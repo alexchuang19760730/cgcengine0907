@@ -36,6 +36,7 @@ scripts/
 - `run_phi3_moe_benchmark.sh` - 运行 Phi-3 MoE 基准测试
 - `full_benchmark.sh` - 完整基准测试
 - `benchmark_server_profiles.py` - 对固定 `qa-zh` / `longform-zh` replay payload 做多轮 server benchmark，并汇总 decode / prompt / acceptance 指标
+- `benchmark_server_matrix.py` - 固定 `longform-zh` + replay payload，扫 `MTP_N_MAX / NGL / draft_ngl / batch / ubatch` 的 devserver server matrix，并默认要求 `accept_mean >= 90%`
 - 以及其他基准测试脚本...
 
 ### sync/
@@ -76,6 +77,9 @@ bash scripts/check/check_server.sh --base-url http://127.0.0.1:8080/v1
 
 # 运行固定 replay payload benchmark
 python3 scripts/benchmark/benchmark_server_profiles.py --base-url http://127.0.0.1:8080/v1 --iterations 3
+
+# 运行 devserver MTP 参数 sweep matrix
+python3 scripts/benchmark/benchmark_server_matrix.py --iterations 1
 
 # 同步代码
 bash scripts/sync/sync_code.sh
