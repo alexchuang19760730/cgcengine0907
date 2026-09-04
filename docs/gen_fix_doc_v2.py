@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Generate 中文開發修復說明書 for expert cache resident passthrough fix."""
+
+import pathlib
+
+HTML = """<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>CGC Expert Cache 修復說明書 v2 — 2026-09-05</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #333; }
+h1 { color: #1a5276; border-bottom: 3px solid #2980b9; padding-bottom: 10px; }
+h2 { color: #2c3e50; margin-top: 30px; }
+h3 { color: #34495e; }
+table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+th { background: #2c3e50; color: white; }
+tr:nth-child(even) { background: #f8f9fa; }
+.pass { color: #27ae60; font-weight: bold; }
+.fail { color: #e74c3c; font-weight: bold; }
+code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 0.85em; }
+.note { background: #e8f4f8; border-left: 4px solid #2980b9; padding: 12px; margin: 15px 0; }
+.warn { background: #fdf2e9; border-left: 4px solid #e67e22; padding: 12px; margin: 15px 0; }
+.ok { background: #eafaf1; border-left: 4px solid #27ae60; padding: 12px; margin: 15px 0; }
+</style>
+</head>
+<body>
+<h1>CGC Expert Cache 修復說明書 v2</h1>
+<p><strong>日期</strong>: 2026-09-05 &nbsp;|&nbsp; <strong>分支</strong>: dev &nbsp;|&nbsp; <strong>模型</strong>: Qwen3.6-35B-A3B (IQ3_XXS + denseIQ4X)</p>
+
+<h2>一、問題摘要</h2>
+<p>Expert cache 在 ngl=99 時產生 0000/garbage 輸出。根因分析:</p>
+
+<h3>1.1 Pool 路徑的根本問題</h3>
+<div class="warn">
+<p><strong>發現</strong>: Pool 路徑的 repointing 是 no-op — pool 是 zero-copy（從 expert tensor buffer adopt），所以 <code>wt->data = pool_base</code> 實際上不改變任何東西。ne[2] 被 shrink 到87（pool capacity），但模型有256個 experts。當 gate routing 到 expert ≥ 87 時，slot 0 被使用（零權重）→ 退化。</p>
+</div>
+
+<h3>1.2 根因鏈</h3>
+<pre>
+模型: 256 experts, top-k=8
+Pool: 87 slots (budget=4GB / 41 layers / 1.2MB per slot)
+ne[2]: shrunk from 256 → 87
+Gate routing: expert 0..255 → remap to slot 0..86
+Expert ≥ 87: maps to slot 0 → zero weights → degenerate gate logits
+Result: layer 2+ uniform logits [0 1 2 3 4 5 6 7] → garbage output
+</pre>
+
+<h2>二、修復方案: Resident Passthrough</h2>
+<div class="ok">
+<p><strong>方案</strong>: 當 <code>expert_cache_skip_load=true</code> (ngl=99) 時，expert tensors 保留在 CPU，ne[2]=256（不 shrink），使用 identity remap（real expert IDs 0..255）。Metal 從原始 full-size tensor 讀取。</p>
+</div>
+
+<h3>2.1 實作變更</h3>
+<table>
+<tr><th>檔案</th><th>變更</th><th>說明</th></tr>
+<tr><td><code>llama-model-loader.cpp</code></td><td>expert tensors → CPU when skip_load=true</td><td>保留 ne[2]=256，不做 pool shrink</td></tr>
+<tr><td><code>llama-model-loader.cpp</td><td>skip ne[2] shrink when skip_load=true</td><td>保持完整 expert dimension</td></tr>
+<tr><td><code>llama-context.cpp</code></td><td>identity remap when skip_load=true</td><td>expert_id 直接作為 index，不經 pool slot</td></tr>
+<tr><td><code>llama-context.cpp</code></td><td>skip repointing when skip_load=true</td><td>不做 pool region repointing</td></tr>
+<tr><td><code>run_n30cache.sh</code></td><td>removed safe profile for MTP</td><td>MTP + denseIQ4X 使用完整 production env</td></tr>
+</table>
+
+<h3>2.2 流程圖</h3>
+<pre>
+ngl=99 + LLAMA_EXPERT_CACHE_ALLOW_NGL=1
+  → expert_cache_skip_load = true
+  → model-loader: expert tensors → CPU buft, ne[2]=256
+  → eval-hook: identity remap (real expert IDs)
+  → Metal: reads from original CPU tensor via identity index
+  → Correct output ✅, ~3.4 t/s (CPU bandwidth bound)
+</pre>
+
+<h2>三、測試結果</h2>
+
+<h3>3.1 CLI 測試 (ngl=99, resident passthrough)</h3>
+<table>
+<tr><th>測試場景</th><th>輸出</th><th>品質</th><th>速度</th><th>Hit Rate</th></tr>
+<tr><td>ZH Q&A: 巴黎首都</td><td>法国</td><td class="pass">✅ 正確</td><td>3.4 t/s</td><td>100%</td></tr>
+<tr><td>Math: 2+2=?</td><td>4</td><td class="pass">✅ 正確</td><td>1.7 t/s</td><td>100%</td></tr>
+<tr><td>Code: Python prime</td><td>正確 is_prime()</td><td class="pass">✅ 正確</td><td>~3 t/s</td><td>100%</td></tr>
+</table>
+
+<h3>3.2 Server API 測試</h3>
+<table>
+<tr><th>配置</th><th>狀態</th><th>備註</th></tr>
+<tr><td>ngl=99 + embedded GGUF template</td><td class="pass">✅ 載入成功</td><td>使用非 MTP 模型，OpenAI 兼容 API</td></tr>
+<tr><td>ngl=99 + MTP + expert cache</td><td class="fail">❌ OOM</td><td>MTP draft context 額外 ~2GB GPU</td></tr>
+</table>
+
+<h3>3.3 Pool 路徑分析（未修復）</h3>
+<div class="warn">
+<p><strong>結論</strong>: Pool 路徑在 ngl=99 無法正確工作。原因:</p>
+<ul>
+<li>Pool 是 zero-copy（adopt from tensor buffer），repointing 是 no-op</li>
+<li>ne[2] shrink 到87 < 256 experts → expert ≥ 87 maps to slot 0</li>
+<li>需要256 slots 才能覆蓋所有 experts，但 256 × 1.2MB × 41 layers = 12.5GB > 16GB Mac</li>
+</ul>
+</div>
+
+<h2>四、速度分析</h2>
+<table>
+<tr><th>配置</th><th>Decode Speed</th><th>品質</th><th>瓶頸</th></tr>
+<tr><td>ngl=30 + partial offload</td><td>~5.5 t/s</td><td class="pass">✅ 正確（think mode）</td><td>CPU expert tensors</td></tr>
+<tr><td>ngl=99 + resident passthrough</td><td>~3.4 t/s</td><td class="pass">✅ 正確</td><td>CPU→GPU bandwidth</td></tr>
+<tr><td>ngl=99 + pool path</td><td>~3.5 t/s</td><td class="fail">❌ garbage</td><td>Pool capacity 不足</td></tr>
+<tr><td>ngl=30 + MTP (denseIQ4X)</td><td>~25+ t/s</td><td class="pass">✅ 正確</td><td>MTP speculative decode</td></tr>
+</table>
+
+<h2>五、已知限制</h2>
+<ol>
+<li><strong>16GB Mac 限制</strong>: 256 experts × 41 layers 無法全部放在 GPU pool 中。需要32GB+ Mac 或減少 expert 數量。</li>
+<li><strong>CPU bandwidth 瓶頸</strong>: Resident passthrough 讓 expert tensors 在 CPU，Metal 透過 unified memory 讀取，速度受限於 ~3.4 t/s。</li>
+<li><strong>MTP + ngl=99 OOM</strong>: MTP draft context 額外需要 ~2GB GPU 記憶體，在16GB Mac 上 OOM。</li>
+<li><strong>Server API expert_cache_active=0</strong>: Server 路徑可能未正確啟用 expert cache，需要進一步調查。</li>
+</ol>
+
+<h2>六、下一步</h2>
+<ol>
+<li><strong>32GB+ Mac</strong>: Pool 路徑可以工作（256 slots × 1.2MB × 41 layers = 12.5GB，32GB Mac 可以容納）</li>
+<li><strong>減少 expert 數量</strong>: 如果模型支持，減少 n_expert 到128或更少，讓 pool 容納所有 experts</li>
+<li><strong>Server API 修復</strong>: 調查為何 server 路徑 expert_cache_active=0，確保 OpenAI API 正確使用 expert cache</li>
+<li><strong>速度優化</strong>: 在 resident passthrough 基礎上，透過 prefetch、warmup、減少 overhead 提升速度</li>
+</ol>
+
+<h2>七、Commit 記錄</h2>
+<pre>
+Commit: fix(expert-cache): resident passthrough for ngl=99 + embedded GGUF template
+Files: llama-model-loader.cpp, llama-context.cpp, run_n30cache.sh
+Status: 本地 dev 分支，測試通過（CLI ngl=99 品質正確）
+</pre>
+
+</body>
+</html>"""
+
+pathlib.Path("docs/CGC_EXPERT_CACHE_FIX_V2_2026-09-05.html").write_text(HTML, encoding="utf-8")
+print("Doc written: docs/CGC_EXPERT_CACHE_FIX_V2_2026-09-05.html")
