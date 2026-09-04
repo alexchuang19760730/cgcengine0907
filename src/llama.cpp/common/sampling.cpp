@@ -479,6 +479,81 @@ static bool grammar_should_apply(struct common_sampler * gsmpl) {
     return true;
 }
 
+namespace {
+thread_local bool g_cgc_sampler_draft_timing_active = false;
+thread_local bool g_cgc_sampler_draft_wait_pending = false;
+thread_local int64_t g_cgc_sampler_draft_decode_return_us = 0;
+
+struct cgc_sampler_draft_telemetry {
+    int64_t sync_us = 0;
+    int64_t sync_after_decode_us = 0;
+    int64_t gap_after_decode_us = 0;
+    int64_t backend_probe_us = 0;
+    int64_t rbudget_us = 0;
+    int64_t grammar_us = 0;
+    int64_t chain_us = 0;
+    int64_t recheck_us = 0;
+    int64_t sample_total_us = 0;
+    int64_t candidate_sort_us = 0;
+    int64_t total_us = 0;
+    int64_t decode_iter_n = 0;
+    int64_t first_after_decode_n = 0;
+    int64_t n = 0;
+};
+
+static cgc_sampler_draft_telemetry g_cgc_sampler_draft_telemetry;
+
+static inline bool cgc_sampler_draft_timing_enabled() {
+    return std::getenv("CGC_SAMPLER_DRAFT_TIMING") != nullptr;
+}
+
+static void cgc_sampler_draft_print_if_needed() {
+    if (!cgc_sampler_draft_timing_enabled()) {
+        return;
+    }
+
+    const int64_t n = g_cgc_sampler_draft_telemetry.n;
+    const bool should_print = n > 0 && (n <= 8 || n % 32 == 0);
+    if (!should_print) {
+        return;
+    }
+
+    auto mean_ms = [](int64_t total_us, int64_t count) {
+        return count > 0 ? total_us / 1000.0 / count : 0.0;
+    };
+
+    fprintf(stderr,
+            "CGC-SAMPLER-DRAFT-SPLIT: n=%lld decode_iters=%lld first_after_decode=%lld sync=%.3f sync_after_decode=%.3f gap_after_decode=%.3f backend_probe=%.3f rbudget=%.3f grammar=%.3f chain=%.3f recheck=%.3f sample_total=%.3f candidate_sort=%.3f total=%.3f ms\n",
+            (long long) n,
+            (long long) g_cgc_sampler_draft_telemetry.decode_iter_n,
+            (long long) g_cgc_sampler_draft_telemetry.first_after_decode_n,
+            mean_ms(g_cgc_sampler_draft_telemetry.sync_us, n),
+            mean_ms(g_cgc_sampler_draft_telemetry.sync_after_decode_us, g_cgc_sampler_draft_telemetry.first_after_decode_n),
+            mean_ms(g_cgc_sampler_draft_telemetry.gap_after_decode_us, g_cgc_sampler_draft_telemetry.first_after_decode_n),
+            mean_ms(g_cgc_sampler_draft_telemetry.backend_probe_us, n),
+            mean_ms(g_cgc_sampler_draft_telemetry.rbudget_us, n),
+            mean_ms(g_cgc_sampler_draft_telemetry.grammar_us, n),
+            mean_ms(g_cgc_sampler_draft_telemetry.chain_us, n),
+            mean_ms(g_cgc_sampler_draft_telemetry.recheck_us, n),
+            mean_ms(g_cgc_sampler_draft_telemetry.sample_total_us, n),
+            mean_ms(g_cgc_sampler_draft_telemetry.candidate_sort_us, n),
+            mean_ms(g_cgc_sampler_draft_telemetry.total_us, n));
+}
+} // namespace
+
+void common_sampler_set_draft_timing_active(bool active) {
+    g_cgc_sampler_draft_timing_active = active;
+}
+
+void common_sampler_note_draft_decode_return(void) {
+    if (!cgc_sampler_draft_timing_enabled()) {
+        return;
+    }
+    g_cgc_sampler_draft_wait_pending = true;
+    g_cgc_sampler_draft_decode_return_us = ggml_time_us();
+    g_cgc_sampler_draft_telemetry.decode_iter_n++;
+}
+
 void common_sampler_accept(struct common_sampler * gsmpl, llama_token token, bool is_generated) {
     if (!gsmpl) {
         return;
@@ -607,10 +682,32 @@ struct llama_sampler * common_sampler_get(const struct common_sampler * gsmpl) {
 }
 
 llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, bool grammar_first) {
+    const bool cgc_sampler_draft_timing = cgc_sampler_draft_timing_enabled() && g_cgc_sampler_draft_timing_active;
+    const int64_t cgc_draft_t0 = cgc_sampler_draft_timing ? ggml_time_us() : 0;
+    const bool cgc_draft_first_after_decode = cgc_sampler_draft_timing && g_cgc_sampler_draft_wait_pending;
     llama_synchronize(ctx);
+    const int64_t cgc_draft_after_sync = cgc_sampler_draft_timing ? ggml_time_us() : 0;
+    if (cgc_draft_first_after_decode) {
+        g_cgc_sampler_draft_telemetry.gap_after_decode_us += cgc_draft_t0 - g_cgc_sampler_draft_decode_return_us;
+        g_cgc_sampler_draft_telemetry.sync_after_decode_us += cgc_draft_after_sync - cgc_draft_t0;
+        g_cgc_sampler_draft_telemetry.first_after_decode_n++;
+        g_cgc_sampler_draft_wait_pending = false;
+    }
 
     // start measuring sampling time after the llama_context synchronization in order to not measure any ongoing async operations
     const auto tm = gsmpl->tm();
+    const bool cgc_sampler_split_timing = getenv("CGC_SAMPLER_SPLIT_TIMING") != nullptr;
+    static int64_t cgc_split_set_logits_us = 0;
+    static int64_t cgc_split_backend_probe_us = 0;
+    static int64_t cgc_split_rbudget_us = 0;
+    static int64_t cgc_split_grammar_us = 0;
+    static int64_t cgc_split_chain_us = 0;
+    static int64_t cgc_split_recheck_us = 0;
+    static int64_t cgc_split_total_us = 0;
+    static int64_t cgc_split_n = 0;
+    const int64_t cgc_t0 = cgc_sampler_split_timing ? ggml_time_us() : 0;
+    int64_t cgc_t = cgc_t0;
+    int64_t cgc_draft_t = cgc_draft_after_sync;
 
     llama_token id = LLAMA_TOKEN_NULL;
 
@@ -620,11 +717,26 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
     auto & cur_p = gsmpl->cur_p; // initialized by set_logits
 
     gsmpl->set_logits(ctx, idx);
+    if (cgc_sampler_split_timing) {
+        const int64_t now = ggml_time_us();
+        cgc_split_set_logits_us += now - cgc_t;
+        cgc_t = now;
+    }
 
     // Check if a backend sampler has already sampled a token in which case we
     // return that token id directly.
     {
         id = llama_get_sampled_token_ith(ctx, idx);
+        if (cgc_sampler_split_timing) {
+            const int64_t now = ggml_time_us();
+            cgc_split_backend_probe_us += now - cgc_t;
+            cgc_t = now;
+        }
+        if (cgc_sampler_draft_timing) {
+            const int64_t now = ggml_time_us();
+            g_cgc_sampler_draft_telemetry.backend_probe_us += now - cgc_draft_t;
+            cgc_draft_t = now;
+        }
 
         if (id != LLAMA_TOKEN_NULL) {
             LOG_DBG("%s: Backend sampler selected token: '%d'. Will not run any CPU samplers\n", __func__, id);
@@ -639,22 +751,101 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
                 }
             }
 
+            if (cgc_sampler_split_timing) {
+                cgc_split_total_us += ggml_time_us() - cgc_t0;
+                cgc_split_n++;
+                if (cgc_split_n % 32 == 0) {
+                    fprintf(stderr,
+                            "CGC-SAMPLER-SPLIT: n=%lld set_logits=%.3f backend_probe=%.3f rbudget=%.3f grammar=%.3f chain=%.3f recheck=%.3f total=%.3f ms\n",
+                            (long long) cgc_split_n,
+                            cgc_split_set_logits_us / 1000.0 / cgc_split_n,
+                            cgc_split_backend_probe_us / 1000.0 / cgc_split_n,
+                            cgc_split_rbudget_us / 1000.0 / cgc_split_n,
+                            cgc_split_grammar_us / 1000.0 / cgc_split_n,
+                            cgc_split_chain_us / 1000.0 / cgc_split_n,
+                            cgc_split_recheck_us / 1000.0 / cgc_split_n,
+                            cgc_split_total_us / 1000.0 / cgc_split_n);
+                }
+            }
+              if (cgc_sampler_draft_timing) {
+                  const int64_t now = ggml_time_us();
+                  g_cgc_sampler_draft_telemetry.sync_us += cgc_draft_after_sync - cgc_draft_t0;
+                  g_cgc_sampler_draft_telemetry.sample_total_us += now - cgc_draft_after_sync;
+                  g_cgc_sampler_draft_telemetry.total_us += now - cgc_draft_t0;
+                  g_cgc_sampler_draft_telemetry.n++;
+                  cgc_sampler_draft_print_if_needed();
+              }
+
             return id;
         }
     }
 
     // apply reasoning budget first
     llama_sampler_apply(rbudget, &cur_p);
+    if (cgc_sampler_split_timing) {
+        const int64_t now = ggml_time_us();
+        cgc_split_rbudget_us += now - cgc_t;
+        cgc_t = now;
+    }
+    if (cgc_sampler_draft_timing) {
+        const int64_t now = ggml_time_us();
+        g_cgc_sampler_draft_telemetry.rbudget_us += now - cgc_draft_t;
+        cgc_draft_t = now;
+    }
 
     if (grammar_first && grammar_should_apply(gsmpl)) {
         llama_sampler_apply(grmr, &cur_p);
+        if (cgc_sampler_split_timing) {
+            const int64_t now = ggml_time_us();
+            cgc_split_grammar_us += now - cgc_t;
+            cgc_t = now;
+        }
+        if (cgc_sampler_draft_timing) {
+            const int64_t now = ggml_time_us();
+            g_cgc_sampler_draft_telemetry.grammar_us += now - cgc_draft_t;
+            cgc_draft_t = now;
+        }
     }
 
     llama_sampler_apply(chain, &cur_p);
+    if (cgc_sampler_split_timing) {
+        const int64_t now = ggml_time_us();
+        cgc_split_chain_us += now - cgc_t;
+        cgc_t = now;
+    }
+    if (cgc_sampler_draft_timing) {
+        const int64_t now = ggml_time_us();
+        g_cgc_sampler_draft_telemetry.chain_us += now - cgc_draft_t;
+        cgc_draft_t = now;
+    }
 
     id = cur_p.data[cur_p.selected].id;
 
     if (grammar_first || !grammar_should_apply(gsmpl)) {
+        if (cgc_sampler_split_timing) {
+            cgc_split_total_us += ggml_time_us() - cgc_t0;
+            cgc_split_n++;
+            if (cgc_split_n % 32 == 0) {
+                fprintf(stderr,
+                        "CGC-SAMPLER-SPLIT: n=%lld set_logits=%.3f backend_probe=%.3f rbudget=%.3f grammar=%.3f chain=%.3f recheck=%.3f total=%.3f ms\n",
+                        (long long) cgc_split_n,
+                        cgc_split_set_logits_us / 1000.0 / cgc_split_n,
+                        cgc_split_backend_probe_us / 1000.0 / cgc_split_n,
+                        cgc_split_rbudget_us / 1000.0 / cgc_split_n,
+                        cgc_split_grammar_us / 1000.0 / cgc_split_n,
+                        cgc_split_chain_us / 1000.0 / cgc_split_n,
+                        cgc_split_recheck_us / 1000.0 / cgc_split_n,
+                        cgc_split_total_us / 1000.0 / cgc_split_n);
+            }
+        }
+          if (cgc_sampler_draft_timing) {
+              const int64_t now = ggml_time_us();
+              g_cgc_sampler_draft_telemetry.sync_us += cgc_draft_after_sync - cgc_draft_t0;
+              g_cgc_sampler_draft_telemetry.sample_total_us += now - cgc_draft_after_sync;
+              g_cgc_sampler_draft_telemetry.total_us += now - cgc_draft_t0;
+              g_cgc_sampler_draft_telemetry.n++;
+              cgc_sampler_draft_print_if_needed();
+          }
         return id;
     }
 
@@ -664,9 +855,43 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
         llama_token_data_array single_token_data_array = { &single_token_data, 1, -1, false };
 
         llama_sampler_apply(grmr, &single_token_data_array);
+        if (cgc_sampler_split_timing) {
+            const int64_t now = ggml_time_us();
+            cgc_split_recheck_us += now - cgc_t;
+            cgc_t = now;
+        }
+        if (cgc_sampler_draft_timing) {
+            const int64_t now = ggml_time_us();
+            g_cgc_sampler_draft_telemetry.recheck_us += now - cgc_draft_t;
+            cgc_draft_t = now;
+        }
 
         const bool is_valid = single_token_data_array.data[0].logit != -INFINITY;
         if (is_valid) {
+            if (cgc_sampler_split_timing) {
+                cgc_split_total_us += ggml_time_us() - cgc_t0;
+                cgc_split_n++;
+                if (cgc_split_n % 32 == 0) {
+                    fprintf(stderr,
+                            "CGC-SAMPLER-SPLIT: n=%lld set_logits=%.3f backend_probe=%.3f rbudget=%.3f grammar=%.3f chain=%.3f recheck=%.3f total=%.3f ms\n",
+                            (long long) cgc_split_n,
+                            cgc_split_set_logits_us / 1000.0 / cgc_split_n,
+                            cgc_split_backend_probe_us / 1000.0 / cgc_split_n,
+                            cgc_split_rbudget_us / 1000.0 / cgc_split_n,
+                            cgc_split_grammar_us / 1000.0 / cgc_split_n,
+                            cgc_split_chain_us / 1000.0 / cgc_split_n,
+                            cgc_split_recheck_us / 1000.0 / cgc_split_n,
+                            cgc_split_total_us / 1000.0 / cgc_split_n);
+                }
+            }
+              if (cgc_sampler_draft_timing) {
+                  const int64_t now = ggml_time_us();
+                  g_cgc_sampler_draft_telemetry.sync_us += cgc_draft_after_sync - cgc_draft_t0;
+                  g_cgc_sampler_draft_telemetry.sample_total_us += now - cgc_draft_after_sync;
+                  g_cgc_sampler_draft_telemetry.total_us += now - cgc_draft_t0;
+                  g_cgc_sampler_draft_telemetry.n++;
+                  cgc_sampler_draft_print_if_needed();
+              }
             return id;
         }
     }
@@ -674,18 +899,78 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
     // resampling:
     // if the token is not valid, sample again, but first apply the grammar sampler and then the sampling chain
     gsmpl->set_logits(ctx, idx);
+    if (cgc_sampler_split_timing) {
+        const int64_t now = ggml_time_us();
+        cgc_split_set_logits_us += now - cgc_t;
+        cgc_t = now;
+    }
 
     llama_sampler_apply(rbudget,  &cur_p);
+    if (cgc_sampler_split_timing) {
+        const int64_t now = ggml_time_us();
+        cgc_split_rbudget_us += now - cgc_t;
+        cgc_t = now;
+    }
+    if (cgc_sampler_draft_timing) {
+        const int64_t now = ggml_time_us();
+        g_cgc_sampler_draft_telemetry.rbudget_us += now - cgc_draft_t;
+        cgc_draft_t = now;
+    }
 
     if (grammar_should_apply(gsmpl)) {
         llama_sampler_apply(grmr,  &cur_p);
+        if (cgc_sampler_split_timing) {
+            const int64_t now = ggml_time_us();
+            cgc_split_grammar_us += now - cgc_t;
+            cgc_t = now;
+        }
+        if (cgc_sampler_draft_timing) {
+            const int64_t now = ggml_time_us();
+            g_cgc_sampler_draft_telemetry.grammar_us += now - cgc_draft_t;
+            cgc_draft_t = now;
+        }
     }
 
     llama_sampler_apply(chain, &cur_p);
+    if (cgc_sampler_split_timing) {
+        const int64_t now = ggml_time_us();
+        cgc_split_chain_us += now - cgc_t;
+        cgc_t = now;
+    }
+    if (cgc_sampler_draft_timing) {
+        const int64_t now = ggml_time_us();
+        g_cgc_sampler_draft_telemetry.chain_us += now - cgc_draft_t;
+        cgc_draft_t = now;
+    }
 
     GGML_ASSERT(cur_p.selected != -1 && "no selected token during sampling - check your sampling configuration");
 
     id = cur_p.data[cur_p.selected].id;
+
+    if (cgc_sampler_split_timing) {
+        cgc_split_total_us += ggml_time_us() - cgc_t0;
+        cgc_split_n++;
+        if (cgc_split_n % 32 == 0) {
+            fprintf(stderr,
+                    "CGC-SAMPLER-SPLIT: n=%lld set_logits=%.3f backend_probe=%.3f rbudget=%.3f grammar=%.3f chain=%.3f recheck=%.3f total=%.3f ms\n",
+                    (long long) cgc_split_n,
+                    cgc_split_set_logits_us / 1000.0 / cgc_split_n,
+                    cgc_split_backend_probe_us / 1000.0 / cgc_split_n,
+                    cgc_split_rbudget_us / 1000.0 / cgc_split_n,
+                    cgc_split_grammar_us / 1000.0 / cgc_split_n,
+                    cgc_split_chain_us / 1000.0 / cgc_split_n,
+                    cgc_split_recheck_us / 1000.0 / cgc_split_n,
+                    cgc_split_total_us / 1000.0 / cgc_split_n);
+        }
+    }
+    if (cgc_sampler_draft_timing) {
+        const int64_t now = ggml_time_us();
+        g_cgc_sampler_draft_telemetry.sync_us += cgc_draft_after_sync - cgc_draft_t0;
+        g_cgc_sampler_draft_telemetry.sample_total_us += now - cgc_draft_after_sync;
+        g_cgc_sampler_draft_telemetry.total_us += now - cgc_draft_t0;
+        g_cgc_sampler_draft_telemetry.n++;
+        cgc_sampler_draft_print_if_needed();
+    }
 
     return id;
 }
@@ -816,6 +1101,8 @@ llama_token_data_array * common_sampler_get_candidates(struct common_sampler * g
     auto * res = &gsmpl->cur_p;
 
     if (do_sort && !res->sorted) {
+        const bool cgc_sampler_draft_timing = cgc_sampler_draft_timing_enabled() && g_cgc_sampler_draft_timing_active;
+        const int64_t cgc_t0 = cgc_sampler_draft_timing ? ggml_time_us() : 0;
         // remember the selected token before sorting
         const llama_token id = res->data[res->selected].id;
 
@@ -832,6 +1119,9 @@ llama_token_data_array * common_sampler_get_candidates(struct common_sampler * g
         }
 
         res->sorted = true;
+        if (cgc_sampler_draft_timing) {
+            g_cgc_sampler_draft_telemetry.candidate_sort_us += ggml_time_us() - cgc_t0;
+        }
     }
 
     return res;

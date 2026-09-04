@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 import re
+import statistics
 import subprocess
 import sys
 from pathlib import Path
@@ -24,7 +25,7 @@ LONG_SENTS = [
 def parse_args():
     repo_root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(
-        description="Compare the historical 25.706 CLI steady recipe with the current llama-server replay benchmark."
+        description="Compare the historical 25.706 CLI steady recipe with the legacy-25plus longform benchmark line."
     )
     parser.add_argument(
         "--binary",
@@ -34,8 +35,8 @@ def parse_args():
         "--model",
         default="/Users/alexchuang/Documents/flashkv0516/models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf",
     )
-    parser.add_argument("--server-base-url", default="http://127.0.0.1:8098/v1")
-    parser.add_argument("--server-profiles", nargs="+", default=["qa-zh", "longform-zh"])
+    parser.add_argument("--server-base-url", default="http://127.0.0.1:8080/v1")
+    parser.add_argument("--server-profiles", nargs="+", default=["longform-zh"])
     parser.add_argument("--server-iterations", type=int, default=1)
     parser.add_argument("--server-timeout", type=int, default=180)
     parser.add_argument("--seed", type=int, default=42)
@@ -67,26 +68,61 @@ def ensure_server_is_healthy(base_url):
         raise RuntimeError(f"server unhealthy: {payload}")
 
 
+def mean_or_none(values):
+    vals = [float(v) for v in values if isinstance(v, (int, float))]
+    if not vals:
+        return None
+    return sum(vals) / len(vals)
+
+
+def median_or_none(values):
+    vals = [float(v) for v in values if isinstance(v, (int, float))]
+    if not vals:
+        return None
+    return statistics.median(vals)
+
+
 def run_server_benchmark(args):
-    bench_script = Path(__file__).with_name("benchmark_server_profiles.py")
-    cmd = [
-        sys.executable,
-        str(bench_script),
-        "--base-url",
-        args.server_base_url,
-        "--profiles",
-        *args.server_profiles,
-        "--iterations",
-        str(args.server_iterations),
-        "--timeout",
-        str(args.server_timeout),
-        "--json",
-    ]
-    proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
-    start = proc.stdout.find("{")
-    if start < 0:
-        raise RuntimeError(f"server benchmark did not emit JSON: {proc.stdout.strip()}")
-    return json.loads(proc.stdout[start:])
+    replay_script = Path(__file__).resolve().parents[1] / "check" / "replay_server_profile.py"
+    all_runs = []
+    summary = []
+
+    for profile in args.server_profiles:
+        runs = []
+        for idx in range(1, args.server_iterations + 1):
+            cmd = [
+                sys.executable,
+                str(replay_script),
+                "--base-url",
+                args.server_base_url,
+                "--profile",
+                profile,
+                "--timeout",
+                str(args.server_timeout),
+            ]
+            proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            result = json.loads(proc.stdout)
+            runs.append(result)
+            all_runs.append({"profile": profile, "iteration": idx, "result": result})
+
+        summary.append(
+            {
+                "profile": profile,
+                "iterations": len(runs),
+                "finish_reasons": [item.get("finish_reason") for item in runs],
+                "decode_tps_mean": mean_or_none([item.get("decode_tps") for item in runs]),
+                "decode_tps_median": median_or_none([item.get("decode_tps") for item in runs]),
+                "prompt_tps_mean": mean_or_none([item.get("prompt_tps") for item in runs]),
+                "completion_tokens_mean": mean_or_none([item.get("completion_tokens") for item in runs]),
+                "draft_accept_pct_mean": mean_or_none([item.get("draft_accept_pct") for item in runs]),
+            }
+        )
+
+    return {
+        "base_url": args.server_base_url,
+        "summary": summary,
+        "runs": all_runs,
+    }
 
 
 def parse_last_float(pattern, text):
@@ -183,19 +219,21 @@ def main():
     print(f"hit_pct        : {cli['hit_pct']}")
     print(f"prompt_tps     : {cli['prompt_tps']}")
     print("")
-    print("== Current server replay ==")
+    print("== Server replay ==")
     for item in server["summary"]:
         print(
             f"{item['profile']}: "
             f"decode_tps_mean={item['decode_tps_mean']} "
             f"prompt_tps_mean={item['prompt_tps_mean']} "
             f"completion_tokens_mean={item['completion_tokens_mean']} "
-            f"draft_accept_pct_mean={item['draft_accept_pct_mean']}"
+            f"draft_accept_pct_mean={item['draft_accept_pct_mean']} "
+            f"finish_reasons={item['finish_reasons']}"
         )
     print("")
     print("== Notes ==")
     print("CLI steady uses the historical long-prompt decode-heavy recipe.")
-    print("Server replay uses the current qa-zh / longform-zh fixed payload benchmark.")
+    print("Server replay defaults to the legacy-25plus longform benchmark line on :8080.")
+    print("QA debug should stay on the isolated :8098 line and be checked separately.")
     return 0
 
 

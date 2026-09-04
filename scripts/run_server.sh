@@ -102,6 +102,7 @@ SERVER_CHAT_AB="${CGC_SERVER_CHAT_AB:-off}"
 SERVER_CHAT_AB_PREFIX="${CGC_SERVER_CHAT_AB_PREFIX:-巴黎是法國的首都。}"
 SERVER_CHAT_AB_MAX_TOKENS="${CGC_SERVER_CHAT_AB_MAX_TOKENS:-8}"
 SERVER_CHAT_AB_STOP="${CGC_SERVER_CHAT_AB_STOP:-。}"
+SERVER_MEMORY_MODE="${CGC_SERVER_MEMORY_MODE:-dev}"  # dev: fail fast, prod: auto-fallback on low-memory starts
 
 case "$SERVER_RUNTIME_PROFILE" in
     ''|auto|off) ;;
@@ -236,6 +237,80 @@ BUDGET="${CGC_SERVER_EXPERT_CACHE_BYTES:-$BUDGET_DEFAULT}"
 LOG_DIR="$ROOT/Backup/cgc_logs"
 LOG="$LOG_DIR/llama_server_$(date +%Y%m%d_%H%M%S).log"
 
+case "$SERVER_MEMORY_MODE" in
+    dev|prod) ;;
+    *)
+        echo "error: CGC_SERVER_MEMORY_MODE must be dev|prod (got $SERVER_MEMORY_MODE)" >&2
+        exit 2
+        ;;
+esac
+
+cgc_existing_llama_server_count() {
+    local count
+    count=$(pgrep -f "build/bin/llama-server" 2>/dev/null | wc -l | tr -d ' ' || true)
+    echo "${count:-0}"
+}
+
+cgc_memory_guard_class() {
+    if [ "$SERVER_MTP" = "1" ] && [ "${SERVER_NGL:-0}" -ge 90 ] && [ "${CTX:-0}" -ge 3072 ]; then
+        echo "full-mtp"
+    elif [ "$SERVER_MTP" = "1" ]; then
+        echo "fallback-mtp"
+    else
+        echo "baseline"
+    fi
+}
+
+cgc_memory_guard_req() {
+    local klass="$1"
+    case "$klass" in
+        full-mtp) echo "24 35 0" ;;      # phys_gb free_pct other_llama_servers
+        fallback-mtp) echo "16 20 0" ;;
+        baseline) echo "12 15 0" ;;
+        *) echo "0 0 999" ;;
+    esac
+}
+
+cgc_memory_guard_reason() {
+    local klass="$1"
+    local phys_gb="$2"
+    local free_pct="$3"
+    local other_servers="$4"
+    local req_phys="$5"
+    local req_free="$6"
+    local req_other="$7"
+    local reasons=()
+    if [ "$phys_gb" -lt "$req_phys" ]; then
+        reasons+=("physical=${phys_gb}GB<${req_phys}GB")
+    fi
+    if [ "$free_pct" -lt "$req_free" ]; then
+        reasons+=("free=${free_pct}%<${req_free}%")
+    fi
+    if [ "$other_servers" -gt "$req_other" ]; then
+        reasons+=("other_llama_servers=${other_servers}>${req_other}")
+    fi
+    local joined="${reasons[*]:-unknown}"
+    echo "${klass}: ${joined}"
+}
+
+cgc_apply_prod_memory_fallback() {
+    echo "[guard] prod low-memory fallback: forcing OOM-safe server profile" >&2
+    SERVER_OOM_SAFE=1
+    if [ "$SERVER_MTP" = "1" ]; then
+        CTX=1024
+        SERVER_NGL=8
+        SERVER_DRAFT_NGL=0
+        SERVER_BATCH=64
+        SERVER_UBATCH=32
+        BUDGET=0
+    else
+        CTX="${CTX:-2048}"
+        if [ "${SERVER_NGL:-0}" -gt 8 ]; then
+            SERVER_NGL=8
+        fi
+    fi
+}
+
 [ -x "$BIN" ] || { echo "error: llama-server 不存在：$BIN（cmake -DLLAMA_BUILD_SERVER=ON 後構建）" >&2; exit 1; }
 if [ ! -f "$MODEL" ]; then
     echo "error: model not found: $MODEL" >&2
@@ -261,10 +336,36 @@ if [ "${N30CACHE_NO_CLEAN:-0}" != 1 ]; then
     sleep 1
 fi
 
-# [防護 2] 記憶體水位（模型 13.2GB --no-mmap + 4GiB wired pool；低水位強制拒跑）
+# [防護 2] 記憶體水位（模型 13.2GB --no-mmap + 4GiB wired pool；低水位先記 warning，
+# 再交由下方 memory guard 統一決定是 fail fast 還是 prod fallback）
 FREE_PCT=$(memory_pressure -Q 2>/dev/null | awk -F': ' '/free percentage/{print int($2)}')
 if [ -n "${FREE_PCT:-}" ] && [ "$FREE_PCT" -lt 25 ]; then
-    echo "error: 系統可用記憶體僅 ${FREE_PCT}%（<25%）——16GB 機上疊 13GB 模型會 kernel panic（§4.5）。關掉其他重工行程再跑。" >&2
+    echo "[guard] warning: 系統可用記憶體僅 ${FREE_PCT}%（<25%）——後續 memory guard 會決定 fail fast 或 prod fallback" >&2
+fi
+
+# [防護 2b] 基本可運作記憶體要求：full-MTP 研發線禁止硬擠；prod 線先自動降到保命配置。
+FREE_PCT="${FREE_PCT:-0}"
+OTHER_LLAMA_SERVERS="$(cgc_existing_llama_server_count)"
+MEM_CLASS="$(cgc_memory_guard_class)"
+read -r MEM_REQ_PHYS_GB MEM_REQ_FREE_PCT MEM_REQ_OTHER <<< "$(cgc_memory_guard_req "$MEM_CLASS")"
+if [ "$PHYS_MEM_GB" -lt "$MEM_REQ_PHYS_GB" ] || [ "$FREE_PCT" -lt "$MEM_REQ_FREE_PCT" ] || [ "$OTHER_LLAMA_SERVERS" -gt "$MEM_REQ_OTHER" ]; then
+    MEM_REASON="$(cgc_memory_guard_reason "$MEM_CLASS" "$PHYS_MEM_GB" "$FREE_PCT" "$OTHER_LLAMA_SERVERS" "$MEM_REQ_PHYS_GB" "$MEM_REQ_FREE_PCT" "$MEM_REQ_OTHER")"
+    if [ "$SERVER_MEMORY_MODE" = "prod" ] && [ "$MEM_CLASS" = "full-mtp" ]; then
+        echo "[guard] prod start does not meet full-MTP memory requirement -> $MEM_REASON" >&2
+        cgc_apply_prod_memory_fallback
+        MEM_CLASS="$(cgc_memory_guard_class)"
+        read -r MEM_REQ_PHYS_GB MEM_REQ_FREE_PCT MEM_REQ_OTHER <<< "$(cgc_memory_guard_req "$MEM_CLASS")"
+    else
+        echo "error: startup blocked by memory guard -> $MEM_REASON" >&2
+        echo "hint: dev 線請先停掉其他 llama-server / 釋放記憶體；prod 線可設 CGC_SERVER_MEMORY_MODE=prod 走自動降級。" >&2
+        exit 1
+    fi
+fi
+
+if [ "$PHYS_MEM_GB" -lt "$MEM_REQ_PHYS_GB" ] || [ "$FREE_PCT" -lt "$MEM_REQ_FREE_PCT" ] || [ "$OTHER_LLAMA_SERVERS" -gt "$MEM_REQ_OTHER" ]; then
+    MEM_REASON="$(cgc_memory_guard_reason "$MEM_CLASS" "$PHYS_MEM_GB" "$FREE_PCT" "$OTHER_LLAMA_SERVERS" "$MEM_REQ_PHYS_GB" "$MEM_REQ_FREE_PCT" "$MEM_REQ_OTHER")"
+    echo "error: even fallback memory guard is not satisfied -> $MEM_REASON" >&2
+    echo "hint: 這代表目前機器狀態連保命線都撐不住，先關掉其他重工行程後再跑。" >&2
     exit 1
 fi
 
@@ -306,6 +407,7 @@ if [ -n "$SERVER_BATCH" ] || [ -n "$SERVER_UBATCH" ]; then
 fi
 echo "[perf]  n_cb=$SERVER_N_CB glu_fused_down=$SERVER_GLU_FUSED_DOWN watchdog=$SERVER_WATCHDOG oa_async=$SERVER_OA_ASYNC"
 echo "[perf]  runtime_profile=$SERVER_RUNTIME_PROFILE model_root=$MODEL_ROOT"
+echo "[guard] memory_mode=$SERVER_MEMORY_MODE class=$MEM_CLASS phys=${PHYS_MEM_GB}GB free=${FREE_PCT}% other_llama_servers=$OTHER_LLAMA_SERVERS"
 if [ "$SERVER_PROFILE" != "off" ]; then
     echo "[chat]  profile=$SERVER_PROFILE"
 fi
@@ -444,20 +546,25 @@ for i in $(seq 1 60); do
         echo "  Windows 伙伴 : 程式內直接指 http://$LAN_IP:$PORT/v1/chat/completions"
         echo "  Runtime    : CGC_SERVER_RUNTIME_PROFILE=mtp|non-mtp (current=${SERVER_RUNTIME_PROFILE})"
         echo "  Regression : bash scripts/check/check_server.sh --base-url http://127.0.0.1:$PORT/v1"
-        echo "  Benchmark  : python3 scripts/benchmark/benchmark_server_profiles.py --base-url http://127.0.0.1:$PORT/v1 --iterations 3"
         if [ "$SERVER_PROFILE" = "qa-zh" ]; then
+            echo "  Benchmark  : python3 scripts/benchmark/benchmark_server_profiles.py --base-url http://127.0.0.1:$PORT/v1 --iterations 3"
             echo "  Profile    : qa-zh（中文短答；目前重點在驗證短答起手是否會誤撞結構 token）"
             echo "  Payload    : {\"messages\":[{\"role\":\"user\",\"content\":\"請用一句中文回答：巴黎是哪個國家的首都？\"}],\"max_tokens\":$SERVER_CHAT_AB_MAX_TOKENS,\"stop\":[\"$SERVER_CHAT_AB_STOP\",\"<|end|>\",\"<|output|>\",\"<|user|>\"]}"
         elif [ "$SERVER_PROFILE" = "longform-zh" ]; then
+            echo "  Benchmark  : python3 scripts/benchmark/benchmark_server_profiles.py --base-url http://127.0.0.1:$PORT/v1 --iterations 3"
             echo "  Profile    : longform-zh（中文長文；預設前綴可用 env 覆寫）"
             echo "  Payload    : {\"messages\":[{\"role\":\"user\",\"content\":\"請用一段中文說明巴黎為什麼是法國的政治與文化中心，避免條列，至少120字。\"}],\"max_tokens\":$SERVER_CHAT_AB_MAX_TOKENS,\"stop\":[\"<|end|>\",\"<|output|>\",\"<|user|>\"]}"
         elif [ "$SERVER_PROFILE" = "legacy-25plus" ]; then
+            echo "  Benchmark  : python3 scripts/check/replay_server_profile.py --base-url http://127.0.0.1:$PORT/v1 --profile longform-zh"
+            echo "  Compare    : python3 scripts/benchmark/compare_cli_steady_vs_server.py --server-base-url http://127.0.0.1:$PORT/v1"
             echo "  Profile    : legacy-25plus（還原第一個 25+ server 狀態的 longform 啟動口徑）"
             echo "  Payload    : {\"messages\":[{\"role\":\"user\",\"content\":\"請用一段中文說明巴黎為什麼是法國的政治與文化中心，避免條列，至少120字。\"}],\"max_tokens\":$SERVER_CHAT_AB_MAX_TOKENS,\"stop\":[\"<|end|>\",\"<|output|>\",\"<|user|>\"]}"
         elif [ "$SERVER_CHAT_AB" = "healthy-prefix" ]; then
+            echo "  Benchmark  : python3 scripts/benchmark/benchmark_server_profiles.py --base-url http://127.0.0.1:$PORT/v1 --iterations 3"
             echo "  Chat A/B   : healthy-prefix（prefill=答：，僅作短答起手 A/B，不代表已通過 QA gate）"
             echo "  Payload    : {\"messages\":[{\"role\":\"user\",\"content\":\"請用一句中文回答：巴黎是哪個國家的首都？\"}],\"max_tokens\":24,\"stop\":[\"$SERVER_CHAT_AB_STOP\",\"<|end|>\",\"<|output|>\",\"<|user|>\"]}"
         elif [ "$SERVER_CHAT_AB" = "custom-prefix" ]; then
+            echo "  Benchmark  : python3 scripts/check/replay_server_profile.py --base-url http://127.0.0.1:$PORT/v1 --profile longform-zh"
             echo "  Chat A/B   : custom-prefix（prefill=${SERVER_CHAT_AB_PREFIX}）"
         fi
         echo "  注意       : 本機 curl 測 localhost 必帶 --noproxy '*'（代理 7897 攔截）"

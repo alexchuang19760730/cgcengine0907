@@ -13,6 +13,56 @@
 #include <map>
 #include <stdexcept>
 
+namespace {
+struct cgc_kv_seq_telemetry {
+    int64_t seq_rm_us = 0;
+    int64_t seq_rm_n = 0;
+    int64_t seq_cp_us = 0;
+    int64_t seq_cp_n = 0;
+    int64_t seq_add_us = 0;
+    int64_t seq_add_n = 0;
+};
+
+static cgc_kv_seq_telemetry g_cgc_kv_seq_telemetry;
+
+static inline bool cgc_kv_seq_timing_enabled() {
+    return std::getenv("CGC_KV_SEQ_TIMING") != nullptr;
+}
+
+static void cgc_kv_seq_print_if_needed() {
+    if (!cgc_kv_seq_timing_enabled()) {
+        return;
+    }
+
+    const int64_t n = std::max<int64_t>({
+        g_cgc_kv_seq_telemetry.seq_rm_n,
+        g_cgc_kv_seq_telemetry.seq_cp_n,
+        g_cgc_kv_seq_telemetry.seq_add_n,
+    });
+
+    const bool should_print =
+        n <= 8 ||
+        (g_cgc_kv_seq_telemetry.seq_rm_n > 0 && g_cgc_kv_seq_telemetry.seq_rm_n % 32 == 0) ||
+        (g_cgc_kv_seq_telemetry.seq_cp_n > 0 && g_cgc_kv_seq_telemetry.seq_cp_n % 32 == 0) ||
+        (g_cgc_kv_seq_telemetry.seq_add_n > 0 && g_cgc_kv_seq_telemetry.seq_add_n % 32 == 0);
+
+    if (n <= 0 || !should_print) {
+        return;
+    }
+
+    auto mean_ms = [](int64_t total_us, int64_t count) {
+        return count > 0 ? total_us / 1000.0 / count : 0.0;
+    };
+
+    fprintf(stderr,
+            "CGC-KV-SEQ: n=%lld seq_rm=%.3f seq_cp=%.3f seq_add=%.3f ms\n",
+            (long long) n,
+            mean_ms(g_cgc_kv_seq_telemetry.seq_rm_us, g_cgc_kv_seq_telemetry.seq_rm_n),
+            mean_ms(g_cgc_kv_seq_telemetry.seq_cp_us, g_cgc_kv_seq_telemetry.seq_cp_n),
+            mean_ms(g_cgc_kv_seq_telemetry.seq_add_us, g_cgc_kv_seq_telemetry.seq_add_n));
+}
+} // namespace
+
 static bool ggml_is_power_of_2(int n) {
     return (n & (n - 1)) == 0;
 }
@@ -377,6 +427,8 @@ void llama_kv_cache::clear(bool data) {
 }
 
 bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
+    const bool cgc_timing = cgc_kv_seq_timing_enabled();
+    const int64_t t0 = cgc_timing ? ggml_time_us() : 0;
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
         return true;
@@ -441,10 +493,18 @@ bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
         }
     }
 
+    if (cgc_timing) {
+        g_cgc_kv_seq_telemetry.seq_rm_us += ggml_time_us() - t0;
+        g_cgc_kv_seq_telemetry.seq_rm_n++;
+        cgc_kv_seq_print_if_needed();
+    }
+
     return true;
 }
 
 void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) {
+    const bool cgc_timing = cgc_kv_seq_timing_enabled();
+    const int64_t t0 = cgc_timing ? ggml_time_us() : 0;
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
         return;
@@ -463,7 +523,12 @@ void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, ll
         auto & cells = v_cells[s0];
 
         if (seq_id_src == seq_id_dst) {
-            return;
+          if (cgc_timing) {
+              g_cgc_kv_seq_telemetry.seq_cp_us += ggml_time_us() - t0;
+              g_cgc_kv_seq_telemetry.seq_cp_n++;
+              cgc_kv_seq_print_if_needed();
+          }
+          return;
         }
 
         if (p0 < 0) {
@@ -534,6 +599,11 @@ void llama_kv_cache::seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst, ll
     //for (uint32_t s = 0; s < n_stream; ++s) {
     //    LLAMA_LOG_WARN("%s: seq %d: min = %d, max = %d\n", __func__, s, v_cells[s].seq_pos_min(s), v_cells[s].seq_pos_max(s));
     //}
+    if (cgc_timing) {
+        g_cgc_kv_seq_telemetry.seq_cp_us += ggml_time_us() - t0;
+        g_cgc_kv_seq_telemetry.seq_cp_n++;
+        cgc_kv_seq_print_if_needed();
+    }
 }
 
 void llama_kv_cache::seq_keep(llama_seq_id seq_id) {
@@ -564,6 +634,8 @@ void llama_kv_cache::seq_keep(llama_seq_id seq_id) {
 }
 
 void llama_kv_cache::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, llama_pos shift) {
+    const bool cgc_timing = cgc_kv_seq_timing_enabled();
+    const int64_t t0 = cgc_timing ? ggml_time_us() : 0;
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
     if (other) {
         return;
@@ -611,6 +683,12 @@ void llama_kv_cache::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, ll
     // If we freed up a slot, set head to it so searching can start there.
     // Otherwise we just start the next search from the beginning.
     head = new_head != cells.size() ? new_head : 0;
+
+    if (cgc_timing) {
+        g_cgc_kv_seq_telemetry.seq_add_us += ggml_time_us() - t0;
+        g_cgc_kv_seq_telemetry.seq_add_n++;
+        cgc_kv_seq_print_if_needed();
+    }
 }
 
 void llama_kv_cache::seq_div(llama_seq_id seq_id, llama_pos p0, llama_pos p1, int d) {
