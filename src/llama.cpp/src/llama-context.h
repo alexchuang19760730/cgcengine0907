@@ -333,9 +333,10 @@ private:
     mutable std::map<int, std::vector<ggml_tensor *>> cache_ffn_tensors;
     // layer -> scratch buffer holding the remap ids written into cache_remap_tensors[il].
     std::map<int, std::vector<uint8_t>> cache_remap_buf;
-    // [kind] per-kind gather buffers (L3-B path): the hook gathers selected expert weights
-    // into these contiguous buffers and points the FFN src0 tensor at them.
-    std::vector<std::vector<uint8_t>> cache_gather_buf;
+    // (layer, kind) -> gather buffer versions (L3-B path): one graph step can invoke the same
+    // layer/kind hook more than once before the CPU mul_mat_id consumers finish. Keep every
+    // repoint on its own backing store until the next graph build restores the original weights.
+    std::map<std::pair<int,int>, std::vector<std::vector<uint8_t>>> cache_gather_buf;
     // (layer, kind) -> (original src0 data pointer); saved before the FFN tensor is repointed
     // at the cache pool, restored in process_ubatch before every build_graph.
     // mutable: written from the const graph_get_cb.

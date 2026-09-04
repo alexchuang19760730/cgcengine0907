@@ -198,6 +198,17 @@ static common_speculative_output_limits server_output_limits(const common_params
     return result;
 }
 
+static bool cgc_server_enable_periodic_slot_logs() {
+    static const bool enabled = []() {
+        const char * env = std::getenv("CGC_SERVER_PERIODIC_SLOT_LOGS");
+        if (env == nullptr) {
+            return false;
+        }
+        return std::atoi(env) != 0;
+    }();
+    return enabled;
+}
+
 // state diagram: https://github.com/ggml-org/llama.cpp/pull/9283
 enum slot_state {
     SLOT_STATE_IDLE,
@@ -471,6 +482,8 @@ struct server_slot {
 
     double t_prompt_processing = 0.0; // ms
     double t_token_generation = 0.0;  // ms
+    int32_t cgc_slots_busy_at_prompt_start = 0;
+    int32_t cgc_deferred_depth_at_prompt_start = 0;
 
     std::function<void(int /* id_slot */)> callback_on_release;
 
@@ -494,6 +507,8 @@ struct server_slot {
         stop           = STOP_TYPE_NONE;
         stopping_word  = "";
         n_sent_text    = 0;
+        cgc_slots_busy_at_prompt_start = 0;
+        cgc_deferred_depth_at_prompt_start = 0;
 
         if (can_speculate()) {
             spec_draft.clear();
@@ -617,7 +632,9 @@ struct server_slot {
             return;
         }
 
-        generated_token_probs.push_back(token);
+        if (task->params.sampling.n_probs > 0) {
+            generated_token_probs.push_back(token);
+        }
     }
 
     int get_n_draft_max() const {
@@ -758,6 +775,9 @@ struct server_slot {
     }
 
     void print_timings_tg() {
+        if (!cgc_server_enable_periodic_slot_logs()) {
+            return;
+        }
         if (n_decoded < 100) {
             return;
         }
@@ -778,6 +798,9 @@ struct server_slot {
     }
 
     void print_timings_pp() const {
+        if (!cgc_server_enable_periodic_slot_logs()) {
+            return;
+        }
         const double n_prompt_second = 1e3 / t_prompt_processing * n_prompt_tokens_processed;
         const double f_progress = (float) prompt.n_tokens() / task->n_tokens();
 
@@ -1682,6 +1705,9 @@ private:
         queue_tasks.on_update_slots([this]() {
             update_slots();
         });
+        queue_tasks.on_has_pending_work([this]() {
+            return has_pending_slot_work();
+        });
         queue_tasks.on_sleeping_state([this](bool sleeping) {
             handle_sleeping_state(sleeping);
         });
@@ -2350,6 +2376,7 @@ private:
 
     void send_final_response(server_slot & slot) {
         auto res = std::make_unique<server_task_result_cmpl_final>();
+        const int64_t t_send_response_us = ggml_time_us();
 
         res->id      = slot.task->id;
         res->id_slot = slot.id;
@@ -2389,6 +2416,21 @@ private:
         res->res_type          = slot.task->params.res_type;
         res->oaicompat_model   = slot.task->params.oaicompat_model;
         res->oaicompat_cmpl_id = slot.task->params.oaicompat_cmpl_id;
+        res->cgc_wrapper_prep_ms = slot.task->t_wrapper_prep_ms;
+        res->cgc_queue_depth_at_post = slot.task->cgc_queue_depth_at_post;
+        res->cgc_slots_busy_at_prompt_start = slot.cgc_slots_busy_at_prompt_start;
+        res->cgc_deferred_depth_at_prompt_start = slot.cgc_deferred_depth_at_prompt_start;
+        res->cgc_route_start_us = slot.task->t_route_start_us;
+        res->cgc_result_enqueued_us = t_send_response_us;
+        if (slot.task->t_post_tasks_us > 0 && slot.t_start_process_prompt > 0) {
+            res->cgc_route_prep_ms = std::max<int64_t>(0, slot.task->t_post_tasks_us - slot.task->t_route_start_us) / 1000.0;
+            res->cgc_queue_wait_ms = std::max<int64_t>(0, slot.t_start_process_prompt - slot.task->t_post_tasks_us) / 1000.0;
+        }
+        const int64_t t_generation_end_us =
+            slot.t_start_generation > 0
+                ? slot.t_start_generation + (int64_t) (slot.t_token_generation * 1000.0)
+                : slot.t_start_process_prompt + (int64_t) (slot.t_prompt_processing * 1000.0);
+        res->cgc_result_queue_ms = std::max<int64_t>(0, t_send_response_us - t_generation_end_us) / 1000.0;
 
         // populate res.probs_output
         if (slot.task->params.sampling.n_probs > 0) {
@@ -2981,6 +3023,29 @@ private:
         }
     }
 
+    bool has_pending_slot_work() const {
+        for (const auto & slot : slots) {
+            if (slot.is_processing()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    int32_t count_processing_slots() const {
+        int32_t n_processing = 0;
+        for (const auto & slot : slots) {
+            if (slot.is_processing()) {
+                ++n_processing;
+            }
+        }
+        return n_processing;
+    }
+
+    int32_t queue_depth_total() const {
+        return (int32_t) (queue_tasks.queue_tasks_size() + queue_tasks.queue_tasks_deferred_size());
+    }
+
     // @ngxson : for debugging only
     int64_t t_pre_decode  = 0;
     int64_t t_decode      = 0;
@@ -3039,13 +3104,6 @@ private:
             if (all_idle) {
                 SRV_TRC("%s", "all slots are idle\n");
                 return; // skip further processing
-
-            } else {
-                SRV_DBG("%s", "posting NEXT_RESPONSE\n");
-
-                server_task task(SERVER_TASK_TYPE_NEXT_RESPONSE);
-                task.id = queue_tasks.get_new_id();
-                queue_tasks.post(std::move(task));
             }
         }
 
@@ -3407,6 +3465,8 @@ private:
                         const int64_t t_prompt_setup_0 = cgc_core_timing ? ggml_time_us() : 0;
                         slot.t_start_process_prompt = ggml_time_us();
                         slot.t_start_generation = 0;
+                        slot.cgc_slots_busy_at_prompt_start = count_processing_slots();
+                        slot.cgc_deferred_depth_at_prompt_start = (int32_t) queue_tasks.queue_tasks_deferred_size();
 
                         slot.state = SLOT_STATE_PROCESSING_PROMPT;
 
@@ -4550,8 +4610,13 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             server_task_type type,
             const json & data,
             const std::vector<raw_buffer> & files,
-            task_response_type res_type) {
+            task_response_type res_type,
+            int64_t t_route_start_us,
+            double wrapper_prep_ms) {
     GGML_ASSERT(type == SERVER_TASK_TYPE_COMPLETION || type == SERVER_TASK_TYPE_INFILL);
+    if (t_route_start_us == 0) {
+        t_route_start_us = ggml_time_us();
+    }
 
     auto res = create_response();
     auto completion_id = gen_chatcmplid();
@@ -4629,6 +4694,21 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             tasks.push_back(std::move(task));
         }
 
+        const int64_t t_post_tasks_us = ggml_time_us();
+        const int32_t cgc_queue_depth_at_post = (int32_t) (queue_tasks.queue_tasks_size() + queue_tasks.queue_tasks_deferred_size());
+        for (auto & task : tasks) {
+            task.t_route_start_us = t_route_start_us;
+            task.t_post_tasks_us  = t_post_tasks_us;
+            task.t_wrapper_prep_ms = wrapper_prep_ms;
+            task.cgc_queue_depth_at_post = cgc_queue_depth_at_post;
+            for (auto & child : task.child_tasks) {
+                child.t_route_start_us = t_route_start_us;
+                child.t_post_tasks_us  = t_post_tasks_us;
+                child.t_wrapper_prep_ms = wrapper_prep_ms;
+                child.cgc_queue_depth_at_post = cgc_queue_depth_at_post;
+            }
+        }
+
         rd.post_tasks(std::move(tasks));
     } catch (const std::exception & e) {
         res->error(format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST));
@@ -4640,6 +4720,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
     if (!stream) {
         // non-stream, wait for the results
         auto all_results = rd.wait_for_all(req.should_stop);
+        const int64_t t_wait_done_us = ggml_time_us();
         if (all_results.is_terminated) {
             return res; // connection is closed
         } else if (all_results.error) {
@@ -4647,10 +4728,50 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             return res;
         } else {
             json arr = json::array();
+            std::vector<server_task_result_cmpl_final *> finals;
             for (auto & res : all_results.results) {
-                GGML_ASSERT(dynamic_cast<server_task_result_cmpl_final*>(res.get()) != nullptr);
-                arr.push_back(res->to_json());
+                auto * final = dynamic_cast<server_task_result_cmpl_final*>(res.get());
+                GGML_ASSERT(final != nullptr);
+                finals.push_back(final);
+                arr.push_back(final->to_json());
             }
+
+            const int64_t t_json_done_us = ggml_time_us();
+            for (size_t i = 0; i < finals.size() && i < arr.size(); ++i) {
+                auto * final = finals[i];
+                const double handler_wait_ms = std::max<int64_t>(0, t_wait_done_us - final->cgc_result_enqueued_us) / 1000.0;
+                const double json_serialize_ms = std::max<int64_t>(0, t_json_done_us - t_wait_done_us) / 1000.0;
+                json stage_timings = {
+                    {"handler_fixed_prep_ms", std::max(0.0, final->cgc_route_prep_ms - final->cgc_wrapper_prep_ms)},
+                    {"wrapper_prep_ms", final->cgc_wrapper_prep_ms},
+                    {"route_prep_ms",   final->cgc_route_prep_ms},
+                    {"queue_depth_at_post", final->cgc_queue_depth_at_post},
+                    {"queue_wait_ms",   final->cgc_queue_wait_ms},
+                    {"slots_busy_at_prompt_start", final->cgc_slots_busy_at_prompt_start},
+                    {"deferred_depth_at_prompt_start", final->cgc_deferred_depth_at_prompt_start},
+                    {"prompt_eval_ms",  final->timings.prompt_ms},
+                    {"decode_eval_ms",  final->timings.predicted_ms},
+                    {"result_queue_ms", final->cgc_result_queue_ms},
+                    {"handler_wait_ms", handler_wait_ms},
+                    {"json_serialize_ms", json_serialize_ms},
+                    {"result_json_ms", final->cgc_result_queue_ms + handler_wait_ms + json_serialize_ms},
+                    {"server_total_ms",
+                        final->cgc_route_prep_ms +
+                        final->cgc_queue_wait_ms +
+                        final->timings.prompt_ms +
+                        final->timings.predicted_ms +
+                        final->cgc_result_queue_ms +
+                        handler_wait_ms +
+                        json_serialize_ms},
+                };
+
+                if (arr[i].contains("__verbose") && arr[i]["__verbose"].is_object()) {
+                    arr[i]["__verbose"]["cgc_stage_timings"] = stage_timings;
+                } else {
+                    arr[i]["cgc_stage_timings"] = stage_timings;
+                }
+            }
+
             GGML_ASSERT(!arr.empty() && "empty results");
             if (arr.size() == 1) {
                 // if single request, return single object instead of array
@@ -5111,6 +5232,7 @@ void server_routes::init_routes() {
 
     this->post_infill = [this](const server_http_req & req) {
         auto res = create_response();
+        const int64_t t_route_start_us = ggml_time_us();
         // check model compatibility
         std::string err;
         if (llama_vocab_fim_pre(ctx_server.vocab) == LLAMA_TOKEN_NULL) {
@@ -5184,11 +5306,13 @@ void server_routes::init_routes() {
             SERVER_TASK_TYPE_INFILL,
             data,
             files,
-            TASK_RESPONSE_TYPE_NONE); // infill is not OAI compatible
+            TASK_RESPONSE_TYPE_NONE,
+            t_route_start_us); // infill is not OAI compatible
     };
 
     this->post_completions = [this](const server_http_req & req) {
         auto res = create_response();
+        const int64_t t_route_start_us = ggml_time_us();
         std::vector<raw_buffer> files; // dummy
         const json body = json::parse(req.body);
         return handle_completions_impl(
@@ -5196,11 +5320,13 @@ void server_routes::init_routes() {
             SERVER_TASK_TYPE_COMPLETION,
             body,
             files,
-            TASK_RESPONSE_TYPE_NONE);
+            TASK_RESPONSE_TYPE_NONE,
+            t_route_start_us);
     };
 
     this->post_completions_oai = [this](const server_http_req & req) {
         auto res = create_response();
+        const int64_t t_route_start_us = ggml_time_us();
         std::vector<raw_buffer> files; // dummy
         const json body = json::parse(req.body);
         return handle_completions_impl(
@@ -5208,13 +5334,16 @@ void server_routes::init_routes() {
             SERVER_TASK_TYPE_COMPLETION,
             body,
             files,
-            TASK_RESPONSE_TYPE_OAI_CMPL);
+            TASK_RESPONSE_TYPE_OAI_CMPL,
+            t_route_start_us);
     };
 
     this->post_chat_completions = [this](const server_http_req & req) {
         auto res = create_response();
+        const int64_t t_route_start_us = ggml_time_us();
         std::vector<raw_buffer> files;
         json body = json::parse(req.body);
+        const int64_t t_wrapper_start_us = ggml_time_us();
         json body_parsed = oaicompat_chat_params_parse(
             body,
             meta->chat_params,
@@ -5224,7 +5353,9 @@ void server_routes::init_routes() {
             SERVER_TASK_TYPE_COMPLETION,
             body_parsed,
             files,
-            TASK_RESPONSE_TYPE_OAI_CHAT);
+            TASK_RESPONSE_TYPE_OAI_CHAT,
+            t_route_start_us,
+            std::max<int64_t>(0, ggml_time_us() - t_wrapper_start_us) / 1000.0);
     };
 
     this->post_chat_completions_tok = [this](const server_http_req & req) {
@@ -5270,7 +5401,9 @@ void server_routes::init_routes() {
 
     this->post_responses_oai = [this](const server_http_req & req) {
         auto res = create_response();
+        const int64_t t_route_start_us = ggml_time_us();
         std::vector<raw_buffer> files;
+        const int64_t t_wrapper_start_us = ggml_time_us();
         json body = server_chat_convert_responses_to_chatcmpl(json::parse(req.body));
         SRV_DBG("%s\n", "Request converted: OpenAI Responses -> OpenAI Chat Completions");
         SRV_DBG("converted request: %s\n", body.dump().c_str());
@@ -5283,7 +5416,9 @@ void server_routes::init_routes() {
             SERVER_TASK_TYPE_COMPLETION,
             body_parsed,
             files,
-            TASK_RESPONSE_TYPE_OAI_RESP);
+            TASK_RESPONSE_TYPE_OAI_RESP,
+            t_route_start_us,
+            std::max<int64_t>(0, ggml_time_us() - t_wrapper_start_us) / 1000.0);
     };
 
     this->post_responses_tok_oai = [this](const server_http_req & req) {
@@ -5292,6 +5427,7 @@ void server_routes::init_routes() {
 
     this->post_transcriptions_oai = [this](const server_http_req & req) {
         auto res = create_response();
+        const int64_t t_route_start_us = ggml_time_us();
 
         if (!meta->has_mtmd || !meta->chat_params.allow_audio) {
             res->error(format_error_response("The current model does not support audio input.", ERROR_TYPE_NOT_SUPPORTED));
@@ -5299,6 +5435,7 @@ void server_routes::init_routes() {
         }
 
         std::vector<raw_buffer> files;
+        const int64_t t_wrapper_start_us = ggml_time_us();
         json body = convert_transcriptions_to_chatcmpl(
             json::parse(req.body),
             meta->chat_params.tmpls.get(),
@@ -5315,12 +5452,16 @@ void server_routes::init_routes() {
             SERVER_TASK_TYPE_COMPLETION,
             body_parsed,
             files,
-            TASK_RESPONSE_TYPE_OAI_ASR);
+            TASK_RESPONSE_TYPE_OAI_ASR,
+            t_route_start_us,
+            std::max<int64_t>(0, ggml_time_us() - t_wrapper_start_us) / 1000.0);
     };
 
     this->post_anthropic_messages = [this](const server_http_req & req) {
         auto res = create_response();
+        const int64_t t_route_start_us = ggml_time_us();
         std::vector<raw_buffer> files;
+        const int64_t t_wrapper_start_us = ggml_time_us();
         json body = server_chat_convert_anthropic_to_oai(json::parse(req.body));
         SRV_DBG("%s\n", "Request converted: Anthropic -> OpenAI Chat Completions");
         SRV_DBG("converted request: %s\n", body.dump().c_str());
@@ -5333,7 +5474,9 @@ void server_routes::init_routes() {
             SERVER_TASK_TYPE_COMPLETION,
             body_parsed,
             files,
-            TASK_RESPONSE_TYPE_ANTHROPIC);
+            TASK_RESPONSE_TYPE_ANTHROPIC,
+            t_route_start_us,
+            std::max<int64_t>(0, ggml_time_us() - t_wrapper_start_us) / 1000.0);
     };
 
     this->post_anthropic_count_tokens = [this](const server_http_req & req) {

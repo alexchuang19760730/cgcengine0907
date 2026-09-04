@@ -30,6 +30,7 @@
 #include <cfloat>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <cmath>
 #include <functional>
 #include <map>
@@ -38,6 +39,23 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+
+// #region debug-point H3:model-config
+static void cgc_debug_ngl99_nil_buffer_model_config(const std::string & tensor_name, int axis, uint32_t il, size_t rotation, const char * axis0_name) {
+    if (tensor_name.find("ffn_") == std::string::npos || tensor_name.find("exps.weight") == std::string::npos) {
+        return;
+    }
+
+    char cmd[2048];
+    snprintf(cmd, sizeof(cmd),
+        "curl -sX POST http://127.0.0.1:7777/event -H 'Content-Type: application/json' "
+        "-d '{\"sessionId\":\"ngl99-nil-buffer\",\"runId\":\"pre-fix\",\"hypothesisId\":\"H3\","
+        "\"location\":\"llama-model.cpp:get_tensor_config_impl\",\"msg\":\"[DEBUG] expert tensor config\","
+        "\"data\":{\"tensor\":\"%s\",\"axis\":%d,\"il\":%u,\"rotation\":%zu,\"axis0\":\"%s\"}}' >/dev/null 2>&1 &",
+        tensor_name.c_str(), axis, il, rotation, axis0_name ? axis0_name : "");
+    (void) std::system(cmd);
+}
+// #endregion
 #include <vector>
 
 static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params & params) {
@@ -440,6 +458,9 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             tensor_axis_0 = ud->model->get_tensor((prefix + suffix_fallback).c_str());
         }
         GGML_ASSERT(tensor_axis_0 != nullptr);
+        // #region debug-point H3:model-config
+        cgc_debug_ngl99_nil_buffer_model_config(tensor_name, axis, il, rotation, tensor_axis_0->name);
+        // #endregion
         return {axis, tensor_axis_0, il, rotation};
     };
 

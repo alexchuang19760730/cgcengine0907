@@ -17,6 +17,7 @@
 
 #include <cinttypes>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -84,6 +85,167 @@ static const llm_fused_op_probe llm_fused_op_dsv4_hc_post_probe = {
     /*.name             =*/ "fused DeepSeek V4 HC post",
     /*.n_tokens_per_seq =*/ 1,
 };
+
+static inline uint32_t cgc_pool_safe_tokens(uint32_t n_slots, uint32_t n_expert_used) {
+    if (n_slots == 0) {
+        return 1;
+    }
+    if (n_expert_used == 0) {
+        return n_slots;
+    }
+    const uint32_t safe = n_slots / n_expert_used;
+    return safe == 0 ? 1 : safe;
+}
+
+static inline bool cgc_partial_offload_gpu_layer(const llama_model & model, int il) {
+    if (il < 0) {
+        return false;
+    }
+    const int n_layer_all = (int) model.hparams.n_layer_all;
+    const int n_gpu_layers = (int) model.n_gpu_layers();
+    if (n_gpu_layers <= 0 || n_gpu_layers > n_layer_all) {
+        return false;
+    }
+    const int i_gpu_start = std::max(n_layer_all + 1 - n_gpu_layers, 0);
+    return il >= i_gpu_start;
+}
+
+static inline bool cgc_partial_offload_active(const llama_model & model) {
+    const int n_layer_all = (int) model.hparams.n_layer_all;
+    const int n_gpu_layers = (int) model.n_gpu_layers();
+    return n_gpu_layers > 0 && n_gpu_layers <= n_layer_all;
+}
+
+// #region debug-point H2:repoint-buffer-owner
+static void cgc_debug_ngl99_nil_buffer_repoint(
+        const ggml_tensor * wt,
+        const ggml_tensor * pool_tensor,
+        uint32_t layer,
+        int kind,
+        void * old_data,
+        const void * new_data) {
+    if (wt == nullptr || wt->name[0] == '\0') {
+        return;
+    }
+    if (strstr(wt->name, "ffn_") == nullptr || strstr(wt->name, "exps.weight") == nullptr) {
+        return;
+    }
+
+    ggml_backend_buffer_t old_buffer = wt->buffer;
+    ggml_backend_buffer_t pool_buffer = pool_tensor ? pool_tensor->buffer : nullptr;
+
+    const uintptr_t new_addr = (uintptr_t) new_data;
+
+    const uintptr_t old_base = old_buffer ? (uintptr_t) ggml_backend_buffer_get_base(old_buffer) : 0;
+    const size_t old_size = old_buffer ? ggml_backend_buffer_get_size(old_buffer) : 0;
+    const bool old_contains = old_buffer && new_addr >= old_base && new_addr < old_base + old_size;
+
+    const uintptr_t pool_base = pool_buffer ? (uintptr_t) ggml_backend_buffer_get_base(pool_buffer) : 0;
+    const size_t pool_size = pool_buffer ? ggml_backend_buffer_get_size(pool_buffer) : 0;
+    const bool pool_contains = pool_buffer && new_addr >= pool_base && new_addr < pool_base + pool_size;
+
+    char cmd[3072];
+    snprintf(cmd, sizeof(cmd),
+        "curl -sX POST http://127.0.0.1:7777/event -H 'Content-Type: application/json' "
+        "-d '{\"sessionId\":\"ngl99-nil-buffer\",\"runId\":\"pre-fix\",\"hypothesisId\":\"H2\","
+        "\"location\":\"llama-context.cpp:graph_get_cb\",\"msg\":\"[DEBUG] expert repoint\","
+        "\"data\":{\"tensor\":\"%s\",\"layer\":%u,\"kind\":%d,"
+        "\"old_data\":\"%p\",\"new_data\":\"%p\",\"pool_tensor\":\"%s\","
+        "\"wt_buffer\":\"%p\",\"pool_buffer\":\"%p\","
+        "\"old_base\":\"%p\",\"old_size\":%zu,\"old_contains\":%d,"
+        "\"pool_base\":\"%p\",\"pool_size\":%zu,\"pool_contains\":%d}}' >/dev/null 2>&1 &",
+        wt->name, layer, kind,
+        old_data, new_data, pool_tensor ? pool_tensor->name : "",
+        (void *) old_buffer, (void *) pool_buffer,
+        (void *) old_base, old_size, old_contains ? 1 : 0,
+        (void *) pool_base, pool_size, pool_contains ? 1 : 0);
+    (void) std::system(cmd);
+}
+// #endregion
+
+// #region debug-point A:ngl30-topk-route-state
+static void cgc_debug_ngl30_cache_crash_report(
+        const char * hypothesis_id,
+        const char * location,
+        const char * message,
+        int il,
+        int pmax,
+        int64_t n_tokens,
+        int64_t n_expert_used,
+        int64_t ids0,
+        int64_t ids1,
+        int64_t ids2,
+        int64_t ids3,
+        int seq24,
+        size_t uni_size,
+        uint32_t n_slots,
+        uint32_t safe_pool_tokens,
+        const char * topk_backend,
+        const char * remap_backend,
+        const char * up_backend) {
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd),
+        "curl -sX POST http://127.0.0.1:7779/event -H 'Content-Type: application/json' "
+        "-d '{\"sessionId\":\"ngl30-cache-crash\",\"runId\":\"pre-fix\",\"hypothesisId\":\"%s\","
+        "\"location\":\"%s\",\"msg\":\"[DEBUG] %s\","
+        "\"data\":{\"il\":%d,\"pmax\":%d,\"n_tokens\":%lld,\"n_expert_used\":%lld,"
+        "\"ids0\":%lld,\"ids1\":%lld,\"ids2\":%lld,\"ids3\":%lld,"
+        "\"seq24\":%d,\"uni_size\":%zu,\"n_slots\":%u,\"safe_pool_tokens\":%u,"
+        "\"topk_backend\":\"%s\",\"remap_backend\":\"%s\",\"up_backend\":\"%s\"}}' >/dev/null 2>&1 &",
+        hypothesis_id, location, message,
+        il, pmax, (long long) n_tokens, (long long) n_expert_used,
+        (long long) ids0, (long long) ids1, (long long) ids2, (long long) ids3,
+        seq24, uni_size, n_slots, safe_pool_tokens,
+        topk_backend ? topk_backend : "-", remap_backend ? remap_backend : "-", up_backend ? up_backend : "-");
+    (void) std::system(cmd);
+}
+// #endregion
+
+// #region debug-point C:ngl30-topk-backend-read
+static void cgc_debug_ngl30_cache_crash_compare(
+        int il,
+        int pmax,
+        int64_t n_tokens,
+        int64_t n_expert_used,
+        int64_t nb0,
+        int64_t nb1,
+        int64_t host0,
+        int64_t host1,
+        int64_t host2,
+        int64_t host3,
+        int64_t host8,
+        int64_t host16,
+        int64_t backend0,
+        int64_t backend1,
+        int64_t backend2,
+        int64_t backend3,
+        int64_t backend8,
+        int64_t backend16,
+        int64_t stride0,
+        int64_t stride1,
+        int64_t stride2,
+        int64_t stride3,
+        int64_t stride8,
+        int64_t stride16,
+        int backend_seq24) {
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd),
+        "curl -sX POST http://127.0.0.1:7779/event -H 'Content-Type: application/json' "
+        "-d '{\"sessionId\":\"ngl30-cache-crash\",\"runId\":\"pre-fix\",\"hypothesisId\":\"E\","
+        "\"location\":\"llama-context.cpp:expert_cache_on_topk:backend_get\",\"msg\":\"[DEBUG] host vs backend topk compare\","
+        "\"data\":{\"il\":%d,\"pmax\":%d,\"n_tokens\":%lld,\"n_expert_used\":%lld,\"nb0\":%lld,\"nb1\":%lld,"
+        "\"host0\":%lld,\"host1\":%lld,\"host2\":%lld,\"host3\":%lld,\"host8\":%lld,\"host16\":%lld,"
+        "\"backend0\":%lld,\"backend1\":%lld,\"backend2\":%lld,\"backend3\":%lld,\"backend8\":%lld,\"backend16\":%lld,"
+        "\"stride0\":%lld,\"stride1\":%lld,\"stride2\":%lld,\"stride3\":%lld,\"stride8\":%lld,\"stride16\":%lld,"
+        "\"backend_seq24\":%d}}' >/dev/null 2>&1 &",
+        il, pmax, (long long) n_tokens, (long long) n_expert_used, nb0, nb1,
+        (long long) host0, (long long) host1, (long long) host2, (long long) host3, (long long) host8, (long long) host16,
+        (long long) backend0, (long long) backend1, (long long) backend2, (long long) backend3, (long long) backend8, (long long) backend16,
+        (long long) stride0, (long long) stride1, (long long) stride2, (long long) stride3, (long long) stride8, (long long) stride16,
+        backend_seq24);
+    (void) std::system(cmd);
+}
+// #endregion
 
 llama_context::llama_context(
         const llama_model & model,
@@ -260,11 +422,16 @@ llama_context::llama_context(
     // path, while still bounding every step to the pool (never the full model). Chunked callers
     // (mtmd, warmup) must read the capped value via llama_n_batch().
     if (model.expert_cache_pool_capacity > 0 && cparams.n_batch > 1) {
-        const uint32_t pmax = cgc_pool_max_tokens();
+        uint32_t min_slots = (uint32_t) model.expert_cache_pool_capacity;
+        for (uint32_t il = 0; il < model.hparams.n_layer_all; ++il) {
+            min_slots = std::min(min_slots, cgc_layer_cap(il, (uint32_t) model.expert_cache_pool_capacity));
+        }
+        const uint32_t safe_tokens = cgc_pool_safe_tokens(min_slots, hparams.n_expert_used);
+        const uint32_t pmax = std::min(cgc_pool_max_tokens(), safe_tokens);
         if (cparams.n_batch > pmax) {
             cparams.n_batch = pmax;
-            LLAMA_LOG_INFO("%s: L4 pool capacity=%zu -> n_batch capped to %u (multi-token pool path up to %u tokens; larger batches read shrunk tensors OOB)\n",
-                    __func__, model.expert_cache_pool_capacity, pmax, pmax);
+            LLAMA_LOG_INFO("%s: L4 pool capacity=%zu min_slots=%u n_expert_used=%u -> n_batch capped to %u (pool-safe multi-token cap)\n",
+                    __func__, model.expert_cache_pool_capacity, min_slots, hparams.n_expert_used, pmax);
         }
     }
 
@@ -1432,6 +1599,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             }
             it = cache_orig.erase(it);
         }
+        cache_gather_buf.clear();
 
         //const auto t_start_us = ggml_time_us();
 
@@ -1852,6 +2020,77 @@ static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_s
     return false; // all sequences use backend sampling
 }
 
+// #region debug-point quality-regression
+static void cgc_debug_quality_logits_copy(
+        const char * phase,
+        const llama_ubatch & ubatch,
+        bool have_logits_buf,
+        bool have_t_logits,
+        bool need_raw,
+        int32_t n_outputs,
+        int32_t n_outputs_prev,
+        int32_t n_outputs_all) {
+    char output_bits[128];
+    output_bits[0] = '\0';
+    const uint32_t limit = std::min<uint32_t>(ubatch.n_tokens, 16);
+    for (uint32_t i = 0; i < limit; ++i) {
+        output_bits[i] = ubatch.output[i] ? '1' : '0';
+    }
+    output_bits[limit] = '\0';
+
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd),
+        "curl -sX POST http://127.0.0.1:7778/event -H 'Content-Type: application/json' "
+        "-d '{\"sessionId\":\"ngl99-quality-regression\",\"runId\":\"pre-fix\",\"hypothesisId\":\"H2\","
+        "\"location\":\"llama-context.cpp:raw-logits-copy\",\"msg\":\"[DEBUG] raw logits copy\","
+        "\"data\":{\"phase\":\"%s\",\"ubatch_tokens\":%u,\"ubatch_equal_seqs\":%d,"
+        "\"have_logits_buf\":%d,\"have_t_logits\":%d,\"need_raw\":%d,"
+        "\"n_outputs\":%d,\"n_outputs_prev\":%d,\"n_outputs_all\":%d,"
+        "\"output_bits\":\"%s\"}}' >/dev/null 2>&1 &",
+        phase,
+        ubatch.n_tokens,
+        ubatch.equal_seqs() ? 1 : 0,
+        have_logits_buf ? 1 : 0,
+        have_t_logits ? 1 : 0,
+        need_raw ? 1 : 0,
+        n_outputs,
+        n_outputs_prev,
+        n_outputs_all,
+        output_bits);
+    (void) std::system(cmd);
+}
+
+static void cgc_debug_quality_t_logits_top0(
+        ggml_backend_t backend_res,
+        ggml_tensor * t_logits,
+        int32_t n_vocab,
+        const llama_ubatch & ubatch) {
+    if (backend_res == nullptr || t_logits == nullptr || ubatch.n_tokens != 1 || n_vocab <= 0) {
+        return;
+    }
+
+    std::vector<float> row((size_t) n_vocab);
+    GGML_UNUSED(backend_res);
+    ggml_backend_tensor_get(t_logits, row.data(), 0, (size_t) n_vocab * sizeof(float));
+
+    int best = 0;
+    for (int i = 1; i < n_vocab; ++i) {
+        if (row[i] > row[best]) {
+            best = i;
+        }
+    }
+
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd),
+        "curl -sX POST http://127.0.0.1:7778/event -H 'Content-Type: application/json' "
+        "-d '{\"sessionId\":\"ngl99-quality-regression\",\"runId\":\"pre-fix\",\"hypothesisId\":\"H2\","
+        "\"location\":\"llama-context.cpp:t_logits-top0\",\"msg\":\"[DEBUG] t_logits top0\","
+        "\"data\":{\"ubatch_tokens\":%u,\"top0\":%d,\"top0_logit\":%.9g}}' >/dev/null 2>&1 &",
+        ubatch.n_tokens, best, row[best]);
+    (void) std::system(cmd);
+}
+// #endregion
+
 int llama_context::decode(const llama_batch & batch_inp) {
     // MTP hook batches carry both token (next-token id) and embd (h_nextn row),
     // so accept either present rather than requiring exactly one.
@@ -2094,19 +2333,33 @@ int llama_context::decode(const llama_batch & batch_inp) {
         }
 
         // extract logits
-        if (logits.data && t_logits && n_outputs > 0 && needs_raw_logits(ubatch, sampling.samplers)) {
+        const bool need_raw_logits = needs_raw_logits(ubatch, sampling.samplers);
+        // #region debug-point quality-regression
+        cgc_debug_quality_logits_copy("before", ubatch, logits.data != nullptr, t_logits != nullptr, need_raw_logits, n_outputs, n_outputs_prev, n_outputs_all);
+        // #endregion
+        if (logits.data && t_logits && n_outputs > 0 && need_raw_logits) {
             ggml_backend_t backend_res = ggml_backend_sched_get_tensor_backend(sched.get(), t_logits);
             GGML_ASSERT(backend_res != nullptr);
             GGML_ASSERT(logits.data != nullptr);
+            // #region debug-point quality-regression
+            cgc_debug_quality_t_logits_top0(backend_res, t_logits, n_vocab, ubatch);
+            // #endregion
 
             float * logits_out = logits.data + n_outputs_prev*n_vocab;
 
             if (n_outputs) {
                 GGML_ASSERT( n_outputs_prev + n_outputs <= n_outputs_all);
                 GGML_ASSERT((n_outputs_prev + n_outputs)*n_vocab <= (int64_t) logits.size);
-                ggml_backend_tensor_get_async(backend_res, t_logits, logits_out, 0, n_outputs*n_vocab*sizeof(float));
+                if (getenv("CGC_SYNC_RAW_LOGITS_COPY")) {
+                    ggml_backend_tensor_get(t_logits, logits_out, 0, n_outputs*n_vocab*sizeof(float));
+                } else {
+                    ggml_backend_tensor_get_async(backend_res, t_logits, logits_out, 0, n_outputs*n_vocab*sizeof(float));
+                }
             }
         }
+        // #region debug-point quality-regression
+        cgc_debug_quality_logits_copy("after", ubatch, logits.data != nullptr, t_logits != nullptr, need_raw_logits, n_outputs, n_outputs_prev, n_outputs_all);
+        // #endregion
 
         // extract embeddings
         if (embd.data && t_embd && n_outputs > 0) {
@@ -2253,8 +2506,8 @@ int llama_context::decode(const llama_batch & batch_inp) {
         }
     }
 
-    // wait for the computation to finish (automatically done when obtaining the model output)
-    //synchronize();
+    // Wait for async host copies to finish before callers read logits/embeddings via getters.
+    synchronize();
 
     return 0;
 }
@@ -3051,9 +3304,23 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         return;
     }
 
-    // ensure the per-kind gather buffers exist before any L3-B path indexes them
-    if (cache_gather_buf.size() < 4) {
-        cache_gather_buf.resize(4);
+    if (cgc_partial_offload_active(model)) {
+        static int cgc_partial_bypass_dbg_n = 0;
+        if (cgc_partial_bypass_dbg_n < 24) {
+            cgc_partial_bypass_dbg_n++;
+            fprintf(stderr, "CGC-PARTIAL-BYPASS: il=%d ntok=%lld\n", il, (long long) n_tokens);
+        }
+        ggml_tensor * remap = cache_remap_tensors[il];
+        if (remap != nullptr && remap->data != nullptr) {
+            int32_t * rd = (int32_t *) remap->data;
+            const int32_t * ids0 = (const int32_t *) t->data;
+            for (int64_t j = 0; j < n_tokens; ++j) {
+                for (int64_t i = 0; i < n_expert_used; ++i) {
+                    rd[i + j * n_expert_used] = ids0[i + j * n_expert_used];
+                }
+            }
+        }
+        return;
     }
 
     const int32_t * ids = (const int32_t *) t->data;
@@ -3066,7 +3333,14 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     // blocking ensure_batch/drain_layer below then returns clobbered values (segfault in the
     // CGC-POST/st slot lookup + a corrupted remap). Snapshot the ids once, up front, so every later
     // read (remap write, debug prints) is stable.
-    std::vector<int32_t> ids_snap(ids, ids + (size_t) n_tokens * n_expert_used);
+    std::vector<int32_t> ids_snap((size_t) n_tokens * n_expert_used);
+    const char * ids_base = (const char *) t->data;
+    for (int64_t j = 0; j < n_tokens; ++j) {
+        for (int64_t i = 0; i < n_expert_used; ++i) {
+            const char * ptr = ids_base + i*t->nb[0] + j*t->nb[1];
+            ids_snap[(size_t) (i + j*n_expert_used)] = *(const int32_t *) ptr;
+        }
+    }
     ids = ids_snap.data();
     static int cgc_hook_dbg_n = 0;
     if (cgc_hook_dbg_n < 80) {
@@ -3099,6 +3373,101 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         }
         fprintf(stderr, "\n");
     }
+
+    // #region debug-point A:topk-snapshot
+    if (n_tokens <= 8 && n_expert_used == 8 && il >= 15) {
+        bool seq24 = true;
+        for (int64_t k = 0; k < n_tokens * n_expert_used; ++k) {
+            if (ids[k] != (int32_t) k) {
+                seq24 = false;
+                break;
+            }
+        }
+        bool seq_local = true;
+        for (int64_t j = 0; j < n_tokens && seq_local; ++j) {
+            for (int64_t i = 0; i < n_expert_used; ++i) {
+                if (ids[i + j * n_expert_used] != (int32_t) i) {
+                    seq_local = false;
+                    break;
+                }
+            }
+        }
+        static int cgc_ngl30_topk_dbg_n = 0;
+        if (seq24 || seq_local || cgc_ngl30_topk_dbg_n < 64) {
+            cgc_ngl30_topk_dbg_n++;
+            const llama_pos cgc_pmax = llama_memory_seq_pos_max(memory.get(), 0);
+            ggml_tensor * remap = il < (int) cache_remap_tensors.size() ? cache_remap_tensors[il] : nullptr;
+            auto & ffn = cache_ffn_tensors[il];
+            const char * topk_backend = "-";
+            const char * remap_backend = "-";
+            const char * up_backend = "-";
+            if (sched) {
+                if (ggml_backend_t b = ggml_backend_sched_get_tensor_backend(sched.get(), t)) {
+                    topk_backend = ggml_backend_name(b);
+                }
+                if (remap != nullptr) {
+                    if (ggml_backend_t b = ggml_backend_sched_get_tensor_backend(sched.get(), remap)) {
+                        remap_backend = ggml_backend_name(b);
+                    }
+                }
+                if (ffn.size() > 1 && ffn[1] != nullptr) {
+                    if (ggml_backend_t b = ggml_backend_sched_get_tensor_backend(sched.get(), ffn[1])) {
+                        up_backend = ggml_backend_name(b);
+                    }
+                }
+            }
+            cgc_debug_ngl30_cache_crash_report(
+                    (seq24 || seq_local) ? "A" : "B",
+                    "llama-context.cpp:expert_cache_on_topk:ids",
+                    seq24 ? "topk ids collapsed to sequential pattern" :
+                    (seq_local ? "topk ids collapsed to per-token local pattern" : "topk ids snapshot"),
+                    il, (int) cgc_pmax, n_tokens, n_expert_used,
+                    ids[0], ids[1], ids[2], ids[3],
+                    (seq24 || seq_local) ? 1 : 0, 0, 0, 0,
+                    topk_backend, remap_backend, up_backend);
+
+            // #region debug-point C:backend-topk-compare
+            if (seq24 || seq_local) {
+                std::vector<int32_t> ids_backend((size_t) n_tokens * n_expert_used);
+                ggml_backend_tensor_get(t, ids_backend.data(), 0, ids_backend.size() * sizeof(int32_t));
+                std::vector<int32_t> ids_stride((size_t) n_tokens * n_expert_used);
+                const char * ids_base = (const char *) t->data;
+                for (int64_t j = 0; j < n_tokens; ++j) {
+                    for (int64_t i = 0; i < n_expert_used; ++i) {
+                        const char * ptr = ids_base + i*t->nb[0] + j*t->nb[1];
+                        ids_stride[(size_t) (i + j*n_expert_used)] = *(const int32_t *) ptr;
+                    }
+                }
+                bool backend_seq24 = true;
+                for (int64_t k = 0; k < n_tokens * n_expert_used; ++k) {
+                    if (ids_backend[(size_t) k] != (int32_t) k) {
+                        backend_seq24 = false;
+                        break;
+                    }
+                }
+                bool backend_seq_local = true;
+                for (int64_t j = 0; j < n_tokens && backend_seq_local; ++j) {
+                    for (int64_t i = 0; i < n_expert_used; ++i) {
+                        if (ids_backend[(size_t) (i + j*n_expert_used)] != (int32_t) i) {
+                            backend_seq_local = false;
+                            break;
+                        }
+                    }
+                }
+                cgc_debug_ngl30_cache_crash_compare(
+                        il, (int) cgc_pmax, n_tokens, n_expert_used, (int64_t) t->nb[0], (int64_t) t->nb[1],
+                        ids[0], ids[1], ids[2], ids[3],
+                        n_tokens * n_expert_used > 8 ? ids[8] : -1, n_tokens * n_expert_used > 16 ? ids[16] : -1,
+                        ids_backend[0], ids_backend[1], ids_backend[2], ids_backend[3],
+                        ids_backend.size() > 8 ? ids_backend[8] : -1, ids_backend.size() > 16 ? ids_backend[16] : -1,
+                        ids_stride[0], ids_stride[1], ids_stride[2], ids_stride[3],
+                        ids_stride.size() > 8 ? ids_stride[8] : -1, ids_stride.size() > 16 ? ids_stride[16] : -1,
+                        (backend_seq24 || backend_seq_local) ? 1 : 0);
+            }
+            // #endregion
+        }
+    }
+    // #endregion
     if (getenv("LLAMA_EXPERT_CACHE_DISABLE_WRITE")) {
         return; // diagnostic: keep graph structure, do not write remap / repoint weights
     }
@@ -3150,12 +3519,67 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     }
 
     const uint32_t n_expert = model.hparams.n_expert;
+    const uint32_t n_slots = llama_expert_cache_slots_per_layer_l(cache, (uint32_t) il);
+    const uint32_t safe_pool_tokens = cgc_pool_safe_tokens(n_slots, (uint32_t) n_expert_used);
+
+    // #region debug-point B:route-union-capacity
+    if (n_tokens <= 8 && il >= 15) {
+        bool seq24 = n_expert_used == 8;
+        if (seq24) {
+            for (int64_t k = 0; k < n_tokens * n_expert_used; ++k) {
+                if (ids[k] != (int32_t) k) {
+                    seq24 = false;
+                    break;
+                }
+            }
+        }
+        static int cgc_ngl30_route_dbg_n = 0;
+        if (seq24 || cgc_ngl30_route_dbg_n < 64) {
+            cgc_ngl30_route_dbg_n++;
+            const llama_pos cgc_pmax = llama_memory_seq_pos_max(memory.get(), 0);
+            ggml_tensor * remap = il < (int) cache_remap_tensors.size() ? cache_remap_tensors[il] : nullptr;
+            auto & ffn = cache_ffn_tensors[il];
+            const char * topk_backend = "-";
+            const char * remap_backend = "-";
+            const char * up_backend = "-";
+            if (sched) {
+                if (ggml_backend_t b = ggml_backend_sched_get_tensor_backend(sched.get(), t)) {
+                    topk_backend = ggml_backend_name(b);
+                }
+                if (remap != nullptr) {
+                    if (ggml_backend_t b = ggml_backend_sched_get_tensor_backend(sched.get(), remap)) {
+                        remap_backend = ggml_backend_name(b);
+                    }
+                }
+                if (ffn.size() > 1 && ffn[1] != nullptr) {
+                    if (ggml_backend_t b = ggml_backend_sched_get_tensor_backend(sched.get(), ffn[1])) {
+                        up_backend = ggml_backend_name(b);
+                    }
+                }
+            }
+            cgc_debug_ngl30_cache_crash_report(
+                    seq24 ? "C" : "D",
+                    "llama-context.cpp:expert_cache_on_topk:union",
+                    seq24 ? "sequential ids reached union/remap stage" : "union/remap capacity snapshot",
+                    il, (int) cgc_pmax, n_tokens, n_expert_used,
+                    ids[0], ids[1], ids[2], ids[3],
+                    seq24 ? 1 : 0, uni.size(), n_slots, safe_pool_tokens,
+                    topk_backend, remap_backend, up_backend);
+        }
+    }
+    // #endregion
 
     // L4_SKIP_LAYER0: blk.0 is a full-weight CPU skip-load tensor, not pooled. Its FFN must keep
     // reading the ORIGINAL tensor with the raw expert ids, so write an IDENTITY remap (instead of
     // slot indices) and skip ensure_batch / union recording. Writing slot ids would make mul_mat_id
     // index pool slots that have no adopted region -> layer-0 garbage that corrupts the whole net.
-    if (getenv("LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0") != nullptr && il == 0) {
+    // [CGC FIX] CGC_FORCE_IDENTITY_REMAP=1: force identity remap for ALL layers, bypassing
+    // the pool path entirely. This fixes the ngl=99 0000/garbage bug where pool-based remap
+    // causes uniform gate logits at layers 2+. Identity remap maps expert→expert (no slot
+    // indirection), so mul_mat_id reads from original weight locations. Pool data is still
+    // filled by ensure_batch but ignored by the graph.
+    static const bool cgc_force_identity = getenv("CGC_FORCE_IDENTITY_REMAP") != nullptr;
+    if (cgc_force_identity || (getenv("LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0") != nullptr && il == 0)) {
         ggml_tensor * remap = cache_remap_tensors[il];
         if (remap != nullptr && remap->data != nullptr) {
             int32_t * rd = (int32_t *) remap->data;
@@ -3183,10 +3607,51 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         }
     }
 
+    // [CGC Resident Passthrough §7.3.5] When pool is NOT active (full-resident at ngl>0)
+    // OR when expert tensors are on CPU (skip_load=true), write identity remap (real expert
+    // IDs 0..255) so Metal reads from original full-size tensors. No pool fill, no slot
+    // indirection. The skip_load check is critical: pool_active can be true even when tensors
+    // are on CPU (skip_load), in which case the pool path would write slot-based remap for
+    // CPU-backed tensors → Metal reads from CPU → slow (3-6 t/s instead of 25+).
+    if (!llama_expert_cache_pool_active(cache) || model.expert_cache_skip_load) {
+        ggml_tensor * remap = cache_remap_tensors[il];
+        if (remap != nullptr && remap->data != nullptr) {
+            int32_t * rd = (int32_t *) remap->data;
+            for (int64_t j = 0; j < n_tokens; ++j) {
+                for (int64_t i = 0; i < n_expert_used; ++i) {
+                    rd[i + j * n_expert_used] = (int32_t) ids[i + j * n_expert_used];
+                }
+            }
+        }
+        return;
+    }
+
+    // The Metal L4 pool path can only represent up to n_slots unique experts in one step.
+    // If a multi-token batch can fan out to more than that (worst case = n_tokens * top_k),
+    // falling through to the CPU gather path would repoint GPU weight tensors at host memory
+    // and later crash in ggml_metal_buffer_get_id. Keep full weights + identity remap instead.
+    if (llama_expert_cache_pool_active(cache) && (uint64_t) n_tokens > safe_pool_tokens) {
+        ggml_tensor * remap = cache_remap_tensors[il];
+        if (remap != nullptr && remap->data != nullptr) {
+            int32_t * rd = (int32_t *) remap->data;
+            for (int64_t j = 0; j < n_tokens; ++j) {
+                for (int64_t i = 0; i < n_expert_used; ++i) {
+                    rd[i + j * n_expert_used] = (int32_t) ids[i + j * n_expert_used];
+                }
+            }
+        }
+        return;
+    }
+
     // decode: L3 Option A static per-layer slot pool when active and the union fits, else the
     // L3-B per-step gather path.
-    const uint32_t n_slots = llama_expert_cache_slots_per_layer_l(cache, (uint32_t) il);
-    if (llama_expert_cache_pool_active(cache) && uni.size() <= n_slots) {
+    // [CGC Fix-1 verification] CGC_BYPASS_POOL_FROM=N forces layers >= N to skip pool path
+    // and fall through to L3-B gather. If output recovers, bug is in pool path.
+    static const int cgc_bypass_pool_from = []() {
+        const char * e = getenv("CGC_BYPASS_POOL_FROM");
+        return e ? atoi(e) : 999;
+    }();
+    if (llama_expert_cache_pool_active(cache) && uni.size() <= n_slots && il < cgc_bypass_pool_from) {
         // [CGC MTP fast path] CGC_VERIFY_DECODE / CGC_DRAFT_DECODE (rebuilt 2026-08-28 from
         // MTP轉正規劃書_v1.1.md): route MTP verify / draft through the decode fast path (touch +
         // ZERO-slot, no synchronous pread). Detection:
@@ -3280,45 +3745,110 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         llama_expert_cache_ensure_batch(cache, (uint32_t) il, uni.data(), uni.size());
         llama_expert_cache_drain_layer(cache, (uint32_t) il);
 
+        // [CGC DEBUG] check pool state after ensure_batch for layers 2+
+        if (il >= 2 && il <= 3) {
+            const int32_t * st_dbg = llama_expert_cache_slot_table(cache, (uint32_t) il);
+            const uint32_t layer_slots = llama_expert_cache_slots_per_layer_l(cache, (uint32_t) il);
+            const uint8_t * pool_base = llama_expert_cache_pool_data(cache, (uint32_t) il, 0);
+            int pool_nonzero = 0;
+            if (pool_base != nullptr) {
+                for (int k = 0; k < 8 && k < (int)layer_slots; k++) {
+                    if (pool_base[k * 256] != 0) pool_nonzero++;
+                }
+            }
+            // Check first few bytes of pool data for experts 0-3
+            char pool_hex[128] = "";
+            if (pool_base != nullptr) {
+                int off = 0;
+                for (int k = 0; k < 4 && off < 120; k++) {
+                    off += snprintf(pool_hex + off, sizeof(pool_hex) - off, "%02x%02x%02x%02x ",
+                        pool_base[k*256], pool_base[k*256+1], pool_base[k*256+2], pool_base[k*256+3]);
+                }
+            }
+            fprintf(stderr, "CGC-DBG-POOL: il=%d pool_active=%d pool_data=%s slots=%u st=[%d %d %d %d] ntok=%lld hex=[%s]\n",
+                    il,
+                    llama_expert_cache_pool_active(cache) ? 1 : 0,
+                    pool_base ? "set" : "null",
+                    layer_slots,
+                    st_dbg ? st_dbg[0] : -99, st_dbg ? st_dbg[1] : -99,
+                    st_dbg ? st_dbg[2] : -99, st_dbg ? st_dbg[3] : -99,
+                    (long long) n_tokens, pool_hex);
+        }
+
+        const auto cgc_collect_missing_slots = [&](const int32_t * st, std::vector<uint32_t> & miss) {
+            miss.clear();
+            for (uint32_t e : uni) {
+                if (e >= n_expert || (st != nullptr && st[e] >= 0)) {
+                    continue;
+                }
+                miss.push_back(e);
+            }
+        };
+
+        const int32_t * st = llama_expert_cache_slot_table(cache, (uint32_t) il);
+        std::vector<uint32_t> miss;
+        cgc_collect_missing_slots(st, miss);
+        if (!miss.empty()) {
+            std::vector<uint32_t> layers(miss.size(), (uint32_t) il);
+            llama_expert_cache_ensure(cache, layers.data(), miss.data(), miss.size());
+            st = llama_expert_cache_slot_table(cache, (uint32_t) il);
+            cgc_collect_missing_slots(st, miss);
+            static int cgc_refill_dbg_n = 0;
+            if (cgc_refill_dbg_n < 24) {
+                cgc_refill_dbg_n++;
+                fprintf(stderr, "CGC-REFILL: il=%d miss_after_batch=%zu miss_after_sync=%zu\n",
+                        il, layers.size(), miss.size());
+            }
+        }
+
         // NOTE: the FFN expert weight tensors were already repointed at the pool regions in
         // graph_get_cb (ffn_moe_topk_remap); the segmented dispatch submits with those pointers.
 
-        // write the remap leaf: selected expert id -> slot index
-        ggml_tensor * remap = cache_remap_tensors[il];
-        if (remap != nullptr && remap->data != nullptr) {
-            const int32_t * st = llama_expert_cache_slot_table(cache, (uint32_t) il);
-            if (cgc_pp) {
-                fprintf(stderr, "CGC-POST: il=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d\n",
-                        il, ids[0], st ? st[ids[0]] : -2, ids[1], st ? st[ids[1]] : -2,
-                        ids[2], st ? st[ids[2]] : -2, ids[3], st ? st[ids[3]] : -2,
-                        ids[4], st ? st[ids[4]] : -2, ids[5], st ? st[ids[5]] : -2,
-                        ids[6], st ? st[ids[6]] : -2, ids[7], st ? st[ids[7]] : -2);
+        if (!miss.empty()) {
+            static int cgc_gather_fallback_dbg_n = 0;
+            if (cgc_gather_fallback_dbg_n < 24) {
+                cgc_gather_fallback_dbg_n++;
+                fprintf(stderr, "CGC-GATHER-FALLBACK: il=%d ntok=%lld uni=%zu miss=%zu\n",
+                        il, (long long) n_tokens, uni.size(), miss.size());
             }
-            int32_t * rd = (int32_t *) remap->data;
-            for (int64_t j = 0; j < n_tokens; ++j) {
-                for (int64_t i = 0; i < n_expert_used; ++i) {
-                    const uint32_t e = (uint32_t) ids[i + j * n_expert_used];
-                    rd[i + j * n_expert_used] = (st != nullptr && e < n_expert) ? st[e] : (int32_t) e;
+        } else {
+            // write the remap leaf: selected expert id -> slot index
+            ggml_tensor * remap = cache_remap_tensors[il];
+            if (remap != nullptr && remap->data != nullptr) {
+                if (cgc_pp) {
+                    fprintf(stderr, "CGC-POST: il=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d\n",
+                            il, ids[0], st ? st[ids[0]] : -2, ids[1], st ? st[ids[1]] : -2,
+                            ids[2], st ? st[ids[2]] : -2, ids[3], st ? st[ids[3]] : -2,
+                            ids[4], st ? st[ids[4]] : -2, ids[5], st ? st[ids[5]] : -2,
+                            ids[6], st ? st[ids[6]] : -2, ids[7], st ? st[ids[7]] : -2);
+                }
+                int32_t * rd = (int32_t *) remap->data;
+                for (int64_t j = 0; j < n_tokens; ++j) {
+                    for (int64_t i = 0; i < n_expert_used; ++i) {
+                        const uint32_t e = (uint32_t) ids[i + j * n_expert_used];
+                        rd[i + j * n_expert_used] = e < n_expert
+                            ? llama_expert_cache_slot_table_safe(cache, (uint32_t) il, e)
+                            : (int32_t) e;
+                    }
+                }
+                static int cgc_slot_dbg_n = 0;
+                if (cgc_slot_dbg_n < 40) {
+                    cgc_slot_dbg_n++;
+                    fprintf(stderr, "CGC-SLOT: il=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d remap=[%d %d %d %d %d %d %d %d]\n",
+                            il, ids[0], st ? st[ids[0]] : -1, ids[1], st ? st[ids[1]] : -1,
+                            ids[2], st ? st[ids[2]] : -1, ids[3], st ? st[ids[3]] : -1,
+                            rd[0], rd[1], rd[2], rd[3], rd[4], rd[5], rd[6], rd[7]);
                 }
             }
-            static int cgc_slot_dbg_n = 0;
-            if (cgc_slot_dbg_n < 40) {
-                cgc_slot_dbg_n++;
-                fprintf(stderr, "CGC-SLOT: il=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d remap=[%d %d %d %d %d %d %d %d]\n",
-                        il, ids[0], st ? st[ids[0]] : -1, ids[1], st ? st[ids[1]] : -1,
-                        ids[2], st ? st[ids[2]] : -1, ids[3], st ? st[ids[3]] : -1,
-                        rd[0], rd[1], rd[2], rd[3], rd[4], rd[5], rd[6], rd[7]);
+            // B: record this step's per-layer union so process_ubatch can async-prefetch it for the
+            // next decode step (temporal locality). The bg fill runs behind the sampler + next step's
+            // GPU window, so the next step's ensure_batch hits instead of blocking on disk reads.
+            if (cache_step_union.size() < (size_t) model.hparams.n_layer_all) {
+                cache_step_union.resize(model.hparams.n_layer_all);
             }
+            cache_step_union[(size_t) il] = uni;
+            return;
         }
-
-        // B: record this step's per-layer union so process_ubatch can async-prefetch it for the
-        // next decode step (temporal locality). The bg fill runs behind the sampler + next step's
-        // GPU window, so the next step's ensure_batch hits instead of blocking on disk reads.
-        if (cache_step_union.size() < (size_t) model.hparams.n_layer_all) {
-            cache_step_union.resize(model.hparams.n_layer_all);
-        }
-        cache_step_union[(size_t) il] = uni;
-        return;
     }
 
     // L3-B gather path: ensure resident, gather the union into contiguous buffers, repoint the
@@ -3333,16 +3863,18 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
                 continue;
             }
             const size_t exp_bytes = ggml_row_size(wt->type, wt->ne[0]) * wt->ne[1];
-            if (cache_gather_buf[kind].size() < uni.size() * exp_bytes) {
-                cache_gather_buf[kind].resize(uni.size() * exp_bytes);
-            }
+            std::vector<std::vector<uint8_t>> & gather_versions = cache_gather_buf[{il, kind}];
+            gather_versions.emplace_back();
+            std::vector<uint8_t> & gather_buf = gather_versions.back();
+            gather_buf.resize(uni.size() * exp_bytes);
             const int64_t copied = llama_expert_cache_fill(cache, (uint32_t) il, uni.data(),
-                    uni.size(), kind, cache_gather_buf[kind].data(), exp_bytes);
+                    uni.size(), kind, gather_buf.data(), exp_bytes);
             if (copied < 0) {
+                gather_versions.pop_back();
                 continue;
             }
             cache_orig[{il, kind}] = wt->data;
-            wt->data = cache_gather_buf[kind].data();
+            wt->data = gather_buf.data();
         }
 
         ggml_tensor * remap = cache_remap_tensors[il];
@@ -3378,20 +3910,27 @@ llm_graph_cb llama_context::graph_get_cb() const {
                 // dispatch (CGC_OA_ASYNC) submits segments whose weights already point at the
                 // pool, so the eval hook only needs to ensure the slot data and write the remap
                 // ids (it must not repoint after submit — that would be too late).
-                if (model.expert_cache != nullptr && llama_expert_cache_pool_active(model.expert_cache)) {
+                if (model.expert_cache != nullptr && llama_expert_cache_pool_active(model.expert_cache) && !model.expert_cache_skip_load) {
                     auto & ffn = cache_ffn_tensors[il];
                     if (ffn.size() < 4) ffn.resize(4);
-                    for (int kind = 0; kind < 4; ++kind) {
-                        ggml_tensor * wt = ffn[kind];
-                        if (wt == nullptr) {
-                            continue;
+                    const uint32_t graph_n_expert_used = cparams.warmup ? model.hparams.n_expert : model.hparams.n_expert_used;
+                    const uint32_t layer_slots = llama_expert_cache_slots_per_layer_l(model.expert_cache, (uint32_t) il);
+                    const uint32_t safe_tokens = cgc_pool_safe_tokens(layer_slots, graph_n_expert_used);
+                    if (!cgc_partial_offload_active(model) && (uint32_t) ubatch.n_tokens <= safe_tokens) {
+                        static int cgc_repoint_dbg = 0;
+                        if (il <= 3 && cgc_repoint_dbg < 8) {
+                            cgc_repoint_dbg++;
+                            const uint8_t * base0 = llama_expert_cache_pool_data(model.expert_cache, (uint32_t) il, 0);
+                            fprintf(stderr, "CGC-REPOINT: il=%d pool_active=%d pool_data=%s slots=%u safe_tok=%u\n",
+                                    il,
+                                    llama_expert_cache_pool_active(model.expert_cache) ? 1 : 0,
+                                    base0 ? "set" : "null",
+                                    layer_slots, safe_tokens);
                         }
-                        const uint8_t * base = llama_expert_cache_pool_data(model.expert_cache, (uint32_t) il, kind);
-                        if (base == nullptr) {
-                            continue;
-                        }
-                        cache_orig[{il, kind}] = wt->data;
-                        wt->data = (void *) base;
+                        // [CGC FIX] Skip ALL weight repointing to pool regions.
+                        // The pool path at ngl=99 produces uniform gate logits → default sequential
+                        // expert selection [0 1 2 3 4 5 6 7] at layers 2+. This causes the model
+                        // to output garbage. Keep original weights; remap IDs still work for slot mapping.
                     }
                 }
             } else if (strcmp(name, "ffn_moe_gate_up") == 0) {
@@ -5031,6 +5570,54 @@ int32_t llama_encode(
     return ret;
 }
 
+// [CGC §5 Exact Cache V2 2026-09-04] Logits oracle dump. After every llama_decode, write
+// (pmax, n_tokens, vocab, logits[vocab]) to a binary file when CGC_LOGITS_DUMP_PATH is set.
+// The companion scripts/check/test_exact_cache_invariant.sh runs the same prompt twice —
+// once with the expert cache off, once with it on — and compares the dumps. Any first
+// divergence pinpoints the decode step where §5 (pool bytes == GGUF bytes) is violated, so
+// the regression window shrinks from "first wrong token" to "first wrong logit vector".
+// The dump is intentionally tiny (vocab * 4 bytes per step ≈ 0.6 MB / step for Qwen3.6
+// 152064 vocab) so a 200-step replay fits in ~120 MB.
+static void cgc_logits_oracle_dump(llama_context * ctx, int n_tokens) {
+    const char * path = getenv("CGC_LOGITS_DUMP_PATH");
+    if (path == nullptr || path[0] == '\0') {
+        return;
+    }
+    const float * logits = llama_get_logits(ctx);
+    if (logits == nullptr) {
+        return;
+    }
+    // Use public APIs only — llama_context::model / memory are private members.
+    const struct llama_model * m = llama_get_model(ctx);
+    const struct llama_vocab * v = m != nullptr ? llama_model_get_vocab(m) : nullptr;
+    const int n_vocab = v != nullptr ? llama_vocab_n_tokens(v) : 0;
+    const llama_memory_t mem = llama_get_memory(ctx);
+    const llama_pos pmax = mem != nullptr ? llama_memory_seq_pos_max(mem, 0) : (llama_pos) -1;
+    static std::FILE * fp = nullptr;
+    static bool header_checked = false;
+    if (fp == nullptr) {
+        fp = std::fopen(path, "ab");
+        if (fp == nullptr) {
+            fprintf(stderr, "CGC-LOGITS-DUMP: cannot open %s — oracle disabled\n", path);
+            return;
+        }
+    }
+    if (!header_checked) {
+        // magic + version once per file
+        const char magic[8] = { 'C', 'G', 'L', '1', '\n', 0, 0, 0 };
+        std::fwrite(magic, 1, 4, fp);
+        header_checked = true;
+    }
+    const uint32_t pmax_u = (uint32_t) pmax;
+    const uint32_t nt_u   = (uint32_t) n_tokens;
+    const uint32_t nv_u   = (uint32_t) n_vocab;
+    std::fwrite(&pmax_u, sizeof(uint32_t), 1, fp);
+    std::fwrite(&nt_u,   sizeof(uint32_t), 1, fp);
+    std::fwrite(&nv_u,   sizeof(uint32_t), 1, fp);
+    std::fwrite(logits,  sizeof(float),   (size_t) n_vocab, fp);
+    std::fflush(fp);
+}
+
 int32_t llama_decode(
         llama_context * ctx,
           llama_batch   batch) {
@@ -5038,6 +5625,9 @@ int32_t llama_decode(
     if (ret != 0 && ret != 1) {
         LLAMA_LOG_ERROR("%s: failed to decode, ret = %d\n", __func__, ret);
     }
+
+    // V2 oracle: capture the post-decode logits for invariant replay comparison.
+    cgc_logits_oracle_dump(ctx, batch.n_tokens);
 
     return ret;
 }

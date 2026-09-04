@@ -24,18 +24,58 @@
 #             N30CACHE_PIN_PROFILE / N30CACHE_WAKE_POLL_US / N30CACHE_WARM
 set -euo pipefail
 
+# --detach / -d：用 Python os.setsid() 脫離父 shell process group，避免 SIGHUP/SIGINT 級聯殺死 server。
+CGC_DETACHED="${CGC_DETACHED:-0}"
+for arg in "$@"; do
+    [ "$arg" = "--detach" ] && CGC_DETACHED=1
+    [ "$arg" = "-d" ] && CGC_DETACHED=1
+done
+if [ "$CGC_DETACHED" = 1 ] && [ -z "${_CGC_DETACHED_MARKER:-}" ]; then
+    echo "[detach] forking via Python os.setsid() (immune to parent SIGHUP)"
+    _SCRIPT="$0"
+    _ARGS="$@"
+    _ARGS=$(echo "$_ARGS" | sed 's/--detach//g; s/^-d$//')
+    _DETACH_PORT="${CGC_SERVER_PORT:-8080}"
+    python3 -c "
+import os, sys, subprocess
+pid = os.fork()
+if pid > 0:
+    print(f'[detach] child PID={pid}, waiting for health...')
+    import time, urllib.request
+    for i in range(60):
+        time.sleep(2)
+        try:
+            r = urllib.request.urlopen('http://127.0.0.1:${_DETACH_PORT}/health', timeout=2)
+            if b'ok' in r.read():
+                print(f'[detach] server ready (PID={pid})')
+                sys.exit(0)
+        except Exception:
+            pass
+    print('[detach] 120s timeout')
+    sys.exit(1)
+else:
+    os.setsid()
+    os.environ['_CGC_DETACHED_MARKER'] = '1'
+    os.environ['CGC_DETACHED'] = '1'
+    os.execvp('$0', ['$0'] + '$_ARGS'.split())
+"
+    exit $?
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # 2026-08-25: 跑 run 前清理上一輪殘留。segfault/OOM 可能留下 ~9.6GB 的 llama-simple（+掛住的 lldb），
 # 佔滿 16GB unified 記憶體 → 新 run 直接 kIOGPUCommandBufferCallbackErrorOutOfMemory。
 # 只 pkill 我們 fork 的 bin 路徑（不誤殺 IDE/其他 llama）。N30CACHE_NO_CLEAN=1 可跳過。
 if [ "${N30CACHE_NO_CLEAN:-0}" != 1 ]; then
-    for pat in "src/llama.cpp/build/bin/llama-simple" "src/llama.cpp/build/bin/llama-speculative-simple"; do
+    for pat in "src/llama.cpp/build/bin/llama-server" "src/llama.cpp/build/bin/llama-simple" "src/llama.cpp/build/bin/llama-speculative-simple"; do
         pkill -9 -f "$pat" 2>/dev/null && echo "  [clean] killed stale $pat" || true
     done
 fi
 # 2026-08-25: BIN 指到 llama-src 新 build（含 CGC_DECODEHIT）；舊 root build 無。
 BIN="$ROOT/src/llama.cpp/build/bin/llama-simple"
 BIN_SPEC="$ROOT/src/llama.cpp/build/bin/llama-speculative-simple"
+BIN_SERVER="$ROOT/src/llama.cpp/build/bin/llama-server"
+SERVER_MINIMAL_CHAT_TEMPLATE="$ROOT/src/llama.cpp/models/templates/Nail-Qwen3.6-Minimal-Chat.jinja"
 G4="${N30CACHE_G4:-$ROOT/models/gguf/gemma-4-26B-A4B-it-UD-IQ3_S.gguf}"
 Q36="$ROOT/models/gguf/Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf"
 # §MTP: qwen36 MTP 載體用 Nail model（blk.40 MTP head 為 UD-IQ3_XXS，與 trunk 同量）。
@@ -46,15 +86,11 @@ Q36_MTP="$ROOT/models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS.gguf"
 # llama-quantize --tensor-type-file 只把 blk.40 MTP head 的 output.weight Q6_K→IQ2_S（其餘 752
 # tensor byte-copy，bit-identical by construction）。獨立 option、預設 off：沒設 = 原 Q6_K head。
 Q36_MTP_HEADIQ2="$ROOT/models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-headIQ2.gguf"
-# §MTP 2026-08-29：dense IQ4_XS 載體（--dense-iq4x / N30CACHE_DENSE_IQ4X=1），head 保留 Q6_K。
-# 從 base IQ3_XXS 以 --tensor-type-file 重新量化：dense Q6_K（attn_*/ssm_out/ffn_*_shexp）→IQ4_XS、
-# output.weight 釘 Q6_K（byte-copy）、其餘 tensor byte-copy（gen_denseiq4x_tt.py --keep-head）。
-# 前代 headIQ2 版（27.33 t/s）出現確定性退化尾段（seed 1：1101 token 的最後 ~140 個 → 0000），
-# head IQ2_S 為頭號嫌疑（target+draft 共用 lm_head）→ 重建為 Q6_K head。檔案 13020 MiB（+243 MiB）。
+# §MTP 2026-09-03：保留 --dense-iq4x 這個 CLI 開關當相容層，但實際載體已切到
+# 「Qwen3.6-35B-A3B-UD-Q4_K_M 主幹 + am17an MTP-only donor blk.40」的合併檔。
+# 目的：不改既有腳本介面與呼叫方式，同時把原本的 denseIQ4X 路徑升級成品質更高的
+# Q4_K_M trunk。metadata 驗證結果：block_count=41、nextn_predict_layers=1、blk.40.*=20。
 Q36_MTP_DENSEIQ4X="$ROOT/models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf"
-# [2026-08-29 three-platform 整合修正] dev bcc22133f 曾把此路徑指向 denseIQ4X-headIQ2.gguf
-# （Windows 8GB 機本地只有該檔）。main 生產線維持 Q6_K head 載體（尾段退化已修、27+ t/s 實測）；
-# Windows 端若無此檔請把本地檔改名/軟連結成此檔名。
 
 MODEL="${N30CACHE_MODEL:-${1:-gemma4}}"
 N=128
@@ -93,23 +129,54 @@ HEAD_IQ2="${N30CACHE_HEAD_IQ2:-0}"
 # §MTP 2026-08-26 #1：dense IQ4_XS + head IQ2 A/B（載體切到 dense IQ4_XS / head IQ2_S 的 Nail model）。
 # 獨立 option、預設 off：沒設 = 原 Q6_K head+dense（bit-exact）。與 --head-iq2 互斥（此已含 head IQ2）。
 DENSE_IQ4X="${N30CACHE_DENSE_IQ4X:-0}"
+SERVER_API="${N30CACHE_SERVER_API:-0}"
+SERVER_PORT="${CGC_SERVER_PORT:-8080}"
+SERVER_HOST="${CGC_SERVER_HOST:-0.0.0.0}"
+SERVER_CHAT_TEMPLATE="${CGC_SERVER_CHAT_TEMPLATE:-}"
+SERVER_CHAT_TEMPLATE_FILE="${CGC_SERVER_CHAT_TEMPLATE_FILE:-}"
+SERVER_CHAT_TEMPLATE_KWARGS="${CGC_SERVER_CHAT_TEMPLATE_KWARGS:-}"
+SERVER_LOG_PROMPTS_DIR="${CGC_SERVER_LOG_PROMPTS_DIR:-}"
+SERVER_REASONING="${CGC_SERVER_REASONING:-off}"
+SERVER_REASONING_FORMAT="${CGC_SERVER_REASONING_FORMAT:-none}"
+SERVER_SKIP_CHAT_PARSING="${CGC_SERVER_SKIP_CHAT_PARSING:-0}"
+SERVER_CHAT_AB="${CGC_SERVER_CHAT_AB:-off}"
+SERVER_CHAT_AB_PREFIX="${CGC_SERVER_CHAT_AB_PREFIX:-巴黎是法國的首都。}"
+SERVER_CHAT_AB_MAX_TOKENS="${CGC_SERVER_CHAT_AB_MAX_TOKENS:-8}"
+SERVER_CHAT_AB_STOP="${CGC_SERVER_CHAT_AB_STOP:-。}"
+SERVER_NGL="${CGC_SERVER_NGL:-}"
+SERVER_BATCH="${CGC_SERVER_BATCH:-}"
+SERVER_UBATCH="${CGC_SERVER_UBATCH:-}"
+SERVER_DRAFT_NGL="${CGC_SERVER_DRAFT_NGL:-}"
+SERVER_LAYER_CAPS="${CGC_SERVER_LAYER_CAPS:-}"
+SERVER_OOM_SAFE="${CGC_SERVER_OOM_SAFE:-0}"
+SERVER_LOG_DIR="$ROOT/Backup/cgc_logs"
+Q36_MTP_MERGED_SAFE_PROFILE=0
 
 usage() {
-    echo "usage: $0 [-m gemma4|qwen36] [-n tokens] [-p prompt | --prompt-file F] [--ngl N] [--budget BYTES] [--pin-profile F] [--no-cache] [--warm] [--mtp [N]] [--mtp-top4] [--head-iq2] [--dense-iq4x] [--seed N] [--decodehit] [--long-prompt] [--ignore-eos] [--steady]
+    echo "usage: $0 [-m gemma4|qwen36] [-n tokens] [-p prompt | --prompt-file F] [--ngl N] [--budget BYTES] [--pin-profile F] [--no-cache] [--warm] [--mtp [N]] [--mtp-top4] [--head-iq2] [--dense-iq4x] [--seed N] [--decodehit] [--long-prompt] [--ignore-eos] [--steady] [--server-api]
 #   --warm 優化 load：run 前把 model cat 進 page cache（重開機後第一次 run 建議；load -22%）
 #   --mtp [N] 啟用 MTP draft-mtp（僅 qwen36 有效，自動切到 graft model + speculative-simple binary，-c 2048 解 OOM）；
 #             N 為 --spec-draft-n-max，預設 2；可用 N30CACHE_MTP_N_MAX 覆寫
 #   --mtp-top4 啟用 MTP draft top-8→top-4 A/B（blk.40 MTP head 只路由 4 experts，trunk 不變；獨立、預設 off）
 #   --head-iq2 啟用 MTP head IQ2 A/B（載體切到 output.weight IQ2_S 的 Nail model；獨立、預設 off）
-#   --dense-iq4x 啟用 MTP dense IQ4_XS + head IQ2 A/B（載體切到 dense IQ4_XS / head IQ2_S 的 Nail
-#             model；含 head IQ2，與 --head-iq2 互斥；獨立、預設 off）
+#   --dense-iq4x 相容入口：目前映射到 merged Q4_K_M-mtp 載體。
+#             - non-MTP：可直接跑 merged Q4_K_M trunk（支援 ngl99 + expert-cache 對照）
+#             - MTP：走 merged-q4km-mtp safe profile（CLI expert-cache only）
 #   --seed N 固定 seed（bit-identity / run-to-run 對照必設；等於 N30CACHE_SEED）
 #   --decodehit 印 CGC_DECODEHIT（decode hit rate，每 390 step 一次）
 #   --long-prompt 產生確定性長 prompt（>1000 token；同內容跨 run 完全一致，供對照）
 #   --ignore-eos 越過 EOG 繼續生成（量 >1000 token steady-state 必用；--steady 自動開）
 #   --steady 驗證模式：--seed 42 + --long-prompt + --decodehit + --ignore-eos + -n 1100（量 steady-state t/s + hit rate）；
 #             --seed / -n 可覆寫
-#   env: N30CACHE_N_CB / N30CACHE_SEED / N30CACHE_BUDGET / N30CACHE_NGL / N30CACHE_WORKERS / N30CACHE_MTP_N_MAX / N30CACHE_MTP_TOP4 / N30CACHE_HEAD_IQ2 / N30CACHE_DENSE_IQ4X / N30CACHE_WARM 可覆寫" >&2
+#   --server-api 啟用 llama-server API 模式（沿用本腳本的生產 env；不需要 -p）
+#   --detach / -d 脫離父 shell（setsid），server 不受 SIGHUP 影響；適用於 --server-api 模式
+#   env: N30CACHE_N_CB / N30CACHE_SEED / N30CACHE_BUDGET / N30CACHE_NGL / N30CACHE_WORKERS / N30CACHE_MTP_N_MAX / N30CACHE_MTP_TOP4 / N30CACHE_HEAD_IQ2 / N30CACHE_DENSE_IQ4X / N30CACHE_WARM / N30CACHE_SERVER_API 可覆寫
+#        server 模式額外讀取：CGC_SERVER_PORT / CGC_SERVER_HOST / CGC_SERVER_BATCH / CGC_SERVER_UBATCH /
+#        CGC_SERVER_DRAFT_NGL / CGC_SERVER_LAYER_CAPS / CGC_SERVER_CHAT_TEMPLATE /
+#        CGC_SERVER_CHAT_TEMPLATE_FILE / CGC_SERVER_CHAT_TEMPLATE_KWARGS / CGC_SERVER_LOG_PROMPTS_DIR /
+#        CGC_SERVER_REASONING / CGC_SERVER_REASONING_FORMAT / CGC_SERVER_SKIP_CHAT_PARSING / CGC_SERVER_OOM_SAFE /
+#        CGC_SERVER_CHAT_AB(off|healthy-prefix) / CGC_SERVER_CHAT_AB_PREFIX / CGC_SERVER_CHAT_AB_MAX_TOKENS /
+#        CGC_SERVER_CHAT_AB_STOP" >&2
     exit 2
 }
 
@@ -129,6 +196,7 @@ while [ $# -gt 0 ]; do
         --long-prompt) LONG_PROMPT=1; shift ;;
         --ignore-eos) IGNORE_EOS=1; shift ;;
         --steady) STEADY=1; shift ;;
+        --server-api) SERVER_API=1; shift ;;
         --mtp)
             MTP=1
             # 可選擇性接 N：--mtp 3
@@ -141,6 +209,8 @@ while [ $# -gt 0 ]; do
         --mtp-top4) MTP_TOP4=1; shift ;;
         --head-iq2) HEAD_IQ2=1; shift ;;
         --dense-iq4x) DENSE_IQ4X=1; shift ;;
+        --detach) CGC_DETACHED=1; shift ;;
+        -d) CGC_DETACHED=1; shift ;;
         -h|--help) usage ;;
         *) usage ;;
     esac
@@ -164,6 +234,7 @@ if [ "$MTP" = 1 ] && [ "$MODEL" != "qwen36" ]; then
     exit 2
 fi
 
+WHITTLE="$ROOT/models/gguf/Whittle-MoE-27B-A18B-v2.1-Q3_K_S.gguf"
 case "$MODEL" in
     gemma4) M="$G4"; DEFAULT_NGL=30 ;;
     qwen36)
@@ -178,11 +249,56 @@ case "$MODEL" in
             fi
             BIN="$BIN_SPEC"
         else
-            M="$Q36"
+            if [ "$DENSE_IQ4X" = 1 ]; then
+                # 2026-09-03: 讓 --dense-iq4x 也能在 non-MTP 模式下當成
+                # 「merged Q4_K_M trunk + expert-cache + ngl99」的可重複跑 profile。
+                # 這樣可以直接沿用 run_n30cache.sh 既有的 bounded-residency env，
+                # 做 non-MTP 與 MTP 的同載體對照。
+                M="$Q36_MTP_DENSEIQ4X"
+            else
+                M="$Q36"
+            fi
         fi
         ;;
-    *) echo "error: MODEL must be gemma4|qwen36 (got $MODEL)" >&2; exit 2 ;;
+    whittle) M="$WHITTLE"; DEFAULT_NGL=30 ;;
+    *) echo "error: MODEL must be gemma4|qwen36|whittle (got $MODEL)" >&2; exit 2 ;;
 esac
+
+# 2026-09-03 merged Q4_K_M-mtp safe profile：
+# 這顆載體在最小 speculative CLI（只靠 -expert-cache CLI，不帶舊 Nail 生產 env）可於 ngl10 正常跑通，
+# 但一旦帶回 run_n30cache 既有的 env 式 expert-cache / prefetch / wake-poll 配置就會 segfault / killed。
+# 因此 --dense-iq4x（現已映射到 Q4_K_M-mtp）在 MTP 模式下走保守 profile：
+# - expert-cache 只經由 CLI -expert-cache 啟用
+# - 不注入舊的 env 式 cache/prefetch/verify/draft decode 旋鈕
+# 2026-09-04 FIX: Safe profile removed. With resident passthrough fix
+# (expert_cache_skip_load=true keeps ne[2]=256 on CPU, identity remap),
+# MTP + denseIQ4X now uses full production env correctly.
+# Q36_MTP_MERGED_SAFE_PROFILE is no longer set.
+
+# qwen36 server: use embedded GGUF template by default (no --chat-template-file).
+# The embedded template uses correct ChatML format (<|im_start|>/im_end).
+# The old custom Nail-Qwen3.6-Minimal-Chat.jinja outputs raw  tags → broken.
+# Override via CGC_SERVER_CHAT_TEMPLATE_FILE env var if needed.
+if [ "$SERVER_API" = 1 ] && [ "$MODEL" = "qwen36" ]; then
+    # DO NOT set SERVER_CHAT_TEMPLATE_FILE — let llama-server use embedded GGUF template
+    # DO NOT skip-chat-parsing — the embedded GGML template needs the parser
+    :
+    case "$SERVER_CHAT_AB" in
+        ''|off) ;;
+        healthy-prefix)
+            # 2026-09-02: 半開頭 prefill（答案是）— generic anchor，跳過 first-token 高熵決策
+            # 2026-09-02 實測：完整 prefill 會讓模型 copy-paste 16 次；完全不灌則 <think> 循環
+            # 半開頭提供語義錨點但仍要求模型生成 6+ token，是誠實的生成
+            if [ -z "$SERVER_CHAT_TEMPLATE_KWARGS" ]; then
+                SERVER_CHAT_TEMPLATE_KWARGS="{\"assistant_prefill\":\"答案是\",\"assistant_prefill_mode\":\"short_qa_zh\"}"
+            fi
+            ;;
+        *)
+            echo "error: CGC_SERVER_CHAT_AB must be off|healthy-prefix (got $SERVER_CHAT_AB)" >&2
+            exit 2
+            ;;
+    esac
+fi
 # §8.77/8.78: CGC_OA_ASYNC — Metal splits 走 async（免每層 callback sync）。
 # 兩家族都驗證 bit-identical + 更快：qwen36 +12.6%、gemma4 +22%（§8.78）。
 # 安全機制：ffn_moe_probs pin CPU（llama-context.cpp:3489）把 topk 鏈留在 CPU split，
@@ -212,51 +328,56 @@ NGL="${N30CACHE_NGL:-$DEFAULT_NGL}"
     echo "  全部 5 個模型的清單與角色：models/gguf/MANIFEST.md" >&2
     exit 2
 }
-if [ -n "$PROMPT_FILE" ]; then
-    PROMPT="$(cat "$PROMPT_FILE")"
+if [ "$SERVER_API" != 1 ]; then
+    if [ -n "$PROMPT_FILE" ]; then
+        PROMPT="$(cat "$PROMPT_FILE")"
+    fi
+    # --long-prompt：產生確定性長 prompt（>1000 token）。循環一組不同句子（非單一段落重複）——
+    # 避免退化 prompt 觸發 model 立即 EOG（2026-08-25 實測：重複 fox 段落 → 只 decode 1 token 就結束）。
+    # 同內容跨 run 完全一致，供 bit-identity / steady-state 對照；實際 token 數以 perf print 為準。
+    if [ "$LONG_PROMPT" = 1 ]; then
+        LONG_SENTS=(
+            "The coastal observatory recorded steady winds from the northwest throughout the morning, and the tide charts suggested a calm crossing for the research vessel. "
+            "Historical records indicate that the old lighthouse was rebuilt three times after storms damaged its foundations beyond repair. "
+            "A team of engineers inspected the railway bridge, noting the corrosion on the lower girders and scheduling reinforcement work for the coming season. "
+            "The museum's new exhibition traces the development of printing from wooden blocks to movable type and finally to industrial presses. "
+            "Farmers in the valley reported an unusually abundant harvest, with the grain stores filling earlier than they had in a decade. "
+            "The orchestra opened with a slow movement, and the woodwinds carried the melody while the strings provided a steady harmonic foundation. "
+            "Geologists mapped the ancient riverbed, discovering fossilized shells that suggested the region was once covered by a shallow sea. "
+            "The committee reviewed the proposal for the new library wing, debating the allocation of funds between reading rooms and digital archives. "
+        )
+        PROMPT=""
+        i=0
+        while [ ${#PROMPT} -lt 7000 ]; do
+            PROMPT="${PROMPT}${LONG_SENTS[i % ${#LONG_SENTS[@]}]}"
+            i=$((i + 1))
+        done
+    fi
+    [ -n "$PROMPT" ] || { echo "error: need -p prompt or --prompt-file" >&2; exit 2; }
 fi
-# --long-prompt：產生確定性長 prompt（>1000 token）。循環一組不同句子（非單一段落重複）——
-# 避免退化 prompt 觸發 model 立即 EOG（2026-08-25 實測：重複 fox 段落 → 只 decode 1 token 就結束）。
-# 同內容跨 run 完全一致，供 bit-identity / steady-state 對照；實際 token 數以 perf print 為準。
-if [ "$LONG_PROMPT" = 1 ]; then
-    LONG_SENTS=(
-        "The coastal observatory recorded steady winds from the northwest throughout the morning, and the tide charts suggested a calm crossing for the research vessel. "
-        "Historical records indicate that the old lighthouse was rebuilt three times after storms damaged its foundations beyond repair. "
-        "A team of engineers inspected the railway bridge, noting the corrosion on the lower girders and scheduling reinforcement work for the coming season. "
-        "The museum's new exhibition traces the development of printing from wooden blocks to movable type and finally to industrial presses. "
-        "Farmers in the valley reported an unusually abundant harvest, with the grain stores filling earlier than they had in a decade. "
-        "The orchestra opened with a slow movement, and the woodwinds carried the melody while the strings provided a steady harmonic foundation. "
-        "Geologists mapped the ancient riverbed, discovering fossilized shells that suggested the region was once covered by a shallow sea. "
-        "The committee reviewed the proposal for the new library wing, debating the allocation of funds between reading rooms and digital archives. "
-    )
-    PROMPT=""
-    i=0
-    while [ ${#PROMPT} -lt 7000 ]; do
-        PROMPT="${PROMPT}${LONG_SENTS[i % ${#LONG_SENTS[@]}]}"
-        i=$((i + 1))
-    done
-fi
-[ -n "$PROMPT" ] || { echo "error: need -p prompt or --prompt-file" >&2; exit 2; }
 # --no-cache：真正關閉 expert cache。cache 由 env CGC_EXPERT_CACHE_BYTES 驅動
 #（llama-simple 只認 env，CLI -expert-cache 是 MTP/speculative-simple 專用）→ NO_CACHE 時 BUDGET=0。
 [ "${NO_CACHE:-0}" = 1 ] && BUDGET=0
 
 # 生產 env 集（全部有 §8 出處；不設則對應行為 off）
-ENVS=(LLAMA_EXPERT_CACHE_ALLOW_NGL=1
-      CGC_EXPERT_CACHE_BYTES=$BUDGET
-      LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0=1
-      LLAMA_EXPERT_CACHE_WORKERS=$WORKERS
-      CGC_WAKE_POLL_US=$WAKE_POLL_US
-      # §8.6x hist prefetch（08-26 回歸移除，08-27 恢復）：CGC_PREFETCH_SRC=hist = rolling window
-      # (CGC_PREFETCH_WINDOW, 預設 4) 的近期 step union → 下一個 decode 的 ensure_batch 多命中，
-      # 冷 miss 不再卡 hook。CGC_EVICTED_RING=0 = 停用 evicted-ring re-prefetch（A/B 定案：省 ring
-      # 開銷，純 LRU）。兩者都只對非 MTP decode 生效。
-      CGC_PREFETCH_SRC=hist
-      CGC_EVICTED_RING=0)
-[ "$OA_ASYNC" = 1 ] && ENVS+=(CGC_OA_ASYNC=1)
-ENVS+=(CGC_N_CB=$N_CB)
-if [ "${N30CACHE_GLU_FUSED_DOWN:-1}" != "0" ]; then
-    ENVS+=(CGC_GLU_FUSED_DOWN=1)  # §8.113: fused gate+up+GLU+down, +6.5% speed
+declare -a ENVS=()
+if [ "$Q36_MTP_MERGED_SAFE_PROFILE" != 1 ]; then
+    ENVS=(LLAMA_EXPERT_CACHE_ALLOW_NGL=1
+          CGC_EXPERT_CACHE_BYTES=$BUDGET
+          LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0=1
+          LLAMA_EXPERT_CACHE_WORKERS=$WORKERS
+          CGC_WAKE_POLL_US=$WAKE_POLL_US
+          # §8.6x hist prefetch（08-26 回歸移除，08-27 恢復）：CGC_PREFETCH_SRC=hist = rolling window
+          # (CGC_PREFETCH_WINDOW, 預設 4) 的近期 step union → 下一個 decode 的 ensure_batch 多命中，
+          # 冷 miss 不再卡 hook。CGC_EVICTED_RING=0 = 停用 evicted-ring re-prefetch（A/B 定案：省 ring
+          # 開銷，純 LRU）。兩者都只對非 MTP decode 生效。
+          CGC_PREFETCH_SRC=hist
+          CGC_EVICTED_RING=0)
+    [ "$OA_ASYNC" = 1 ] && ENVS+=(CGC_OA_ASYNC=1)
+    ENVS+=(CGC_N_CB=$N_CB)
+    if [ "${N30CACHE_GLU_FUSED_DOWN:-1}" != "0" ]; then
+        ENVS+=(CGC_GLU_FUSED_DOWN=1)  # §8.113: fused gate+up+GLU+down, +6.5% speed
+    fi
 fi
 # §CGC 2026-08-28 WIN_PIN（LLAMA_EXPERT_CACHE_WIN_PIN=K）：window pin — 每層保留最近 K 個
 # miss-step union 的 expert 不被 LRU 逐出。A/B 結論（steady MTP 4GiB seed 1，2026-08-28）：
@@ -339,13 +460,16 @@ if [ -n "${N30CACHE_DRAIN_EVERY:-}" ]; then
     ENVS+=(CGC_DRAIN_EVERY=$N30CACHE_DRAIN_EVERY)
 fi
 
-echo "=== n30cache production run ==="
-echo "  model  : $MODEL ($(basename "$M"))"
-echo "  ngl    : $NGL   budget: $((BUDGET/1073741824))GiB   workers: $WORKERS"
-echo "  pin    : ${PIN_PROFILE:-off}   wake-poll: ${WAKE_POLL_US}us   cache: ${NO_CACHE:-0}=off   warm: $WARM"
-echo "  decodehit: $DECODEHIT"
-echo "  seed   : ${SEED:-default}   long-prompt: $LONG_PROMPT   ignore-eos: $IGNORE_EOS   steady: $STEADY   gen: $N"
-[ "$MTP" = 1 ] && echo "  mtp    : ON (spec-type=draft-mtp, n_max=$MTP_N_MAX, ctx=$MTP_CTX, top4=$MTP_TOP4)"
+if [ "$SERVER_API" != 1 ]; then
+    echo "=== n30cache production run ==="
+    echo "  model  : $MODEL ($(basename "$M"))"
+    echo "  ngl    : $NGL   budget: $((BUDGET/1073741824))GiB   workers: $WORKERS"
+    echo "  pin    : ${PIN_PROFILE:-off}   wake-poll: ${WAKE_POLL_US}us   cache: ${NO_CACHE:-0}=off   warm: $WARM"
+    echo "  decodehit: $DECODEHIT"
+    echo "  seed   : ${SEED:-default}   long-prompt: $LONG_PROMPT   ignore-eos: $IGNORE_EOS   steady: $STEADY   gen: $N"
+    [ "$MTP" = 1 ] && echo "  mtp    : ON (spec-type=draft-mtp, n_max=$MTP_N_MAX, ctx=$MTP_CTX, top4=$MTP_TOP4)"
+    [ "$Q36_MTP_MERGED_SAFE_PROFILE" = 1 ] && echo "  safe   : merged-q4km-mtp (CLI expert-cache only; env cache/prefetch/verify overrides disabled)"
+fi
 
 SEED_ARG=""
 [ -n "$SEED" ] && SEED_ARG="-s $SEED"
@@ -363,14 +487,14 @@ MTP_ARG=""
 # §MTP 2026-08-27：async prefetch bg thread（B-section hist prefetch）在 GPU 執行 MTP verify 時
 # 填/逐 slots，覆寫 GPU 仍在讀的 slot → 輸出壞 + accept 掉（08-22 實測）。MTP 一律關 prefetch
 # （CGC_NO_PREFETCH=1），基於歷史約束 CGC_PREFETCH_OFF 的同一目的。
-if [ "$MTP" = 1 ]; then
+if [ "$MTP" = 1 ] && [ "$Q36_MTP_MERGED_SAFE_PROFILE" != 1 ]; then
     ENVS+=(CGC_NO_PREFETCH=1)
 fi
 # §MTP 2026-08-25（獨立 option，CGC_VERIFY_DECODE=1）：verify 走 decode fast path（ZERO-slot，無
 # 同步 pread stall）。實測 verify 64→35.4ms/token、MTP 13.9→25.2 t/s（=base decode rate）、
 # accept 97.8%→95.7%、輸出仍正確（deterministic）。此 env 是 MTP 專屬 opt-in：沒設 = 原 exact-load
 # verify（bit-exact、較慢）。N30CACHE_MTP_VERIFY_DECODE=0 可關掉。
-if [ "$MTP" = 1 ] && [ "${N30CACHE_MTP_VERIFY_DECODE:-1}" = 1 ]; then
+if [ "$MTP" = 1 ] && [ "$Q36_MTP_MERGED_SAFE_PROFILE" != 1 ] && [ "${N30CACHE_MTP_VERIFY_DECODE:-1}" = 1 ]; then
     ENVS+=(CGC_VERIFY_DECODE=1)
 fi
 # §MTP 2026-08-25（獨立 option，CGC_DRAFT_DECODE=1）：draft 也走 decode fast path（touch + ZERO-slot，
@@ -378,14 +502,14 @@ fi
 # （95.7%→97.1%）。速度持平（25.4 t/s）：step-timing 證實 draft 已非瓶頸（verify 在 bandwidth floor、
 # blk.40 head 是真 GPU compute、CPU 已全藏 GPU 後）→ 27-28 t/s 需砍 MTP head 成本（model 側）。
 # N30CACHE_MTP_DRAFT_DECODE=0 可關掉。
-if [ "$MTP" = 1 ] && [ "${N30CACHE_MTP_DRAFT_DECODE:-1}" = 1 ]; then
+if [ "$MTP" = 1 ] && [ "$Q36_MTP_MERGED_SAFE_PROFILE" != 1 ] && [ "${N30CACHE_MTP_DRAFT_DECODE:-1}" = 1 ]; then
     ENVS+=(CGC_DRAFT_DECODE=1)
 fi
 # §MTP 2026-08-30 warm gate: short prompts need a small verify warmup to avoid
 # ZERO-slot collapse ("0000..."), while long prompts must not inherit the short
 # threshold. Keep a shell-level default that matches the production test paths,
 # and let N30CACHE_WARM_NPAST override it for focused A/B runs.
-if [ "$MTP" = 1 ]; then
+if [ "$MTP" = 1 ] && [ "$Q36_MTP_MERGED_SAFE_PROFILE" != 1 ]; then
     if [ -n "${N30CACHE_WARM_NPAST:-}" ]; then
         ENVS+=(CGC_WARM_NPAST=$N30CACHE_WARM_NPAST)
     elif [ "$LONG_PROMPT" = 1 ] || [ "$STEADY" = 1 ]; then
@@ -399,17 +523,171 @@ fi
 # §MTP 2026-08-25 A/B（獨立 option，CGC_MTP_DRAFT_TOP4=1）：blk.40 MTP head 的 routed experts
 # 8→4（draft-only，trunk 不變）→ draft weight-read 減半。預設 off：沒設 = 原 top-8 draft（bit-exact）。
 # 用途：量 top-4 draft 對 accept / t/s / 輸出的影響（品質成本）。N30CACHE_MTP_TOP4=1 或 --mtp-top4 開啟。
-if [ "$MTP" = 1 ] && [ "$MTP_TOP4" = 1 ]; then
+if [ "$MTP" = 1 ] && [ "$Q36_MTP_MERGED_SAFE_PROFILE" != 1 ] && [ "$MTP_TOP4" = 1 ]; then
     ENVS+=(CGC_MTP_DRAFT_TOP4=1)
 fi
+
+if [ "$SERVER_API" = 1 ]; then
+    [ -x "$BIN_SERVER" ] || { echo "error: binary not found: $BIN_SERVER (先跑 cmake -DLLAMA_BUILD_SERVER=ON 後構建)" >&2; exit 2; }
+
+    if [ "$SERVER_OOM_SAFE" = "1" ]; then
+        PHYS_MEM_BYTES="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+        PHYS_MEM_GB=$(( PHYS_MEM_BYTES / 1024 / 1024 / 1024 ))
+        if [ "$PHYS_MEM_GB" -le 16 ]; then
+            [ "$MTP" = 1 ] && CTX=1024
+            [ -z "$SERVER_NGL" ] && SERVER_NGL=8
+            [ -z "$SERVER_DRAFT_NGL" ] && SERVER_DRAFT_NGL=0
+            [ -z "$SERVER_BATCH" ] && SERVER_BATCH=64
+            [ -z "$SERVER_UBATCH" ] && SERVER_UBATCH=32
+            BUDGET=0
+        fi
+    fi
+
+    ENVS+=(CGC_EXPERT_CACHE_BYTES=$BUDGET)
+
+    SERVER_CTX="$CTX"
+    if [ "$SERVER_CTX" = "0" ]; then
+        if [ "$MTP" = 1 ]; then
+            SERVER_CTX="$MTP_CTX"
+        else
+            SERVER_CTX=2048
+        fi
+    fi
+    if [ -z "$SERVER_NGL" ]; then
+        SERVER_NGL="$NGL"
+    fi
+
+    if [ -n "$SERVER_LAYER_CAPS" ]; then
+        ENVS+=(LLAMA_EXPERT_CACHE_LAYER_CAPS="$SERVER_LAYER_CAPS")
+    elif [ "$MTP" = 1 ]; then
+        ENVS+=(LLAMA_EXPERT_CACHE_LAYER_CAPS="40-40:256")
+    fi
+
+    mkdir -p "$SERVER_LOG_DIR"
+    SERVER_LOG="$SERVER_LOG_DIR/llama_server_$(date +%Y%m%d_%H%M%S).log"
+    ln -sf "$SERVER_LOG" "$SERVER_LOG_DIR/llama_server_latest.log"
+
+    if [ "$WARM" = 1 ]; then
+        echo "  warm   : pre-loading $(basename "$M") into page cache..."
+        sh -c "cat '$M' > /dev/null" 2>&1 | grep -E "real" | sed 's/^/    /' || true
+    fi
+
+    SERVER_ARGS=(
+        -m "$M"
+        -expert-cache "$BUDGET"
+        -ngl "$SERVER_NGL"
+        --no-mmap
+        -t 8
+        -c "$SERVER_CTX"
+        -np 1
+        --no-kv-unified
+        -sps 0
+        --host "$SERVER_HOST"
+        --port "$SERVER_PORT"
+    )
+    if [ -n "$SERVER_BATCH" ]; then
+        SERVER_ARGS+=(-b "$SERVER_BATCH")
+    fi
+    if [ -n "$SERVER_UBATCH" ]; then
+        SERVER_ARGS+=(-ub "$SERVER_UBATCH")
+    fi
+    if [ "$MTP" = 1 ]; then
+        SERVER_ARGS+=(--spec-type draft-mtp --spec-draft-n-max "$MTP_N_MAX" --temp 0)
+        if [ -n "$SERVER_DRAFT_NGL" ]; then
+            SERVER_ARGS+=(--spec-draft-ngl "$SERVER_DRAFT_NGL")
+        fi
+    fi
+    if [ -n "$SERVER_CHAT_TEMPLATE" ]; then
+        SERVER_ARGS+=(--chat-template "$SERVER_CHAT_TEMPLATE")
+    fi
+    if [ -n "$SERVER_CHAT_TEMPLATE_FILE" ]; then
+        SERVER_ARGS+=(--chat-template-file "$SERVER_CHAT_TEMPLATE_FILE")
+    fi
+    if [ -n "$SERVER_CHAT_TEMPLATE_KWARGS" ]; then
+        SERVER_ARGS+=(--chat-template-kwargs "$SERVER_CHAT_TEMPLATE_KWARGS")
+    fi
+    if [ -n "$SERVER_LOG_PROMPTS_DIR" ]; then
+        SERVER_ARGS+=(--log-prompts-dir "$SERVER_LOG_PROMPTS_DIR")
+    fi
+    if [ -n "$SERVER_REASONING" ]; then
+        SERVER_ARGS+=(--reasoning "$SERVER_REASONING")
+    fi
+    if [ -n "$SERVER_REASONING_FORMAT" ]; then
+        SERVER_ARGS+=(--reasoning-format "$SERVER_REASONING_FORMAT")
+    fi
+    if [ "$SERVER_SKIP_CHAT_PARSING" = "1" ]; then
+        SERVER_ARGS+=(--skip-chat-parsing)
+    fi
+
+    echo "=== n30cache server api ==="
+    echo "  model  : $MODEL ($(basename "$M"))"
+    echo "  host   : $SERVER_HOST   port: $SERVER_PORT"
+    echo "  ngl    : $SERVER_NGL   ctx: $SERVER_CTX   budget: $((BUDGET/1073741824))GiB"
+    echo "  mtp    : $MTP   n_max: $MTP_N_MAX   draft_ngl: ${SERVER_DRAFT_NGL:-auto}"
+    echo "  batch  : ${SERVER_BATCH:-auto}   ubatch: ${SERVER_UBATCH:-auto}"
+    if [ "$SERVER_OOM_SAFE" = "1" ]; then
+        echo "  dbg    : oom_safe=1 effective_ctx=$SERVER_CTX effective_ngl=$SERVER_NGL effective_draft_ngl=${SERVER_DRAFT_NGL:-auto} effective_batch=${SERVER_BATCH:-auto} effective_ubatch=${SERVER_UBATCH:-auto} effective_budget_bytes=$BUDGET"
+    fi
+    echo "  chat   : template=${SERVER_CHAT_TEMPLATE:-auto} file=${SERVER_CHAT_TEMPLATE_FILE:-off} skip_chat_parsing=$SERVER_SKIP_CHAT_PARSING"
+    echo "  chatab : mode=$SERVER_CHAT_AB prefix=${SERVER_CHAT_AB_PREFIX:-off}"
+    echo "  log    : $SERVER_LOG"
+
+    if [ ${#ENVS[@]} -gt 0 ]; then
+        env "${ENVS[@]}" "$BIN_SERVER" "${SERVER_ARGS[@]}" > "$SERVER_LOG" 2>&1 &
+    else
+        "$BIN_SERVER" "${SERVER_ARGS[@]}" > "$SERVER_LOG" 2>&1 &
+    fi
+    SERVER_PID=$!
+    LAN_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "<Mac IP>")
+    echo "[wait]  模型載入中（首次 ~1min）..."
+    for i in $(seq 1 60); do
+        sleep 2
+        kill -0 "$SERVER_PID" 2>/dev/null || { echo "error: server 行程已退出——看 $SERVER_LOG" >&2; exit 1; }
+        if curl -s --noproxy '*' -m 2 "http://127.0.0.1:$SERVER_PORT/health" 2>/dev/null | grep -q "ok"; then
+            echo ""
+            echo "================ 連線卡（server api） ================"
+            echo "  Base URL   : http://$LAN_IP:$SERVER_PORT/v1"
+            echo "  Models     : curl --noproxy '*' http://127.0.0.1:$SERVER_PORT/v1/models"
+            echo "  Chat API   : http://$LAN_IP:$SERVER_PORT/v1/chat/completions"
+            if [ "$SERVER_CHAT_AB" = "healthy-prefix" ]; then
+                echo "  Chat A/B   : healthy-prefix（prefill=disabled, 驗證 free-generation 品質）"
+                echo "  A payload  : {\"messages\":[{\"role\":\"user\",\"content\":\"請用一句中文回答：巴黎是哪個國家的首都？\"}],\"max_tokens\":$SERVER_CHAT_AB_MAX_TOKENS}"
+                echo "  B payload  : {\"messages\":[{\"role\":\"user\",\"content\":\"請用一句中文回答：巴黎是哪個國家的首都？\"}],\"max_tokens\":24,\"stop\":[\"$SERVER_CHAT_AB_STOP\"]}"
+            fi
+            echo "  停止       : pkill -INT -f llama-server（或 kill ${SERVER_PID:-unknown}）"
+            echo "======================================================"
+            echo ""
+            if [ "$CGC_DETACHED" = 1 ]; then
+                echo "[detach] server PID=${SERVER_PID:-unknown}（已脫離父 shell，不受 SIGHUP 影響）"
+                echo "         停止: kill -INT ${SERVER_PID:-unknown} 或 pkill -INT -f llama-server"
+                echo "         log: tail -f $SERVER_LOG"
+                exit 0
+            else
+                echo "[run]    前景運行中（Ctrl+C = 優雅關閉）。log: tail -f $SERVER_LOG"
+                trap 'kill -INT "$SERVER_PID" 2>/dev/null; wait "$SERVER_PID" 2>/dev/null; exit 0' INT TERM
+                wait "$SERVER_PID"
+                exit $?
+            fi
+        fi
+    done
+    echo "error: 120s 內 /health 未就緒——看 $SERVER_LOG" >&2
+    exit 1
+fi
+
 # 優化 load：先 cat model 進 page cache（重開機後第一次 run 建議），之後 loader 的 read 全 RAM-speed
 if [ "$WARM" = 1 ]; then
     echo "  warm   : pre-loading $(basename "$M") into page cache..."
-    sh -c "cat '$M' > /dev/null" 2>&1 | grep -E "real" | sed 's/^/    /'
+    # The warm step is best-effort: on systems without shell timing output, do not abort the benchmark.
+    sh -c "cat '$M' > /dev/null" 2>&1 | grep -E "real" | sed 's/^/    /' || true
 fi
 OUT=/tmp/n30cache.out; ERR=/tmp/n30cache.err
-env "${ENVS[@]}" "$BIN" -m "$M" -n "$N" -ngl "$NGL" --no-mmap -t 8 \
-    $SEED_ARG $IGNORE_EOS_ARG $CTX_ARG $MTP_ARG -p "$PROMPT" > "$OUT" 2> "$ERR"
+if [ ${#ENVS[@]} -gt 0 ]; then
+    env "${ENVS[@]}" "$BIN" -m "$M" -n "$N" -ngl "$NGL" --no-mmap -t 8 \
+        $SEED_ARG $IGNORE_EOS_ARG $CTX_ARG $MTP_ARG -p "$PROMPT" > "$OUT" 2> "$ERR"
+else
+    "$BIN" -m "$M" -n "$N" -ngl "$NGL" --no-mmap -t 8 \
+        $SEED_ARG $IGNORE_EOS_ARG $CTX_ARG $MTP_ARG -p "$PROMPT" > "$OUT" 2> "$ERR"
+fi
 RC=$?
 
 echo "--- 結果 ---"
