@@ -1265,10 +1265,21 @@ struct ggml_tensor * llama_model_loader::create_tensor(
         }
 
         if (!buft) {
+            // CGC expert-cache: two paths for expert tensors:
+            // 1. Resident passthrough (skip_load=true, ngl>0 full-resident): CPU skip-load, ne[2]=256,
+            //    identity remap. Metal reads from original full-size tensor.
+            // 2. Pool path (skip_load=false, partial offload): GPU pool buffer, ne[2] shrunk to
+            //    pool capacity, slot-based remap. Metal reads from pool region.
             if (expert_cache_skip_load && strstr(t_meta->name, "_exps") && strstr(t_meta->name, "blk.")) {
+                // Resident passthrough: keep expert tensors on CPU with full ne[2]=256.
                 buft = ggml_backend_cpu_buffer_type();
+                LLAMA_LOG_INFO("llama_model_loader: %s -> CPU skip-load (resident passthrough, ne[2]=%lld)\n",
+                        t_meta->name, (long long) t_meta->ne[2]);
             } else if (l4_kind >= 0) {
+                // Pool path: GPU pool buffer, ne[2] shrunk to pool capacity.
                 buft = select_weight_buft(hparams, t_meta, op, buft_list);
+                LLAMA_LOG_INFO("llama_model_loader: %s -> GPU pool buffer (L4 zero-copy, buft=%s host=%d)\n",
+                        t_meta->name, ggml_backend_buft_name(buft), ggml_backend_buft_is_host(buft) ? 1 : 0);
             } else {
                 buft = select_weight_buft(hparams, t_meta, op, buft_list);
             }
@@ -1381,6 +1392,10 @@ struct ggml_tensor * llama_model_loader::create_tensor(
             else if (strstr(tname, "ffn_down_exps")) l4_kind = 2;
             else if (strstr(tname, "ffn_gate_exps")) l4_kind = 0;
             else l4_kind = -1;
+            // [CGC Resident Passthrough] When expert_cache_skip_load=true (ngl>0 full-resident),
+            // do NOT shrink ne[2]. The design doc §7.3.5 requires ne[2]=256 for n_as indexing.
+            // Metal reads from the original full-size tensor via identity remap (real expert IDs).
+            // Pool path only activates when skip_load=false (partial offload).
             if (l4_kind >= 0 && !(expert_cache_l4_skip_layer0 && l4_il == 0) && !expert_cache_skip_load) {
                 if (expert_cache_full_ne2 == 0) {
                     expert_cache_full_ne2 = t_meta.ne[2];

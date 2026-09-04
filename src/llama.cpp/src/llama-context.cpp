@@ -436,17 +436,6 @@ llama_context::llama_context(
     }
 
     cparams.n_ubatch = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
-    // [CGC FIX 2026-09-05] when the L4 cap pushes n_batch (and therefore n_ubatch) below
-    // n_keep_tail=n_rs_seq+1, llama-batch split_equal asserts. Keep n_ubatch at least
-    // n_keep_tail+1 so the warmup / seq_rm probe / decode steps do not abort.
-    {
-        const uint32_t n_keep_tail = cparams.n_rs_seq > 0 ? cparams.n_rs_seq + 1u : 0u;
-        if (n_keep_tail > 0 && cparams.n_ubatch <= n_keep_tail) {
-            LLAMA_LOG_WARN("%s: n_ubatch=%u bumped to n_keep_tail+1=%u (MTP recurrent)\n",
-                    __func__, cparams.n_ubatch, n_keep_tail + 1u);
-            cparams.n_ubatch = n_keep_tail + 1u;
-        }
-    }
 
     cparams.n_outputs_max = params.n_outputs_max == 0 || llama_model_has_encoder(&model) ? cparams.n_batch : params.n_outputs_max;
     cparams.n_outputs_max_per_seq = params.n_outputs_max_per_seq == 0 ?
@@ -3310,30 +3299,8 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         return;
     }
 
-    // [CGC DIAG 2026-09-05] unconditional entry log: count how many times this hook fires
-    // for prefill vs verify vs draft. Previous mystery: CGC-GATE / CGC-L3B / CGC-COLD
-    // all 0 hits despite code+library loaded — hypothesis is graph reuse keeps the hook
-    // from firing during decode. CGC-ENTER has a high cap (2000) and groups by ctx_type
-    // + il-bucket so we can read the call distribution without flooding stderr.
-    {
-        static int cgc_enter_n = 0;
-        if (cgc_enter_n < 2000) {
-            cgc_enter_n++;
-            const char * ctx_kind =
-                cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP ? "draft" :
-                cparams.embeddings_nextn ? "verify" : "trunk";
-            fprintf(stderr, "CGC-ENTER %s il=%d ntok=%lld n_used=%lld\n",
-                    ctx_kind, il, (long long) n_tokens, (long long) n_expert_used);
-        }
-    }
-
     llama_expert_cache * cache = model.expert_cache;
     if (cache == nullptr) {
-        static int cgc_nocache_n = 0;
-        if (cgc_nocache_n < 200) {
-            cgc_nocache_n++;
-            fprintf(stderr, "CGC-EXIT-NOCACHE il=%d ntok=%lld\n", il, (long long) n_tokens);
-        }
         return;
     }
 
@@ -3529,11 +3496,6 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         }
     }
     if (uni.empty()) {
-        static int cgc_empty_n = 0;
-        if (cgc_empty_n < 50) {
-            cgc_empty_n++;
-            fprintf(stderr, "CGC-EXIT-EMPTY il=%d ntok=%lld\n", il, (long long) n_tokens);
-        }
         return;
     }
     std::sort(uni.begin(), uni.end());
@@ -3552,12 +3514,6 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     // (speculative/MTP verify) fall through to the pool/gather path below, where the union spans
     // ALL tokens and the remap leaf is written for every token.
     if ((uint64_t) n_tokens > cgc_pool_max_tokens()) {
-        static int cgc_large_n = 0;
-        if (cgc_large_n < 50) {
-            cgc_large_n++;
-            fprintf(stderr, "CGC-EXIT-LARGE il=%d ntok=%lld pmax=%zu\n",
-                    il, (long long) n_tokens, (size_t) cgc_pool_max_tokens());
-        }
         llama_expert_cache_record_routes(cache, (uint32_t) il, routes.data(), routes.size());
         return;
     }
@@ -3623,15 +3579,7 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     // indirection), so mul_mat_id reads from original weight locations. Pool data is still
     // filled by ensure_batch but ignored by the graph.
     static const bool cgc_force_identity = getenv("CGC_FORCE_IDENTITY_REMAP") != nullptr;
-    static const bool cgc_l4_skip_layer0 = getenv("LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0") != nullptr;
-    if (cgc_force_identity || (cgc_l4_skip_layer0 && il == 0)) {
-        static int cgc_force_n = 0;
-        if (cgc_force_n < 50) {
-            cgc_force_n++;
-            fprintf(stderr, "CGC-EXIT-FORCE il=%d ntok=%lld reason=%s\n",
-                    il, (long long) n_tokens,
-                    cgc_force_identity ? "force" : "L4skipL0");
-        }
+    if (cgc_force_identity || (getenv("LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0") != nullptr && il == 0)) {
         ggml_tensor * remap = cache_remap_tensors[il];
         if (remap != nullptr && remap->data != nullptr) {
             int32_t * rd = (int32_t *) remap->data;
@@ -3659,16 +3607,13 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         }
     }
 
-    // [CGC Resident Passthrough] When expert tensors are on CPU (skip_load=true),
-    // write identity remap (real expert IDs 0..255) so Metal reads from original full-size
-    // tensors. Pool path writes slot-based remap for GPU-backed tensors only.
-    if (model.expert_cache_skip_load) {
-        static int cgc_resident_n = 0;
-        if (cgc_resident_n < 20) {
-            cgc_resident_n++;
-            fprintf(stderr, "CGC-EXIT-RESIDENT il=%d ntok=%lld\n",
-                    il, (long long) n_tokens);
-        }
+    // [CGC Resident Passthrough §7.3.5] When pool is NOT active (full-resident at ngl>0)
+    // OR when expert tensors are on CPU (skip_load=true), write identity remap (real expert
+    // IDs 0..255) so Metal reads from original full-size tensors. No pool fill, no slot
+    // indirection. The skip_load check is critical: pool_active can be true even when tensors
+    // are on CPU (skip_load), in which case the pool path would write slot-based remap for
+    // CPU-backed tensors → Metal reads from CPU → slow (3-6 t/s instead of 25+).
+    if (!llama_expert_cache_pool_active(cache) || model.expert_cache_skip_load) {
         ggml_tensor * remap = cache_remap_tensors[il];
         if (remap != nullptr && remap->data != nullptr) {
             int32_t * rd = (int32_t *) remap->data;
@@ -3686,12 +3631,6 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     // falling through to the CPU gather path would repoint GPU weight tensors at host memory
     // and later crash in ggml_metal_buffer_get_id. Keep full weights + identity remap instead.
     if (llama_expert_cache_pool_active(cache) && (uint64_t) n_tokens > safe_pool_tokens) {
-        static int cgc_safe_n = 0;
-        if (cgc_safe_n < 50) {
-            cgc_safe_n++;
-            fprintf(stderr, "CGC-EXIT-SAFE il=%d ntok=%lld safe=%u n_slots=%u\n",
-                    il, (long long) n_tokens, safe_pool_tokens, n_slots);
-        }
         ggml_tensor * remap = cache_remap_tensors[il];
         if (remap != nullptr && remap->data != nullptr) {
             int32_t * rd = (int32_t *) remap->data;
@@ -3712,17 +3651,6 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         const char * e = getenv("CGC_BYPASS_POOL_FROM");
         return e ? atoi(e) : 999;
     }();
-    {
-        static int cgc_gate_dbg = 0;
-        if (cgc_gate_dbg < 200) {
-            cgc_gate_dbg++;
-            fprintf(stderr, "CGC-GATE il=%d pool_active=%d n_slots=%u uni=%zu il_lt_999=%d\n",
-                    il,
-                    llama_expert_cache_pool_active(cache) ? 1 : 0,
-                    n_slots, uni.size(),
-                    il < cgc_bypass_pool_from ? 1 : 0);
-        }
-    }
     if (llama_expert_cache_pool_active(cache) && uni.size() <= n_slots && il < cgc_bypass_pool_from) {
         // [CGC MTP fast path] CGC_VERIFY_DECODE / CGC_DRAFT_DECODE (rebuilt 2026-08-28 from
         // MTP轉正規劃書_v1.1.md): route MTP verify / draft through the decode fast path (touch +
@@ -3756,35 +3684,7 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
                     cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP ? "draft" : "verify",
                     cgc_n_past, cgc_warm_npast, (int) cgc_fast_eligible);
         }
-        // [CGC Fast-Path Cold Guard 2026-09-05] Fast path only routes cold experts to the
-        // reserved ZERO slot, so when too many of this step's top-k are cold the gate reads
-        // a constant zero contribution → uniform softmax → deterministic sequential top-k
-        // ([0 1 2 3 4 5 6 7]) → 0000 garbage. Below threshold the ZERO-slot contamination
-        // is <1/3 and the softmax absorbs it; above we fall through to ensure_batch so the
-        // cold experts actually get filled. CGC_FAST_COLD_MAX env overrides the ratio
-        // (default 0.30). step_dbg + cold_dbg fire only on the first few il=1 steps so they
-        // can be turned into a regression check after this lands.
-        const char * cgc_cold_env = getenv("CGC_FAST_COLD_MAX");
-        const double cgc_fast_cold_max = cgc_cold_env ? atof(cgc_cold_env) : 0.30;
-        size_t cgc_cold_count = 0;
-        if (cache != nullptr && il >= 0 && (uint32_t) il < cache->slot_owner.size()) {
-            const int32_t * cgc_st = cache->slot_table.data() + (size_t) il * cache->n_expert;
-            for (uint32_t e : uni) {
-                if (e < cache->n_expert && cgc_st[e] < 0) {
-                    cgc_cold_count++;
-                }
-            }
-        }
-        const double cgc_cold_rate = uni.empty() ? 0.0 : (double) cgc_cold_count / (double) uni.size();
-        const bool cgc_fast_too_cold = cgc_cold_rate > cgc_fast_cold_max;
-        static int cgc_cold_dbg = 0;
-        if (cgc_cold_dbg < 24 && il == 1) {
-            cgc_cold_dbg++;
-            fprintf(stderr, "CGC-COLD il=%d uni=%zu cold=%zu rate=%.2f max=%.2f too_cold=%d\n",
-                    il, uni.size(), cgc_cold_count, cgc_cold_rate, cgc_fast_cold_max,
-                    (int) cgc_fast_too_cold);
-        }
-        if ((verify_fast || draft_fast) && cgc_fast_eligible && !cgc_fast_too_cold) {
+        if ((verify_fast || draft_fast) && cgc_fast_eligible) {
             // zero the reserved ZERO slot once per layer: cold experts (slot table == -1) map to
             // it, so the FFN reads a finite zero contribution instead of an OOB pool row (NaN
             // cascade -> whole-graph corruption).
@@ -3954,12 +3854,6 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     // L3-B gather path: ensure resident, gather the union into contiguous buffers, repoint the
     // FFN tensors and remap the ids to 0..k-1.
     {
-        static int cgc_l3b_dbg = 0;
-        if (cgc_l3b_dbg < 200) {
-            cgc_l3b_dbg++;
-            fprintf(stderr, "CGC-L3B il=%d ntok=%lld uni=%zu n_slots=%u\n",
-                    il, (long long) n_tokens, uni.size(), n_slots);
-        }
         std::vector<uint32_t> layers(uni.size(), (uint32_t) il);
         llama_expert_cache_ensure(cache, layers.data(), uni.data(), uni.size());
 
@@ -3999,14 +3893,6 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
 
 llm_graph_cb llama_context::graph_get_cb() const {
     return [&](const llama_ubatch & ubatch, ggml_tensor * cur, const char * name, int il) {
-        // [CGC DIAG] unconditional log at the top of graph_get_cb
-        static int cgc_cb_count = 0;
-        if (cgc_cb_count < 100) {
-            cgc_cb_count++;
-            fprintf(stderr, "CGC-CB-FIRE: il=%d name=%s expert_cache_active=%d pool_active=%d\n",
-                    il, name, model.expert_cache_active,
-                    model.expert_cache != nullptr ? llama_expert_cache_pool_active(model.expert_cache) : -1);
-        }
         if (il >= 0) {
             ggml_format_name(cur, "%s-%d", name, il);
         } else {
@@ -4030,70 +3916,46 @@ llm_graph_cb llama_context::graph_get_cb() const {
                     const uint32_t graph_n_expert_used = cparams.warmup ? model.hparams.n_expert : model.hparams.n_expert_used;
                     const uint32_t layer_slots = llama_expert_cache_slots_per_layer_l(model.expert_cache, (uint32_t) il);
                     const uint32_t safe_tokens = cgc_pool_safe_tokens(layer_slots, graph_n_expert_used);
-                    // [CGC] Repointing now done in each FFN capture block (ffn_moe_gate_up/up/gate/down)
-                    // because graph build order is remap→FFN, so ffn[] is empty when remap fires.
-                    // Graph reuse means remap fires only once, but FFN blocks fire on every build.
+                    if (!cgc_partial_offload_active(model) && (uint32_t) ubatch.n_tokens <= safe_tokens) {
+                        static int cgc_repoint_dbg = 0;
+                        if (il <= 3 && cgc_repoint_dbg < 8) {
+                            cgc_repoint_dbg++;
+                            const uint8_t * base0 = llama_expert_cache_pool_data(model.expert_cache, (uint32_t) il, 0);
+                            fprintf(stderr, "CGC-REPOINT: il=%d pool_active=%d pool_data=%s slots=%u safe_tok=%u\n",
+                                    il,
+                                    llama_expert_cache_pool_active(model.expert_cache) ? 1 : 0,
+                                    base0 ? "set" : "null",
+                                    layer_slots, safe_tokens);
+                        }
+                        // [CGC FIX] Skip ALL weight repointing to pool regions.
+                        // The pool path at ngl=99 produces uniform gate logits → default sequential
+                        // expert selection [0 1 2 3 4 5 6 7] at layers 2+. This causes the model
+                        // to output garbage. Keep original weights; remap IDs still work for slot mapping.
+                    }
                 }
             } else if (strcmp(name, "ffn_moe_gate_up") == 0) {
-                { static int cgc_gu_dbg = 0; if (cgc_gu_dbg < 4) { cgc_gu_dbg++; fprintf(stderr, "CGC-GATEUP-FIRE: il=%d\n", il); } }
                 if (cur->src[0] != nullptr) {
                     auto & ffn = cache_ffn_tensors[il];
                     if (ffn.size() < 4) ffn.resize(4);
                     ffn[3] = cur->src[0];
-                    // [CGC FIX] Repoint gate_up (kind=3) to pool on capture.
-                    if (model.expert_cache != nullptr && llama_expert_cache_pool_active(model.expert_cache)) {
-                        const uint8_t * base = llama_expert_cache_pool_data(model.expert_cache, (uint32_t) il, 3);
-                        if (base != nullptr) {
-                            static int cgc_repoint_k3 = 0;
-                            if (cgc_repoint_k3 < 8) { cgc_repoint_k3++; fprintf(stderr, "CGC-REPOINT-BLOCK: il=%d kind=3 before=%p after=%p\n", il, ffn[3]->data, (void*)base); }
-                            cache_orig[{il, 3}] = ffn[3]->data;
-                            ffn[3]->data = (void *) base;
-                        }
-                    }
                 }
             } else if (strcmp(name, "ffn_moe_up") == 0) {
                 if (cur->src[0] != nullptr) {
                     auto & ffn = cache_ffn_tensors[il];
                     if (ffn.size() < 4) ffn.resize(4);
                     ffn[1] = cur->src[0];
-                    // [CGC FIX] Repoint up (kind=1) to pool on capture.
-                    if (model.expert_cache != nullptr && llama_expert_cache_pool_active(model.expert_cache)) {
-                        const uint8_t * base = llama_expert_cache_pool_data(model.expert_cache, (uint32_t) il, 1);
-                        if (base != nullptr) {
-                            cache_orig[{il, 1}] = ffn[1]->data;
-                            ffn[1]->data = (void *) base;
-                        }
-                    }
                 }
             } else if (strcmp(name, "ffn_moe_gate") == 0) {
                 if (cur->src[0] != nullptr) {
                     auto & ffn = cache_ffn_tensors[il];
                     if (ffn.size() < 4) ffn.resize(4);
                     ffn[0] = cur->src[0];
-                    // [CGC FIX] Repoint gate (kind=0) to pool on capture.
-                    if (model.expert_cache != nullptr && llama_expert_cache_pool_active(model.expert_cache)) {
-                        const uint8_t * base = llama_expert_cache_pool_data(model.expert_cache, (uint32_t) il, 0);
-                        if (base != nullptr) {
-                            static int cgc_repoint_k0 = 0;
-                            if (cgc_repoint_k0 < 4) { cgc_repoint_k0++; fprintf(stderr, "CGC-REPOINT-K0: il=%d before=%p after=%p ne2=%lld\n", il, ffn[0]->data, (void*)base, (long long)ffn[0]->ne[2]); }
-                            cache_orig[{il, 0}] = ffn[0]->data;
-                            ffn[0]->data = (void *) base;
-                        }
-                    }
                 }
             } else if (strcmp(name, "ffn_moe_down") == 0) {
                 if (cur->src[0] != nullptr) {
                     auto & ffn = cache_ffn_tensors[il];
                     if (ffn.size() < 4) ffn.resize(4);
                     ffn[2] = cur->src[0];
-                    // [CGC FIX] Repoint down (kind=2) to pool on capture.
-                    if (model.expert_cache != nullptr && llama_expert_cache_pool_active(model.expert_cache)) {
-                        const uint8_t * base = llama_expert_cache_pool_data(model.expert_cache, (uint32_t) il, 2);
-                        if (base != nullptr) {
-                            cache_orig[{il, 2}] = ffn[2]->data;
-                            ffn[2]->data = (void *) base;
-                        }
-                    }
                 }
             }
         }
