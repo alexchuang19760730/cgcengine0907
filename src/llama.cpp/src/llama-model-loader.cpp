@@ -1084,7 +1084,7 @@ void llama_model_loader::compute_l4_pool_capacity() {
     uint32_t max_layer = 0;
     for (int64_t i = 0; i < n_t; ++i) {
         const char * name = gguf_get_tensor_name(metadata, i);
-        if (name == nullptr || !strstr(name, "_exps") || !strstr(name, ".weight") || !strstr(name, "blk.")) {
+        if (name == nullptr || !strstr(name, "_exps") || !strstr(name, "blk.")) {
             continue;
         }
         const char * p2 = strstr(name, "blk.");
@@ -1265,21 +1265,20 @@ struct ggml_tensor * llama_model_loader::create_tensor(
         }
 
         if (!buft) {
-            // CGC expert-cache: two paths for expert tensors:
-            // 1. Resident passthrough (skip_load=true, ngl>0 full-resident): CPU skip-load, ne[2]=256,
-            //    identity remap. Metal reads from original full-size tensor.
-            // 2. Pool path (skip_load=false, partial offload): GPU pool buffer, ne[2] shrunk to
-            //    pool capacity, slot-based remap. Metal reads from pool region.
-            if (expert_cache_skip_load && strstr(t_meta->name, "_exps") && strstr(t_meta->name, "blk.")) {
-                // Resident passthrough: keep expert tensors on CPU with full ne[2]=256.
-                buft = ggml_backend_cpu_buffer_type();
-                LLAMA_LOG_INFO("llama_model_loader: %s -> CPU skip-load (resident passthrough, ne[2]=%lld)\n",
-                        t_meta->name, (long long) t_meta->ne[2]);
-            } else if (l4_kind >= 0) {
-                // Pool path: GPU pool buffer, ne[2] shrunk to pool capacity.
+            // CGC expert-cache L4: the expert tensor was shrunk to the bounded pool capacity and
+            // keeps its normal buft (Metal at -ngl>0). Its own storage IS the pool region, adopted
+            // via llama_expert_cache_adopt_pool_region after load — the Metal FFN reads it zero-copy.
+            if (l4_kind >= 0) {
                 buft = select_weight_buft(hparams, t_meta, op, buft_list);
                 LLAMA_LOG_INFO("llama_model_loader: %s -> GPU pool buffer (L4 zero-copy, buft=%s host=%d)\n",
                         t_meta->name, ggml_backend_buft_name(buft), ggml_backend_buft_is_host(buft) ? 1 : 0);
+            } else if (expert_cache_skip_load && strstr(t_meta->name, "_exps") && strstr(t_meta->name, "blk.")) {
+                // CGC expert-cache (L4 skip-load / L4_SKIP_LAYER0): keep expert tensors on the CPU.
+                // Active experts are staged onto the GPU pool via llama_expert_cache_adopt_pool_region
+                // at compute time, so the resident expert weights never enter the Metal working set.
+                // Only applies when no explicit override selected a buft (overrides win).
+                buft = ggml_backend_cpu_buffer_type();
+                LLAMA_LOG_INFO("llama_model_loader: keeping %s out of GPU buffers (skip-load expert streaming)\n", t_meta->name);
             } else {
                 buft = select_weight_buft(hparams, t_meta, op, buft_list);
             }
@@ -1384,7 +1383,7 @@ struct ggml_tensor * llama_model_loader::create_tensor(
     if (expert_cache_pool_capacity > 0) {
         const std::string tname_str = tn.str();
         const char * tname = tname_str.c_str();
-        if (strstr(tname, "_exps") && strstr(tname, ".weight") && strstr(tname, "blk.")) {
+        if (strstr(tname, "_exps") && strstr(tname, "blk.")) {
             const char * p2 = strstr(tname, "blk.");
             l4_il = p2 ? atoi(p2 + 4) : -1;
             if (strstr(tname, "ffn_gate_up_exps")) l4_kind = 3;
@@ -1392,11 +1391,7 @@ struct ggml_tensor * llama_model_loader::create_tensor(
             else if (strstr(tname, "ffn_down_exps")) l4_kind = 2;
             else if (strstr(tname, "ffn_gate_exps")) l4_kind = 0;
             else l4_kind = -1;
-            // [CGC Resident Passthrough] When expert_cache_skip_load=true (ngl>0 full-resident),
-            // do NOT shrink ne[2]. The design doc §7.3.5 requires ne[2]=256 for n_as indexing.
-            // Metal reads from the original full-size tensor via identity remap (real expert IDs).
-            // Pool path only activates when skip_load=false (partial offload).
-            if (l4_kind >= 0 && !(expert_cache_l4_skip_layer0 && l4_il == 0) && !expert_cache_skip_load) {
+            if (l4_kind >= 0 && !(expert_cache_l4_skip_layer0 && l4_il == 0)) {
                 if (expert_cache_full_ne2 == 0) {
                     expert_cache_full_ne2 = t_meta.ne[2];
                 }
@@ -1576,20 +1571,6 @@ bool llama_model_loader::load_all_data(
     std::vector<ggml_backend_event_t> events;
     std::vector<void *> host_ptrs;
     size_t buffer_idx = 0; // buffer to use for async loads
-    auto validate_tensor_data = [](const char * func, const ggml_tensor * tensor, const void * data, size_t n_size) {
-        const bool ok = ggml_validate_row_data(tensor->type, data, n_size);
-        if (!ok) {
-            LLAMA_LOG_ERROR(
-                    "%s: validation failed for tensor '%s' type=%s nbytes=%zu ne=[%" PRId64 ", %" PRId64 ", %" PRId64 ", %" PRId64 "] nb=[%zu, %zu, %zu, %zu]\n",
-                    func,
-                    ggml_get_name(tensor),
-                    ggml_type_name(tensor->type),
-                    n_size,
-                    tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->ne[3],
-                    tensor->nb[0], tensor->nb[1], tensor->nb[2], tensor->nb[3]);
-        }
-        return ok;
-    };
     ggml_backend_t upload_backend = [&](const char * func) -> ggml_backend_t {
         if (use_mmap || check_tensors) {
             return nullptr;
@@ -1690,7 +1671,7 @@ bool llama_model_loader::load_all_data(
         if (expert_cache_bytes > 0) {
             const char * name = ggml_get_name(cur);
             // match blk.{il}.ffn_{gate,up,down}[_up]?_exps.weight
-            if (strstr(name, "_exps") && strstr(name, ".weight") && strstr(name, "blk.")) {
+            if (strstr(name, "_exps") && strstr(name, "blk.")) {
                 int il = -1;
                 const char * p2 = strstr(name, "blk.");
                 if (p2) il = atoi(p2 + 4);
@@ -1731,8 +1712,8 @@ bool llama_model_loader::load_all_data(
             uint8_t * data = (uint8_t *) mapping->addr() + weight->offs;
 
             if (check_tensors) {
-                validation_result.emplace_back(std::async(std::launch::async, [cur, data, n_size, validate_tensor_data] {
-                    return std::make_pair(cur, validate_tensor_data(__func__, cur, data, n_size));
+                validation_result.emplace_back(std::async(std::launch::async, [cur, data, n_size] {
+                    return std::make_pair(cur, ggml_validate_row_data(cur->type, data, n_size));
                 }));
             }
 
@@ -1757,8 +1738,8 @@ bool llama_model_loader::load_all_data(
                 file->seek(weight->offs, SEEK_SET);
                 file->read_raw(cur->data, n_size);
                 if (check_tensors) {
-                    validation_result.emplace_back(std::async(std::launch::async, [cur, n_size, validate_tensor_data] {
-                        return std::make_pair(cur, validate_tensor_data(__func__, cur, cur->data, n_size));
+                    validation_result.emplace_back(std::async(std::launch::async, [cur, n_size] {
+                        return std::make_pair(cur, ggml_validate_row_data(cur->type, cur->data, n_size));
                     }));
                 }
             } else {
@@ -1820,7 +1801,7 @@ bool llama_model_loader::load_all_data(
                     file->seek(weight->offs, SEEK_SET);
                     file->read_raw(read_buf.data(), n_size);
                     ggml_backend_tensor_set(cur, read_buf.data(), 0, n_size);
-                    if (check_tensors && !validate_tensor_data(__func__, cur, read_buf.data(), n_size)) {
+                    if (check_tensors && !ggml_validate_row_data(cur->type, read_buf.data(), n_size)) {
                         throw std::runtime_error(format("tensor '%s' has invalid data", ggml_get_name(cur)));
                     }
                 }

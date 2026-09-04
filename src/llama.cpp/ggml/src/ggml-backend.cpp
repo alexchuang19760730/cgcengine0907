@@ -27,26 +27,6 @@
 #include <sys/sysctl.h>
 #endif
 
-// #region debug-point H1:tensor-alloc
-static void cgc_debug_ngl99_nil_buffer_tensor_alloc(const struct ggml_tensor * tensor, ggml_backend_buffer_t buffer, void * addr) {
-    if (tensor == NULL || tensor->name[0] == '\0') {
-        return;
-    }
-    if (strstr(tensor->name, "ffn_") == NULL || strstr(tensor->name, "exps.weight") == NULL) {
-        return;
-    }
-
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd),
-        "curl -sX POST http://127.0.0.1:7777/event -H 'Content-Type: application/json' "
-        "-d '{\"sessionId\":\"ngl99-nil-buffer\",\"runId\":\"pre-fix\",\"hypothesisId\":\"H1\","
-        "\"location\":\"ggml-backend.cpp:ggml_backend_tensor_alloc\",\"msg\":\"[DEBUG] expert tensor alloc\","
-        "\"data\":{\"tensor\":\"%s\",\"buffer\":\"%s\",\"buf_size\":%zu,\"nbytes\":%zu,\"addr\":\"%p\"}}' >/dev/null 2>&1 &",
-        tensor->name, ggml_backend_buffer_name(buffer), ggml_backend_buffer_get_size(buffer), ggml_nbytes(tensor), addr);
-    (void) system(cmd);
-}
-// #endregion
-
 
 // backend buffer type
 
@@ -2375,9 +2355,6 @@ enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct 
 
     tensor->buffer = buffer;
     tensor->data = addr;
-    // #region debug-point H1:tensor-alloc
-    cgc_debug_ngl99_nil_buffer_tensor_alloc(tensor, buffer, addr);
-    // #endregion
     return ggml_backend_buffer_init_tensor(buffer, tensor);
 }
 

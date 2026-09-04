@@ -9,9 +9,6 @@
 #include <Metal/Metal.h>
 
 #include <stdatomic.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 #ifndef TARGET_OS_VISION
 #define TARGET_OS_VISION 0
@@ -2005,24 +2002,6 @@ void ggml_metal_buffer_clear(ggml_metal_buffer_t buf, uint8_t value) {
     }
 }
 
-// #region debug-point H2:nil-buffer
-static void cgc_debug_ngl99_nil_buffer_nil_event(ggml_metal_buffer_t buf, const struct ggml_tensor * t, int64_t tsize) {
-    if (t == NULL || strstr(t->name, "ffn_") == NULL || strstr(t->name, "exps.weight") == NULL) {
-        return;
-    }
-
-    const size_t first_size = buf->n_buffers > 0 ? buf->buffers[0].size : 0;
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd),
-        "curl -sX POST http://127.0.0.1:7777/event -H 'Content-Type: application/json' "
-        "-d '{\"sessionId\":\"ngl99-nil-buffer\",\"runId\":\"pre-fix\",\"hypothesisId\":\"H2\","
-        "\"location\":\"ggml-metal-device.m:ggml_metal_buffer_get_id\",\"msg\":\"[DEBUG] nil metal buffer\","
-        "\"data\":{\"tensor\":\"%s\",\"tsize\":%lld,\"tdata\":\"%p\",\"n_buffers\":%d,\"first_buf_size\":%zu}}' >/dev/null 2>&1 &",
-        t->name, (long long) tsize, t->data, buf->n_buffers, first_size);
-    (void) system(cmd);
-}
-// #endregion
-
 struct ggml_metal_buffer_id ggml_metal_buffer_get_id(ggml_metal_buffer_t buf, const struct ggml_tensor * t) {
     struct ggml_metal_buffer_id res = { nil, 0 };
 
@@ -2043,9 +2022,6 @@ struct ggml_metal_buffer_id ggml_metal_buffer_get_id(ggml_metal_buffer_t buf, co
         }
     }
 
-    // #region debug-point H2:nil-buffer
-    cgc_debug_ngl99_nil_buffer_nil_event(buf, t, tsize);
-    // #endregion
     GGML_LOG_ERROR("%s: error: tensor '%s' buffer is nil\n", __func__, t->name);
 
     return res;

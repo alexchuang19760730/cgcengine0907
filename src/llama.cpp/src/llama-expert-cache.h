@@ -59,13 +59,6 @@ struct llama_expert_cache {
     size_t index_size = 0;
 
     std::vector<FILE *> files; // per file_idx; all must be open (else cache disabled)
-    // [CGC §5 Exact Cache verifier] parallel array of the on-disk paths so the post-fill
-    // verifier can re-open the GGUF through an INDEPENDENT file descriptor and confirm
-    // pool bytes == bytes that would be read by a fresh open() + pread(). Required because
-    // the cache's own FILE* may share stdio buffering / kernel page cache state with the
-    // writes that filled the pool — a verifier that re-uses it would mask off-by-one offset
-    // bugs that read the same wrong bytes both times.
-    std::vector<std::string> files_path;
     std::unordered_map<uint64_t, std::vector<uint32_t>> key_segs; // key -> positions in index
 
     size_t budget = 0;
@@ -122,10 +115,9 @@ struct llama_expert_cache {
     std::vector<std::vector<std::vector<uint8_t>>> pool; // [layer][kind][slot*stride ..] (malloc path)
     // L4 zero-copy (-ngl>0 + ALLOW_NGL): pool regions adopted from the expert tensors' Metal
     // storage (non-owning). When pool_ext[layer][kind] != nullptr it takes precedence over pool.
-    std::vector<std::vector<const uint8_t *>> pool_ext;        // [layer][kind] base
+    std::vector<std::vector<const uint8_t *>> pool_ext;       // [layer][kind] base
     std::vector<std::vector<size_t>>          pool_ext_stride; // [layer][kind] bytes per slot
     std::vector<std::vector<uint32_t>>        pool_ext_slots;  // [layer][kind] capacity
-    std::vector<std::vector<ggml_tensor *>>   pool_ext_tensor; // [layer][kind] adopted tensor owning the Metal buffer
     // prefill hot prewarm (LLAMA_EXPERT_CACHE_PREWARM_HOT=1): per-layer expert route frequency
     // accumulated during prefill; the first decode step fills the pool with the top-K hot set
     // (instead of the loader's experts-0..n prewarm, which ignores actual routing).
@@ -277,8 +269,7 @@ size_t llama_expert_cache_load_pin_profile(llama_expert_cache * cache, const cha
 // Metal-visible shared buffer at -ngl>0). Returns false if out of range / null. The LRU/fill
 // machinery then writes into the tensor's buffer; the Metal FFN reads it directly (zero copy).
 bool llama_expert_cache_adopt_pool_region(llama_expert_cache * cache, uint32_t layer, int kind,
-        const uint8_t * base, int64_t n_slots, size_t stride, ggml_tensor * tensor);
-ggml_tensor * llama_expert_cache_pool_tensor(const llama_expert_cache * cache, uint32_t layer, int kind);
+        const uint8_t * base, int64_t n_slots, size_t stride);
 // L4 cold-start (2026-08-15): the loader pre-reads the FIRST n_slots experts of every layer into
 // the adopted Metal pool regions (the expert tensor buffers). Mark those slots resident so the
 // first accesses are pool HITS instead of re-preading the same bytes — otherwise every short

@@ -152,10 +152,6 @@ struct server_task {
     // used by SERVER_TASK_TYPE_INFERENCE
     task_params   params;
     server_tokens tokens;
-    int64_t t_route_start_us = 0;
-    int64_t t_post_tasks_us  = 0;
-    double  t_wrapper_prep_ms = 0.0;
-    int32_t cgc_queue_depth_at_post = 0;
 
     // only used by CLI, this allow tokenizing CLI inputs on server side
     // we need this because mtmd_context and vocab are not accessible outside of server_context
@@ -238,10 +234,6 @@ struct server_task {
         copy.type      = type;
         copy.tokens    = tokens.clone();
         copy.id_slot   = -1; // child tasks cannot specify slot
-        copy.t_route_start_us = t_route_start_us;
-        copy.t_post_tasks_us  = t_post_tasks_us;
-        copy.t_wrapper_prep_ms = t_wrapper_prep_ms;
-        copy.cgc_queue_depth_at_post = cgc_queue_depth_at_post;
 
         // use different sampling seed for each child
         // note: https://github.com/ggml-org/llama.cpp/pull/18700#discussion_r2675115723
@@ -362,15 +354,6 @@ struct server_task_result_cmpl_final : server_task_result {
     bool has_new_line;
     std::string stopping_word;
     stop_type stop = STOP_TYPE_NONE;
-    double cgc_route_prep_ms   = 0.0;
-    double cgc_wrapper_prep_ms = 0.0;
-    double cgc_queue_wait_ms   = 0.0;
-    double cgc_result_queue_ms = 0.0;
-    int32_t cgc_queue_depth_at_post = 0;
-    int32_t cgc_slots_busy_at_prompt_start = 0;
-    int32_t cgc_deferred_depth_at_prompt_start = 0;
-    int64_t cgc_route_start_us    = 0;
-    int64_t cgc_result_enqueued_us = 0;
 
     bool post_sampling_probs;
     std::vector<completion_token_output> probs_output;

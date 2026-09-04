@@ -1460,38 +1460,6 @@ struct mmid_row_mapping {
     int32_t i2;
 };
 
-// #region debug-point A:ngl30-mmid-invalid-id
-static void cgc_debug_ngl30_mmid_invalid_id(
-        const struct ggml_tensor * dst,
-        const struct ggml_tensor * src0,
-        const struct ggml_tensor * src1,
-        const struct ggml_tensor * ids,
-        int64_t iid1,
-        int id,
-        int32_t i02,
-        int64_t n_as) {
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd),
-        "curl -sX POST http://127.0.0.1:7779/event -H 'Content-Type: application/json' "
-        "-d '{\"sessionId\":\"ngl30-cache-crash\",\"runId\":\"pre-fix\",\"hypothesisId\":\"A\","
-        "\"location\":\"ggml-cpu.c:ggml_compute_forward_mul_mat_id:ids\",\"msg\":\"[DEBUG] invalid remap id before mul_mat_id grouping\","
-        "\"data\":{\"dst\":\"%s\",\"src0\":\"%s\",\"src1\":\"%s\",\"ids\":\"%s\","
-        "\"iid1\":%lld,\"id\":%d,\"i02\":%d,\"n_as\":%lld,"
-        "\"ids_ne0\":%lld,\"ids_ne1\":%lld,\"ids_nb0\":%lld,\"ids_nb1\":%lld,"
-        "\"src0_ne2\":%lld,\"src1_ne1\":%lld,\"dst_ne1\":%lld,"
-        "\"src0_data\":\"%p\",\"src1_data\":\"%p\",\"dst_data\":\"%p\",\"ids_data\":\"%p\"}}' >/dev/null 2>&1 &",
-        dst  && dst->name[0]  ? dst->name  : "-",
-        src0 && src0->name[0] ? src0->name : "-",
-        src1 && src1->name[0] ? src1->name : "-",
-        ids  && ids->name[0]  ? ids->name  : "-",
-        (long long) iid1, id, i02, (long long) n_as,
-        (long long) ids->ne[0], (long long) ids->ne[1], (long long) ids->nb[0], (long long) ids->nb[1],
-        (long long) src0->ne[2], (long long) src1->ne[1], (long long) dst->ne[1],
-        src0->data, src1->data, dst->data, ids->data);
-    (void) system(cmd);
-}
-// #endregion
-
 static void ggml_compute_forward_mul_mat_id_one_chunk(
     struct ggml_tensor * dst,
     const struct ggml_tensor * src0,
@@ -1659,16 +1627,6 @@ static void ggml_compute_forward_mul_mat_id(
         for (int64_t iid1 = 0; iid1 < ids->ne[1]; ++iid1) {
             for (int id = 0; id < n_ids; ++id) {
                 const int32_t i02 = *(const int32_t *) ((const char *) ids->data + iid1*ids->nb[1] + id*ids->nb[0]);
-
-                // #region debug-point A:ngl30-mmid-invalid-id
-                if (i02 < 0 || i02 >= n_as) {
-                    static int cgc_ngl30_mmid_invalid_id_n = 0;
-                    if (cgc_ngl30_mmid_invalid_id_n < 16) {
-                        cgc_ngl30_mmid_invalid_id_n++;
-                        cgc_debug_ngl30_mmid_invalid_id(dst, src0, src1, ids, iid1, id, i02, n_as);
-                    }
-                }
-                // #endregion
 
                 assert(i02 >= 0 && i02 < n_as);
 
@@ -3938,3 +3896,4 @@ void ggml_cpu_init(void) {
 
 // CGC stub: mmid slot tables clear (no-op for upstream compat)
 void ggml_cpu_clear_mmid_slot_tables_all(void) {}
+

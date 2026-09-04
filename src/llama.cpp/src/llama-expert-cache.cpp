@@ -7,7 +7,6 @@
 #include <chrono>
 #include <thread>
 #include <unistd.h>
-#include <fcntl.h>       // open / O_RDONLY (CGC §5 Exact Cache verifier)
 #include <sys/stat.h>
 #include <sys/uio.h> // struct iovec / preadv (merge-read jobs)
 
@@ -408,19 +407,7 @@ static void fill_pool_direct_collect(llama_expert_cache * cache, uint32_t layer,
     }
 }
 
-// Forward declaration for V1 verification
-static void cgc_exact_cache_verify_post_fill(llama_expert_cache * cache,
-                                              const std::vector<llama_expert_cache::segment> & segs,
-                                              const std::vector<uint8_t *> & dsts);
-
 static void fill_pool_direct(llama_expert_cache * cache, uint32_t layer, int32_t slot_idx, uint32_t expert) {
-    static int cgc_fill_dbg = 0;
-    if (cgc_fill_dbg < 8) {
-        cgc_fill_dbg++;
-        fprintf(stderr, "CGC-FILL: layer=%u expert=%u slot=%d verify=%s\n",
-                layer, expert, slot_idx,
-                getenv("CGC_EXACT_CACHE_VERIFY") ? "ON" : "OFF");
-    }
     std::vector<llama_expert_cache::segment> segs;
     std::vector<uint8_t *> dsts;
     fill_pool_direct_collect(cache, layer, slot_idx, expert, segs, dsts);
@@ -435,8 +422,6 @@ static void fill_pool_direct(llama_expert_cache * cache, uint32_t layer, int32_t
             memset(dsts[i], 0, segs[i].bytes);
         }
     }
-    // [CGC V1] Also verify via fill_segments_pool path
-    cgc_exact_cache_verify_post_fill(cache, segs, dsts);
 }
 
 int32_t llama_expert_cache_ensure_slot(llama_expert_cache * cache, uint32_t layer, uint32_t expert,
@@ -840,25 +825,15 @@ size_t llama_expert_cache_pool_stride(const llama_expert_cache * cache, uint32_t
 }
 
 bool llama_expert_cache_adopt_pool_region(llama_expert_cache * cache, uint32_t layer, int kind,
-        const uint8_t * base, int64_t n_slots, size_t stride, ggml_tensor * tensor) {
+        const uint8_t * base, int64_t n_slots, size_t stride) {
     if (cache == nullptr || layer >= cache->pool_ext.size() || kind < 0 || kind >= 4 ||
             base == nullptr || n_slots <= 0 || stride == 0) {
         return false;
     }
-    cache->pool_ext[layer][kind]        = base;
+    cache->pool_ext[layer][kind]       = base;
     cache->pool_ext_stride[layer][kind] = stride;
     cache->pool_ext_slots[layer][kind]  = (uint32_t) n_slots;
-    if (layer < cache->pool_ext_tensor.size()) {
-        cache->pool_ext_tensor[layer][kind] = tensor;
-    }
     return true;
-}
-
-ggml_tensor * llama_expert_cache_pool_tensor(const llama_expert_cache * cache, uint32_t layer, int kind) {
-    if (cache == nullptr || layer >= cache->pool_ext_tensor.size() || kind < 0 || kind >= 4) {
-        return nullptr;
-    }
-    return cache->pool_ext_tensor[layer][kind];
 }
 
 // Prefill hot prewarm: accumulate (layer, expert) route frequencies. Called from the hook for
@@ -1365,85 +1340,6 @@ static void rdadvise_range(FILE * f, off_t off, size_t bytes) {
     (void) fcntl(fileno(f), F_RDADVISE, &ra);
 }
 #endif
-
-// [CGC §5 Exact Cache verifier 2026-09-04] Post-fill integrity check. For every (file_idx,
-// file_offset, bytes) the pool just received, re-open the GGUF through a FRESH file descriptor
-// and pread the same range into a side buffer, then byte-compare against dst. This catches three
-// classes of §5 violations: (a) wrong file_offset math in ensure_batch / pick_slot, (b) wrong
-// dst pointer in fill_segments_pool, (c) cross-layer file_offset aliasing when the expert index
-// stores the per-expert segment in file order. Uses an INDEPENDENT fd so any stdio buffering
-// shared with cache->files[file_idx] cannot mask an off-by-N byte read. Env-gated: only runs
-// when CGC_EXACT_CACHE_VERIFY=1 (prod default off; CI / ngl=99 reproduce must set it).
-//
-// CGC_EXACT_CACHE_VERIFY_FIRST_N (default 256) caps the number of segments verified per fill
-// batch — the verifier is O(bytes) and would otherwise dominate the decode path under ngl=99
-// full offload. The first batch always verifies everything; subsequent batches are sample-
-// bounded so a single rogue segment is found fast without paying the check on every token.
-static void cgc_exact_cache_verify_post_fill(llama_expert_cache * cache,
-                                              const std::vector<llama_expert_cache::segment> & segs,
-                                              const std::vector<uint8_t *> & dsts) {
-    if (getenv("CGC_EXACT_CACHE_VERIFY") == nullptr) {
-        return;
-    }
-    static int cgc_exact_remain = -1;
-    if (cgc_exact_remain < 0) {
-        const char * e = getenv("CGC_EXACT_CACHE_VERIFY_FIRST_N");
-        cgc_exact_remain = e ? atoi(e) : 256;
-    }
-    static std::unordered_set<uint64_t> cgc_exact_seen; // (file,off,len) — already verified
-    for (size_t i = 0; i < segs.size(); ++i) {
-        if (cgc_exact_remain <= 0) {
-            return;
-        }
-        const auto & s = segs[i];
-        if (s.file_idx >= cache->files_path.size() || cache->files_path[s.file_idx].empty()) {
-            // split-model or unset path: skip silently (the cache couldn't fill either)
-            continue;
-        }
-        const uint64_t key = ((uint64_t) s.file_idx << 40) ^ s.file_offset ^ s.bytes;
-        if (cgc_exact_seen.count(key)) {
-            continue;
-        }
-        cgc_exact_seen.insert(key);
-        cgc_exact_remain--;
-
-        const int fd = ::open(cache->files_path[s.file_idx].c_str(), O_RDONLY);
-        if (fd < 0) {
-            fprintf(stderr, "CGC-EXACT-VERIFY: open(%s) failed errno=%d — verifier disabled for this segment\n",
-                    cache->files_path[s.file_idx].c_str(), errno);
-            continue;
-        }
-        std::vector<uint8_t> ref(s.bytes);
-        size_t off = 0;
-        while (off < s.bytes) {
-            const ssize_t r = ::pread(fd, ref.data() + off, s.bytes - off,
-                                       (off_t) s.file_offset + (off_t) off);
-            if (r <= 0) {
-                fprintf(stderr, "CGC-EXACT-VERIFY: pread failed off=%zu errno=%d — aborting\n",
-                        off, errno);
-                ::close(fd);
-                abort();
-            }
-            off += (size_t) r;
-        }
-        ::close(fd);
-
-        size_t diff_off = SIZE_MAX;
-        for (size_t k = 0; k < s.bytes; ++k) {
-            if (dsts[i][k] != ref[k]) { diff_off = k; break; }
-        }
-        if (diff_off != SIZE_MAX) {
-            fprintf(stderr,
-                "CGC-EXACT-MISMATCH: file_idx=%u file_off=%lu bytes=%u "
-                "diff_off=%zu pool=0x%02x ref=0x%02x dst=%p path=%s — §5 violated, aborting\n",
-                s.file_idx, (unsigned long) s.file_offset, s.bytes, diff_off,
-                dsts[i][diff_off], ref[diff_off], (const void *) dsts[i],
-                cache->files_path[s.file_idx].c_str());
-            abort();
-        }
-    }
-}
-
 static void fill_segments_pool(llama_expert_cache * cache,
                                const std::vector<llama_expert_cache::segment> & segs,
                                const std::vector<uint8_t *> & dsts,
@@ -1563,10 +1459,6 @@ static void fill_segments_pool(llama_expert_cache * cache,
         std::unique_lock<std::mutex> lk(cache->pool_m);
         cache->pool_done_cv.wait(lk, [&]{ return cache->pool_outstanding == 0; });
     }
-    // [CGC §5 Exact Cache] after every worker has completed (pool_outstanding == 0) the dst
-    // buffers hold the post-fill pool contents. Re-verify against the GGUF on disk through an
-    // independent fd. No-op when CGC_EXACT_CACHE_VERIFY is unset.
-    cgc_exact_cache_verify_post_fill(cache, segs, dsts);
 }
 
 llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t budget_bytes) {
@@ -1595,7 +1487,6 @@ llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t b
         max_idx = std::max(max_idx, idx[i].file_idx);
     }
     cache->files.assign(max_idx + 1, nullptr);
-    cache->files_path.assign(max_idx + 1, std::string());
     std::vector<int> opened(max_idx + 1, 0);
     for (size_t i = 0; i < nidx; ++i) {
         const uint32_t f = idx[i].file_idx;
@@ -1603,7 +1494,6 @@ llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t b
             opened[f] = 1;
             if (f == 0) {
                 cache->files[f] = fopen(model->expert_cache_path.c_str(), "rb");
-                cache->files_path[f] = model->expert_cache_path;
             }
         }
     }
@@ -1715,7 +1605,6 @@ llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t b
         cache->pool_ext.assign(max_layer, std::vector<const uint8_t *>(4, nullptr));
         cache->pool_ext_stride.assign(max_layer, std::vector<size_t>(4, 0));
         cache->pool_ext_slots.assign(max_layer, std::vector<uint32_t>(4, 0));
-        cache->pool_ext_tensor.assign(max_layer, std::vector<ggml_tensor *>(4, nullptr));
         // "1" enables the pool; any other value (including "0") leaves it off. The L3-B gather
         // path is always available regardless. L4 (-ngl>0 + ALLOW_NGL) forces the pool on: the
         // Metal-visible pool is the only correct FFN source for a Metal-buft expert tensor.

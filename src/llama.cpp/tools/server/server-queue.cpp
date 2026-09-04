@@ -173,9 +173,6 @@ void server_queue::start_loop(int64_t idle_sleep_ms) {
             if (!running || !queue_tasks.empty()) {
                 break; // go back to process new tasks or terminate
             }
-            if (callback_has_pending_work && callback_has_pending_work()) {
-                break; // active server work remains, continue without a synthetic queue task
-            }
 
             // no tasks, check for sleeping state
             if (should_sleep()) {

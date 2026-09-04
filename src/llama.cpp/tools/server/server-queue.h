@@ -22,14 +22,13 @@ private:
     std::deque<server_task> queue_tasks;
     std::deque<server_task> queue_tasks_deferred;
 
-    mutable std::mutex mutex_tasks;
+    std::mutex mutex_tasks;
     std::condition_variable condition_tasks;
 
     // callback functions
     std::function<void(server_task &&)> callback_new_task;
     std::function<void(void)>           callback_update_slots;
     std::function<void(bool)>           callback_sleeping_state;
-    std::function<bool(void)>           callback_has_pending_work;
 
 public:
     // Add a new task to the end of the queue
@@ -52,7 +51,7 @@ public:
     // returns immediately if not sleeping
     void wait_until_no_sleep();
 
-    bool is_sleeping() const {
+    bool is_sleeping() {
         std::unique_lock<std::mutex> lock(mutex_tasks);
         return sleeping;
     }
@@ -77,12 +76,7 @@ public:
     void start_loop(int64_t idle_sleep_ms = -1);
 
     // for metrics
-    size_t queue_tasks_size() const {
-        std::unique_lock<std::mutex> lock(mutex_tasks);
-        return queue_tasks.size();
-    }
-
-    size_t queue_tasks_deferred_size() const {
+    size_t queue_tasks_deferred_size() {
         std::unique_lock<std::mutex> lock(mutex_tasks);
         return queue_tasks_deferred.size();
     }
@@ -114,13 +108,6 @@ public:
         } else {
             callback_sleeping_state = std::move(callback);
         }
-    }
-
-    // Register callback to check whether the server still has active work even when
-    // there are no queued tasks. This lets the main loop continue decode iterations
-    // without posting synthetic wake-up tasks back into the queue.
-    void on_has_pending_work(std::function<bool(void)> callback) {
-        callback_has_pending_work = std::move(callback);
     }
 
 private:

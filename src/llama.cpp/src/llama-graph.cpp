@@ -2035,25 +2035,26 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     }
     cb(selected_experts, "ffn_moe_topk", il);
 
+    // CGC expert-cache: remap leaf. An I32 input tensor of the same shape as the top-k ids
+    // that the eval hook (expert_cache_on_topk) repoints to cache slot indices (pool path) or
+    // 0..k-1 gathered indices (L3-B path) before the FFN mul_mat_id dispatches. Built as an
+    // input so its data is writable from the host; the hook fills it via cache_remap_tensors.
+    // When active, mul_mat_id below uses remap_ids instead of the raw expert ids so the FFN
+    // reads cache-resident (pool / gather) weights; the routing weights (ffn_moe_weights) keep
+    // using the raw ids because they index the gating probs by expert.
     ggml_tensor * remap_ids = nullptr;
     const char * dw_env = getenv("LLAMA_EXPERT_CACHE_DISABLE_WRITE");
-    // [CGC MTP fix] the expert-cache pool path is active for single-token decode AND small
-    // multi-token pool steps (speculative/MTP verify, n_tokens <= cgc_pool_max_tokens()).
-    // Keep the top-k ids alive across the async segmented dispatch so the eval hook snapshots
-    // the real expert ids instead of a recycled work buffer that has already fallen back to
-    // the allocator's trivial 0..k-1 pattern on `ngl30`.
-    const bool pool_path_active = expert_cache_active && !(dw_env && dw_env[0]) && n_tokens >= 1 &&
-            (uint64_t) n_tokens <= cgc_pool_max_tokens() && il >= 0 && il < n_layer + n_layer_nextn;
-    if (pool_path_active) {
-        ggml_set_output(selected_experts);
-    }
-
-    // CGC expert-cache: remap tensor. It must depend on selected_experts so the eval hook can
-    // rewrite the copied ids only after top-k has been produced and before mul_mat_id consumes
-    // them. The remap is only built for the pool-path range; larger prefill batches keep using
-    // the raw top-k ids and full expert weights.
-    if (pool_path_active) {
-        ggml_tensor * remap = ggml_cont(ctx0, selected_experts);
+    // [CGC MTP fix] the remap leaf is created for single-token decode AND small multi-token
+    // pool steps (speculative/MTP verify, n_tokens <= cgc_pool_max_tokens()): the hook maps
+    // expert ids to pool slot indices across ALL tokens of the batch, and the FFN reads the
+    // pool regions by slot. Larger prefill batches (n_tokens > pool_max) compute over the
+    // full expert weights and MUST keep using the raw top-k ids, because the per-layer expert
+    // tensors are shrunk to the bounded pool capacity — a raw-id read against a capacity-slot
+    // tensor would go OOB -> NaN -> garbage downstream. Creating the leaf here for such batches
+    // would perturb the ggml-alloc buffer layout, so it is only built for the pool-path range.
+    if (expert_cache_active && !(dw_env && dw_env[0]) && n_tokens >= 1 &&
+            (uint64_t) n_tokens <= cgc_pool_max_tokens() && il >= 0 && il < n_layer + n_layer_nextn) {
+        ggml_tensor * remap = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_expert_used, n_tokens);
         ggml_set_output(remap); // prevent ggml-alloc from overwriting the hook-written ids before mul_mat_id consumes them
         cb(remap, "ffn_moe_topk_remap", il);
         ggml_build_forward_expand(gf, remap);

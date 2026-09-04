@@ -355,17 +355,16 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
         ml.expert_cache_bytes = params.expert_cache_bytes;
         if (params.expert_cache_bytes > 0) {
             model->expert_cache_path = fname;
-            const bool full_gpu_offload = params.n_gpu_layers > (int32_t) model->hparams.n_layer_all;
             // CGC: L4 skip-load gate — expert tensors stay on CPU (bounded residency). Same gate as
             // expert_cache_active below: -ngl>0 only enables it with the explicit ALLOW_NGL override.
             const char * no_gather = getenv("LLAMA_EXPERT_CACHE_NOGATHER");
-            ml.expert_cache_skip_load = (params.n_gpu_layers <= 0 || (full_gpu_offload && getenv("LLAMA_EXPERT_CACHE_ALLOW_NGL"))) && !(no_gather && no_gather[0]);
+            ml.expert_cache_skip_load = (params.n_gpu_layers <= 0 || getenv("LLAMA_EXPERT_CACHE_ALLOW_NGL")) && !(no_gather && no_gather[0]);
             model->expert_cache_skip_load = ml.expert_cache_skip_load;
-            // CGC expert-cache L4: bounded Metal pool, only on the full-offload Metal path.
+            // CGC expert-cache L4: bounded Metal pool, only on the Metal path (-ngl > 0 + ALLOW_NGL).
             // compute_l4_pool_capacity scans the GGUF metadata (budget -> capacity) and sets
             // expert_cache_pool_capacity; create_tensor then shrinks the expert tensors to it.
             ml.expert_cache_l4_skip_layer0 = getenv("LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0") != nullptr;
-            const bool l4_path = full_gpu_offload && getenv("LLAMA_EXPERT_CACHE_ALLOW_NGL") && !(no_gather && no_gather[0]);
+            const bool l4_path = params.n_gpu_layers > 0 && getenv("LLAMA_EXPERT_CACHE_ALLOW_NGL") && !(no_gather && no_gather[0]);
             if (l4_path) {
                 ml.compute_l4_pool_capacity();
                 model->expert_cache_pool_capacity = ml.expert_cache_pool_capacity;
@@ -388,11 +387,9 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
                 LLAMA_LOG_INFO("%s: expert cache initialized: %zu bytes budget, %zu index entries\n",
                     __func__, params.expert_cache_bytes, model->expert_index.size());
                 // CGC: hook + gather path gate (disabled by NOGATHER; on the Metal path (ngl > 0)
-                // it only runs with the explicit ALLOW_NGL override, and partial offload keeps it
-                // disabled until the cross-backend contract is fixed.
+                // it only runs with the explicit ALLOW_NGL override).
                 const char * no_gather = getenv("LLAMA_EXPERT_CACHE_NOGATHER");
-                const bool full_gpu_offload = model->n_gpu_layers() > model->hparams.n_layer_all;
-                model->expert_cache_active = (model->n_gpu_layers() <= 0 || (full_gpu_offload && getenv("LLAMA_EXPERT_CACHE_ALLOW_NGL"))) && !(no_gather && no_gather[0]);
+                model->expert_cache_active = (model->n_gpu_layers() <= 0 || getenv("LLAMA_EXPERT_CACHE_ALLOW_NGL")) && !(no_gather && no_gather[0]);
                 // CGC expert-cache L4: adopt each expert tensor's Metal storage as the per-layer pool
                 // region (zero copy — the Metal FFN reads the pool directly). Then mark the first
                 // n_slots experts of every layer resident: their bytes were already pre-read into the
@@ -404,7 +401,7 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
                         }
                         llama_expert_cache_adopt_pool_region(model->expert_cache,
                                 ref.layer, ref.kind, (const uint8_t *) ref.tensor->data,
-                                (int64_t) model->expert_cache_pool_capacity, ref.expert_bytes, ref.tensor);
+                                (int64_t) model->expert_cache_pool_capacity, ref.expert_bytes);
                     }
                     for (const auto & ref : ml.l4_pool_tensors) {
                         if (ref.kind != 0) {
@@ -673,3 +670,4 @@ const char * llama_print_system_info(void) {
 
     return s.c_str();
 }
+
