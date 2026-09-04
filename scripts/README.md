@@ -80,6 +80,8 @@ scripts/
   - QA semantic debug 结论以 `8098` 为准。
 - `run_server.sh` 现在有明确的 memory guard：
   - `CGC_SERVER_MEMORY_MODE=dev`：如果当前机器不满足该条 server 的基本可运作记忆体要求，直接拒跑。
+  - 对 `legacy-25plus` 这类已验证单机 profile，guard 按 `free% + other_llama_servers` 判断，不再用 physical RAM 一刀切。
+  - 对未知的 full-MTP heavy line，guard 仍会要求更保守的空闲水位。
   - `CGC_SERVER_MEMORY_MODE=prod`：如果 full-MTP heavy line 不满足要求，先自动切到保命配置（`ngl=8`、`draft_ngl=0`、更小 `ctx/batch/ubatch`）。
   - 即使是 `prod`，如果连保命线也不满足，仍会拒跑。
   - 这条 guard 也会把“已有其他 `llama-server` 在跑”算进去，因此不要在同一台机器上双开两条 full-MTP `legacy-25plus` 实验线。

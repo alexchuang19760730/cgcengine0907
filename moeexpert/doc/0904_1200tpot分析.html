@@ -319,6 +319,12 @@
       <td><span class="accent">主開放槓桿</span></td>
     </tr>
     <tr>
+      <td><b>draft force-sync（<code>CGC_DRAFT_FORCE_SYNC=1</code>）</b></td>
+      <td>串行 A/B 已否決：同一條 <code>longform-zh</code> replay 下，吞吐從 <code>26.40 t/s</code> 降到 <code>17.02 t/s</code>，但 acceptance 仍是 <code>163/168</code></td>
+      <td>這證明把 draft decode 改成同步，並沒有縮短 critical path，只是把原本藏在 sample 前的 wait 轉移成更早發生的顯式同步。</td>
+      <td><span class="warn">關閉</span></td>
+    </tr>
+    <tr>
       <td><b>QA debug 線隔離</b></td>
       <td>已固化為 <code>8098</code>，不再混入 longform benchmark</td>
       <td>這不是 CPOT 微觀優化，但它能避免 legacy benchmark 線被非性能實驗污染。</td>
@@ -454,7 +460,7 @@ Invoke-RestMethod -Method Post `
 </div>
 
 <div class="sub" style="margin-top:22px">
-數據來源：2026-09-04 本地實測 + <code>CGC_CPOT_分析工具白皮書_2026-08-29</code>。legacy-25plus longform server = <code>26.2197 ~ 26.4062 t/s</code>、<code>163/168 accepted</code>；isolated CLI steady = <code>24.296 t/s</code>、accept <code>99.187%</code>、hit <code>88.9%</code>。fresh <code>CGC-SEG + decode_breakdown.py</code> 直接量測結果：verify = <code>99.3 ~ 109.1 ms/step</code>、fill = <code>3.2 ~ 3.5 ms/step</code>、submit = <code>3.0 ~ 3.3 ms/step</code>、residual = <code>31.3 ~ 41.7 ms/step</code>。最新 residual telemetry 再向下收斂為：<code>draft=16.735 ms/call</code>、其中 <code>draft llama_decode=2.710</code>、<code>pick_writeback=16.379</code>、而 <code>pick sampler=16.373</code> 幾乎全由 <code>common_sampler_sample() → llama_synchronize(ctx_dft)</code> 構成（<code>5.428 ms/sample</code>，占 sample total <code>99.89%</code>）。因此本頁對 CPU/GPU overlap 的最新結論是：<b>GPU verify wait 仍主導整體 decode，而 CPU residual 裡最大的可改子桶已定位為 draft sampler sync wait</b>。
+數據來源：2026-09-04 本地實測 + <code>CGC_CPOT_分析工具白皮書_2026-08-29</code>。legacy-25plus longform server = <code>26.2197 ~ 26.4062 t/s</code>、<code>163/168 accepted</code>；isolated CLI steady = <code>24.296 t/s</code>、accept <code>99.187%</code>、hit <code>88.9%</code>。fresh <code>CGC-SEG + decode_breakdown.py</code> 直接量測結果：verify = <code>99.3 ~ 109.1 ms/step</code>、fill = <code>3.2 ~ 3.5 ms/step</code>、submit = <code>3.0 ~ 3.3 ms/step</code>、residual = <code>31.3 ~ 41.7 ms/step</code>。最新 residual telemetry 再向下收斂為：<code>draft=16.735 ms/call</code>、其中 <code>draft llama_decode=2.710</code>、<code>pick_writeback=16.379</code>、而 <code>pick sampler=16.373</code> 幾乎全由 <code>common_sampler_sample() → llama_synchronize(ctx_dft)</code> 構成（<code>5.428 ms/sample</code>，占 sample total <code>99.89%</code>）。另外，串行 <code>CGC_DRAFT_FORCE_SYNC=1</code> A/B 已確認同 accept 下僅把 longform 吞吐壓到 <code>17.0156 t/s</code>，因此本頁對 CPU/GPU overlap 的最新結論是：<b>GPU verify wait 仍主導整體 decode，而 CPU residual 裡最大的可改子桶雖已定位為 draft sampler sync wait，但不能靠 force-sync 直接消除</b>。
 </div>
 
 </div>

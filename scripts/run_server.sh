@@ -253,7 +253,11 @@ cgc_existing_llama_server_count() {
 
 cgc_memory_guard_class() {
     if [ "$SERVER_MTP" = "1" ] && [ "${SERVER_NGL:-0}" -ge 90 ] && [ "${CTX:-0}" -ge 3072 ]; then
-        echo "full-mtp"
+        if [ "$SERVER_PROFILE" = "legacy-25plus" ]; then
+            echo "full-mtp-known-profile"
+        else
+            echo "full-mtp"
+        fi
     elif [ "$SERVER_MTP" = "1" ]; then
         echo "fallback-mtp"
     else
@@ -264,9 +268,10 @@ cgc_memory_guard_class() {
 cgc_memory_guard_req() {
     local klass="$1"
     case "$klass" in
-        full-mtp) echo "24 35 0" ;;      # phys_gb free_pct other_llama_servers
-        fallback-mtp) echo "16 20 0" ;;
-        baseline) echo "12 15 0" ;;
+        full-mtp-known-profile) echo "0 35 0" ;;   # known single-machine profile: free_pct other_llama_servers gate only
+        full-mtp) echo "0 40 0" ;;                 # unknown heavy full-MTP launches need more headroom
+        fallback-mtp) echo "0 20 0" ;;
+        baseline) echo "0 15 0" ;;
         *) echo "0 0 999" ;;
     esac
 }
@@ -343,7 +348,10 @@ if [ -n "${FREE_PCT:-}" ] && [ "$FREE_PCT" -lt 25 ]; then
     echo "[guard] warning: 系統可用記憶體僅 ${FREE_PCT}%（<25%）——後續 memory guard 會決定 fail fast 或 prod fallback" >&2
 fi
 
-# [防護 2b] 基本可運作記憶體要求：full-MTP 研發線禁止硬擠；prod 線先自動降到保命配置。
+# [防護 2b] 基本可運作記憶體要求：
+# - 已驗證單機 profile（legacy-25plus）按 free% + other_llama_servers 判斷，不再用 physical RAM 一刀切。
+# - 未知 full-MTP heavy line 仍保守要求更高 free%。
+# - prod 線若 full-MTP 不滿足要求，先自動降到保命配置。
 FREE_PCT="${FREE_PCT:-0}"
 OTHER_LLAMA_SERVERS="$(cgc_existing_llama_server_count)"
 MEM_CLASS="$(cgc_memory_guard_class)"
