@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>0904_1200 TPOT 分析 · devserver longform 25+ old-good vs latest</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --card: #171e2e;
+    --ink: #e8ecf4;
+    --sub: #9aa5b8;
+    --line: #2a3350;
+    --gpu: #7fb8f0;
+    --cpu: #8fe3a0;
+    --core: #f0a45c;
+    --wrap: #d98cf0;
+    --good: #8fe3a0;
+    --warn: #f08a8a;
+    --accent: #ffd479;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+    padding: 32px 20px 60px;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+  h1 { margin: 0 0 6px; font-size: 28px; }
+  h2 { margin: 0 0 10px; font-size: 18px; }
+  p { margin: 0 0 12px; }
+  .sub { color: var(--sub); font-size: 14px; margin-bottom: 28px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 22px 24px;
+    margin-bottom: 22px;
+  }
+  .desc { color: var(--sub); font-size: 13px; margin-bottom: 16px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px;
+    margin-top: 14px;
+  }
+  .metric {
+    background: #0c1019;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .metric .k { color: var(--sub); font-size: 12px; margin-bottom: 4px; }
+  .metric .v { font-size: 24px; font-weight: 700; }
+  .metric .s { color: var(--sub); font-size: 12px; margin-top: 6px; }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+    color: var(--sub);
+    font-size: 12.5px;
+    margin: 8px 0 16px;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .barrow { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .barlabel {
+    width: 280px;
+    flex-shrink: 0;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  .barlabel small { display: block; color: var(--sub); font-size: 11px; }
+  .bar {
+    flex: 1;
+    height: 36px;
+    display: flex;
+    overflow: hidden;
+    border-radius: 9px;
+    border: 1px solid var(--line);
+    background: #0c1019;
+    position: relative;
+  }
+  .seg {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #10141f;
+    border-right: 1px solid rgba(15,20,32,.35);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--accent);
+    opacity: 0.95;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 8px;
+    font-size: 13px;
+  }
+  th, td {
+    border-bottom: 1px solid var(--line);
+    padding: 9px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { color: var(--sub); font-size: 12px; font-weight: 600; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .good { color: var(--good); font-weight: 700; }
+  .warn { color: var(--warn); font-weight: 700; }
+  .accent { color: var(--accent); font-weight: 700; }
+  code {
+    background: #0c1019;
+    color: #cde3a0;
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-size: 12px;
+  }
+  pre {
+    background: #0c1019;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    color: #cde3a0;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  ul { margin: 8px 0 0 18px; padding: 0; }
+  li { margin: 6px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>0904_1200 TPOT 分析</h1>
+<div class="sub">Nail-Qwen3.6 denseIQ4X · devserver branch · 2026-09-04 12:00 context · 比較 old-good <code>legacy-25plus</code>、當前 latest debug line，以及 isolated CLI steady control</div>
+
+<div class="card">
+  <h2>① 本次結論</h2>
+  <p class="desc">本頁重點不是再追問「是不是 HTTP 慢」，而是把現在 longform decode 的 TPOT 拆開，找出 30+ 的主槓桿在哪。核心結論很清楚：</p>
+  <div class="grid">
+    <div class="metric">
+      <div class="k">old-good server（legacy-25plus）</div>
+      <div class="v">26.31 t/s</div>
+      <div class="s">TPOT = 38.01 ms/token · draft accept = 97.02%</div>
+    </div>
+    <div class="metric">
+      <div class="k">latest server（8098 debug line）</div>
+      <div class="v">14.48 t/s</div>
+      <div class="s">TPOT = 69.08 ms/token · draft accept = 41.67%</div>
+    </div>
+    <div class="metric">
+      <div class="k">isolated CLI steady control</div>
+      <div class="v">24.30 t/s</div>
+      <div class="s">TPOT = 41.16 ms/token · accept = 99.19% · hit = 88.9%</div>
+    </div>
+    <div class="metric">
+      <div class="k">30+ 目標線</div>
+      <div class="v">33.33 ms/token</div>
+      <div class="s">相對 latest 還要再砍 <span class="accent">35.75 ms/token</span></div>
+    </div>
+  </div>
+  <p style="margin-top:14px">現在的主退化不是 wrapper。真正炸開的是 <span class="accent">server core 這一段的有效 TPOT</span>，而且它和 <code>draft_accept</code> 從 <code>97%</code> 掉到 <code>41.7%</code> 完全同方向。</p>
+</div>
+
+<div class="card">
+  <h2>② 本次採用的實測口徑</h2>
+  <p class="desc">這次把數字分成三條線，避免把不同測法混在一起。</p>
+  <table>
+    <tr><th>線別</th><th>命令 / 入口</th><th>關鍵設定</th><th>結果</th></tr>
+    <tr>
+      <td><b>legacy-25plus server</b></td>
+      <td><code>CGC_SERVER_PROFILE=legacy-25plus</code> + <code>replay_server_profile.py --profile longform-zh</code></td>
+      <td>denseIQ4X、MTP、CLI parity、<code>n_max=3</code>、longform prefill、<code>reasoning-format=deepseek</code></td>
+      <td><span class="good">26.31 t/s</span>、<code>163/168 accepted</code>、finish=<code>length</code></td>
+    </tr>
+    <tr>
+      <td><b>latest server</b></td>
+      <td><code>http://127.0.0.1:8098/v1</code> + <code>replay_server_profile.py --profile longform-zh</code></td>
+      <td>native thinking-contract debug 線、QA-only override 已存在、同樣 denseIQ4X + MTP server</td>
+      <td><span class="warn">14.48 t/s</span>、<code>20/48 accepted</code>、finish=<code>stop</code></td>
+    </tr>
+    <tr>
+      <td><b>isolated CLI steady</b></td>
+      <td><code>llama-speculative-simple</code> 長 prompt steady recipe</td>
+      <td>denseIQ4X、MTP、CLI production env、<code>n_max=2</code>、無 server 併跑</td>
+      <td><span class="good">24.30 t/s</span>、accept=<code>99.187%</code>、hit=<code>88.9%</code></td>
+    </tr>
+  </table>
+  <p style="margin-top:12px">注意：CLI steady 和 server replay 的 prompt / <code>n_max</code> 不同，所以它不是拿來直接宣判誰快誰慢，而是拿來當「健康 compute floor」的參考。這次真正可直接對拍的是 <b>legacy-25plus server</b> vs <b>latest server</b>，因為兩邊都走同一個 longform replay 口徑。</p>
+</div>
+
+<div class="card">
+  <h2>③ TPOT 長條圖：latest 炸掉的是哪一段</h2>
+  <p class="desc">拆法說明：這裡把 <b>old-good server</b> 當作健康 server path 的參考，把它的 TPOT 拆成 GPU / CPU compute + 少量 server core + wrapper。對 <b>latest</b>，保持 compute floor 與 wrapper 不變，把多出來的 TPOT 全部先歸到 <b>server core stall / acceptance inefficiency</b>。這是工程估算，不是假裝直接量到的 perf counter。</p>
+
+  <div class="legend">
+    <span><i class="sw" style="background:var(--gpu)"></i>GPU compute</span>
+    <span><i class="sw" style="background:var(--cpu)"></i>CPU compute / cache / scheduler</span>
+    <span><i class="sw" style="background:var(--core)"></i>server core（chat/parser/MTP acceptance path）</span>
+    <span><i class="sw" style="background:var(--wrap)"></i>wrapper（HTTP/OpenAI JSON）</span>
+    <span><i class="sw" style="background:var(--accent)"></i>30+ 目標線（33.33 ms/token）</span>
+  </div>
+
+  <div class="barrow">
+    <div class="barlabel">old-good server<small>26.31 t/s · 38.01 ms/token · 97.02% accept</small></div>
+    <div class="bar">
+      <div class="seg" style="width:33.88%;background:var(--gpu)" title="23.41 ms/token">GPU 23.4</div>
+      <div class="seg" style="width:18.24%;background:var(--cpu)" title="12.60 ms/token">CPU 12.6</div>
+      <div class="seg" style="width:1.74%;background:var(--core)" title="1.20 ms/token"></div>
+      <div class="seg" style="width:1.16%;background:var(--wrap)" title="0.80 ms/token"></div>
+      <div class="line" style="left:48.25%"></div>
+    </div>
+  </div>
+
+  <div class="barrow">
+    <div class="barlabel">latest server<small>14.48 t/s · 69.08 ms/token · 41.67% accept</small></div>
+    <div class="bar">
+      <div class="seg" style="width:33.88%;background:var(--gpu)" title="23.41 ms/token">GPU 23.4</div>
+      <div class="seg" style="width:18.24%;background:var(--cpu)" title="12.60 ms/token">CPU 12.6</div>
+      <div class="seg" style="width:46.70%;background:var(--core)" title="32.26 ms/token">core 32.3</div>
+      <div class="seg" style="width:1.16%;background:var(--wrap)" title="0.80 ms/token"></div>
+      <div class="line" style="left:48.25%"></div>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>段落</th><th>old-good</th><th>latest</th><th>差值</th><th>判讀</th></tr>
+    <tr><td>GPU compute</td><td class="num">23.41 ms</td><td class="num">23.41 ms</td><td class="num">0.00</td><td>先視為模型 / Metal 核心 compute floor 未變。</td></tr>
+    <tr><td>CPU compute</td><td class="num">12.60 ms</td><td class="num">12.60 ms</td><td class="num">0.00</td><td>先視為 expert-cache / scheduler 基本盤未變。</td></tr>
+    <tr><td>server core</td><td class="num">1.20 ms</td><td class="num">32.26 ms</td><td class="num"><span class="warn">+31.06</span></td><td>這是現在最像真 root cause 的炸點，且和 accept 崩落同步。</td></tr>
+    <tr><td>wrapper</td><td class="num">0.80 ms</td><td class="num">0.80 ms</td><td class="num">0.00</td><td>HTTP / OpenAI JSON 不足以解釋這種級別的退化。</td></tr>
+  </table>
+
+  <p style="margin-top:12px">換句話說，若只想知道「30+ 的主槓桿在哪」，答案不是 wrapper，而是把 longform 從現在這條 latest debug server core 拉回 <b>legacy-25plus</b> 那條健康 acceptance 線。</p>
+</div>
+
+<div class="card">
+  <h2>④ latest 設定 vs old-good 設定</h2>
+  <p class="desc">這一段把目前最值得保留的設定和最該隔離的設定明寫出來，方便後續不要再把 QA debug 線混到 longform benchmark。</p>
+
+  <table>
+    <tr><th>項目</th><th>old-good（legacy-25plus）</th><th>latest（8098）</th><th>評語</th></tr>
+    <tr><td>模型 / carrier</td><td>denseIQ4X + MTP</td><td>denseIQ4X + MTP</td><td>相同，不是 carrier 問題。</td></tr>
+    <tr><td>CLI parity init</td><td><code>ON</code></td><td><code>ON</code></td><td>這是應保留的健康 runtime 基線。</td></tr>
+    <tr><td>ctx / ngl / expert-cache</td><td><code>3072 / 99 / 4GiB</code></td><td><code>3072 / 99 / 4GiB</code></td><td>核心 runtime 面基本一致。</td></tr>
+    <tr><td>spec-draft-n-max</td><td><code>3</code></td><td><code>3</code></td><td>同口徑對拍。</td></tr>
+    <tr><td>longform 起手</td><td><code>assistant_prefill="巴黎之所以成為法國的政治與文化中心，主要是因為"</code></td><td>native thinking-contract debug 線</td><td>old-good 明顯更利於 acceptance。</td></tr>
+    <tr><td>semantic debug / QA-only 相關</td><td>無</td><td>有</td><td>這些東西應留在 QA 實驗，不應共享 longform benchmark 線。</td></tr>
+    <tr><td>實測 longform 結果</td><td><span class="good">26.31 t/s / 97.02%</span></td><td><span class="warn">14.48 t/s / 41.67%</span></td><td>差異大到足以先回退路徑再談細修。</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>⑤ 哪些槓桿最有希望把 server 拉到 30+</h2>
+  <p class="desc">從 latest 的 <code>69.08 ms/token</code> 拉到 <code>33.33 ms/token</code>，總共要再砍 <code>35.75 ms/token</code>。按現在證據，最有希望的不是平均撒網，而是按優先順序一刀一刀吃。</p>
+  <table>
+    <tr><th>槓桿</th><th>預估收益</th><th>依據</th><th>備註</th></tr>
+    <tr>
+      <td><b>先把 longform benchmark 線回到 legacy-25plus profile</b></td>
+      <td class="num"><span class="good">-31.06 ms/token</span></td>
+      <td>已實測：<code>26.31 t/s</code> vs <code>14.48 t/s</code></td>
+      <td>這一刀本身就能把 longform 從 <code>14.5</code> 拉回 <code>26.3</code>。</td>
+    </tr>
+    <tr>
+      <td>在 legacy-25plus 線上重 sweep <code>n_max=2/3</code>、batch/ubatch</td>
+      <td class="num">-2.0 ~ -2.5</td>
+      <td>當前 old-good 已經健康，適合做純性能 sweep</td>
+      <td>這一刀比在 latest 壞線上 sweep 更乾淨。</td>
+    </tr>
+    <tr>
+      <td>把 semantic debug / extra prompt logging 完全移出 benchmark 線</td>
+      <td class="num">-0.5 ~ -1.0</td>
+      <td>屬熱路徑外衣，應避免帶進 production benchmark</td>
+      <td>不是主因，但應該順手拿掉。</td>
+    </tr>
+    <tr>
+      <td>再把 longform accept 從 <code>97%</code> 往 <code>99%</code> 推</td>
+      <td class="num">-1.0 ~ -1.5</td>
+      <td>目前 server old-good 已接近，仍有小幅空間</td>
+      <td>偏細修，但足以吃掉最後幾 ms。</td>
+    </tr>
+    <tr>
+      <td>wrapper / JSON / HTTP 微優化</td>
+      <td class="num">-0.3 ~ -0.7</td>
+      <td>本次分解已證明它不是主槓桿</td>
+      <td>可以做，但順序應排後面。</td>
+    </tr>
+  </table>
+
+  <p style="margin-top:12px">也就是說，現在要到 <b>30+</b> 的最短路，不是繼續在 latest 壞線上找零碎優化，而是：</p>
+  <ul>
+    <li>先讓 longform benchmark 固定走 <code>legacy-25plus</code> 這條健康線；</li>
+    <li>再在這條線上做 <code>n_max / batch / ubatch</code> 的純性能 sweep；</li>
+    <li>把 QA-only native-thinking contract debug 留在另一條隔離線，不要再共享 longform benchmark。</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h2>⑥ 可重跑命令</h2>
+  <pre><code># A. old-good server（第一個 25+ 狀態）
+CGC_SERVER_MODEL_ROOT=/Users/alexchuang/Documents/flashkv0516/models/gguf \
+CGC_SERVER_PROFILE=legacy-25plus \
+CGC_SERVER_PORT=8099 \
+CGC_SERVER_HOST=127.0.0.1 \
+N30CACHE_NO_CLEAN=1 \
+bash scripts/run_server.sh
+
+python3 scripts/check/replay_server_profile.py \
+  --base-url http://127.0.0.1:8099/v1 \
+  --profile longform-zh \
+  --timeout 180 \
+  --model test
+
+# B. latest server（當前 debug 線）
+python3 scripts/check/replay_server_profile.py \
+  --base-url http://127.0.0.1:8098/v1 \
+  --profile longform-zh \
+  --timeout 180 \
+  --model test
+
+# C. isolated CLI steady control（不可與 server 併跑）
+python3 scripts/benchmark/compare_cli_steady_vs_server.py</code></pre>
+  <p style="margin-top:12px">注意：CLI steady 一定要在沒有其它 <code>llama-server</code> 佔同機資源時跑，否則同機共跑會把 steady 速度從 <code>25.6</code> 左右壓到 <code>20</code> 左右，會把判讀整個弄歪。</p>
+</div>
+
+<div class="card">
+  <h2>⑦ Windows 端如何連上我們的 server</h2>
+  <p class="desc">目前 server 已經提供 OpenAI-compatible 介面。Windows 端不需要懂 llama.cpp 內部細節，只要把 Base URL 指到 Mac 上的 <code>/v1</code> 就可以。</p>
+  <table>
+    <tr><th>項目</th><th>說明</th></tr>
+    <tr><td>Base URL</td><td><code>http://&lt;Mac LAN IP&gt;:8080/v1</code> 或你實際啟動時指定的 port，例如 <code>http://192.168.101.87:8099/v1</code></td></tr>
+    <tr><td>Chat Completions</td><td><code>POST /chat/completions</code></td></tr>
+    <tr><td>Models</td><td><code>GET /models</code></td></tr>
+    <tr><td>Auth</td><td>目前本地 LAN 測試線不需要 API Key；若上外網再另外補保護。</td></tr>
+  </table>
+
+  <pre><code># 先在 Mac 上啟動 server
+CGC_SERVER_MODEL_ROOT=/Users/alexchuang/Documents/flashkv0516/models/gguf \
+CGC_SERVER_PROFILE=legacy-25plus \
+CGC_SERVER_PORT=8080 \
+bash scripts/run_server.sh
+
+# Windows PowerShell 測試：列出模型
+Invoke-RestMethod -Method Get `
+  -Uri "http://192.168.101.87:8080/v1/models"
+
+# Windows PowerShell 測試：chat.completions
+$body = @{
+  model = "test"
+  messages = @(
+    @{ role = "user"; content = "請用一段中文說明巴黎為什麼是法國的政治與文化中心，避免條列，至少120字。" }
+  )
+  temperature = 0
+  max_tokens = 220
+  stop = @("&lt;|end|&gt;", "&lt;|output|&gt;", "&lt;|user|&gt;")
+} | ConvertTo-Json -Depth 6
+
+Invoke-RestMethod -Method Post `
+  -Uri "http://192.168.101.87:8080/v1/chat/completions" `
+  -ContentType "application/json" `
+  -Body $body</code></pre>
+
+  <ul>
+    <li>若 Windows 端連不上，先檢查 Mac 的防火牆是否允許該 port，並確認兩台機器在同一個 LAN。</li>
+    <li>Mac 本機自測 <code>localhost</code> 時要加 <code>--noproxy '*'</code>；Windows 對 LAN IP 通常不需要。</li>
+    <li>若要給第三方 SDK（OpenAI SDK、LangChain、LobeChat 等）接，只要把 base URL 改成這個 <code>/v1</code> 即可。</li>
+  </ul>
+</div>
+
+<div class="sub" style="margin-top:22px">
+數據來源：2026-09-04 本地實測。old-good longform server = <code>26.3063 t/s</code>、<code>163/168 accepted</code>；latest longform server = <code>14.4767 t/s</code>、<code>20/48 accepted</code>；isolated CLI steady = <code>24.296 t/s</code>、accept <code>99.187%</code>、hit <code>88.9%</code>。本頁的 GPU/CPU/core/wrapper 分解屬工程估算，用途是排序槓桿，不是宣稱拿到了硬體 perf counter 級別的直接量測。
+</div>
+
+</div>
+</body>
+</html>

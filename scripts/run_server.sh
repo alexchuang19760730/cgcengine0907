@@ -24,6 +24,7 @@
 #   CGC_SERVER_RUNTIME_PROFILE=non-mtp ./scripts/run_server.sh   # 非 MTP 基線（~8 t/s）
 #   CGC_SERVER_RUNTIME_PROFILE=mtp ./scripts/run_server.sh        # 明確切回 MTP 生產配置
 #   CGC_SERVER_MTP_CLI_PARITY=1 ./scripts/run_server.sh          # 增量套用 CLI 的 MTP init（warmup / seq_rm probe）
+#   CGC_SERVER_PROFILE=legacy-25plus ./scripts/run_server.sh     # 還原第一個 25+ server 狀態的 longform 啟動口徑
 #   CGC_SERVER_OOM_SAFE=1 ./scripts/run_server.sh # 16GB 機器上的 fallback / 保命模式
 #   CGC_SERVER_PORT=9931 ./scripts/run_server.sh  # 換 port
 #   CGC_SERVER_MODEL_ROOT=/path/to/models/gguf ./scripts/run_server.sh # worktree 外掛模型目錄
@@ -160,8 +161,24 @@ case "$SERVER_PROFILE" in
         [ -z "${CGC_SERVER_CHAT_AB_MAX_TOKENS+x}" ] && SERVER_CHAT_AB_MAX_TOKENS="220"
         [ -z "${CGC_SERVER_CHAT_AB_STOP+x}" ] && SERVER_CHAT_AB_STOP="<|end|>,<|output|>,<|user|>"
         ;;
+    legacy-25plus)
+        # 2026-09-04 第一個 25+ server 狀態：
+        # - denseIQ4X + MTP + CLI parity env
+        # - healthy runtime（ngl=99, ctx=3072, n_max=3）
+        # - longform prefill 把輸出拉回 content 軌
+        # - reasoning-format=deepseek，便於重放 semantic-gap 當時的量測口徑
+        [ -z "${CGC_SERVER_MTP+x}" ] && SERVER_MTP=1
+        [ -z "${CGC_SERVER_DENSE_IQ4X+x}" ] && SERVER_DENSE_IQ4X=1
+        [ -z "${CGC_SERVER_MTP_CLI_PARITY+x}" ] && SERVER_MTP_CLI_PARITY=1
+        [ -z "${CGC_SERVER_SKIP_CHAT_PARSING+x}" ] && SERVER_SKIP_CHAT_PARSING=0
+        [ -z "${CGC_SERVER_REASONING_FORMAT+x}" ] && SERVER_REASONING_FORMAT="deepseek"
+        [ -z "${CGC_SERVER_CHAT_AB+x}" ] && SERVER_CHAT_AB="custom-prefix"
+        [ -z "${CGC_SERVER_CHAT_AB_PREFIX+x}" ] && SERVER_CHAT_AB_PREFIX="巴黎之所以成為法國的政治與文化中心，主要是因為"
+        [ -z "${CGC_SERVER_CHAT_AB_MAX_TOKENS+x}" ] && SERVER_CHAT_AB_MAX_TOKENS="220"
+        [ -z "${CGC_SERVER_CHAT_AB_STOP+x}" ] && SERVER_CHAT_AB_STOP="<|end|>,<|output|>,<|user|>"
+        ;;
     *)
-        echo "error: CGC_SERVER_PROFILE must be off|qa-zh|longform-zh (got $SERVER_PROFILE)" >&2
+        echo "error: CGC_SERVER_PROFILE must be off|qa-zh|longform-zh|legacy-25plus (got $SERVER_PROFILE)" >&2
         exit 2
         ;;
 esac
@@ -425,7 +442,7 @@ for i in $(seq 1 60); do
         echo "  Base URL   : http://$LAN_IP:$PORT/v1（OpenAI 相容）"
         echo "  測試       : curl --noproxy '*' http://127.0.0.1:$PORT/v1/models"
         echo "  Windows 伙伴 : 程式內直接指 http://$LAN_IP:$PORT/v1/chat/completions"
-        echo "  Runtime    : CGC_SERVER_RUNTIME_PROFILE=mtp|non-mtp（目前 $SERVER_RUNTIME_PROFILE）"
+        echo "  Runtime    : CGC_SERVER_RUNTIME_PROFILE=mtp|non-mtp (current=${SERVER_RUNTIME_PROFILE})"
         echo "  Regression : bash scripts/check/check_server.sh --base-url http://127.0.0.1:$PORT/v1"
         echo "  Benchmark  : python3 scripts/benchmark/benchmark_server_profiles.py --base-url http://127.0.0.1:$PORT/v1 --iterations 3"
         if [ "$SERVER_PROFILE" = "qa-zh" ]; then
@@ -433,6 +450,9 @@ for i in $(seq 1 60); do
             echo "  Payload    : {\"messages\":[{\"role\":\"user\",\"content\":\"請用一句中文回答：巴黎是哪個國家的首都？\"}],\"max_tokens\":$SERVER_CHAT_AB_MAX_TOKENS,\"stop\":[\"$SERVER_CHAT_AB_STOP\",\"<|end|>\",\"<|output|>\",\"<|user|>\"]}"
         elif [ "$SERVER_PROFILE" = "longform-zh" ]; then
             echo "  Profile    : longform-zh（中文長文；預設前綴可用 env 覆寫）"
+            echo "  Payload    : {\"messages\":[{\"role\":\"user\",\"content\":\"請用一段中文說明巴黎為什麼是法國的政治與文化中心，避免條列，至少120字。\"}],\"max_tokens\":$SERVER_CHAT_AB_MAX_TOKENS,\"stop\":[\"<|end|>\",\"<|output|>\",\"<|user|>\"]}"
+        elif [ "$SERVER_PROFILE" = "legacy-25plus" ]; then
+            echo "  Profile    : legacy-25plus（還原第一個 25+ server 狀態的 longform 啟動口徑）"
             echo "  Payload    : {\"messages\":[{\"role\":\"user\",\"content\":\"請用一段中文說明巴黎為什麼是法國的政治與文化中心，避免條列，至少120字。\"}],\"max_tokens\":$SERVER_CHAT_AB_MAX_TOKENS,\"stop\":[\"<|end|>\",\"<|output|>\",\"<|user|>\"]}"
         elif [ "$SERVER_CHAT_AB" = "healthy-prefix" ]; then
             echo "  Chat A/B   : healthy-prefix（prefill=答：，僅作短答起手 A/B，不代表已通過 QA gate）"
