@@ -10,7 +10,87 @@
 #include "speculative.h"
 #include "server-common.h"
 
+#include <cpp-httplib/httplib.h>
+#include <algorithm>
+#include <cstdlib>
+#include <fstream>
+
 using json = nlohmann::ordered_json;
+
+namespace {
+
+struct debug_server_cfg {
+    std::string url = "http://127.0.0.1:7777/event";
+    std::string session_id = "server-semantic-gap";
+    std::string run_id = "pre-fix";
+    bool enabled = false;
+};
+
+static debug_server_cfg load_debug_server_cfg() {
+    debug_server_cfg cfg;
+    const char * enabled = std::getenv("CGC_SERVER_SEMANTIC_DEBUG");
+    if (!enabled || std::string(enabled) != "1") {
+        return cfg;
+    }
+
+    cfg.enabled = true;
+
+    const char * run_id = std::getenv("CGC_SERVER_SEMANTIC_DEBUG_RUN_ID");
+    if (run_id && *run_id) {
+        cfg.run_id = run_id;
+    }
+
+    const char * env_path = std::getenv("CGC_SERVER_SEMANTIC_DEBUG_ENV");
+    const char * default_env = "/Users/alexchuang/Documents/flashkv0516/.dbg/server-semantic-gap.env";
+    std::ifstream env(env_path && *env_path ? env_path : default_env);
+    std::string line;
+    while (std::getline(env, line)) {
+        if (line.rfind("DEBUG_SERVER_URL=", 0) == 0) {
+            cfg.url = line.substr(std::string("DEBUG_SERVER_URL=").size());
+        } else if (line.rfind("DEBUG_SESSION_ID=", 0) == 0) {
+            cfg.session_id = line.substr(std::string("DEBUG_SESSION_ID=").size());
+        }
+    }
+    return cfg;
+}
+
+static void post_debug_event(const char * hypothesis_id, const char * location, const std::string & msg, json data) {
+    // #region debug-point semantic-gap
+    const debug_server_cfg cfg = load_debug_server_cfg();
+    if (!cfg.enabled) {
+        return;
+    }
+
+    std::string url = cfg.url;
+    const std::string scheme = "http://";
+    if (url.rfind(scheme, 0) != 0) {
+        return;
+    }
+    url = url.substr(scheme.size());
+    const size_t slash = url.find('/');
+    std::string host_port = slash == std::string::npos ? url : url.substr(0, slash);
+    std::string path = slash == std::string::npos ? "/" : url.substr(slash);
+    const size_t colon = host_port.rfind(':');
+    std::string host = colon == std::string::npos ? host_port : host_port.substr(0, colon);
+    int port = colon == std::string::npos ? 80 : std::stoi(host_port.substr(colon + 1));
+
+    httplib::Client cli(host, port);
+    cli.set_connection_timeout(0, 200000);
+    cli.set_read_timeout(0, 200000);
+
+    json payload = {
+        {"sessionId", cfg.session_id},
+        {"runId", cfg.run_id},
+        {"hypothesisId", hypothesis_id},
+        {"location", location},
+        {"msg", msg},
+        {"data", std::move(data)},
+    };
+    cli.Post(path, payload.dump(), "application/json");
+    // #endregion
+}
+
+} // namespace
 
 //
 // task_params
@@ -451,6 +531,26 @@ json server_task_result_cmpl_final::to_json_oaicompat_chat() {
     if (stop == STOP_TYPE_WORD || stop == STOP_TYPE_EOS) {
         finish_reason = msg.tool_calls.empty() ? "stop" : "tool_calls";
     }
+    post_debug_event(
+        stop == STOP_TYPE_WORD || stop == STOP_TYPE_EOS ? "B" : "D",
+        "server-task.cpp:final-chat",
+        "[DEBUG] final chat response assembly",
+        {
+            {"stop_type", stop_type_to_str(stop)},
+            {"stopping_word", stopping_word},
+            {"finish_reason", finish_reason},
+            {"content_len", content.size()},
+            {"oaicompat_msg_empty", oaicompat_msg.empty()},
+            {"msg_content_len", msg.content.size()},
+            {"reasoning_len", msg.reasoning_content.size()},
+            {"tool_call_count", msg.tool_calls.size()},
+            {"reasoning_format", common_reasoning_format_name(generation_params.chat_parser_params.reasoning_format)},
+            {"reasoning_in_content", generation_params.chat_parser_params.reasoning_in_content},
+            {"stop", generation_params.antiprompt},
+            {"msg_content", msg.content},
+            {"reasoning_content", msg.reasoning_content},
+        }
+    );
 
     json choice {
         {"finish_reason", finish_reason},
@@ -1019,6 +1119,25 @@ void server_task_result_cmpl_partial::update(task_result_state & state) {
         return; // begin marker only flushes headers, skip parsing
     }
     state.update_chat_msg(content, true, oaicompat_msg_diffs);
+    post_debug_event(
+        !content.empty() ? "A" : "D",
+        "server-task.cpp:partial-update",
+        "[DEBUG] partial chat state update",
+        {
+            {"content", content},
+            {"content_len", content.size()},
+            {"diff_count", oaicompat_msg_diffs.size()},
+            {"reasoning_content_len", state.chat_msg.reasoning_content.size()},
+            {"text_content_len", state.chat_msg.content.size()},
+            {"chat_msg_empty", state.chat_msg.empty()},
+            {"reasoning_delta_present", std::any_of(oaicompat_msg_diffs.begin(), oaicompat_msg_diffs.end(), [](const common_chat_msg_diff & diff) {
+                return !diff.reasoning_content_delta.empty();
+            })},
+            {"text_delta_present", std::any_of(oaicompat_msg_diffs.begin(), oaicompat_msg_diffs.end(), [](const common_chat_msg_diff & diff) {
+                return !diff.content_delta.empty();
+            })},
+        }
+    );
 
     // Copy current state for use in to_json_*() (reflects state BEFORE this chunk)
     thinking_block_started = state.thinking_block_started;

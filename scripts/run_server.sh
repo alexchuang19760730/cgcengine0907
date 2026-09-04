@@ -23,6 +23,7 @@
 #   ./scripts/run_server.sh --detach              # 同上，但脫離父 shell（setsid），不被 SIGHUP 殺
 #   CGC_SERVER_RUNTIME_PROFILE=non-mtp ./scripts/run_server.sh   # 非 MTP 基線（~8 t/s）
 #   CGC_SERVER_RUNTIME_PROFILE=mtp ./scripts/run_server.sh        # 明確切回 MTP 生產配置
+#   CGC_SERVER_MTP_CLI_PARITY=1 ./scripts/run_server.sh          # 增量套用 CLI 的 MTP init（warmup / seq_rm probe）
 #   CGC_SERVER_OOM_SAFE=1 ./scripts/run_server.sh # 16GB 機器上的 fallback / 保命模式
 #   CGC_SERVER_PORT=9931 ./scripts/run_server.sh  # 換 port
 #   CGC_SERVER_MODEL_ROOT=/path/to/models/gguf ./scripts/run_server.sh # worktree 外掛模型目錄
@@ -81,6 +82,9 @@ Q36_MTP_DENSEIQ4X="$MODEL_ROOT/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.ggu
 SERVER_RUNTIME_PROFILE="${CGC_SERVER_RUNTIME_PROFILE:-auto}"
 SERVER_MTP="${CGC_SERVER_MTP:-1}"
 SERVER_DENSE_IQ4X="${CGC_SERVER_DENSE_IQ4X:-1}"  # denseIQ4X is the production MTP carrier
+SERVER_MTP_CLI_PARITY="${CGC_SERVER_MTP_CLI_PARITY:-0}"  # opt-in: mirror speculative-simple init path
+SERVER_MTP_NO_WARMUP="${CGC_SERVER_MTP_NO_WARMUP:-0}"    # pass-through: skip CLI-style manual warmup
+SERVER_NO_SEQ_RM_PROBE="${CGC_SERVER_NO_SEQ_RM_PROBE:-0}" # pass-through: skip seq_rm probe explicitly
 SERVER_N_CB="${CGC_SERVER_N_CB:-8}"  # §8.93: cb8 sweet spot
 SERVER_GLU_FUSED_DOWN="${CGC_SERVER_GLU_FUSED_DOWN:-1}"  # §8.113: +6.5% speed
 SERVER_WATCHDOG="${CGC_SERVER_WATCHDOG:-1}"  # Metal deadlock watchdog
@@ -128,13 +132,13 @@ PHYS_MEM_BYTES="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
 PHYS_MEM_GB=$(( PHYS_MEM_BYTES / 1024 / 1024 / 1024 ))
 SERVER_OOM_SAFE="${CGC_SERVER_OOM_SAFE:-0}"
 
-# qwen36 的 server chat 默認走最小模板，先拿掉 metadata 模板裡的空/open think 起手。
-# answer-side prefill 仍維持 opt-in，避免把未驗證的回答腳手架硬塞成默認。
+# qwen36 的 server chat 默認走最小模板。
+# prefill 改成 profile-aware：longform 可用，qa 預設不用，避免把長文前綴誤塞到短答。
 if [ -z "$SERVER_CHAT_TEMPLATE" ] && [ -z "$SERVER_CHAT_TEMPLATE_FILE" ]; then
     SERVER_CHAT_TEMPLATE_FILE="$SERVER_MINIMAL_CHAT_TEMPLATE"
 fi
 if [ -z "${CGC_SERVER_SKIP_CHAT_PARSING:-}" ]; then
-    SERVER_SKIP_CHAT_PARSING=1
+    SERVER_SKIP_CHAT_PARSING=0
 fi
 
 # 可重跑 profile：把已驗證過的 QA / 長文口徑固化，讓 OA_ASYNC=0/1 只切一個變量。
@@ -142,10 +146,13 @@ fi
 case "$SERVER_PROFILE" in
     ''|off) ;;
     qa-zh)
-        [ -z "${CGC_SERVER_CHAT_AB+x}" ] && SERVER_CHAT_AB="healthy-prefix"
-        [ -z "${CGC_SERVER_CHAT_AB_PREFIX+x}" ] && SERVER_CHAT_AB_PREFIX="答："
+        # QA 不再默認注入全域 prefill，避免把不相關的首 token 錨點套到短答。
+        [ -z "${CGC_SERVER_CHAT_AB+x}" ] && SERVER_CHAT_AB="off"
         [ -z "${CGC_SERVER_CHAT_AB_MAX_TOKENS+x}" ] && SERVER_CHAT_AB_MAX_TOKENS="24"
         [ -z "${CGC_SERVER_CHAT_AB_STOP+x}" ] && SERVER_CHAT_AB_STOP="。"
+        if [ -z "$SERVER_CHAT_TEMPLATE_KWARGS" ]; then
+            SERVER_CHAT_TEMPLATE_KWARGS='{"disable_think_scaffold":true}'
+        fi
         ;;
     longform-zh)
         [ -z "${CGC_SERVER_CHAT_AB+x}" ] && SERVER_CHAT_AB="custom-prefix"
@@ -260,6 +267,9 @@ ln -sf "$LOG" "$LOG_DIR/llama_server_latest.log"
 echo "[start] $MODEL  port=$PORT  ctx=$CTX  ngl=$SERVER_NGL  budget=${BUDGET}B"
 if [ "$SERVER_MTP" = "1" ]; then
     echo "[mode]  MTP ON (draft-mtp, n_max=$SPEC_DRAFT_N_MAX, denseIQ4X=$SERVER_DENSE_IQ4X)"
+    if [ "$SERVER_MTP_CLI_PARITY" = "1" ]; then
+        echo "[mode]  cli_parity_init=1 (warmup / seq_rm probe mirror speculative-simple)"
+    fi
     if [ -n "$SERVER_DRAFT_NGL" ]; then
         echo "[mode]  draft_ngl=$SERVER_DRAFT_NGL"
     fi
@@ -390,6 +400,15 @@ if [ "$SERVER_MTP" = "1" ]; then
     else
         SERVER_ENV+=(LLAMA_EXPERT_CACHE_LAYER_CAPS="40-40:256")
     fi
+    if [ "$SERVER_MTP_CLI_PARITY" = "1" ]; then
+        SERVER_ENV+=(CGC_MTP_CLI_PARITY=1)
+    fi
+    if [ "$SERVER_MTP_NO_WARMUP" = "1" ]; then
+        SERVER_ENV+=(CGC_MTP_NO_WARMUP=1)
+    fi
+    if [ "$SERVER_NO_SEQ_RM_PROBE" = "1" ]; then
+        SERVER_ENV+=(CGC_NO_SEQ_RM_PROBE=1)
+    fi
 fi
 env "${SERVER_ENV[@]}" "$BIN" "${SERVER_ARGS[@]}" > "$LOG" 2>&1 &
 SERVER_PID=$!
@@ -410,13 +429,13 @@ for i in $(seq 1 60); do
         echo "  Regression : bash scripts/check/check_server.sh --base-url http://127.0.0.1:$PORT/v1"
         echo "  Benchmark  : python3 scripts/benchmark/benchmark_server_profiles.py --base-url http://127.0.0.1:$PORT/v1 --iterations 3"
         if [ "$SERVER_PROFILE" = "qa-zh" ]; then
-            echo "  Profile    : qa-zh（中文短答；已驗證答：前綴可避開 <think>）"
+            echo "  Profile    : qa-zh（中文短答；目前重點在驗證短答起手是否會誤撞結構 token）"
             echo "  Payload    : {\"messages\":[{\"role\":\"user\",\"content\":\"請用一句中文回答：巴黎是哪個國家的首都？\"}],\"max_tokens\":$SERVER_CHAT_AB_MAX_TOKENS,\"stop\":[\"$SERVER_CHAT_AB_STOP\",\"<|end|>\",\"<|output|>\",\"<|user|>\"]}"
         elif [ "$SERVER_PROFILE" = "longform-zh" ]; then
             echo "  Profile    : longform-zh（中文長文；預設前綴可用 env 覆寫）"
             echo "  Payload    : {\"messages\":[{\"role\":\"user\",\"content\":\"請用一段中文說明巴黎為什麼是法國的政治與文化中心，避免條列，至少120字。\"}],\"max_tokens\":$SERVER_CHAT_AB_MAX_TOKENS,\"stop\":[\"<|end|>\",\"<|output|>\",\"<|user|>\"]}"
         elif [ "$SERVER_CHAT_AB" = "healthy-prefix" ]; then
-            echo "  Chat A/B   : healthy-prefix（prefill=答：，驗證短答正文起手）"
+            echo "  Chat A/B   : healthy-prefix（prefill=答：，僅作短答起手 A/B，不代表已通過 QA gate）"
             echo "  Payload    : {\"messages\":[{\"role\":\"user\",\"content\":\"請用一句中文回答：巴黎是哪個國家的首都？\"}],\"max_tokens\":24,\"stop\":[\"$SERVER_CHAT_AB_STOP\",\"<|end|>\",\"<|output|>\",\"<|user|>\"]}"
         elif [ "$SERVER_CHAT_AB" = "custom-prefix" ]; then
             echo "  Chat A/B   : custom-prefix（prefill=${SERVER_CHAT_AB_PREFIX}）"

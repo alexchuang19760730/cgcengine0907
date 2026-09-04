@@ -32,6 +32,9 @@ def build_payload(profile, model, max_tokens):
             ],
             "temperature": 0,
             "max_tokens": max_tokens or 24,
+            "chat_template_kwargs": {
+                "disable_think_scaffold": True,
+            },
             "stop": ["。", "<|end|>", "<|output|>", "<|user|>"],
         }
 

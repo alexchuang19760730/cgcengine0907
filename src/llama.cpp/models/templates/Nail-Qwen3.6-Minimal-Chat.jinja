@@ -2,27 +2,43 @@
 {%- set prefill_text = assistant_prefill if assistant_prefill is defined and assistant_prefill is string else '' -%}
 {%- set summary_prefill = assistant_prefill_summary if assistant_prefill_summary is defined and assistant_prefill_summary is string else '' -%}
 {%- set prefill_mode = assistant_prefill_mode if assistant_prefill_mode is defined and assistant_prefill_mode is string else 'always' -%}
+{%- set disable_think_scaffold = disable_think_scaffold if disable_think_scaffold is defined and disable_think_scaffold in [true, false] else false -%}
 
 {%- for message in messages -%}
-  {%- if message.role == 'user' -%}
-<|user|>
-{{ message.content }}</output>
+  {%- set content = message.content if message.content is string else '' -%}
+  {%- if message.role == 'system' -%}
+{{- '<|system|>\n' + content + '<|end|>\n' -}}
+  {%- elif message.role == 'user' -%}
+{{- '<|user|>\n' + content + '<|end|>\n' -}}
   {%- elif message.role == 'assistant' -%}
-<|assistant|>
-{{ message.content }}</output>
+    {%- set reasoning_content = '' -%}
+    {%- if message.reasoning_content is defined and message.reasoning_content is string -%}
+      {%- set reasoning_content = message.reasoning_content -%}
+    {%- elif '</think>' in content -%}
+      {%- set reasoning_content = content.split('</think>')[0].rstrip('\n').split('<think>')[-1].lstrip('\n') -%}
+      {%- set content = content.split('</think>')[-1].lstrip('\n') -%}
+    {%- endif -%}
+{{- '<|assistant|>\n' -}}
+    {%- if reasoning_content | trim -%}
+{{- '<think>\n' + (reasoning_content | trim) + '\n</think>\n\n' -}}
+    {%- elif not disable_think_scaffold and enable_thinking is defined and enable_thinking is false -%}
+{{- '<think>\n\n</think>\n\n' -}}
+    {%- endif -%}
+{{- content -}}
+{{- '<|end|>\n' -}}
   {%- elif message.role == 'tool' -%}
-<|assistant|>
-{{ message.content }}</output>
+{{- '<|assistant|>\n' + content + '<|end|>\n' -}}
   {%- endif -%}
 {%- endfor -%}
 {%- if add_generation_prompt -%}
+{{- '<|assistant|>\n' -}}
+  {%- if not disable_think_scaffold and enable_thinking is defined and enable_thinking is false -%}
+{{- '<think>\n\n</think>\n\n' -}}
+  {%- endif -%}
   {%- if summary_prefill -%}
-<|assistant|>
-{{ summary_prefill }}
+{{- summary_prefill -}}
   {%- elif prefill_text and prefill_mode == 'always' -%}
-<|assistant|>
-{{ prefill_text }}
+{{- prefill_text -}}
   {%- else -%}
-<|assistant|>
   {%- endif -%}
 {%- endif -%}

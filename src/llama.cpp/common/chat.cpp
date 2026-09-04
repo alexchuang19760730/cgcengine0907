@@ -13,6 +13,7 @@
 #include "jinja/caps.h"
 #include "peg-parser.h"
 
+#include <cpp-httplib/httplib.h>
 #include "nlohmann/json.hpp"
 
 #include <algorithm>
@@ -20,6 +21,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <exception>
+#include <fstream>
 #include <functional>
 #include <map>
 
@@ -31,6 +33,98 @@
 #include <vector>
 
 using json = nlohmann::ordered_json;
+
+namespace {
+
+struct chat_debug_server_cfg {
+    std::string url = "http://127.0.0.1:7777/event";
+    std::string session_id = "qa-answer-scaffold";
+    std::string run_id = "pre-fix";
+    bool enabled = false;
+};
+
+static chat_debug_server_cfg load_chat_debug_server_cfg() {
+    chat_debug_server_cfg cfg;
+    const char * enabled = std::getenv("CGC_SERVER_SEMANTIC_DEBUG");
+    if (!enabled || std::string(enabled) != "1") {
+        return cfg;
+    }
+
+    cfg.enabled = true;
+
+    const char * run_id = std::getenv("CGC_SERVER_SEMANTIC_DEBUG_RUN_ID");
+    if (run_id && *run_id) {
+        cfg.run_id = run_id;
+    }
+
+    const char * env_path = std::getenv("CGC_SERVER_SEMANTIC_DEBUG_ENV");
+    const char * default_env = "/Users/alexchuang/Documents/flashkv0516/.dbg/qa-answer-scaffold.env";
+    std::ifstream env(env_path && *env_path ? env_path : default_env);
+    std::string line;
+    while (std::getline(env, line)) {
+        if (line.rfind("DEBUG_SERVER_URL=", 0) == 0) {
+            cfg.url = line.substr(std::string("DEBUG_SERVER_URL=").size());
+        } else if (line.rfind("DEBUG_SESSION_ID=", 0) == 0) {
+            cfg.session_id = line.substr(std::string("DEBUG_SESSION_ID=").size());
+        }
+    }
+    return cfg;
+}
+
+static void post_chat_debug_event(const char * hypothesis_id, const char * location, const std::string & msg, json data) {
+    // #region debug-point A:qa-generation-prompt
+    const chat_debug_server_cfg cfg = load_chat_debug_server_cfg();
+    if (!cfg.enabled) {
+        return;
+    }
+
+    std::string url = cfg.url;
+    const std::string scheme = "http://";
+    if (url.rfind(scheme, 0) != 0) {
+        return;
+    }
+    url = url.substr(scheme.size());
+    const size_t slash = url.find('/');
+    std::string host_port = slash == std::string::npos ? url : url.substr(0, slash);
+    std::string path = slash == std::string::npos ? "/" : url.substr(slash);
+    const size_t colon = host_port.rfind(':');
+    std::string host = colon == std::string::npos ? host_port : host_port.substr(0, colon);
+    int port = colon == std::string::npos ? 80 : std::stoi(host_port.substr(colon + 1));
+
+    httplib::Client cli(host, port);
+    cli.set_connection_timeout(0, 200000);
+    cli.set_read_timeout(0, 200000);
+
+    json payload = {
+        {"sessionId", cfg.session_id},
+        {"runId", cfg.run_id},
+        {"hypothesisId", hypothesis_id},
+        {"location", location},
+        {"msg", msg},
+        {"data", std::move(data)},
+    };
+    cli.Post(path, payload.dump(), "application/json");
+    // #endregion
+}
+
+static json chat_messages_tail(const json & messages) {
+    if (!messages.is_array() || messages.empty()) {
+        return nullptr;
+    }
+
+    json tail = json::array();
+    const size_t start = messages.size() > 2 ? messages.size() - 2 : 0;
+    for (size_t i = start; i < messages.size(); ++i) {
+        const auto & msg = messages.at(i);
+        tail.push_back({
+            {"role", msg.value("role", "")},
+            {"content", msg.value("content", "")},
+        });
+    }
+    return tail;
+}
+
+} // namespace
 
 static std::string format_time(const std::chrono::system_clock::time_point & now, const std::string & format) {
     auto               time       = std::chrono::system_clock::to_time_t(now);
@@ -1148,6 +1242,29 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
     auto has_response_format = inputs.json_schema.is_object() && !inputs.json_schema.empty();
     auto extract_reasoning   = inputs.reasoning_format != COMMON_REASONING_FORMAT_NONE;
     auto include_grammar     = has_response_format || (has_tools && inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_NONE);
+    const std::string initial_generation_prompt = data.generation_prompt;
+    auto disable_think_scaffold =
+        inputs.extra_context.is_object() &&
+        inputs.extra_context.contains("disable_think_scaffold") &&
+        inputs.extra_context.at("disable_think_scaffold").is_boolean() &&
+        inputs.extra_context.at("disable_think_scaffold").get<bool>();
+    auto use_assistant_only_generation_prompt =
+        disable_think_scaffold &&
+        supports_reasoning &&
+        extract_reasoning &&
+        !inputs.has_continuation() &&
+        !has_tools &&
+        !has_response_format;
+
+    if (use_assistant_only_generation_prompt) {
+        // Let native Qwen/Nail choose whether to enter <think> or answer text.
+        // Pre-seeding "<think>\n" on the server chat path can trap these models in a recursive think loop.
+        data.generation_prompt = GEN_PREFIX;
+        if (string_ends_with(data.prompt, initial_generation_prompt)) {
+            data.prompt.resize(data.prompt.size() - initial_generation_prompt.size());
+            data.prompt += data.generation_prompt;
+        }
+    }
 
     if (inputs.has_continuation()) {
         const auto & msg = inputs.continue_msg;
@@ -1273,6 +1390,110 @@ static common_chat_params common_chat_params_init_qwen3_coder(const common_chat_
         }
     }
 
+    return data;
+}
+
+static common_chat_params common_chat_params_init_nail_qwen3_6_minimal(const common_chat_template &          tmpl,
+                                                                       const autoparser::generation_params & inputs) {
+    common_chat_params data;
+
+    const std::string GEN_PREFIX = "<|assistant|>\n";
+    const std::string THINK_START = "<think>";
+    const std::string THINK_END = "</think>";
+
+    data.prompt             = common_chat_template_direct_apply_impl(tmpl, inputs);
+    data.generation_prompt  = common_chat_template_generation_prompt_impl(tmpl, inputs);
+    data.format             = COMMON_CHAT_FORMAT_PEG_NATIVE;
+    data.supports_thinking  = true;
+    data.thinking_start_tag = THINK_START;
+    data.thinking_end_tags  = {THINK_END};
+    data.preserved_tokens   = {
+        THINK_START,
+        THINK_END,
+        "<|assistant|>",
+        "<|user|>",
+        "<|system|>",
+        "<|end|>",
+    };
+
+    data.message_delimiters = {
+        { COMMON_CHAT_ROLE_ASSISTANT, "<|assistant|>" },
+        { COMMON_CHAT_ROLE_USER,      "<|user|>"      },
+        { COMMON_CHAT_ROLE_SYSTEM,    "<|system|>"    },
+    };
+
+    const bool extract_reasoning = inputs.reasoning_format != COMMON_REASONING_FORMAT_NONE;
+
+    post_chat_debug_event(
+        "A",
+        "chat.cpp:nail-qwen3.6-minimal",
+        "[DEBUG] qa generation prompt built",
+        {
+            {"generation_prompt", data.generation_prompt},
+            {"generation_prompt_len", data.generation_prompt.size()},
+            {"prompt_tail", data.prompt.size() > 240 ? data.prompt.substr(data.prompt.size() - 240) : data.prompt},
+            {"prompt_len", data.prompt.size()},
+            {"messages_tail", chat_messages_tail(inputs.messages)},
+            {"chat_template_kwargs", inputs.extra_context.contains("assistant_prefill") || inputs.extra_context.contains("assistant_prefill_summary") || inputs.extra_context.contains("disable_think_scaffold") ? inputs.extra_context : json()},
+            {"enable_thinking", inputs.enable_thinking},
+            {"extract_reasoning", extract_reasoning},
+            {"has_continuation", inputs.has_continuation()},
+            {"continue_final_message", inputs.continue_final_message},
+        }
+    );
+
+    if (inputs.has_continuation()) {
+        const auto & msg = inputs.continue_msg;
+        const bool has_reasoning_continuation = extract_reasoning && !msg.reasoning_content.empty();
+
+        data.generation_prompt = GEN_PREFIX;
+        if (has_reasoning_continuation) {
+            data.generation_prompt += THINK_START + "\n" + msg.reasoning_content;
+            if (inputs.continue_final_message == COMMON_CHAT_CONTINUATION_CONTENT) {
+                data.generation_prompt += "\n" + THINK_END + "\n\n";
+            }
+        }
+        if (inputs.continue_final_message == COMMON_CHAT_CONTINUATION_CONTENT) {
+            data.generation_prompt += msg.render_content();
+        }
+
+        data.prompt += data.generation_prompt;
+    }
+
+    post_chat_debug_event(
+        inputs.has_continuation() ? "D" : "A",
+        "chat.cpp:nail-qwen3.6-minimal:final-prompt",
+        "[DEBUG] qa final prompt after continuation",
+        {
+            {"generation_prompt", data.generation_prompt},
+            {"generation_prompt_len", data.generation_prompt.size()},
+            {"prompt_tail", data.prompt.size() > 240 ? data.prompt.substr(data.prompt.size() - 240) : data.prompt},
+            {"prompt_len", data.prompt.size()},
+            {"has_continuation", inputs.has_continuation()},
+            {"continue_final_message", inputs.continue_final_message},
+            {"continue_msg_content", inputs.has_continuation() ? inputs.continue_msg.content : ""},
+            {"continue_msg_reasoning_content", inputs.has_continuation() ? inputs.continue_msg.reasoning_content : ""},
+        }
+    );
+
+    auto parser = build_chat_peg_parser([&](common_chat_peg_builder & p) {
+        auto generation_prompt = p.literal(data.generation_prompt);
+
+        auto body = p.content(p.rest());
+        if (extract_reasoning) {
+            auto reasoning_then_content =
+                p.literal(THINK_START) +
+                p.reasoning(p.until(THINK_END)) +
+                p.literal(THINK_END) +
+                p.space() +
+                p.content(p.rest());
+            body = p.choice({ reasoning_then_content, body });
+        }
+
+        return generation_prompt + body + p.end();
+    });
+
+    data.parser = parser.save();
     return data;
 }
 
@@ -3354,6 +3575,14 @@ std::optional<common_chat_params> common_chat_try_specialized_template(
         src.find("<parameter=") != std::string::npos) {
         LOG_DBG("Using specialized template: Qwen3-Coder\n");
         return common_chat_params_init_qwen3_coder(tmpl, params);
+    }
+
+    if (src.find("Minimal chat template for Nail-Qwen3.6-MTP") != std::string::npos &&
+        src.find("<|assistant|>") != std::string::npos &&
+        src.find("<|user|>") != std::string::npos &&
+        src.find("<think>") != std::string::npos) {
+        LOG_DBG("Using specialized template: Nail-Qwen3.6-Minimal\n");
+        return common_chat_params_init_nail_qwen3_6_minimal(tmpl, params);
     }
 
     return std::nullopt;

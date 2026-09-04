@@ -1081,6 +1081,15 @@ private:
                                         params_base.speculative.types.end(),
                                         COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end();
         const bool has_spec = has_draft || spec_mtp;
+        // Optional CLI-parity path: keep the existing server defaults intact unless
+        // explicitly enabled, then mirror speculative-simple's MTP init sequence.
+        const bool cgc_mtp_cli_parity = spec_mtp && getenv("CGC_MTP_CLI_PARITY") != nullptr;
+        const bool cgc_no_seq_rm_probe = getenv("CGC_NO_SEQ_RM_PROBE") != nullptr || cgc_mtp_cli_parity;
+        const bool warmup_skip = cgc_mtp_cli_parity;
+        const bool warmup_prev = params_base.warmup;
+        if (warmup_skip) {
+            params_base.warmup = false;
+        }
 
         if (callback_state) {
             std::vector<std::string> stages = {"text_model"};
@@ -1264,6 +1273,44 @@ private:
             load_progress_callback(1.0f, &load_progress_spec);
         }
 
+        if (cgc_mtp_cli_parity) {
+            try {
+                spec.reset(common_speculative_init(params_base.speculative, params_base.n_parallel));
+            } catch (const std::exception & e) {
+                SRV_ERR("failed to initialize speculative decoding context: %s\n", e.what());
+            }
+
+            const bool cgc_no_warmup = getenv("CGC_MTP_NO_WARMUP") != nullptr;
+            if (spec && warmup_skip && warmup_prev && !cgc_no_warmup) {
+                std::vector<llama_token> tmp;
+                llama_token bos = llama_vocab_bos(vocab);
+                llama_token eos = llama_vocab_eos(vocab);
+                if (bos != LLAMA_TOKEN_NULL) {
+                    tmp.push_back(bos);
+                }
+                if (eos != LLAMA_TOKEN_NULL) {
+                    tmp.push_back(eos);
+                }
+                if (tmp.empty()) {
+                    tmp.push_back(0);
+                }
+
+                // Mirror speculative-simple: warm up after speculative init has
+                // enabled the MTP nextn topology, not before.
+                llama_decode(ctx_tgt, llama_batch_get_one(tmp.data(), std::min(tmp.size(), (size_t) llama_n_batch(ctx_tgt))));
+                llama_memory_clear(llama_get_memory(ctx_tgt), true);
+                llama_synchronize(ctx_tgt);
+                llama_perf_context_reset(ctx_tgt);
+
+                if (ctx_dft != nullptr) {
+                    llama_decode(ctx_dft, llama_batch_get_one(tmp.data(), std::min(tmp.size(), (size_t) llama_n_batch(ctx_dft))));
+                    llama_memory_clear(llama_get_memory(ctx_dft), true);
+                    llama_synchronize(ctx_dft);
+                    llama_perf_context_reset(ctx_dft);
+                }
+            }
+        }
+
         if (has_mmproj) {
             if (callback_state) {
                 callback_state(SERVER_STATE_LOADING, {{"stage", "mmproj_model"}});
@@ -1325,13 +1372,21 @@ private:
 
         slots.clear();
 
-        ctx_tgt_seq_rm_type = common_context_can_seq_rm(ctx_tgt);
-        if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
-            SRV_WRN("%s", "speculative decoding not supported by this context\n");
-        }
+        if (cgc_no_seq_rm_probe) {
+            ctx_tgt_seq_rm_type = COMMON_CONTEXT_SEQ_RM_TYPE_PART;
+            if (ctx_dft) {
+                ctx_dft_seq_rm_type = COMMON_CONTEXT_SEQ_RM_TYPE_PART;
+            }
+            SRV_INF("%s", "skipping seq_rm probe (CLI parity / explicit override)\n");
+        } else {
+            ctx_tgt_seq_rm_type = common_context_can_seq_rm(ctx_tgt);
+            if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
+                SRV_WRN("%s", "speculative decoding not supported by this context\n");
+            }
 
-        if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
-            SRV_TRC("%s", "speculative decoding will use checkpoints\n");
+            if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
+                SRV_TRC("%s", "speculative decoding will use checkpoints\n");
+            }
         }
 
         // setup slots
@@ -1344,7 +1399,7 @@ private:
         }
 
         // try speculative decoding
-        if (ctx_tgt_seq_rm_type != COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
+        if (!spec && ctx_tgt_seq_rm_type != COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
             try {
                 spec.reset(common_speculative_init(params_base.speculative, params_base.n_parallel));
             } catch (const std::exception & e) {
@@ -1352,7 +1407,7 @@ private:
             }
         }
 
-        if (ctx_dft) {
+        if (!cgc_no_seq_rm_probe && ctx_dft) {
             ctx_dft_seq_rm_type = common_context_can_seq_rm(ctx_dft);
         }
 
