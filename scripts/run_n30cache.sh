@@ -477,8 +477,6 @@ IGNORE_EOS_ARG=""
 [ "$IGNORE_EOS" = 1 ] && IGNORE_EOS_ARG="--ignore-eos"
 CTX_ARG=""
 [ "$CTX" != "0" ] && CTX_ARG="-c $CTX"
-# MTP: MTP_ARG already includes -c $MTP_CTX, so skip CTX_ARG to avoid conflict
-[ "$MTP" = 1 ] && CTX_ARG=""
 MTP_ARG=""
 # §MTP: speculative-simple 用 common_params_parse，只認 CLI -expert-cache（不讀 CGC_EXPERT_CACHE_BYTES
 # env——那是 llama-simple 的私有 patch）。MTP 不走 env 會回到全權重（weights ~8118 MiB）→ GPU OOM。
