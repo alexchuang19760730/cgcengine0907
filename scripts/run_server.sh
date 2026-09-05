@@ -140,8 +140,12 @@ SERVER_OOM_SAFE="${CGC_SERVER_OOM_SAFE:-0}"
 # profile 才傳 --chat-template-file Nail-Qwen3.6-Minimal-Chat.jinja）。
 # prefill 改成 profile-aware：longform 可用，qa 預設不用，避免把長文前綴誤塞到短答。
 if [ -z "$SERVER_CHAT_TEMPLATE" ] && [ -z "$SERVER_CHAT_TEMPLATE_FILE" ]; then
-    # 不預設：走 GGUF embedded ChatML。legacy-25plus / longform-zh 若要 Nail jinja 自行加 CGC_SERVER_CHAT_TEMPLATE_FILE。
-    :
+    # 2026-09-05 預設改走 Nail jinja (v4 ChatML 風格): 支援 assistant_prefill / disable_think_scaffold。
+    # b66e0eaf7 之前的「Nail jinja 不工作」是因為 v1-v3 Nail jinja 用 <|user|>,而當前 v4 已改 <|im_start|>
+    # ChatML 風格,行為等同 GGUF embedded + 額外支援 prefill。Nail jinja header 含
+    # "Minimal chat template for Nail-Qwen3.6-MTP" + "<think>" 兩個字串,會 dispatch 進 chat.cpp
+    # Nail handler,啟用 THINK_SEED 注入 (v4 fix)。
+    SERVER_CHAT_TEMPLATE_FILE="$SERVER_MINIMAL_CHAT_TEMPLATE"
 fi
 if [ -z "${CGC_SERVER_SKIP_CHAT_PARSING:-}" ]; then
     SERVER_SKIP_CHAT_PARSING=0

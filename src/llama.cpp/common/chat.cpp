@@ -1397,9 +1397,11 @@ static common_chat_params common_chat_params_init_nail_qwen3_6_minimal(const com
                                                                        const autoparser::generation_params & inputs) {
     common_chat_params data;
 
-    const std::string GEN_PREFIX = "<|assistant|>\n";
     const std::string THINK_START = "<think>";
     const std::string THINK_END = "</think>";
+    const std::string GEN_PREFIX = "<|assistant|>\n";
+
+    const bool extract_reasoning = inputs.reasoning_format != COMMON_REASONING_FORMAT_NONE;
 
     data.prompt             = common_chat_template_direct_apply_impl(tmpl, inputs);
     data.generation_prompt  = common_chat_template_generation_prompt_impl(tmpl, inputs);
@@ -1422,8 +1424,6 @@ static common_chat_params common_chat_params_init_nail_qwen3_6_minimal(const com
         { COMMON_CHAT_ROLE_SYSTEM,    "<|system|>"    },
     };
 
-    const bool extract_reasoning = inputs.reasoning_format != COMMON_REASONING_FORMAT_NONE;
-
     // 2026-09-05 CGC fix (chat template):
     // Nail-Qwen3.6-MTP is an inference MTP carrier — reasoning is harmful because the model
     // gets trapped in <think>…</think> loops and emits 0000/<|assistant|> padding.
@@ -1435,7 +1435,18 @@ static common_chat_params common_chat_params_init_nail_qwen3_6_minimal(const com
         inputs.extra_context.contains("disable_think_scaffold") &&
         inputs.extra_context.at("disable_think_scaffold").is_boolean() &&
         inputs.extra_context.at("disable_think_scaffold").get<bool>();
-    const bool wants_think_scaffold_seed = disable_think_scaffold;
+    // 2026-09-05 CGC fix v5: 補上 assistant_prefill 觸發條件。
+    // v4 commit 改走「純 prefill 路徑」(request 帶 assistant_prefill,不再用 disable_think_scaffold),
+    // 但 wants_think_scaffold_seed 仍只看 disable_think_scaffold → prefill 場景下 think scaffold
+    // 永遠不注入,model 從 prefill 結尾接續 1 token 就命中 stop(實測 qa-zh 跟 coding 都 1 token stop)。
+    // v4 commit 描述的「最終 prompt 結尾 = <|im_start|>assistant\n答:巴黎<think>\n\n</think>\n\n」
+    // 在 v4 fixture 下根本沒生效 → 14.88 t/s + 100% accept 不可重現。
+    // 解法: 同時看 assistant_prefill / assistant_prefill_summary 存在時也 seed think scaffold。
+    const bool has_assistant_prefill =
+        inputs.extra_context.is_object() &&
+        (inputs.extra_context.contains("assistant_prefill") ||
+         inputs.extra_context.contains("assistant_prefill_summary"));
+    const bool wants_think_scaffold_seed = disable_think_scaffold || has_assistant_prefill;
 
     // 2026-09-05 CGC fix v2: 用 startsWith 而非 ==,因為 prefill 套用後
     // data.generation_prompt 是 "<|assistant|>\n答：" 而不是裸 "<|assistant|>\n"。

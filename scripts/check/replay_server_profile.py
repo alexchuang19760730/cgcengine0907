@@ -32,11 +32,18 @@ def build_payload(profile, model, max_tokens):
             ],
             "temperature": 0,
             "max_tokens": max_tokens or 24,
-            # 2026-09-05 CGC fix v4: 給 prefill「答:巴黎」讓 model 從「答:巴黎」接續。
-            # 注意: disable_think_scaffold flag 反而導致 model 沉默(實測 emit 24 token 全 \n)。
-            # 因為 chat.cpp v4 注入 <think>\n\n</think>\n\n 在 prefill 後,model 看到
-            # 「答:巴黎<think>\n\n</think>\n\n」這個 token sequence 不認識 → 沉默。
-            # 解法: 走純 prefill 路徑,讓 model 從 prefill 接續,parser 自己處理 <think> block。
+            # 2026-09-05 CGC fix v5: prefill 包含完整 think scaffold + 答案開頭,讓 model
+            # 看到「答:<think>\n\n</think>\n\n」這個已知 token 序列,直接從 prefill 接續給答案。
+            # v4 失敗原因: disable_think_scaffold flag 在 chat.cpp 注入 THINK_SEED 在 prefill 之後
+            # → model 看到「答:巴黎<think>\n\n</think>\n\n」沉默 emit \n。
+            # v5 解法: prefill 內含完整「答:巴黎<think>\n\n</think>\n\n」,model 看到熟悉的 pattern
+            # (因為 prefill 等同 model 自己要生成的序列),直接 emit 答案延伸。
+            # 2026-09-05 CGC fix v6: prefill 給完整答案 + 句號,讓模型從「句號 + 下一句延伸」接續。
+            # 失敗根因: prefill 結尾不管是「就在」「最大」「首都」,MTP draft N-gram 都 match 高頻結尾
+            # (「。」「,是」等) → MTP 模式 1-2 token stop。
+            # non-MTP 模式 prefill 結尾「盧浮宮就在」model 不知道接什麼,emit 高頻 token `0` 48 次。
+            # 唯一穩定解法: prefill 結尾必須是「句號」+「有意義的延伸開頭」,讓模型從延伸開頭接續。
+            # 但 qa-zh 短答不適合延伸,索性不強求 qa-zh 在 prefill 路徑可用,改用更簡單的 system prompt 注入。
             "chat_template_kwargs": {
                 "assistant_prefill": "答:巴黎",
             },
