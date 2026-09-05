@@ -1,364 +1,1030 @@
-# CGC Expert Cache Hybrid Slot Table + Soft Shrink Pool 設計 (2026-09-05)
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CGC Expert Cache Hybrid Slot Table + Soft Shrink Pool 設計 (2026-09-05)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --heading: #f0f6fc;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --orange: #db6d28;
+    --purple: #bc8cff;
+    --code-bg: #0d1117;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans TC', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    max-width: 1020px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+  h1 { color: var(--heading); font-size: 2em; margin: 32px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h2 { color: var(--heading); font-size: 1.5em; margin: 32px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { color: var(--heading); font-size: 1.2em; margin: 24px 0 8px; }
+  h4 { color: var(--accent); font-size: 1.05em; margin: 16px 0 6px; }
+  p, li { margin: 8px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    background: var(--code-bg);
+    color: #79c0ff;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+    font-size: 0.92em;
+    border: 1px solid var(--border);
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 12px 0;
+    font-size: 0.88em;
+    line-height: 1.55;
+  }
+  pre code { background: none; border: none; padding: 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.92em;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th { background: var(--card); color: var(--heading); }
+  tr:nth-child(even) td { background: rgba(22, 27, 34, 0.4); }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--card);
+    padding: 12px 16px;
+    margin: 16px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout-warn { border-left-color: var(--yellow); }
+  .callout-danger { border-left-color: var(--red); }
+  .callout-ok { border-left-color: var(--green); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.78em;
+    font-weight: 600;
+    margin-right: 4px;
+  }
+  .badge-green { background: rgba(63, 185, 80, 0.15); color: var(--green); border: 1px solid rgba(63, 185, 80, 0.3); }
+  .badge-red { background: rgba(248, 81, 73, 0.15); color: var(--red); border: 1px solid rgba(248, 81, 73, 0.3); }
+  .badge-yellow { background: rgba(210, 153, 34, 0.15); color: var(--yellow); border: 1px solid rgba(210, 153, 34, 0.3); }
+  .badge-purple { background: rgba(188, 140, 255, 0.15); color: var(--purple); border: 1px solid rgba(188, 140, 255, 0.3); }
+  .badge-blue { background: rgba(88, 166, 255, 0.15); color: var(--accent); border: 1px solid rgba(88, 166, 255, 0.3); }
+  .toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 24px;
+    margin: 16px 0;
+  }
+  .toc h2 { font-size: 1.1em; margin: 0 0 8px; border: none; padding: 0; }
+  .toc ol { padding-left: 24px; }
+  .toc li { margin: 2px 0; }
+  .toc a { color: var(--text); }
+  .mermaid { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 16px; margin: 16px 0; }
+  .meta {
+    color: #8b949e;
+    font-size: 0.9em;
+    margin: 8px 0 24px;
+  }
+  ul, ol { padding-left: 24px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    text-align: center;
+  }
+  .stat-value {
+    font-size: 1.8em;
+    font-weight: 700;
+    color: var(--accent);
+    font-family: 'SF Mono', monospace;
+  }
+  .stat-label {
+    color: #8b949e;
+    font-size: 0.85em;
+    margin-top: 4px;
+  }
+  .stat-card.danger .stat-value { color: var(--red); }
+  .stat-card.ok .stat-value { color: var(--green); }
+  .stat-card.warn .stat-value { color: var(--yellow); }
+  .layer-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 8px 0;
+  }
+  .layer-l0 { border-left: 4px solid var(--green); }
+  .layer-l1 { border-left: 4px solid var(--yellow); }
+  .layer-l2 { border-left: 4px solid var(--purple); }
+</style>
+</head>
+<body>
 
-## 0. 為什麼需要新設計
+<h1>CGC Expert Cache Hybrid Slot Table + Soft Shrink Pool 設計</h1>
 
-Dev branch `522428cdc` / `1afedfa68` 採用「**靜態 ne[2] 硬縮 256→87**」換取
-100% 語意正確性, 但代價是 5.5 t/s (CPU resident bottleneck) + 直接放棄 GPU pool
-+ 跟我們的 devserver 動態 slot table 機制 (256→87 對映 + ZERO-slot 路由 + MTP
-fast path) 完全互斥。
+<p class="meta">
+  作者: CGC devserver team &nbsp;|&nbsp; 日期: 2026-09-05 &nbsp;|&nbsp; 版本: v2.0 (revamped)<br>
+  對應 commit: <code>180f161df</code> &nbsp;|&nbsp; 原始作者: alex_chuang<br>
+  配套文件: <a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_INTEGRATION_DIFF_2026-09-05.html">INTEGRATION_DIFF</a> · <a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_SOFTPOOL_WHITE_PAPER_2026-09-05.html">SOFTPOOL_WHITE_PAPER</a>
+</p>
 
-Devserver 想借鏡的是 dev branch 的**內存效率**概念, 但不能直接移植它的
-實作方式 (tensor 形狀硬縮)。本文件提出一個**解耦的 hybrid 方案**:
+<div class="callout callout-ok">
+  <strong>TL;DR</strong>: 把「shrink」從 <strong>tensor 形狀層 (ne[2])</strong> 上移到 <strong>pool 容量層</strong>。三層完全解耦:
+  <ul>
+    <li><strong>Tensor 形狀</strong>永遠 256 (不可變,保留 <code>mul_mat_id</code> 邏輯形狀)</li>
+    <li><strong>Pool 容量</strong>動態可縮 (soft shrink, 借鑒 dev branch 內存效率)</li>
+    <li><strong>Slot table</strong>動態 256→N 對映 + LRU evict (取代固定 ZERO-slot)</li>
+  </ul>
+  結果: <strong>24~26 t/s</strong> + <strong>100% 語意</strong>,比 dev branch 5.5 t/s 快 4-5x。
+</div>
 
-- **Tensor 形狀永遠 256** (不動 ne[2], 保留 mul_mat_id 邏輯形狀)
-- **Pool 容量動態可縮** (soft shrink, 借鑒 dev branch 內存效率)
-- **動態 slot table 保留** (256→N 對映 + LRU evict, 取代固定 ZERO-slot)
-- **Cold 路由可選 ZERO-slot 或 L2 CPU fallback** (兼得速度 + 正確性)
+<div class="toc">
+<h2>目錄</h2>
+<ol>
+  <li><a href="#s0">0. 為什麼需要新設計</a></li>
+  <li><a href="#s1">1. 核心洞察: 三層解耦</a></li>
+  <li><a href="#s2">2. Hybrid 方案: Soft Pool + LRU Slot Table + L2 Cold Fallback</a></li>
+  <li><a href="#s3">3. 跟現有機制對照</a></li>
+  <li><a href="#s4">4. 實作藍圖 (4 階段)</a></li>
+  <li><a href="#s5">5. 預期效益</a></li>
+  <li><a href="#s6">6. 風險評估</a></li>
+  <li><a href="#s7">7. 不做的事 (明確排除)</a></li>
+  <li><a href="#s8">8. 驗證計劃</a></li>
+  <li><a href="#s9">9. 環境變數速查 (Env Gates)</a></li>
+</ol>
+</div>
 
----
+<h2 id="s0">0. 為什麼需要新設計</h2>
 
-## 1. 核心洞察: 把「shrink」從 tensor 形狀層移到 pool 容量層
+<div class="stat-grid">
+  <div class="stat-card ok">
+    <div class="stat-value">26+ t/s</div>
+    <div class="stat-label">devserver 現狀</div>
+  </div>
+  <div class="stat-card warn">
+    <div class="stat-value">27%</div>
+    <div class="stat-label">Hybrid 預期內存節省</div>
+  </div>
+  <div class="stat-card ok">
+    <div class="stat-value">100%</div>
+    <div class="stat-label">Hybrid 語意正確性</div>
+  </div>
+  <div class="stat-card warn">
+    <div class="stat-value">4.7x</div>
+    <div class="stat-label">vs dev branch 速度</div>
+  </div>
+</div>
 
-### 1.1 互斥的根本原因
-| 層 | Dev branch 改法 | 影響 |
-|----|----------------|------|
-| **Tensor 形狀層** (ne[2]) | 硬縮 256→87 | 破壞 mul_mat_id 邏輯形狀 → layer 2+ 路由 OOB |
-| **Pool 容量層** (slot 數) | (沒概念, 全塞 pool) | 4GB 預分配, 16GB Mac 物理上限受限 |
-| **Slot table 層** (256→N 對映) | (沒概念, 走 identity) | 直接放棄 mul_mat_id slot 概念 |
+<p>Dev branch <code>522428cdc</code> / <code>1afedfa68</code> 採用「<strong>靜態 ne[2] 硬縮 256→87</strong>」換取 100% 語意正確性, 但代價是 5.5 t/s (CPU resident bottleneck) + 直接放棄 GPU pool + 跟我們的 devserver 動態 slot table 機制 (256→87 對映 + ZERO-slot 路由 + MTP fast path) 完全互斥。</p>
 
-### 1.2 解耦設計: 三個層獨立演進
-- **Tensor 形狀層** (永遠 256, 不可變)
-- **Pool 容量層** (可縮, 透過 env: `CGC_SOFT_POOL=64` etc)
-- **Slot table 層** (動態 256→N 對映, LRU evict 取代固定 ZERO-slot)
+<p>Devserver 想借鏡的是 dev branch 的<strong>內存效率</strong>概念, 但不能直接移植它的實作方式 (tensor 形狀硬縮)。本文件提出一個<strong>解耦的 hybrid 方案</strong>:</p>
 
-這樣 dev branch 的「shrink 87」概念可以**只作用於 pool 容量層**, 不影響
-tensor 形狀層跟 slot table 層, 三者完全解耦。
+<div class="mermaid">
+<pre class="mermaid">
+graph LR
+  A[dev branch 互斥設計] --> B{問題根源}
+  B --> C[Tensor 形狀: 硬縮 256→87]
+  B --> D[Pool 容量: 沒概念]
+  B --> E[Slot table: 沒概念]
 
----
+  F[Hybrid 解耦設計] --> G{Tensor 永遠 256}
+  F --> H{Pool 容量動態可縮}
+  F --> I{Slot table 動態 LRU}
+</pre>
+</div>
 
-## 2. Hybrid 方案: Soft Pool + LRU Slot Table + L2 Cold Fallback
+<h2 id="s1">1. 核心洞察: 把「shrink」從 tensor 形狀層移到 pool 容量層</h2>
 
-### 2.1 整體架構
+<h3>1.1 互斥的根本原因</h3>
 
-```
-                ┌──────────────────────────────────────────────────┐
-                │  Tensor 形狀層 (ne[2]=256, 永不改)               │
-                └──────────────────────────────────────────────────┘
-                                    ▲
-                                    │ slot_table[e] 動態查找
-                                    │
-                ┌──────────────────────────────────────────────────┐
-                │  Slot Table 層 (256 → N 對映, LRU evict)         │
-                │  ┌────┐ ┌────┐ ┌────┐       ┌────┐              │
-                │  │L0  │ │L0  │ │L1  │  ...  │L1  │              │
-                │  │hot │ │hot │ │warm│       │warm│              │
-                │  └────┘ └────┘ └────┘       └────┘              │
-                │  slot_owner[] = LRU timestamp                   │
-                └──────────────────────────────────────────────────┘
-                          ▲           ▲           ▲
-                          │           │           │
-                ┌─────────┴───┐ ┌─────┴─────┐ ┌───┴──────────┐
-                │ L0 GPU Hot  │ │ L1 GPU    │ │ L2 CPU Cold  │
-                │ Tier Pool   │ │ Warm Tier │ │ Tier Pool    │
-                │ (32 slot)   │ │ (32 slot) │ │ (256 expert) │
-                │ 2GB resident│ │ 2GB LRU   │ │ 12.5GB mmap  │
-                └─────────────┘ └───────────┘ └──────────────┘
-```
+<table>
+  <thead>
+    <tr><th>層</th><th>Dev branch 改法</th><th>影響</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Tensor 形狀層</strong> (ne[2])</td>
+      <td>硬縮 256→87</td>
+      <td>破壞 <code>mul_mat_id</code> 邏輯形狀 → layer 2+ 路由 OOB</td>
+    </tr>
+    <tr>
+      <td><strong>Pool 容量層</strong> (slot 數)</td>
+      <td>(沒概念, 全塞 pool)</td>
+      <td>4GB 預分配, 16GB Mac 物理上限受限</td>
+    </tr>
+    <tr>
+      <td><strong>Slot table 層</strong> (256→N 對映)</td>
+      <td>(沒概念, 走 identity)</td>
+      <td>直接放棄 <code>mul_mat_id</code> slot 概念</td>
+    </tr>
+  </tbody>
+</table>
 
-### 2.2 三層定義
+<h3>1.2 解耦設計: 三個層獨立演進</h3>
 
-| 層 | 容量 (預設) | 內存 | 命中率 | 替換策略 | 失誤路徑 |
-|----|------------|------|--------|----------|----------|
-| **L0 GPU Hot** | 32 slot (top-32 hot) | ~2GB resident | 85%+ | 無 (固定 hot) | → L1 |
-| **L1 GPU Warm** | 32 slot (LRU) | ~2GB resident | 12% | LRU evict → L2 | → L2 |
-| **L2 CPU Cold** | 256 expert 完整 | ~12.5GB unified mmap | 100% | LRU mmap hint | → ZERO-slot (最後手段) |
+<div class="mermaid">
+<pre class="mermaid">
+graph TB
+  subgraph "三層完全解耦"
+    T1[Tensor 形狀層<br/>永遠 256<br/>不可變]
+    P1[Pool 容量層<br/>可縮, env 控制<br/>CGC_SOFT_POOL=64]
+    S1[Slot table 層<br/>動態 256→N 對映<br/>LRU evict]
 
-**預設配置**:
-- `CGC_SOFT_POOL_L0=32 CGC_SOFT_POOL_L1=32` (合計 64 slot, 比原 87 省 27% 內存)
-- 可調: `CGC_SOFT_POOL_L0=0 CGC_SOFT_POOL_L1=64` (全 L1 LRU, 適合長尾)
-- 極限: `CGC_SOFT_POOL=0` (關閉 soft pool, 走 dev branch 風格 L2 + ZERO-slot)
+    T1 --> S1
+    S1 --> P1
+  end
+</pre>
+</div>
 
-### 2.2.1 實作對應 (2026-09-05 commit 範圍: 階段 1)
+<ul>
+  <li><strong>Tensor 形狀層</strong> (永遠 256, 不可變)</li>
+  <li><strong>Pool 容量層</strong> (可縮, 透過 env: <code>CGC_SOFT_POOL=64</code> 等)</li>
+  <li><strong>Slot table 層</strong> (動態 256→N 對映, LRU evict 取代固定 ZERO-slot)</li>
+</ul>
 
-> 本節對應 §4.1 階段 1「Soft Pool Capacity 環境變數」, 記錄實際 commit 的
-> 程式碼改動。其他階段 (LRU Eviction / L2 CPU Cold Fallback) 留待後續 commit。
+<div class="callout callout-ok">
+  <strong>關鍵洞察</strong>: 這樣 dev branch 的「shrink 87」概念可以<strong>只作用於 pool 容量層</strong>, 不影響 tensor 形狀層跟 slot table 層, 三者完全解耦。
+</div>
 
-**1) 環境變數讀取** (`llama-expert-cache.h`)
+<h2 id="s2">2. Hybrid 方案: Soft Pool + LRU Slot Table + L2 Cold Fallback</h2>
 
-新增 inline 函式 `cgc_soft_pool_tier(env_name, fallback)`:
-- 讀 `getenv(env_name)`, 缺省或空字串 → fallback
-- 解析為 long, 負值 → 0
-- 上限 clamp 256 (避免誤設超大值)
+<h3>2.1 整體架構</h3>
 
-```cpp
-static inline uint32_t cgc_soft_pool_tier(const char * env_name, uint32_t fallback) {
+<div class="mermaid">
+<pre class="mermaid">
+graph TB
+  subgraph "Tensor 形狀層 (ne 2 = 256, 永不改)"
+    T[Tensor shape: 256 expert<br/>mul_mat_id 邏輯形狀]
+  end
+
+  subgraph "Slot Table 層 (256 → N 對映, LRU evict)"
+    S[slot_table 256 entries]
+    S --> S0[L0 固定 hot: 0..l0_size-1]
+    S --> S1[L1 LRU warm: l0_size..l0_size+l1_size-1]
+    S --> S2[hot/warm 不在池: -1 → ZERO-slot]
+    S --> S3[evicted: -2 → L2 mmap fallback]
+  end
+
+  subgraph "Pool 三層 (Soft Pool)"
+    L0P[L0 GPU Hot Tier<br/>32 slot 固定<br/>2GB resident]
+    L1P[L1 GPU Warm Tier<br/>32 slot LRU<br/>2GB resident]
+    L2P[L2 CPU Cold Tier<br/>256 expert 完整<br/>12.5GB mmap]
+  end
+
+  T --> S
+  S0 --> L0P
+  S1 --> L1P
+  S2 -.ZERO-slot 吸收.-> L0P
+  S3 -.mmap fallback.-> L2P
+</pre>
+</div>
+
+<h3>2.2 三層定義</h3>
+
+<div class="layer-box layer-l0">
+  <h4>🟢 L0 GPU Hot Tier</h4>
+  <p><strong>容量 (預設)</strong>: 32 slot (top-32 hot)<br>
+  <strong>內存</strong>: ~2GB resident (Metal pool)<br>
+  <strong>命中率</strong>: 85%+<br>
+  <strong>替換策略</strong>: 無 (固定 hot)<br>
+  <strong>失誤路徑</strong>: → L1</p>
+</div>
+
+<div class="layer-box layer-l1">
+  <h4>🟡 L1 GPU Warm Tier</h4>
+  <p><strong>容量 (預設)</strong>: 32 slot (LRU)<br>
+  <strong>內存</strong>: ~2GB resident (Metal pool)<br>
+  <strong>命中率</strong>: 12%<br>
+  <strong>替換策略</strong>: LRU evict → L2<br>
+  <strong>失誤路徑</strong>: → L2</p>
+</div>
+
+<div class="layer-box layer-l2">
+  <h4>🟣 L2 CPU Cold Tier</h4>
+  <p><strong>容量 (預設)</strong>: 256 expert 完整<br>
+  <strong>內存</strong>: ~12.5GB unified mmap<br>
+  <strong>命中率</strong>: 100%<br>
+  <strong>替換策略</strong>: LRU mmap hint<br>
+  <strong>失誤路徑</strong>: → ZERO-slot (最後手段)</p>
+</div>
+
+<h3>2.2.1 環境變數配置</h3>
+
+<pre><code># 預設配置 (推薦)
+export CGC_SOFT_POOL_L0=32 CGC_SOFT_POOL_L1=32
+# 合計 64 slot, 比原 87 省 27% 內存
+
+# 可調配置 (長尾場景)
+export CGC_SOFT_POOL_L0=0 CGC_SOFT_POOL_L1=64
+# 全 L1 LRU, 適合長尾
+
+# 極限配置 (dev branch 風格)
+export CGC_SOFT_POOL=0
+# 關閉 soft pool, 走 L2 + ZERO-slot
+</code></pre>
+
+<h3>2.2.2 實作對應 (2026-09-05 commit 範圍: 階段 1)</h3>
+
+<div class="callout">
+  本節對應 §4.1 階段 1「Soft Pool Capacity 環境變數」, 記錄實際 commit 的程式碼改動。其他階段 (LRU Eviction / L2 CPU Cold Fallback) 留待後續 commit。
+</div>
+
+<h4>1) 環境變數讀取 (llama-expert-cache.h)</h4>
+
+<p>新增 inline 函式 <code>cgc_soft_pool_tier(env_name, fallback)</code>:</p>
+
+<ul>
+  <li>讀 <code>getenv(env_name)</code>, 缺省或空字串 → fallback</li>
+  <li>解析為 long, 負值 → 0</li>
+  <li>上限 clamp 256 (避免誤設超大值)</li>
+</ul>
+
+<pre><code>static inline uint32_t cgc_soft_pool_tier(const char * env_name, uint32_t fallback) {
     const char * env = getenv(env_name);
     if (env == nullptr || env[0] == '\0') return fallback;
     long v = atol(env);
-    if (v < 0) return 0;
-    return (uint32_t) std::min<long>(v, 256);
+    if (v &lt; 0) return 0;
+    return (uint32_t) std::min&lt;long&gt;(v, 256);
 }
-```
+</code></pre>
 
-**2) Cache 結構體欄位** (`llama-expert-cache.h`)
+<h4>2) Cache 結構體欄位 (llama-expert-cache.h)</h4>
 
-`llama_expert_cache` 新增 2 個 uint32_t 欄位:
-- `soft_pool_l0`: L0 固定 hot slot 數 (預設 32)
-- `soft_pool_l1`: L1 LRU warm slot 數 (預設 32)
-- `soft_pool_l0 + soft_pool_l1 <= slots_l(layer)`, 超過則按比例 clamp
-- `L0 + L1 = 0` 表示未啟用 partition, 走 legacy uniform n_slots 行為 (byte-identical)
+<p><code>llama_expert_cache</code> 新增 2 個 uint32_t 欄位:</p>
 
-**3) Init 邏輯** (`llama-expert-cache.cpp`)
+<ul>
+  <li><code>soft_pool_l0</code>: L0 固定 hot slot 數 (預設 32)</li>
+  <li><code>soft_pool_l1</code>: L1 LRU warm slot 數 (預設 32)</li>
+  <li><code>soft_pool_l0 + soft_pool_l1 &lt;= slots_l(layer)</code>, 超過則按比例 clamp</li>
+  <li><code>L0 + L1 = 0</code> 表示未啟用 partition, 走 legacy uniform n_slots 行為 (byte-identical)</li>
+</ul>
 
-在 `slot_table.assign(...)` 之後:
-1. 讀 `CGC_SOFT_POOL_L0` / `CGC_SOFT_POOL_L1` (各 fallback 32)
-2. 若 `L0 + L1 > n_slots` → 按比例 clamp 並 stderr warning
-3. 若 `L0 + L1 = 0` → 走 legacy 行為
-4. 寫入 `cache->soft_pool_{l0,l1}` 供 runtime introspection
+<h4>3) Init 邏輯 (llama-expert-cache.cpp)</h4>
 
-stderr log 格式:
-```
-CGC Soft Pool init: L0=<n> L1=<n> (n_slots=<n>, partition <active|disabled>)
-```
+<p>在 <code>slot_table.assign(...)</code> 之後:</p>
 
-**4) 當前未實作** (留待後續 commit)
+<ol>
+  <li>讀 <code>CGC_SOFT_POOL_L0</code> / <code>CGC_SOFT_POOL_L1</code> (各 fallback 32)</li>
+  <li>若 <code>L0 + L1 &gt; n_slots</code> → 按比例 clamp 並 stderr warning</li>
+  <li>若 <code>L0 + L1 = 0</code> → 走 legacy 行為</li>
+  <li>寫入 <code>cache-&gt;soft_pool_{l0,l1}</code> 供 runtime introspection</li>
+</ol>
 
-- ❌ `pick_slot` L0/L1 分割邏輯 (階段 2 LRU Eviction)
-  - 目前 `pick_slot` 仍走 legacy n_slots 邏輯, L0/L1 欄位僅作 introspection
-  - 行為: 若預設 32/32, runtime 跟 legacy 87 slot 略不同 (slot 數變少)
-  - 預期影響: pool 容量從 87 縮到 64, cold rate 略升但仍 < 5%
-- ❌ L1 LRU evict 標記 -2 區分 (階段 2)
-- ❌ L2 mmap fallback (階段 3)
-- ❌ L0 hot set 自動學習 (階段 4)
+<pre><code>CGC Soft Pool init: L0=&lt;n&gt; L1=&lt;n&gt; (n_slots=&lt;n&gt;, partition &lt;active|disabled&gt;)
+</code></pre>
 
-**5) 驗證清單** (本 commit 範圍)
+<h4>4) 當前未實作 (留待後續 commit)</h4>
 
-- [x] `CGC_SOFT_POOL_L0=32 CGC_SOFT_POOL_L1=32` (預設) → init log 顯示 `partition active`
-- [x] `CGC_SOFT_POOL_L0=0 CGC_SOFT_POOL_L1=0` → init log 顯示 `partition disabled`, 走 legacy 87 slot 邏輯
-- [x] `CGC_SOFT_POOL_L0=9999` (oversize) → clamp 到 256, 不超過 n_slots
-- [x] `CGC_SOFT_POOL_L0=-1` (負值) → fallback 0
-- [x] 不指定 env → fallback 32/32
-- [ ] replay benchmark regression: 留待 rebuild 後 (todo 41 配合)
+<ul>
+  <li>❌ <code>pick_slot</code> L0/L1 分割邏輯 (階段 2 LRU Eviction)
+    <ul>
+      <li>目前 <code>pick_slot</code> 仍走 legacy n_slots 邏輯, L0/L1 欄位僅作 introspection</li>
+      <li>行為: 若預設 32/32, runtime 跟 legacy 87 slot 略不同 (slot 數變少)</li>
+      <li>預期影響: pool 容量從 87 縮到 64, cold rate 略升但仍 &lt; 5%</li>
+    </ul>
+  </li>
+  <li>❌ L1 LRU evict 標記 -2 區分 (階段 2)</li>
+  <li>❌ L2 mmap fallback (階段 3)</li>
+  <li>❌ L0 hot set 自動學習 (階段 4)</li>
+</ul>
 
-### 2.3 Slot Table 動態演進 (取代固定 ZERO-slot)
+<h4>5) 驗證清單 (本 commit 範圍)</h4>
 
-```
-傳統 devserver slot table (line 3152-3300 llama-context.cpp):
-  hot   → st[e] = 0..n_slots-1
-  cold  → st[e] = -1 (固定 ZERO-slot)
+<ul>
+  <li>✅ <code>CGC_SOFT_POOL_L0=32 CGC_SOFT_POOL_L1=32</code> (預設) → init log 顯示 <code>partition active</code></li>
+  <li>✅ <code>CGC_SOFT_POOL_L0=0 CGC_SOFT_POOL_L1=0</code> → init log 顯示 <code>partition disabled</code>, 走 legacy 87 slot 邏輯</li>
+  <li>✅ <code>CGC_SOFT_POOL_L0=9999</code> (oversize) → clamp 到 256, 不超過 n_slots</li>
+  <li>✅ <code>CGC_SOFT_POOL_L0=-1</code> (負值) → fallback 0</li>
+  <li>✅ 不指定 env → fallback 32/32</li>
+  <li>⏳ replay benchmark regression: 留待 rebuild 後 (todo 41 配合)</li>
+</ul>
 
-Hybrid slot table:
-  hot   → st[e] = 0..l0_size-1 (L0 固定 hot, 不 evict)
-  warm  → st[e] = l0_size..l0_size+l1_size-1 (L1 LRU)
-  cold  → st[e] = -1 (ZERO-slot 仍是 last resort, 但同時觸發 L2 mmap hint)
-  evicted→ st[e] = -2 (slot 被回收, 但 L2 mmap 仍可 fallback)
-```
+<h3>2.3 Slot Table 動態演進 (取代固定 ZERO-slot)</h3>
 
-**關鍵差異**: L1 用 LRU evict, 不是固定 ZERO-slot。Evicted slot 可從 L2
-mmap 重新拉回 (犧牲速度但保正確), 而不是固定讀 ZERO-slot (犧牲正確性)。
+<div class="mermaid">
+<pre class="mermaid">
+graph LR
+  subgraph "傳統 devserver slot table"
+    A1[hot: st e = 0..n_slots-1]
+    A2[cold: st e = -1<br/>固定 ZERO-slot]
+  end
 
----
+  subgraph "Hybrid slot table"
+    B1[hot: st e = 0..l0_size-1<br/>L0 固定 hot, 不 evict]
+    B2[warm: st e = l0_size..l0_size+l1_size-1<br/>L1 LRU]
+    B3[cold: st e = -1<br/>ZERO-slot 仍是 last resort]
+    B4[evicted: st e = -2<br/>slot 被回收, L2 mmap 仍可 fallback]
+  end
+</pre>
+</div>
 
-## 3. 跟現有機制對照
+<table>
+  <thead>
+    <tr><th>Slot 值</th><th>傳統 devserver</th><th>Hybrid 提案</th><th>差異</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>0..n_slots-1</td>
+      <td>hot</td>
+      <td><strong>L0 hot</strong> (0..l0_size-1, 永不 evict)</td>
+      <td>分層</td>
+    </tr>
+    <tr>
+      <td>-1 (cold)</td>
+      <td>ZERO-slot 固定</td>
+      <td>ZERO-slot + L2 mmap hint</td>
+      <td>新增 L2 fallback</td>
+    </tr>
+    <tr>
+      <td>-2 (evicted)</td>
+      <td>不支援</td>
+      <td>L2 mmap 仍可 fallback</td>
+      <td>新增 evict 機制</td>
+    </tr>
+  </tbody>
+</table>
 
-### 3.1 跟 devserver 現狀 (slot table 256→87, ZERO-slot) 對照
+<div class="callout callout-ok">
+  <strong>關鍵差異</strong>: L1 用 LRU evict, 不是固定 ZERO-slot。Evicted slot 可從 L2 mmap 重新拉回 (犧牲速度但保正確), 而不是固定讀 ZERO-slot (犧牲正確性)。
+</div>
 
-| 面向 | 現狀 (固定 87 slot) | Hybrid 提案 | 差異 |
-|------|--------------------|-----------|------|
-| Pool 容量 | 87 slot (~4.4GB) | 64 slot (32+32, ~3.2GB) | 省 27% 內存 |
-| Slot 替換 | 固定 (LRU touch, no evict) | L1 LRU evict | 新增 evict 機制 |
-| Cold 路由 | ZERO-slot (固定 0 權重) | ZERO-slot + L2 mmap hint | 新增 L2 fallback |
-| Tensor 形狀 | 256 | 256 (不變) | 0 (保留) |
-| MTP fast path | ✅ 保留 | ✅ 保留 | 0 |
-| Warm gate | ✅ 保留 | ✅ 保留 | 0 |
-| ne[2] 形狀 | 256 | 256 | 0 (絕對不動) |
-| 預期速度 | 26+ t/s | 24~26 t/s (cold 走 L2 慢一點) | 略降但仍達標 |
-| 語意正確性 | 條件性對 (cold 過多退化) | 100% 對 (L2 fallback) | 改善 |
+<h2 id="s3">3. 跟現有機制對照</h2>
 
-### 3.2 跟 dev branch (ne[2] 硬縮 256→87) 對照
+<h3>3.1 跟 devserver 現狀 (slot table 256→87, ZERO-slot) 對照</h3>
 
-| 面向 | dev branch | Hybrid 提案 | 差異 |
-|------|-----------|-----------|------|
-| Tensor 形狀 | **87 (硬縮)** ❌ | 256 (保留) ✅ | 根本不同 |
-| Pool 容量 | 沒概念 (放棄 pool) | 64 slot (soft shrink) | 重新引入 pool |
-| Cold 路由 | 沒概念 (OOB) | L2 mmap + ZERO-slot | 新機制 |
-| 速度 | 5.5 t/s | 24~26 t/s | +4x 速度 |
-| 語意 | 100% 對 | 100% 對 | 同 |
+<table>
+  <thead>
+    <tr><th>面向</th><th>現狀 (固定 87 slot)</th><th>Hybrid 提案</th><th>差異</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Pool 容量</td>
+      <td>87 slot (~4.4GB)</td>
+      <td>64 slot (32+32, ~3.2GB)</td>
+      <td><span class="badge badge-green">省 27% 內存</span></td>
+    </tr>
+    <tr>
+      <td>Slot 替換</td>
+      <td>固定 (LRU touch, no evict)</td>
+      <td>L1 LRU evict</td>
+      <td>新增 evict 機制</td>
+    </tr>
+    <tr>
+      <td>Cold 路由</td>
+      <td>ZERO-slot (固定 0 權重)</td>
+      <td>ZERO-slot + L2 mmap hint</td>
+      <td>新增 L2 fallback</td>
+    </tr>
+    <tr>
+      <td>Tensor 形狀</td>
+      <td>256</td>
+      <td>256 (不變)</td>
+      <td>0 (保留)</td>
+    </tr>
+    <tr>
+      <td>MTP fast path</td>
+      <td>✅ 保留</td>
+      <td>✅ 保留</td>
+      <td>0</td>
+    </tr>
+    <tr>
+      <td>Warm gate</td>
+      <td>✅ 保留</td>
+      <td>✅ 保留</td>
+      <td>0</td>
+    </tr>
+    <tr>
+      <td>ne[2] 形狀</td>
+      <td>256</td>
+      <td>256</td>
+      <td>0 (絕對不動)</td>
+    </tr>
+    <tr>
+      <td>預期速度</td>
+      <td>26+ t/s</td>
+      <td>24~26 t/s (cold 走 L2 慢一點)</td>
+      <td>略降但仍達標</td>
+    </tr>
+    <tr>
+      <td>語意正確性</td>
+      <td>條件性對 (cold 過多退化)</td>
+      <td><span class="badge badge-green">100% 對 (L2 fallback)</span></td>
+      <td>改善</td>
+    </tr>
+  </tbody>
+</table>
 
-**結論**: Hybrid 方案從 dev branch 借鏡「pool 容量縮減」概念, 但**保留
-tensor 256 形狀 + 動態 slot table + MTP fast path**, 達成「又快又準」。
+<h3>3.2 跟 dev branch (ne[2] 硬縮 256→87) 對照</h3>
 
----
+<div class="mermaid">
+<pre class="mermaid">
+xychart-beta
+  title "速度對比: 三種架構"
+  x-axis ["devserver 現狀", "Hybrid 提案", "dev branch"]
+  y-axis "t/s" 0 --> 30
+  bar [26.5, 25, 5.5]
+</pre>
+</div>
 
-## 4. 實作藍圖 (4 階段)
+<table>
+  <thead>
+    <tr><th>面向</th><th>dev branch</th><th>Hybrid 提案</th><th>差異</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Tensor 形狀</td>
+      <td><strong>87 (硬縮)</strong> ❌</td>
+      <td>256 (保留) ✅</td>
+      <td>根本不同</td>
+    </tr>
+    <tr>
+      <td>Pool 容量</td>
+      <td>沒概念 (放棄 pool)</td>
+      <td>64 slot (soft shrink)</td>
+      <td>重新引入 pool</td>
+    </tr>
+    <tr>
+      <td>Cold 路由</td>
+      <td>沒概念 (OOB)</td>
+      <td>L2 mmap + ZERO-slot</td>
+      <td>新機制</td>
+    </tr>
+    <tr>
+      <td>速度</td>
+      <td><span class="badge badge-red">5.5 t/s</span></td>
+      <td><span class="badge badge-green">24~26 t/s</span></td>
+      <td>+4x 速度</td>
+    </tr>
+    <tr>
+      <td>語意</td>
+      <td>100% 對</td>
+      <td>100% 對</td>
+      <td>同</td>
+    </tr>
+  </tbody>
+</table>
 
-### 4.1 階段 1: Soft Pool Capacity 環境變數 (低風險)
-- 新增 `CGC_SOFT_POOL_L0` / `CGC_SOFT_POOL_L1` env vars
-- 預設沿用現有 87 slot 邏輯 (`L0=87, L1=0`)
-- 改 `llama_expert_cache_slots_per_layer_l` 邏輯支援 L0/L1 split
-- 預期: 行為 0 變化, 只多開關
+<div class="callout callout-ok">
+  <strong>結論</strong>: Hybrid 方案從 dev branch 借鏡「pool 容量縮減」概念, 但<strong>保留 tensor 256 形狀 + 動態 slot table + MTP fast path</strong>, 達成「又快又準」。
+</div>
 
-### 4.2 階段 2: LRU Eviction 機制 (中風險)
-- `slot_owner[il][e]` 加 LRU timestamp
-- `llama_expert_cache_touch` 同時更新 timestamp
-- `llama_expert_cache_ensure_batch` 滿載時 evict LRU
-- Evicted slot 標記為 -2 (cold 路由可走 L2 fallback)
-- 預期: 內存省 27%, fast path 仍 24+ t/s
+<h2 id="s4">4. 實作藍圖 (4 階段)</h2>
 
-### 4.3 階段 3: L2 CPU Cold Fallback (高風險, 但選用)
-- 新增 `llama_expert_cache_fetch_l2(cache, il, e)` 從 L2 mmap 拉單個 expert
-- L1 miss 且 slot=-2 時觸發
-- 同步載入 slot + 寫 remap
-- 預期: cold 場景語意 100% 對, 但 fetch 慢 (1-2ms per expert)
-- **可選**: 透過 `CGC_L2_FALLBACK=0` 關閉, 退回 ZERO-slot (速度優先)
+<div class="mermaid">
+<pre class="mermaid">
+gantt
+  title Hybrid 4 階段實作時間線
+  dateFormat YYYY-MM-DD
+  axisFormat %m/%d
+  section Stage 1
+  Soft Pool env vars               :s1, 2026-09-05, 1d
+  section Stage 2
+  LRU Eviction 機制                :s2, after s1, 3d
+  section Stage 3
+  L2 CPU Cold Fallback (選用)      :s3, after s2, 5d
+  section Stage 4
+  L0 Hot Set 自動學習              :s4, after s3, 7d
+</pre>
+</div>
 
-### 4.4 階段 4: L0 Hot Set 自動學習 (進階)
-- 用 `LLAMA_EXPERT_CACHE_ROUTE_RECORD=1` 收集 route frequency
-- 啟動時跑 calibration (前 10 step) 統計 top-32 hot
-- 寫入 `slot_owner[il][e]` 為 fixed hot, 永不 evict
-- 預期: warm gate 之後 cold rate 從 65% 降到 ~20%
+<h3>4.1 階段 1: Soft Pool Capacity 環境變數 (低風險)</h3>
 
----
+<ul>
+  <li>新增 <code>CGC_SOFT_POOL_L0</code> / <code>CGC_SOFT_POOL_L1</code> env vars</li>
+  <li>預設沿用現有 87 slot 邏輯 (<code>L0=87, L1=0</code>)</li>
+  <li>改 <code>llama_expert_cache_slots_per_layer_l</code> 邏輯支援 L0/L1 split</li>
+  <li>預期: 行為 0 變化, 只多開關</li>
+</ul>
 
-## 5. 預期效益
+<h3>4.2 階段 2: LRU Eviction 機制 (中風險)</h3>
 
-### 5.1 內存效率 (借鏡 dev branch)
-- Pool 容量 87 → 64 slot (省 27%)
-- 4.4GB → 3.2GB GPU pool
-- 16GB Mac 物理上限下, 可省出 ~1.2GB 給 L2 mmap cache
+<ul>
+  <li><code>slot_owner[il][e]</code> 加 LRU timestamp</li>
+  <li><code>llama_expert_cache_touch</code> 同時更新 timestamp</li>
+  <li><code>llama_expert_cache_ensure_batch</code> 滿載時 evict LRU</li>
+  <li>Evicted slot 標記為 -2 (cold 路由可走 L2 fallback)</li>
+  <li>預期: 內存省 27%, fast path 仍 24+ t/s</li>
+</ul>
 
-### 5.2 速度保持 (保留 devserver 26+ t/s 機制)
-- MTP fast path 保留 (touch + ZERO-slot, 不做 pread)
-- Warm gate 保留 (CGC_WARM_NPAST=256)
-- L0 固定 hot 命中率 85%+ 不受 L1 LRU 影響
-- 預期: 24~26 t/s (vs 現狀 26.31 t/s, 略降但仍達 25+ 目標)
+<h3>4.3 階段 3: L2 CPU Cold Fallback (高風險, 但選用)</h3>
 
-### 5.3 語意改善 (借鏡 dev branch 100% 對)
-- L1 LRU evict + L2 fallback 取代固定 ZERO-slot
-- 條件性 0000 風險 (cold 過多退化) 消除
-- QA 短答場景語意穩定性提升
+<ul>
+  <li>新增 <code>llama_expert_cache_fetch_l2(cache, il, e)</code> 從 L2 mmap 拉單個 expert</li>
+  <li>L1 miss 且 slot=-2 時觸發</li>
+  <li>同步載入 slot + 寫 remap</li>
+  <li>預期: cold 場景語意 100% 對, 但 fetch 慢 (1-2ms per expert)</li>
+  <li><strong>可選</strong>: 透過 <code>CGC_L2_FALLBACK=0</code> 關閉, 退回 ZERO-slot (速度優先)</li>
+</ul>
 
----
+<h3>4.4 階段 4: L0 Hot Set 自動學習 (進階)</h3>
 
-## 6. 風險評估
+<ul>
+  <li>用 <code>LLAMA_EXPERT_CACHE_ROUTE_RECORD=1</code> 收集 route frequency</li>
+  <li>啟動時跑 calibration (前 10 step) 統計 top-32 hot</li>
+  <li>寫入 <code>slot_owner[il][e]</code> 為 fixed hot, 永不 evict</li>
+  <li>預期: warm gate 之後 cold rate 從 65% 降到 ~20%</li>
+</ul>
 
-| 改動 | 風險 | 緩解 |
-|------|------|------|
-| Soft pool env vars | 極低 (預設 0 行為變化) | env tunable, fallback 預設值 |
-| LRU eviction | 中 (可能 evict 熱 expert 導致 miss) | L0 固定 hot 隔離 + LRU 監控 |
-| L2 fallback | 高 (L2 fetch 慢, 阻塞 fast path) | 非同步 pread, 走 ZERO-slot fast path 時不阻塞 |
-| L0 hot set 學習 | 中 (calibration 期間 cold 較多) | warm gate 已涵蓋, calibration 期間走 ensure_batch |
+<h2 id="s5">5. 預期效益</h2>
 
----
+<div class="stat-grid">
+  <div class="stat-card ok">
+    <div class="stat-value">-27%</div>
+    <div class="stat-label">Pool 容量內存節省 (87→64)</div>
+  </div>
+  <div class="stat-card ok">
+    <div class="stat-value">-1.2GB</div>
+    <div class="stat-label">GPU pool 內存省出 (4.4GB→3.2GB)</div>
+  </div>
+  <div class="stat-card warn">
+    <div class="stat-value">24-26 t/s</div>
+    <div class="stat-label">速度 (vs 現狀 26.31 t/s, 略降但達標)</div>
+  </div>
+  <div class="stat-card ok">
+    <div class="stat-value">100%</div>
+    <div class="stat-label">語意正確性 (L2 fallback)</div>
+  </div>
+</div>
 
-## 7. 不做的事 (明確排除)
+<h3>5.1 內存效率 (借鏡 dev branch)</h3>
 
-- ❌ 改 ne[2] tensor 形狀 (256→87 硬縮) - 跟 slot table 機制根本互斥
-- ❌ 走 dev branch 整個 commit 1afedfa68 / 522428cdc (被打回 5.5 t/s)
-- ❌ 改用 GGUF embedded ChatML (跟 Nail token strategy 衝突)
-- ❌ 強制 CPU resident passthrough (犧牲 26+ t/s 速度)
+<ul>
+  <li>Pool 容量 87 → 64 slot (省 27%)</li>
+  <li>4.4GB → 3.2GB GPU pool</li>
+  <li>16GB Mac 物理上限下, 可省出 ~1.2GB 給 L2 mmap cache</li>
+</ul>
 
----
+<h3>5.2 速度保持 (保留 devserver 26+ t/s 機制)</h3>
 
-## 8. 驗證計劃 (在實作後跑)
+<ul>
+  <li>MTP fast path 保留 (touch + ZERO-slot, 不做 pread)</li>
+  <li>Warm gate 保留 (CGC_WARM_NPAST=256)</li>
+  <li>L0 固定 hot 命中率 85%+ 不受 L1 LRU 影響</li>
+  <li>預期: 24~26 t/s (vs 現狀 26.31 t/s, 略降但仍達 25+ 目標)</li>
+</ul>
 
-1. **qa-zh** (短答, 語意穩定性): 14.88 t/s → 預期 14+ t/s + 100% accept
-2. **longform-zh** (長文, prefill loop 待修): 26+ t/s → 預期 24+ t/s + 語意對
-3. **coding** (Python 費氏數列): 25+ t/s → 預期 23+ t/s + 語意對
-4. **cold flood test** (故意灌 256 unique expert): 0% 語意崩潰 (L2 fallback 保證)
-5. **memory delta**: 4.4GB → 預期 3.2GB (-27%)
-6. **MTP accept rate**: 27.6% (server) → 預期維持或改善
+<h3>5.3 語意改善 (借鏡 dev branch 100% 對)</h3>
 
----
+<ul>
+  <li>L1 LRU evict + L2 fallback 取代固定 ZERO-slot</li>
+  <li>條件性 0000 風險 (cold 過多退化) 消除</li>
+  <li>QA 短答場景語意穩定性提升</li>
+</ul>
 
-## 9. 與現有 todo 對應
+<h2 id="s6">6. 風險評估</h2>
 
-- **todo 22b** (整合 dev expert cache commits): Hybrid 設計的先決條件, 但只
-  採納無衝突的 (83c47b137 CLI + Cold Guard 防呆), 不要直接 cherry-pick
-  skip_load 條件
-- **todo 25** (本文件): Hybrid slot table + soft shrink pool 設計, 後續實作
-  4 階段分批 commit
-- **todo 24a/24b** (長文/代碼驗證): 在 hybrid 設計完成後, 跑 3 profile 確認
-  語意 + 速度不退
+<table>
+  <thead>
+    <tr><th>改動</th><th>風險等級</th><th>影響</th><th>緩解</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Soft pool env vars</td>
+      <td><span class="badge badge-green">極低</span></td>
+      <td>預設 0 行為變化</td>
+      <td>env tunable, fallback 預設值</td>
+    </tr>
+    <tr>
+      <td>LRU eviction</td>
+      <td><span class="badge badge-yellow">中</span></td>
+      <td>可能 evict 熱 expert 導致 miss</td>
+      <td>L0 固定 hot 隔離 + LRU 監控</td>
+    </tr>
+    <tr>
+      <td>L2 fallback</td>
+      <td><span class="badge badge-red">高</span></td>
+      <td>L2 fetch 慢, 阻塞 fast path</td>
+      <td>非同步 pread, 走 ZERO-slot fast path 時不阻塞</td>
+    </tr>
+    <tr>
+      <td>L0 hot set 學習</td>
+      <td><span class="badge badge-yellow">中</span></td>
+      <td>calibration 期間 cold 較多</td>
+      <td>warm gate 已涵蓋, calibration 期間走 ensure_batch</td>
+    </tr>
+  </tbody>
+</table>
 
----
+<h2 id="s7">7. 不做的事 (明確排除)</h2>
 
-## 10. 環境變數速查 (Env Gates)
+<div class="callout callout-danger">
+  <strong>明確排除的設計方向</strong>:
+</div>
 
-> **核心原則: 所有驗證 gate 預設全 OFF, 不影響原有功能。** 只有 CI / 調查時
-> 手動設 env 才會啟動。Soft Pool 容量 env 有 fallback 預設值, 不設也安全。
+<ul>
+  <li>❌ 改 ne[2] tensor 形狀 (256→87 硬縮) - 跟 slot table 機制根本互斥</li>
+  <li>❌ 走 dev branch 整個 commit 1afedfa68 / 522428cdc (被打回 5.5 t/s)</li>
+  <li>❌ 改用 GGUF embedded ChatML (跟 Nail token strategy 衝突)</li>
+  <li>❌ 強制 CPU resident passthrough (犧牲 26+ t/s 速度)</li>
+</ul>
 
-### 10.1 Soft Pool 容量 (Stage 1, 預設開)
+<h2 id="s8">8. 驗證計劃 (在實作後跑)</h2>
 
-| Env var | 型別 | 預設 | Clamp | 用途 |
-|---------|------|------|-------|------|
-| `CGC_SOFT_POOL_L0` | int | 32 | `[0, 256]` | L0 固定 hot 集 slot 數, 永不 evict |
-| `CGC_SOFT_POOL_L1` | int | 32 | `[0, 256]` | L1 LRU 動態 slot 數, 滿載走 LRU |
+<table>
+  <thead>
+    <tr><th>#</th><th>Profile</th><th>基線</th><th>預期</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>qa-zh (短答, 語意穩定性)</td>
+      <td>14.88 t/s</td>
+      <td>14+ t/s + 100% accept</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>longform-zh (長文, prefill loop 待修)</td>
+      <td>26+ t/s</td>
+      <td>24+ t/s + 語意對</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>coding (Python 費氏數列)</td>
+      <td>25 t/s</td>
+      <td>23+ t/s + 語意對</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>cold flood test (故意灌 256 unique expert)</td>
+      <td>n/a</td>
+      <td><span class="badge badge-green">0% 語意崩潰 (L2 fallback 保證)</span></td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>memory delta</td>
+      <td>4.4GB</td>
+      <td>3.2GB (-27%)</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td>MTP accept rate</td>
+      <td>27.6% (server)</td>
+      <td>維持或改善</td>
+    </tr>
+  </tbody>
+</table>
 
-- 不設 env → fallback 32/32 (合計 64 slot, 比原 87 省 27% 內存)
-- `=0` → 該層關閉 (L0=0 全 L1, L1=0 全 L0)
-- 負值 → fallback 0
-- 詳見 §4.1
+<h3>8.1 與現有 todo 對應</h3>
 
-### 10.2 驗證 Gates (V1 + V2, 預設全 OFF)
+<ul>
+  <li><strong>todo 22b</strong> (整合 dev expert cache commits): Hybrid 設計的先決條件, 但只採納無衝突的 (83c47b137 CLI + Cold Guard 防呆), 不要直接 cherry-pick skip_load 條件</li>
+  <li><strong>todo 25</strong> (本文件): Hybrid slot table + soft shrink pool 設計, 後續實作 4 階段分批 commit</li>
+  <li><strong>todo 24a/24b</strong> (長文/代碼驗證): 在 hybrid 設計完成後, 跑 3 profile 確認語意 + 速度不退</li>
+</ul>
 
-**V1 — Pool-fill 雜湊比對** (驗證 §5 Exact Cache 不變量 I1)
-位置: `llama-expert-cache.cpp::cgc_exact_cache_verify_post_fill`
+<h2 id="s9">9. 環境變數速查 (Env Gates)</h2>
 
-| Env var | 預設 | Clamp | 用途 |
-|---------|------|-------|------|
-| `CGC_EXACT_CACHE_VERIFY` | **OFF** | 設 `1` 開啟 | fill 後 byte-by-byte 對比 fresh-fd 讀到的 GGUF bytes |
-| `CGC_EXACT_CACHE_VERIFY_FIRST_N` | 256 | `[1, +∞)` | 限制去重後的 segments 數 (避免 O(n) 爆炸) |
+<div class="callout callout-warn">
+  <strong>核心原則: 所有驗證 gate 預設全 OFF, 不影響原有功能。</strong>只有 CI / 調查時手動設 env 才會啟動。Soft Pool 容量 env 有 fallback 預設值, 不設也安全。
+</div>
 
-- 不設 → function 第一行 `if (getenv() == nullptr) return`, **完全 zero cost**
-- 設 1 → 違規時 `abort()` 印出 `layer/slot/file_idx/file_off/bytes/diff_off/pool/ref`
-- 設計見 §11 詳細: 每次 fill 用 fseeko+fread 走「不同 syscall 路徑」重讀, 確保
-  stdio buffering 掩蓋的 off-by-N 也被抓到
-- 常態路徑只多一個 `getenv()` + `unordered_set::count()` ≈ ns 級別
+<h3>9.1 Soft Pool 容量 (Stage 1, 預設開)</h3>
 
-**V2 — Logits oracle** (驗證 §5 Exact Cache 不變量 I4, 端到端)
-位置: `llama-context.cpp::cgc_logits_oracle_dump`
+<table>
+  <thead>
+    <tr><th>Env var</th><th>型別</th><th>預設</th><th>Clamp</th><th>用途</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>CGC_SOFT_POOL_L0</code></td>
+      <td>int</td>
+      <td>32</td>
+      <td><code>[0, 256]</code></td>
+      <td>L0 固定 hot 集 slot 數, 永不 evict</td>
+    </tr>
+    <tr>
+      <td><code>CGC_SOFT_POOL_L1</code></td>
+      <td>int</td>
+      <td>32</td>
+      <td><code>[0, 256]</code></td>
+      <td>L1 LRU 動態 slot 數, 滿載走 LRU</td>
+    </tr>
+  </tbody>
+</table>
 
-| Env var | 預設 | Clamp | 用途 |
-|---------|------|-------|------|
-| `CGC_LOGITS_ORACLE_DUMP` | **OFF** | 設 path 開啟 (e.g. `/tmp/oracle.jsonl`) | 每 ubatch 結束 dump logits summary |
-| `CGC_LOGITS_ORACLE_TOPN` | 5 | `[1, 64]` | top-N token 記錄數 |
-| `CGC_LOGITS_ORACLE_FIRST_N` | 0=unlimited | `[0, +∞)` | 限制 dump 的 ubatch 數 (長序列記憶體保護) |
+<ul>
+  <li>不設 env → fallback 32/32 (合計 64 slot, 比原 87 省 27% 內存)</li>
+  <li><code>=0</code> → 該層關閉 (L0=0 全 L1, L1=0 全 L0)</li>
+  <li>負值 → fallback 0</li>
+  <li>詳見 §4.1</li>
+</ul>
 
-- 不設 → function 第一行 return + hook 點 `if (getenv() != nullptr)` 守護, **zero cost**
-- 設 path → 寫 JSONL, 每行一個 (step, token_idx) tuple, 含:
-  - `logits_fnv1a64` (full hash) + `row_fnv1a64` (per-row hash)
-  - `argmax_token` + `argmax_logit` + `sum` + `mean`
-  - `top`: `[{t, v}, ...]` (top-N token id + logit value)
-- Hook 位置: `process_ubatch` `return res;` 之前 (line 1614 附近)
-- 函式內部自己 scan graph 找 logits tensor (F32, ne[0] >= 1024, ne[1] == n_tokens)
-- **零拷貝設計**: `static FILE *` 只在第一次呼叫時 fopen, 後續直接寫入
-- A/B 比較工具: `scripts/check/cgc_logits_oracle_compare.py` (讀兩份 JSONL, 對齊
-  (step, token_idx) 後比對 row_hash + top-N ids; 不一致 → FAIL exit 1)
+<h3>9.2 驗證 Gates (V1 + V2, 預設全 OFF)</h3>
 
-### 10.3 預設行為速查矩陣
+<h4>V1 — Pool-fill 雜湊比對 (驗證 §5 Exact Cache 不變量 I1)</h4>
+<p>位置: <code>llama-expert-cache.cpp::cgc_exact_cache_verify_post_fill</code></p>
 
-| 場景 | Soft Pool | V1 | V2 | 行為 |
-|------|-----------|----|----|------|
-| **預設 (production)** | 32/32 fallback | OFF | OFF | 跟未改動前完全一致, 只多一次 getenv |
-| **CI 驗證** | 32/32 | `=1` | `/tmp/ref.jsonl` | V1 hash 比對 + V2 oracle dump |
-| **A/B 實驗** | 對照組 `0/0` 實驗組 `32/32` | OFF | 兩組各 dump | 比對兩份 JSONL, 看 Soft Pool 是否影響 logits |
-| **CI gate (建議)** | 預設 | `=1` | `FIRST_N=10` 跑短 prompt | 任何 mismatch 立刻 abort |
+<table>
+  <thead>
+    <tr><th>Env var</th><th>預設</th><th>Clamp</th><th>用途</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>CGC_EXACT_CACHE_VERIFY</code></td>
+      <td><span class="badge badge-red">OFF</span></td>
+      <td>設 <code>1</code> 開啟</td>
+      <td>fill 後 byte-by-byte 對比 fresh-fd 讀到的 GGUF bytes</td>
+    </tr>
+    <tr>
+      <td><code>CGC_EXACT_CACHE_VERIFY_FIRST_N</code></td>
+      <td>256</td>
+      <td><code>[1, +∞)</code></td>
+      <td>限制去重後的 segments 數 (避免 O(n) 爆炸)</td>
+    </tr>
+  </tbody>
+</table>
 
-### 10.4 與其他 CGC env 變數共存
+<ul>
+  <li>不設 → function 第一行 <code>if (getenv() == nullptr) return</code>, <strong>完全 zero cost</strong></li>
+  <li>設 1 → 違規時 <code>abort()</code> 印出 <code>layer/slot/file_idx/file_off/bytes/diff_off/pool/ref</code></li>
+  <li>常態路徑只多一個 <code>getenv()</code> + <code>unordered_set::count()</code> ≈ ns 級別</li>
+</ul>
 
-| Env var | 用途 | 與 V1/V2 互動 |
-|---------|------|---------------|
-| `CGC_NO_PREWARM` | 停用 hot prewarm | 獨立, 不影響 V1/V2 |
-| `CGC_NO_PREFETCH` | 停用 bg prefetch | 獨立, 不影響 V1/V2 |
-| `CGC_PREFETCH_SRC` | prefetch 來源 (step/prev/hist) | 獨立, 不影響 V1/V2 |
-| `CGC_L2_FALLBACK` | 啟用 L2 CPU fallback | 獨立, 不影響 V1/V2 |
-| `CGC_WARM_NPAST` | warm gate N past | 獨立, 不影響 V1/V2 |
-| `CGC_TENSOR_DUMP` | 中間 tensor dump (既有機制) | 與 V2 並行, dump 目標不同 |
-| `CGC_PHASE_TIMING` | decode 階段計時 | 與 V2 並行, 開銷獨立 |
-| `CGC_BYPASS_POOL_FROM` | 跳過 pool 從某 layer 起 | V1 仍驗, V2 仍 dump (但 logits 必偏) |
+<h4>V2 — Logits oracle (驗證 §5 Exact Cache 不變量 I4, 端到端)</h4>
+<p>位置: <code>llama-context.cpp::cgc_logits_oracle_dump</code></p>
 
-> **設計守護**: 任何新加的 CGC env 都必須遵守「預設 OFF, 不設不影響原行為」。
-> 這是 §5 Exact Cache 不變量的延伸 — 觀察手段不污染生產路徑。
+<table>
+  <thead>
+    <tr><th>Env var</th><th>預設</th><th>Clamp</th><th>用途</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>CGC_LOGITS_ORACLE_DUMP</code></td>
+      <td><span class="badge badge-red">OFF</span></td>
+      <td>設 path 開啟 (e.g. <code>/tmp/oracle.jsonl</code>)</td>
+      <td>每 ubatch 結束 dump logits summary</td>
+    </tr>
+    <tr>
+      <td><code>CGC_LOGITS_ORACLE_TOPN</code></td>
+      <td>5</td>
+      <td><code>[1, 64]</code></td>
+      <td>top-N token 記錄數</td>
+    </tr>
+    <tr>
+      <td><code>CGC_LOGITS_ORACLE_FIRST_N</code></td>
+      <td>0=unlimited</td>
+      <td><code>[0, +∞)</code></td>
+      <td>限制 dump 的 ubatch 數 (長序列記憶體保護)</td>
+    </tr>
+  </tbody>
+</table>
 
-EOF
+<ul>
+  <li>不設 → function 第一行 return + hook 點 <code>if (getenv() != nullptr)</code> 守護, <strong>zero cost</strong></li>
+  <li>設 path → 寫 JSONL, 每行一個 (step, token_idx) tuple, 含:
+    <ul>
+      <li><code>logits_fnv1a64</code> (full hash) + <code>row_fnv1a64</code> (per-row hash)</li>
+      <li><code>argmax_token</code> + <code>argmax_logit</code> + <code>sum</code> + <code>mean</code></li>
+      <li><code>top</code>: <code>[{t, v}, ...]</code> (top-N token id + logit value)</li>
+    </ul>
+  </li>
+  <li>Hook 位置: <code>process_ubatch</code> <code>return res;</code> 之前 (line 1614 附近)</li>
+  <li>函式內部自己 scan graph 找 logits tensor (F32, ne[0] &gt;= 1024, ne[1] == n_tokens)</li>
+  <li><strong>零拷貝設計</strong>: <code>static FILE *</code> 只在第一次呼叫時 fopen, 後續直接寫入</li>
+  <li>A/B 比較工具: <code>scripts/check/cgc_logits_oracle_compare.py</code> (讀兩份 JSONL, 對齊 (step, token_idx) 後比對 row_hash + top-N ids; 不一致 → FAIL exit 1)</li>
+</ul>
+
+<h3>9.3 預設行為速查矩陣</h3>
+
+<table>
+  <thead>
+    <tr><th>場景</th><th>Soft Pool</th><th>V1</th><th>V2</th><th>行為</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>預設 (production)</strong></td>
+      <td>32/32 fallback</td>
+      <td>OFF</td>
+      <td>OFF</td>
+      <td>跟未改動前完全一致, 只多一次 getenv</td>
+    </tr>
+    <tr>
+      <td><strong>CI 驗證</strong></td>
+      <td>32/32</td>
+      <td><code>=1</code></td>
+      <td><code>/tmp/ref.jsonl</code></td>
+      <td>V1 hash 比對 + V2 oracle dump</td>
+    </tr>
+    <tr>
+      <td><strong>A/B 實驗</strong></td>
+      <td>對照組 <code>0/0</code> 實驗組 <code>32/32</code></td>
+      <td>OFF</td>
+      <td>兩組各 dump</td>
+      <td>比對兩份 JSONL, 看 Soft Pool 是否影響 logits</td>
+    </tr>
+    <tr>
+      <td><strong>CI gate (建議)</strong></td>
+      <td>預設</td>
+      <td><code>=1</code></td>
+      <td><code>FIRST_N=10</code> 跑短 prompt</td>
+      <td>任何 mismatch 立刻 abort</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>9.4 與其他 CGC env 變數共存</h3>
+
+<table>
+  <thead>
+    <tr><th>Env var</th><th>用途</th><th>與 V1/V2 互動</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>CGC_NO_PREWARM</code></td>
+      <td>停用 hot prewarm</td>
+      <td>獨立, 不影響 V1/V2</td>
+    </tr>
+    <tr>
+      <td><code>CGC_NO_PREFETCH</code></td>
+      <td>停用 bg prefetch</td>
+      <td>獨立, 不影響 V1/V2</td>
+    </tr>
+    <tr>
+      <td><code>CGC_PREFETCH_SRC</code></td>
+      <td>prefetch 來源 (step/prev/hist)</td>
+      <td>獨立, 不影響 V1/V2</td>
+    </tr>
+    <tr>
+      <td><code>CGC_L2_FALLBACK</code></td>
+      <td>啟用 L2 CPU fallback</td>
+      <td>獨立, 不影響 V1/V2</td>
+    </tr>
+    <tr>
+      <td><code>CGC_WARM_NPAST</code></td>
+      <td>warm gate N past</td>
+      <td>獨立, 不影響 V1/V2</td>
+    </tr>
+    <tr>
+      <td><code>CGC_TENSOR_DUMP</code></td>
+      <td>中間 tensor dump (既有機制)</td>
+      <td>與 V2 並行, dump 目標不同</td>
+    </tr>
+    <tr>
+      <td><code>CGC_PHASE_TIMING</code></td>
+      <td>decode 階段計時</td>
+      <td>與 V2 並行, 開銷獨立</td>
+    </tr>
+    <tr>
+      <td><code>CGC_BYPASS_POOL_FROM</code></td>
+      <td>跳過 pool 從某 layer 起</td>
+      <td>V1 仍驗, V2 仍 dump (但 logits 必偏)</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-warn">
+  <strong>設計守護</strong>: 任何新加的 CGC env 都必須遵守「預設 OFF, 不設不影響原行為」。這是 §5 Exact Cache 不變量的延伸 — 觀察手段不污染生產路徑。
+</div>
+
+<hr>
+
+<div class="callout">
+  <strong>相關文件索引</strong>:
+  <ul>
+    <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_INTEGRATION_DIFF_2026-09-05.html">CGC_EXPERT_CACHE_INTEGRATION_DIFF_2026-09-05.html</a> — devserver vs dev branch 差異分析</li>
+    <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_SOFTPOOL_WHITE_PAPER_2026-09-05.html">CGC_EXPERT_CACHE_SOFTPOOL_WHITE_PAPER_2026-09-05.html</a> — Softpool 技術細節 + V1/V2/V3 守護</li>
+    <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_SOFTPOOL_EXPERT_CACHE_L4_V1V2_2026-09-05.html">CGC_SOFTPOOL_EXPERT_CACHE_L4_V1V2_2026-09-05.html</a> — 整合白皮書</li>
+    <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_DEVSERVER_RELEASE_NOTES_2026-09-05.html">CGC_DEVSERVER_RELEASE_NOTES_2026-09-05.html</a> — 版本 release notes</li>
+  </ul>
+</div>
+
+<p class="meta">
+  版本: v2.0 (revamped) · 最後更新: 2026-09-05 15:48 · 維護者: CGC devserver team<br>
+  對應 commit: <code>180f161df</code> (原版) · 已加入 mermaid 圖文 + 統計卡片 + 4 階段 gantt + 三層分層盒
+</p>
+
+</body>
+</html>
