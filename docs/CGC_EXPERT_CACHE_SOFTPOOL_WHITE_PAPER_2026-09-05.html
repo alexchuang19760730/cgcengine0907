@@ -260,7 +260,7 @@ CGC_SOFT_POOL=0
 </div>
 
 <!-- ============================================================ -->
-<h2 id="s5">5. Bit-Correctness 守護: V1 (Hash) + V2 (Logits Oracle)</h2>
+<h2 id="s5">5. Bit-Correctness 守護: V1 (Hash) + V2 (Logits Oracle) + V3 (Sub-buffer Alias)</h2>
 
 <p>
   核心原則: <span class="badge badge-red">預設 OFF</span> <span class="badge badge-green">zero cost on production</span>
@@ -331,6 +331,164 @@ CGC_SOFT_POOL=0
   共 9 組測試, V2 oracle dump <span class="badge badge-green">2433/2433 (100%) bit-level 一致</span>,
   delta < 0.91 t/s (< 4%) 都在 dylib noise floor 內。
 </div>
+
+<h3>5.4 V3: Sub-buffer Aliasing Check (Metal-only, 設計階段)</h3>
+
+<p>
+  V1 守護「<strong>storage 內部 byte</strong>」, V2 守護「<strong>最終計算 logits</strong>」, 但兩者之間
+  有一層「<strong>view 對映</strong>」是盲點 — 也就是 Metal <code>MTLBuffer</code> 透過
+  <code>subBufferWithOffset:length:</code> 開出來的多個 sub-buffer 視圖, 各自指向 storage
+  的哪一段 byte。
+</p>
+
+<h4>5.4.1 三層守護邊界對比</h4>
+
+<table>
+  <thead>
+    <tr>
+      <th>層</th>
+      <th>守護對象</th>
+      <th>工具</th>
+      <th>抓得到的 bug</th>
+      <th>抓不到的 bug</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>V1</strong></td>
+      <td>pool storage 內容</td>
+      <td>SHA-256 pool-fill hash</td>
+      <td>file_offset 算錯 / dst 指錯 / 跨層 aliasing</td>
+      <td>sub-buffer view 指錯位置但 storage 本身正確</td>
+    </tr>
+    <tr>
+      <td><strong>V2</strong></td>
+      <td>decode logits 輸出</td>
+      <td>FNV-1a 64-bit per-(step,token) JSONL</td>
+      <td>最終計算結果 bit-level 飄移 / argmax 錯</td>
+      <td>mild regression (logits 接近但 bit-level 略飄) — 需 §10 contract 定位</td>
+    </tr>
+    <tr>
+      <td><strong>V3</strong></td>
+      <td>sub-buffer view 對映</td>
+      <td>(MTLBuffer, sub_offset, sub_size) → expert_id 對映表 + reverse SHA-256</td>
+      <td>offset 算錯 / alias 覆寫 / view 沒 rebase</td>
+      <td>— (定位 view 層 bug 的唯一手段)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>5.4.2 核心風險場景</h4>
+
+<p>Metal 同一個 <code>MTLBuffer storage</code> 可以開多個 <code>subBufferWithOffset</code> view,
+Expert Cache 用 sub-buffer 切多個 expert slot。常見的 view 層 bug:</p>
+
+<ul>
+  <li><strong>offset 算錯</strong>: LRU evict 後忘了 rebase base pointer, 或 hot→warm promote 時
+    <code>slot_owner[]</code> 指向錯的 storage slice → sub-buffer 視圖悄悄指到別的 expert 的權重 byte</li>
+  <li><strong>alias 覆寫</strong>: 兩個 sub-buffer view 透過 shared storage alias 互相覆寫
+    (race condition 後看到 stale data)</li>
+  <li><strong>in-place update 後 view 沒 rebase</strong>: storage 內容更新了但 sub-buffer 的
+    <code>offset</code>/<code>size</code> 沒同步 → 讀到舊 byte</li>
+</ul>
+
+<div class="callout warn">
+  <strong>為什麼 V1/V2 抓不到:</strong> V1 只驗 storage 內部 byte 跟 GGUF 對齊, 不管 view 怎麼切;
+  V2 驗最終 logits, 但 view 指錯 expert 通常讓 logits 接近 (MoE 路由有冗餘), bit-level 會飄但未必
+  觸發明顯的語意退化 — 屬於 mild regression, 要靠 §10.3 契約文件才能定位。
+</div>
+
+<h4>5.4.3 Dump 對映表 + Reverse-lookup 設計</h4>
+
+<p>V3 做兩件事, <span class="badge badge-red">env-gated OFF, 預設零成本</span> (跟 V1/V2 同哲學):</p>
+
+<pre><code>// (1) 觸發: CGC_SUBBUFFER_ALIAS_DUMP=path/to/alias.jsonl
+//     在 ggml-metal.metal 的 subBuffer alloc 點插 trace hook
+//     每個 sub-buffer 創建時記錄對映表:
+
+{
+  "slot_id":     42,
+  "expert_id":   87,
+  "storage_id":  "0x7f9a3c000",      // MTLBuffer GPU 端 handle
+  "sub_offset":  4194304,             // bytes into storage
+  "sub_size":    1048576,             // bytes of this view
+  "created_step": 1024,
+  "tensor_name": "blk.13.ffn_up_exps.weight",
+  "view_id":     "0x7f9c10000"       // 該 sub-buffer 的 handle
+}
+</code></pre>
+
+<pre><code>// (2) Reverse-lookup 驗證:
+//     從 GGUF 重讀該 expert 的權重 raw bytes (獨立 fd, 不走 cache),
+//     跟 (storage + sub_offset)[:sub_size] 算 SHA-256 比對。
+//     不一致 → cgc_subbuffer_alias_check 印 FATAL:
+//
+//     "V3 sub-buffer alias mismatch:
+//        slot 42 → expert 87
+//        storage 0x7f9a3c000 offset 4194304 size 1048576
+//        SHA-256(gguf)  = 0xabc123...
+//        SHA-256(view)  = 0xdef456...
+//        → likely: offset arithmetic or aliasing bug"
+</code></pre>
+
+<h4>5.4.4 抓的 Bug 類型矩陣</h4>
+
+<table>
+  <thead>
+    <tr>
+      <th>Bug 類型</th>
+      <th>V1 抓得到?</th>
+      <th>V2 抓得到?</th>
+      <th>V3 抓得到?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>offset 算錯 (storage 指對, view 切錯位置)</td>
+      <td><span class="badge badge-red">否</span></td>
+      <td><span class="badge badge-yellow">部分</span> (mild)</td>
+      <td><span class="badge badge-green">是</span></td>
+    </tr>
+    <tr>
+      <td>alias 覆寫 (race 後 sub-buffer 看到 stale)</td>
+      <td><span class="badge badge-red">否</span></td>
+      <td><span class="badge badge-yellow">部分</span></td>
+      <td><span class="badge badge-green">是</span></td>
+    </tr>
+    <tr>
+      <td>in-place update 後 view 沒 rebase (讀舊 byte)</td>
+      <td><span class="badge badge-red">否</span></td>
+      <td><span class="badge badge-yellow">部分</span></td>
+      <td><span class="badge badge-green">是</span></td>
+    </tr>
+    <tr>
+      <td>storage 本身 byte-flip</td>
+      <td><span class="badge badge-green">是</span></td>
+      <td><span class="badge badge-green">是</span></td>
+      <td><span class="badge badge-green">是</span> (via reverse)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>5.4.5 Metal-only 範圍</h4>
+
+<p>
+  Sub-buffer 是 Metal <code>MTLBuffer</code> 抽象 (透過 <code>subBufferWithOffset:length:</code> 開 view),
+  CPU 路徑走 <code>mmap</code> 沒這個概念, Vulkan 走 <code>vk::BufferView</code> 雖類似但 descriptor
+  set 行為不同 — V3 守護本身無從掛載到非 Metal 後端, 故設計上 <strong>僅 Metal 啟用</strong>。
+</p>
+
+<h4>5.4.6 實作掛載點 (待後續 commit)</h4>
+
+<ul>
+  <li><strong>Trace hook</strong>: <code>ggml-metal.metal</code> 的 <code>ggml_metal_alloc_buffer</code> /
+    <code>ggml_metal_sub_buffer</code> 入口插 env-gated trace</li>
+  <li><strong>對映表</strong>: in-memory hash table <code>sub_buffer_id → (storage_id, offset, size, expert_id)</code>,
+    寫到 JSONL</li>
+  <li><strong>Reverse-lookup 工具</strong>: <code>scripts/check/cgc_subbuffer_alias_verify.py</code>,
+    讀 JSONL + GGUF + 透過 <code>MTLBuffer.contents</code> 讀 GPU storage slice 算 SHA-256</li>
+  <li><strong>預設 OFF</strong>: 跟 V1/V2 一樣 <code>CGC_SUBBUFFER_ALIAS_DUMP</code> 缺省為空 → 零成本</li>
+</ul>
 
 <!-- ============================================================ -->
 <h2 id="s6">6. Prefill 結尾結構化 Marker Fix (v6 + v7)</h2>
@@ -514,13 +672,18 @@ fi
 <!-- ============================================================ -->
 <h2 id="s10">10. 後續 Roadmap: V3 + CI Gate + 合約文件</h2>
 
-<h3>10.1 V3: Sub-buffer Aliasing Check (Metal-only)</h3>
+<h3>10.1 V3: Sub-buffer Aliasing Check (Metal-only, 設計已收錄 §5.4)</h3>
 
 <p>
-  V1 跟 V2 守護的是「整個 segment 跟 GGUF 一致」, 但 GGUF 內部 <code>mul_mat_id</code> 用的 sub-buffer
-  可能因為 Metal kernel 的 alignment 要求而被拷貝 + relayout, 這層 aliasing V1/V2 抓不到。
-  V3 計劃在 Metal dispatch 入口加一個 <code>cgc_subbuffer_alias_check</code>, 比對 ggml-metal 內部
-  <code>ggml_cpy</code> / <code>ggml_view</code> 的 src/dst offset 跟 size 是否一致。
+  V3 守護 Expert Cache sub-buffer view 對映層 — 補 V1 (storage byte) 跟 V2 (logits) 之間的盲點。
+  完整設計見 <a href="#s5">§5.4</a>: 三層守護邊界對比、核心風險、Dump 對映表、Reverse-lookup
+  SHA-256、Bug 類型矩陣、Metal-only 範圍、實作掛載點。
+</p>
+
+<p>
+  <strong>狀態</strong>: 設計完成 (§5.4), 待後續 commit 實作 trace hook (ggml-metal.metal
+  <code>subBufferWithOffset</code> 入口) + reverse-lookup 工具
+  (<code>scripts/check/cgc_subbuffer_alias_verify.py</code>)。
 </p>
 
 <h3>10.2 CI Gate Script</h3>
