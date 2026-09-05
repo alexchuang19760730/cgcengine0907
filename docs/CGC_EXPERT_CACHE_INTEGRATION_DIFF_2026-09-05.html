@@ -1,0 +1,206 @@
+# CGC Expert Cache 整合差異分析 (2026-09-05)
+
+## 0. 結論先講
+
+**Dev branch 3 個 commit 之前已 cherry-pick 到 devserver,但全部被 revert** (commit
+`80939f844` / `e3af2992f` / `a7d176394`)。Revert 原因是 **直接合併會把 26+ t/s 的
+GPU pool path 打成 5.5 t/s 的 CPU resident path** —— dev branch 走的是「放棄 pool
+保正確」,跟我們「保留 pool 求速度」的策略**互斥**。
+
+但 dev branch 仍有些**可借鏡的局部修補**可以採納 (見 §4)。
+
+---
+
+## 1. 為什麼 devserver (我們) 快: 26+ t/s 的核心機制
+
+### 1.1 動態 slot table (256 → 87 對映,無 0000 風險)
+- `expert_cache_on_topk` (llama-context.cpp:3033-3360)
+- **256 expert 永遠有效**: `hparams.n_expert = 256` **從未被縮**
+- `slot_table[il][e]` 動態記錄每個 expert 對應的 pool slot
+  - hot (在 pool 內): 0..n_slots-1
+  - cold (不在 pool): **-1 → 指向 ZERO-slot** (zeroed 過的固定槽)
+- 跟 dev branch 不同: devserver **不修改 `ne[2]`**,tensor 仍是 256 expert 完整形狀
+
+### 1.2 GPU 4GB Pool + 統一記憶體
+- `expert_cache 4294967296` (4GB) 配置下, hot experts 永遠 resident
+- `process_ubatch` 從 disk pread 進 pool (async),decode 命中就直接讀
+- 16GB Mac 的 unified memory 讓 CPU/Metal 共用同一份 buffer
+
+### 1.3 MTP Fast Path (CGC_VERIFY_DECODE / CGC_DRAFT_DECODE)
+- llama-context.cpp:3189-3268
+- **Warm gate** (`CGC_WARM_NPAST=256`): prefill 餵飽 pool 前走 ensure_batch,餵飽後走 fast path
+- Fast path 只 touch + zero slot, **不做 pread**, 所以 65% cold 仍能 26+ t/s
+- Cold 走 ZERO-slot (固定 0 權重槽),但 softmax 吸收 < 1/3 cold 不影響 routing
+
+### 1.4 Layer 0 Identity Remap (L4_SKIP_LAYER0)
+- llama-context.cpp:3158-3169
+- blk.0 是 full-weight CPU skip-load tensor,**不走 pool**
+- 寫原始 expert ID (identity) → mul_mat_id 讀原始 tensor 完整 256 expert
+
+---
+
+## 2. 為什麼 dev branch 正確: 5.5 t/s 但語意對
+
+### 2.1 Root cause (522428cdc / 1afedfa68 共同根因)
+- dev branch 的 **pool 設計缺陷**:
+  - Pool 是 zero-copy (adopt from tensor buffer),repointing 是 no-op
+  - 載入時把 tensor `ne[2]` 從 **256 縮到 87** (pool capacity)
+  - Expert >= 87 **直接 OOB 或被當 slot 0 (零權重)**
+  - 結果: layer 2+ uniform routing [0 1 2 3 4 5 6 7] → 0000 garbage
+
+### 2.2 Dev branch 修法 (1afedfa68 核心)
+- llama-context.cpp (line 3659 改前 / 3611 改後)
+- **改前**: `if (!pool_active || model.expert_cache_skip_load)` → identity remap
+- **改後**: `if (model.expert_cache_skip_load)` → identity remap
+- 也就是: **完全不走 pool**,所有 expert 從 CPU 原 tensor (ne[2]=256) 讀
+- 結果: 5.5 t/s (CPU 頻寬瓶頸) + 語意 100% 對
+
+### 2.3 為什麼 dev branch 5.5 t/s (不是 26+)
+- 放棄 4GB GPU pool,所有 expert 走 CPU
+- 16GB Mac 上 256 expert 完整大小 = ~12.5GB (over budget)
+- 強制 unified memory CPU path,沒有 pread 預熱
+
+### 2.4 為什麼 dev branch 還能正確輸出
+- Identity remap (real expert IDs 0..255) 讓 mul_mat_id 從原始 tensor 找
+- Metal 透過 unified memory 讀 CPU tensor (慢但對)
+- 所有 41 層 256 expert 都能路由,gate logits 不退化
+
+---
+
+## 3. 兩邊的本質差異 (不是 bug,是設計哲學)
+
+| 面向 | devserver (我們快) | dev branch (他們對) |
+|------|--------------------|--------------------|
+| 256→87 對映 | **動態 slot table** (e → slot, cold = -1) | **靜態 ne[2] shrink** (tensor 硬縮) |
+| 冷專家處理 | **ZERO-slot** (固定零槽) | **沒概念** (直接 OOB) |
+| Fast path | **CGC_MTP_FAST** + warm gate | **沒有** (一律 ensure_batch) |
+| n_expert tensor 形狀 | 維持 256 | 縮到 87 |
+| 4GB pool 命中率 | 35% (cold ZERO-slot 吸收) | 不適用 (放棄 pool) |
+| 速度 | 26+ t/s | 5.5 t/s |
+| 語意 | 條件性對 (zero-slot 過多時退化) | 100% 對 |
+
+**核心矛盾**:
+- dev branch 的「正確性 fix」是「放棄 pool 換 100% 對」
+- devserver 的「速度」是「保留 pool 換 26+ t/s,接受條件性 0000 風險」
+- **兩者不可直接合併** —— 一個互斥的 if 條件
+
+---
+
+## 4. 可借鏡採納的局部修補 (不犧牲速度)
+
+雖然不能直接 cherry-pick 整個 `1afedfa68` / `522428cdc`,但裡面有幾個**獨立、輕量、不衝突**的修補值得採納:
+
+### 4.1 ✅ `83c47b137` (run_n30cache.sh CLI 修正) - 可無痛採納
+- 2 行改動: `if MTP active; skip CTX_ARG` (避免 MTP_CTX + CTX 兩個 -c 衝突)
+- 跟 devserver 完全無關,純 CLI 層
+- **採納動作**: 直接 cherry-pick 這個 commit (或手動複製那 2 行到 `scripts/run_server.sh`)
+
+### 4.2 ✅ `1afedfa68` 的 n_ubatch bump (llama-context.cpp:436-449) - 可採納
+```cpp
+// [CGC FIX 2026-09-05] when the L4 cap pushes n_batch (and therefore n_ubatch) below
+// n_keep_tail=n_rs_seq+1, llama-batch split_equal asserts. Keep n_ubatch at least
+// n_keep_tail+1 so the warmup / seq_rm probe / decode steps do not abort.
+const uint32_t n_keep_tail = cparams.n_rs_seq > 0 ? cparams.n_rs_seq + 1u : 0u;
+if (n_keep_tail > 0 && cparams.n_ubatch <= n_keep_tail) {
+    LLAMA_LOG_WARN("%s: n_ubatch=%u bumped to n_keep_tail+1=%u (MTP recurrent)\n",
+            __func__, cparams.n_ubatch, n_keep_tail + 1u);
+    cparams.n_ubatch = n_keep_tail + 1u;
+}
+```
+- **不衝突**: 是 llama_context 建構子的獨立 patch,跟 pool / expert cache 路徑無關
+- **防呆**: 防止 `split_equal` assertion crash (MTP 場景下 n_rs_seq 推 n_keep_tail)
+- **採納動作**: 手動複製這段到 devserver 的 llama-context.cpp 建構子
+
+### 4.3 ✅ `1afedfa68` 的 CGC Fast-Path Cold Guard (llama-context.cpp:3760+) - 借鏡
+```cpp
+// [CGC Fast-Path Cold Guard 2026-09-05] Fast path only routes cold experts to the
+// reserved ZERO slot, so when too many of this step's top-k are cold the gate reads
+// a constant zero contribution → uniform softmax → deterministic sequential top-k
+// ([0 1 2 3 4 5 6 7]) → 0000 garbage. Below threshold the ZERO-slot contamination
+// is <1/3 and the softmax absorbs it; above we fall through to ensure_batch so the
+// cold experts actually get filled.
+const char * cgc_cold_env = getenv("CGC_FAST_COLD_MAX");
+const double cgc_fast_cold_max = cgc_cold_env ? atof(cgc_cold_env) : 0.30;
+size_t cgc_cold_count = 0;
+if (cache != nullptr && il >= 0 && (uint32_t) il < cache->slot_owner.size()) {
+    const int32_t * cgc_st = cache->slot_table.data() + (size_t) il * cache->n_expert;
+    for (uint32_t e : uni) {
+        if (e < cache->n_expert && cgc_st[e] < 0) {
+            cgc_cold_count++;
+```
+- **現狀**: devserver 已有 warm gate (`CGC_WARM_NPAST=256`) 防 0000,但**沒有 cold ratio guard**
+- **可改進**: 加 cold ratio check,當 fast path 的 step cold 率 > 30% 時 fall through ensure_batch
+- **預期效果**: QA 短答場景的 0000 風險可進一步降低 (warm gate 之後仍可能有 65% cold)
+- **採納動作**: 在 devserver 的 `expert_cache_on_topk` line 3222 之前加 cold ratio check
+
+### 4.4 ✅ `1afedfa68` / `522428cdc` 的 debug 列印 - 可採納 (env-gated)
+- CGC-ENTER / CGC-EXIT-NOCACHE / CGC-EXIT-EMPTY / CGC-EXIT-LARGE / CGC-EXIT-FORCE
+- CGC-EXIT-RESIDENT / CGC-EXIT-SAFE / CGC-GATE
+- **現狀**: devserver 已有 CGC-HOOK / CGC-IDS / CGC-PRE / CGC-POST / CGC-SLOT
+- **衝突點**: 命名重疊 (CGC-EXIT-RESIDENT vs devserver 的 fast path 邏輯可能撞名)
+- **採納動作**: 只挑有訊息量的 (CGC-GATE, CGC-EXIT-FORCE),且統一 env-gated (`CGC_DIAG_LEVEL=1`)
+
+### 4.5 ❌ `522428cdc` embedded GGUF template fix - **不可採納**
+- dev branch 移除 Nail minimal jinja,改用 GGUF embedded ChatML
+- 跟我們 `ddde852b0` 的 Nail token strategy **完全相反**
+- 採納 = 把 `disable_think_scaffold` 全套都打掉
+
+### 4.6 ❌ `1afedfa68` 的 `if (model.expert_cache_skip_load)` - **不可採納**
+- 這就是 dev branch 放棄 pool 換正確的核心
+- 採納 = 26+ t/s 變 5.5 t/s
+
+---
+
+## 5. 整合行動方案 (建議順序)
+
+### Step 1: 採納 83c47b137 (CLI 修正) - 5 分鐘
+```bash
+cd /Users/alexchuang/Documents/flashkv-devserver
+git show 83c47b137 -- scripts/run_n30cache.sh
+# 手動套用到 scripts/run_server.sh
+```
+
+### Step 2: 採納 n_ubatch bump - 10 分鐘
+- 在 `llama_context::llama_context` 建構子加 14 行
+- 跟 pool 路徑無關,可立即生效
+- 防 split_equal assertion crash
+
+### Step 3: 加 CGC Fast-Path Cold Guard - 30 分鐘
+- 在 `expert_cache_on_topk` fast path 入口加 cold ratio check
+- 預期減少 QA 短答 0000 風險
+- 需驗證: 跑 longform (26+ t/s 不掉) + qa-zh (語意對)
+
+### Step 4: 採納選定 debug 列印 (env-gated) - 20 分鐘
+- 加 CGC-GATE / CGC-EXIT-FORCE (跟現有 CGC-HOOK / CGC-PRE 不撞)
+- 透過 `CGC_DIAG_LEVEL=1` 開,production 預設關
+
+### Step 5: 跑 3 個 profile 驗證 - 1 小時
+- qa-zh: 語意 + 25+ t/s
+- longform-zh: 26+ t/s + 完整長文
+- coding: 25+ t/s + Python 費氏數列正確
+
+### Step 6: 全部 commit - 15 分鐘
+- 單一整合 commit, 訊息包含:
+  - 為何不直接 cherry-pick 整個 dev branch commit
+  - 哪些採納 / 哪些跳過 / 為什麼
+  - 驗證結果 (3 profile 速度+語意)
+
+---
+
+## 6. 風險評估
+
+| 改動 | 風險 | 緩解 |
+|------|------|------|
+| 83c47b137 CLI | 極低 (2 行) | 改壞就回滾,純 shell |
+| n_ubatch bump | 低 (只在 <= n_keep_tail 觸發) | 加 log warn |
+| Cold guard | 中 (可能讓 fast path 退回 ensure_batch) | env tunable (`CGC_FAST_COLD_MAX`) |
+| Debug 列印 | 極低 (env-gated) | default off |
+
+---
+
+## 7. 不做的事 (明確排除)
+
+- ❌ Cherry-pick `1afedfa68` 整個 commit (會打回 5.5 t/s)
+- ❌ Cherry-pick `522428cdc` 整個 commit (embedded template fix 跟 Nail strategy 衝突)
+- ❌ 改用 dev branch 的 `ne[2]` shrink pool 設計 (跟 slot table 機制互斥)
+- ❌ 強制 CPU resident passthrough (犧牲 26+ t/s 速度)
