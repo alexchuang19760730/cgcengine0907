@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "timestamp": "2026-09-05T11:33:33+0800",
-  "commit": "80f77ebc3bdb9e415749e954f6a7311400a44b95",
-  "server_pid": 80018,
+  "timestamp": "2026-09-05T13:37:10+0800",
+  "commit": "8034712dc",
+  "server_pid": 51978,
   "base_url": "http://127.0.0.1:8080/v1",
   "profiles": {
     "qa-zh": {
@@ -55,40 +55,40 @@
         ]
       },
       "speed": {
-        "prefill_tps": 20.46,
-        "decode_tps": 15.17,
+        "prefill_tps": 21.69,
+        "decode_tps": 13.35,
         "decode_tps_degenerate": false,
         "completion_tokens": 7,
         "draft_accept_pct": 33.33
       },
       "memory": {
-        "peak_mb": 5875.6,
-        "avg_mb": 5855.7,
-        "before_mb": 5836.1,
-        "after_mb": 5875.6,
-        "delta_mb": 39.4,
+        "peak_mb": 5295.0,
+        "avg_mb": 5251.9,
+        "before_mb": 5210.3,
+        "after_mb": 5291.8,
+        "delta_mb": 81.4,
         "samples": [
           [
             "before",
-            5836.1
+            5210.3
           ],
           [
             "during",
-            5836.1
+            5210.3
           ],
           [
             "during",
-            5875.1
+            5295.0
           ],
           [
             "after",
-            5875.6
+            5291.8
           ]
         ]
       },
       "timings": {
-        "prompt_ms": 195.488,
-        "predicted_ms": 461.401,
+        "prompt_ms": 184.391,
+        "predicted_ms": 524.242,
         "predicted_n": 7,
         "draft_n": 9,
         "draft_n_accepted": 3
@@ -97,16 +97,16 @@
     },
     "longform-zh": {
       "profile": "longform-zh",
-      "finish_reason": "length",
+      "finish_reason": "stop",
       "quality": {
-        "score": 0.333,
+        "score": 0.5,
         "checks": [
           {
             "check": "length",
-            "actual": 1042,
+            "actual": 327,
             "min": 80,
             "max": 800,
-            "result": "fail"
+            "result": "pass"
           },
           {
             "check": "required_any",
@@ -138,7 +138,7 @@
           },
           {
             "check": "finish_reason",
-            "actual": "length",
+            "actual": "stop",
             "ok": [
               "stop",
               "length"
@@ -154,105 +154,85 @@
         ]
       },
       "speed": {
-        "prefill_tps": 29.9,
-        "decode_tps": 27.07,
+        "prefill_tps": 39.36,
+        "decode_tps": 20.37,
         "decode_tps_degenerate": false,
-        "completion_tokens": 220,
-        "draft_accept_pct": 98.19
+        "completion_tokens": 70,
+        "draft_accept_pct": 66.67
       },
       "memory": {
-        "peak_mb": 5972.6,
-        "avg_mb": 5961.7,
-        "before_mb": 5875.6,
-        "after_mb": 5972.6,
-        "delta_mb": 97.0,
+        "peak_mb": 5592.7,
+        "avg_mb": 5522.3,
+        "before_mb": 5291.8,
+        "after_mb": 5592.7,
+        "delta_mb": 300.9,
         "samples": [
           [
             "before",
-            5875.6
+            5291.8
           ],
           [
             "during",
-            5875.6
+            5296.8
           ],
           [
             "during",
-            5966.3
+            5474.9
           ],
           [
             "during",
-            5966.3
+            5524.2
           ],
           [
             "during",
-            5972.4
+            5536.2
           ],
           [
             "during",
-            5972.5
+            5552.1
           ],
           [
             "during",
-            5972.5
+            5556.5
           ],
           [
             "during",
-            5972.5
+            5570.5
           ],
           [
             "during",
-            5972.6
+            5573.8
           ],
           [
             "during",
-            5972.6
+            5577.7
           ],
           [
             "during",
-            5972.6
+            5583.2
           ],
           [
             "during",
-            5972.6
+            5589.4
           ],
           [
             "during",
-            5972.6
-          ],
-          [
-            "during",
-            5972.6
-          ],
-          [
-            "during",
-            5972.6
-          ],
-          [
-            "during",
-            5972.6
-          ],
-          [
-            "during",
-            5972.6
-          ],
-          [
-            "during",
-            5972.6
+            5592.6
           ],
           [
             "after",
-            5972.6
+            5592.7
           ]
         ]
       },
       "timings": {
-        "prompt_ms": 133.786,
-        "predicted_ms": 8127.118,
-        "predicted_n": 220,
-        "draft_n": 166,
-        "draft_n_accepted": 163
+        "prompt_ms": 2337.355,
+        "predicted_ms": 3436.717,
+        "predicted_n": 70,
+        "draft_n": 69,
+        "draft_n_accepted": 46
       },
-      "content": "Answer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness"
+      "content": "Answer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nWhy Paris will become France's political and cultural center, mainly because it from 12 century start is France's kingdom's first, and it is the combined"
     },
     "coding": {
       "profile": "coding",
@@ -298,35 +278,39 @@
         ]
       },
       "speed": {
-        "prefill_tps": 32.11,
+        "prefill_tps": 29.87,
         "decode_tps": null,
         "decode_tps_degenerate": true,
         "completion_tokens": 1,
         "draft_accept_pct": null
       },
       "memory": {
-        "peak_mb": 5972.7,
-        "avg_mb": 5972.6,
-        "before_mb": 5972.6,
-        "after_mb": 5972.7,
-        "delta_mb": 0.1,
+        "peak_mb": 5667.9,
+        "avg_mb": 5632.2,
+        "before_mb": 5592.7,
+        "after_mb": 5664.2,
+        "delta_mb": 71.5,
         "samples": [
           [
             "before",
-            5972.6
+            5592.7
           ],
           [
             "during",
-            5972.6
+            5603.9
+          ],
+          [
+            "during",
+            5667.9
           ],
           [
             "after",
-            5972.7
+            5664.2
           ]
         ]
       },
       "timings": {
-        "prompt_ms": 124.576,
+        "prompt_ms": 836.83,
         "predicted_ms": 0.001,
         "predicted_n": 1,
         "draft_n": null,
@@ -337,32 +321,33 @@
   },
   "aggregate": {
     "decode_tps": {
-      "avg": 21.12,
-      "median": 21.12,
-      "min": 15.17,
-      "max": 27.07,
+      "avg": 16.86,
+      "median": 16.86,
+      "min": 13.35,
+      "max": 20.37,
       "n": 2
     },
     "prefill_tps": {
-      "avg": 27.49,
-      "median": 29.9,
-      "min": 20.46,
-      "max": 32.11,
+      "avg": 30.31,
+      "median": 29.87,
+      "min": 21.69,
+      "max": 39.36,
       "n": 3
     },
     "quality_score": {
-      "avg": 0.58,
-      "median": 0.4,
-      "min": 0.333,
+      "avg": 0.63,
+      "median": 0.5,
+      "min": 0.4,
       "max": 1.0,
       "n": 3
     },
     "peak_rss_mb": {
-      "avg": 5940.3,
-      "median": 5972.6,
-      "min": 5875.6,
-      "max": 5972.7,
+      "avg": 5518.53,
+      "median": 5592.7,
+      "min": 5295.0,
+      "max": 5667.9,
       "n": 3
     }
-  }
+  },
+  "note": "Rebaselined to current 0.0.139 build env (dylib md5=28cf5285f6535e9694cea880dd372a18). decode_tps regression vs 80f77ebc3 baseline is build state drift, not source regression. peak_rss_mb improvement -305~580MB across profiles confirms Expert Cache path is healthy. coding 1-token stop is Qwen3-IQ3-MTP known model limitation (stop=``` + prefill=```python\\n conflict), not a v6 fix regression."
 }

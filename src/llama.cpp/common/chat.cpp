@@ -1448,6 +1448,28 @@ static common_chat_params common_chat_params_init_nail_qwen3_6_minimal(const com
          inputs.extra_context.contains("assistant_prefill_summary"));
     const bool wants_think_scaffold_seed = disable_think_scaffold || has_assistant_prefill;
 
+    // 2026-09-05 CGC fix v6: 條件式 marker skip。
+    // 當 assistant_prefill 結尾是結構 marker(換行 / 反引號 / 冒號 / 空白),代表 prefill
+    // 已經在 continuation 狀態(例如 ```python\n / 答:\n / 答: 結尾),model 會自然從
+    // prefill 結尾接續,不需要再注入 THINK_SEED 把 think block 強塞中間。
+    // 中文 / 句號 / 其他 → 維持 v5 注入 THINK_SEED 避免 1-token stop / scaffold loop。
+    // 註: UTF-8 中文末位 byte 落在 0x80-0xBF (signed -128..-65),不會誤命中 ASCII marker。
+    std::string assistant_prefill_str;
+    if (has_assistant_prefill) {
+        if (inputs.extra_context.contains("assistant_prefill") &&
+            inputs.extra_context.at("assistant_prefill").is_string()) {
+            assistant_prefill_str = inputs.extra_context.at("assistant_prefill").get<std::string>();
+        } else if (inputs.extra_context.contains("assistant_prefill_summary") &&
+                   inputs.extra_context.at("assistant_prefill_summary").is_string()) {
+            assistant_prefill_str = inputs.extra_context.at("assistant_prefill_summary").get<std::string>();
+        }
+    }
+    const bool prefill_ends_with_continuation = !assistant_prefill_str.empty() &&
+        (assistant_prefill_str.back() == '\n' ||
+         assistant_prefill_str.back() == '`' ||
+         assistant_prefill_str.back() == ':' ||
+         assistant_prefill_str.back() == ' ');
+
     // 2026-09-05 CGC fix v2: 用 startsWith 而非 ==,因為 prefill 套用後
     // data.generation_prompt 是 "<|assistant|>\n答：" 而不是裸 "<|assistant|>\n"。
     // 之前用 == 永遠不命中,think scaffold 不會被 seed,模型看到 prefill 後
@@ -1473,6 +1495,7 @@ static common_chat_params common_chat_params_init_nail_qwen3_6_minimal(const com
         return false;
     };
     if (wants_think_scaffold_seed &&
+        !(has_assistant_prefill && prefill_ends_with_continuation) &&
         starts_with_any(data.generation_prompt, {"<|im_start|>assistant\n", "<|im_start|>assistant", "<|assistant|>\n", "<|assistant|>"})) {
         const std::string THINK_SEED = "<think>\n\n</think>\n\n";
         data.generation_prompt += THINK_SEED;
@@ -1500,6 +1523,7 @@ static common_chat_params common_chat_params_init_nail_qwen3_6_minimal(const com
             {"chat_template_kwargs", inputs.extra_context.contains("assistant_prefill") || inputs.extra_context.contains("assistant_prefill_summary") || inputs.extra_context.contains("disable_think_scaffold") ? inputs.extra_context : json()},
             {"enable_thinking", inputs.enable_thinking},
             {"wants_think_scaffold_seed", wants_think_scaffold_seed},
+            {"prefill_ends_with_continuation", prefill_ends_with_continuation},
             {"extract_reasoning", extract_reasoning},
             {"has_continuation", inputs.has_continuation()},
             {"continue_final_message", inputs.continue_final_message},
