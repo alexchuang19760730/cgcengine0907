@@ -281,6 +281,24 @@ private:
     // chunk 0 first diverge between the MTP and non-MTP paths.
     void cgc_dump_graph_tensors(ggml_cgraph * gf);
 
+    // [CGC V2 logits oracle 2026-09-05] Per-ubatch logits summary to JSONL. Complements V1
+    // (byte-identity on cache fill) by catching semantic divergence V1 cannot: V1 verifies
+    // the bytes match GGUF; V2 verifies the bytes produce the same model output. Trigger:
+    // CGC_LOGITS_ORACLE_DUMP=path/to/oracle.jsonl. CGC_LOGITS_ORACLE_TOPN (default 5) controls
+    // top-k token records. CGC_LOGITS_ORACLE_FIRST_N (default unlimited, 0=unlimited) caps the
+    // number of ubatches dumped (memory-bounded for long sequences). The function scans
+    // gf for the F32 logits tensor (ne[0] == n_vocab, ne[1] == n_tokens) itself so the
+    // caller only needs to pass the graph.
+    //
+    // Format (one JSON object per line):
+    //   {"step":N,"token_idx":T,"n_tokens":NT,"n_vocab":V,"ctx_type":"DEF|MTP",
+    //    "logits_fnv1a64":"<hex16>","row_fnv1a64":"<hex16>",
+    //    "sum":X,"mean":Y,
+    //    "argmax_token":ID,"argmax_logit":V,
+    //    "top":[{"t":ID,"v":V}, ...]}
+    // Compare two oracle files with scripts/check/cgc_logits_oracle_compare.py.
+    void cgc_logits_oracle_dump(ggml_cgraph * gf, uint32_t n_tokens, uint32_t n_outputs);
+
     // [CGC bit-bisect v7] in-compute tensor dump. The CGC segmented dispatcher
     // (ggml-backend.cpp hook_seg) forwards each node to expert_cache_eval_cb with
     // ask=false right after the node's segment completed and before the next

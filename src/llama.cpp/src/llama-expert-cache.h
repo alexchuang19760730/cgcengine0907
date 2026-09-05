@@ -59,6 +59,11 @@ struct llama_expert_cache {
     size_t index_size = 0;
 
     std::vector<FILE *> files; // per file_idx; all must be open (else cache disabled)
+    // [CGC V1 verify 2026-09-05] files_path mirrors files[]. We need the path string (not just
+    // the open FILE *) to re-open the GGUF through a FRESH fd for byte-identity verification
+    // (so any stdio buffering on cache->files cannot mask an off-by-N read). Populated in
+    // llama_expert_cache_init alongside the fopen() call. Empty string = split-model / unset.
+    std::vector<std::string> files_path;
     std::unordered_map<uint64_t, std::vector<uint32_t>> key_segs; // key -> positions in index
 
     size_t budget = 0;
@@ -129,6 +134,13 @@ struct llama_expert_cache {
     std::vector<std::vector<uint8_t>>  slot_loading;     // [layer][slot] 1 = bg thread filling (prefetch in flight)
     std::vector<std::vector<uint8_t>>  slot_pinned;      // [layer][slot] 1 = LRU-exempt (decode tail-union prewarm, TAILPIN)
     std::vector<std::vector<uint8_t>>  slot_pinned_static; // [layer][slot] 1 = LRU-exempt static profile pin (LLAMA_EXPERT_CACHE_PIN_PROFILE, never unpinned)
+    // [CGC Hybrid 2026-09-05] Soft Pool tier partition (env CGC_SOFT_POOL_L0 / CGC_SOFT_POOL_L1):
+    // slot indices [0, soft_pool_l0) are L0 hot (no LRU eviction), [soft_pool_l0, soft_pool_l0+l1)
+    // are L1 warm (LRU). soft_pool_l0 + soft_pool_l1 <= slots_l(layer) — slots beyond L1 are
+    // spare (currently unused; reserved for future L2 spillover). When both tiers are 0 the
+    // pool is unpartitioned (legacy uniform behavior, byte-identical to pre-Soft-Pool).
+    uint32_t soft_pool_l0 = 0;
+    uint32_t soft_pool_l1 = 0;
     // [CGC prefetch v2] recently-evicted experts per layer (ring). When pick_slot evicts an
     // expert to make room, that expert is a prime "will-be-needed-again" candidate (miss
     // analysis: 1062 misses across 126 steps = only 80 distinct experts, 72 of them repeated —
@@ -224,6 +236,24 @@ static inline uint32_t cgc_layer_cap(uint32_t layer, uint32_t def) {
         }
     }
     return cur;
+}
+
+// [CGC Hybrid 2026-09-05] Soft Pool tier capacities: CGC_SOFT_POOL_L0 / CGC_SOFT_POOL_L1
+// partition the per-layer slot pool into L0 (fixed hot, no LRU eviction) and L1 (warm, LRU
+// evict). Default 32/32 matches the doc's recommended 64-slot per-layer configuration
+// (saving 27% resident memory vs 87 slots). L0+L1=0 disables the partition (legacy uniform
+// n_slots behavior, byte-identical to pre-Soft-Pool). Read once per process via
+// cgc_soft_pool_tier() and recorded on cache->soft_pool_{l0,l1} for runtime introspection.
+static inline uint32_t cgc_soft_pool_tier(const char * env_name, uint32_t fallback) {
+    const char * env = getenv(env_name);
+    if (env == nullptr || env[0] == '\0') {
+        return fallback;
+    }
+    long v = atol(env);
+    if (v < 0) {
+        return 0; // explicit 0 (or negative treated as 0) = "no slots in this tier"
+    }
+    return (uint32_t) std::min<long>(v, 256); // cap at 256 (= one slot per expert)
 }
 
 // L3 Option A: per-layer static slot pool API. Returns the slot index holding (layer, expert)

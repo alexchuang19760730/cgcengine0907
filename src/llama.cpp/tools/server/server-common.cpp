@@ -787,6 +787,74 @@ std::vector<server_tokens> tokenize_input_prompts(const llama_vocab * vocab, mtm
 // OAI utils
 //
 
+// 2026-09-05 CGC FIX v7: coding prefill 時自動加強 stop 後綴。
+// 當 prompt 結尾含 code fence 開頭 (```python / ```c / ```cpp / ```java 等) + 換行時,
+// 將 stop 列表中的 ``` 替換為 ```\n\n,避免 Qwen3-IQ3-MTP 組合在第一個 code block 結尾
+// 立刻觸發 1-token stop。GPT-style stop 集合 (```, <|im_end|>, <|end|>) 是 Qwen3-IQ3-MTP
+// 在無 hint coding prefill 下的已知模型限制,v6 fix 透過 marker skip 把 1-token stop
+// 跟 THINK_SEED 注入副作用解耦,v7 fix 進一步把 stop 策略本身升級:把孤立的 ``` 升級
+// 為 ```\n\n 讓 model 有機會自然寫完整個 code block 才 stop。
+// 設計選擇:只改 stop 字串,不刪除 stop,確保非 coding 場景行為 bit-identical。
+// 若 prompt 中已含 stop ```,client 端可以透過 cgc_code_strict_stop=1 kwarg 強制保留原 stop。
+static void cgc_patch_coding_stop(json & llama_params) {
+    if (!llama_params.contains("prompt") || !llama_params["prompt"].is_string()) {
+        return;
+    }
+    const std::string prompt = llama_params["prompt"].get<std::string>();
+    if (prompt.empty()) {
+        return;
+    }
+    // detect code fence open at end of prompt (```python\n / ```c\n / ```cpp\n / ```java\n etc)
+    bool has_coding_fence = false;
+    static const std::vector<std::string> fence_languages = {
+        "python", "py", "c", "cpp", "c++", "java", "javascript", "js", "typescript", "ts",
+        "rust", "rs", "go", "ruby", "rb", "php", "swift", "kotlin", "scala", "sh", "bash",
+        "sql", "html", "css", "json", "yaml", "yml", "xml"
+    };
+    for (const auto & lang : fence_languages) {
+        const std::string marker = "```" + lang + "\n";
+        if (prompt.size() >= marker.size() &&
+            prompt.compare(prompt.size() - marker.size(), marker.size(), marker) == 0) {
+            has_coding_fence = true;
+            break;
+        }
+    }
+    // also catch bare ```\n (no language tag)
+    if (!has_coding_fence && prompt.size() >= 4 &&
+        prompt.compare(prompt.size() - 4, 4, "```\n") == 0) {
+        has_coding_fence = true;
+    }
+    if (!has_coding_fence || !llama_params.contains("stop") || !llama_params["stop"].is_array()) {
+        return;
+    }
+    // check if ``` is in stop list; if not, nothing to patch
+    bool has_backtick_stop = false;
+    for (const auto & s : llama_params["stop"]) {
+        if (s.is_string() && s.get<std::string>() == "```") {
+            has_backtick_stop = true;
+            break;
+        }
+    }
+    if (!has_backtick_stop) {
+        return;
+    }
+    // check cgc_code_strict_stop=1 escape hatch
+    if (llama_params.contains("chat_template_kwargs")) {
+        const auto & k = llama_params["chat_template_kwargs"];
+        if (k.is_object() && k.contains("cgc_code_strict_stop") &&
+            k["cgc_code_strict_stop"].is_string() && k["cgc_code_strict_stop"].get<std::string>() == "1") {
+            return;
+        }
+    }
+    // patch: replace ``` with ```\n\n in the stop array
+    for (auto & s : llama_params["stop"]) {
+        if (s.is_string() && s.get<std::string>() == "```") {
+            s = std::string("```\n\n");
+        }
+    }
+    SRV_INF("%s", "CGC v7 fix: coding fence detected in prompt tail, stop ``` -> ```\\n\\n\n");
+}
+
 // used by /completions endpoint
 json oaicompat_completion_params_parse(const json & body) {
     json llama_params;
@@ -801,6 +869,9 @@ json oaicompat_completion_params_parse(const json & body) {
     } else {
         llama_params["stop"] = json_value(body, "stop", json::array());
     }
+
+    // 2026-09-05 CGC v7 fix: coding prefill -> stop ``` -> ```\n\n
+    cgc_patch_coding_stop(llama_params);
 
     // Handle "echo" field
     if (json_value(body, "echo", false)) {
@@ -1122,6 +1193,12 @@ json oaicompat_chat_params_parse(
     }
 
     llama_params["message_delimiters"] = chat_params.message_delimiters.to_json();
+
+    // 2026-09-05 CGC v7 fix: coding prefill -> stop ``` -> ```\n\n
+    // After chat template application, prompt is finalized and all stops merged
+    // (user stop + chat_params.additional_stops). Patch ``` -> ```\n\n if a
+    // code-fence open appears at the prompt tail.
+    cgc_patch_coding_stop(llama_params);
 
     // Reasoning budget: pass parameters through to sampling layer
     {

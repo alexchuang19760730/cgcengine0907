@@ -1611,6 +1611,13 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
 
     ret = GGML_STATUS_SUCCESS;
 
+    // [CGC V2 logits oracle 2026-09-05] per-ubatch logits summary (see header comment for
+    // JSONL format / env vars). Env-gated; one line of caller code, the function no-ops when
+    // CGC_LOGITS_ORACLE_DUMP is unset.
+    if (getenv("CGC_LOGITS_ORACLE_DUMP") != nullptr) {
+        cgc_logits_oracle_dump(res->get_gf(), (uint32_t) ubatch.n_tokens, (uint32_t) ubatch.n_tokens);
+    }
+
     return res;
 }
 
@@ -3028,6 +3035,158 @@ void llama_context::cgc_dump_graph_tensors(ggml_cgraph * gf) {
                     (long long) t->ne[0], (long long) t->ne[1], (long long) t->ne[2], (long long) t->ne[3], nbytes);
         }
     }
+}
+
+// [CGC V2 logits oracle 2026-09-05] FNV-1a 64-bit hash. Self-contained (no external crypto).
+// FNV-1a 64-bit: hash = offset_basis; for each byte: hash ^= byte; hash *= FNV_prime.
+// offset_basis = 0xcbf29ce484222325, FNV_prime = 0x100000001b3.
+static uint64_t cgc_logits_fnv1a64(const void * data, size_t bytes) {
+    const uint8_t * p = (const uint8_t *) data;
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < bytes; ++i) {
+        h ^= (uint64_t) p[i];
+        h *= 0x100000001b3ULL;
+    }
+    return h;
+}
+
+void llama_context::cgc_logits_oracle_dump(ggml_cgraph * gf, uint32_t n_tokens, uint32_t n_outputs) {
+    (void) n_outputs; // log every token row in the ubatch (n_outputs is informational)
+    if (gf == nullptr) {
+        return;
+    }
+    // env-gated; static so the lookup + file open only happen once
+    static const char * env_path = getenv("CGC_LOGITS_ORACLE_DUMP");
+    if (env_path == nullptr || env_path[0] == '\0') {
+        return;
+    }
+    static FILE * f_out = fopen(env_path, "w");
+    if (f_out == nullptr) {
+        return;
+    }
+    static int topn = -1;
+    if (topn < 0) {
+        const char * e = getenv("CGC_LOGITS_ORACLE_TOPN");
+        topn = (e != nullptr) ? atoi(e) : 5;
+        if (topn < 1) topn = 1;
+        if (topn > 64) topn = 64;
+    }
+    // first_n_max: -2=unset, -1=unlimited, >=0 = cap
+    static int first_n_max = -2;
+    static int dump_seq = 0;
+    if (first_n_max == -2) {
+        const char * e = getenv("CGC_LOGITS_ORACLE_FIRST_N");
+        first_n_max = (e != nullptr) ? atoi(e) : -1;
+    }
+    if (first_n_max >= 0 && dump_seq >= first_n_max) {
+        return;
+    }
+    // find logits tensor: F32, ne[1] == n_tokens, ne[0] is the vocab dim
+    // (the result_output / result_logits tensors match this; the rest of the graph is mostly F16/BF16)
+    ggml_tensor * t_logits = nullptr;
+    const int n_nodes = ggml_graph_n_nodes(gf);
+    for (int i = 0; i < n_nodes; ++i) {
+        ggml_tensor * t = ggml_graph_node(gf, i);
+        if (t == nullptr || t->type != GGML_TYPE_F32) {
+            continue;
+        }
+        if (t->ne[1] != (int64_t) n_tokens) {
+            continue;
+        }
+        // vocab dim is typically the largest ne[0] in the graph (>> 1024)
+        if (t->ne[0] < 1024) {
+            continue;
+        }
+        t_logits = t;
+        break;
+    }
+    if (t_logits == nullptr) {
+        return;
+    }
+    const int64_t n_vocab = t_logits->ne[0];
+    const int64_t n_tok   = t_logits->ne[1];
+    if (n_vocab <= 0 || n_tok <= 0) {
+        return;
+    }
+    const size_t n_floats = (size_t) (n_vocab * n_tok);
+    const size_t nbytes = n_floats * sizeof(float);
+    std::vector<float> buf(n_floats);
+    // sync the async pipeline before pulling the work buffer
+    ggml_backend_sched_synchronize(sched.get());
+    ggml_backend_tensor_get(t_logits, buf.data(), 0, nbytes);
+
+    const uint64_t h_full = cgc_logits_fnv1a64(buf.data(), nbytes);
+    const char * ctype = cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP ? "MTP" : "DEF";
+
+    // Per-token row dump: one JSON object per (ubatch_step, token_idx) so single-token
+    // divergence in a multi-token ubatch is detectable (vs. only the last-token argmax).
+    for (int64_t t = 0; t < n_tok; ++t) {
+        const float * row = buf.data() + t * n_vocab;
+        double sum = 0.0;
+        float maxv = row[0];
+        int64_t argmax = 0;
+        for (int64_t v = 0; v < n_vocab; ++v) {
+            sum += (double) row[v];
+            if (row[v] > maxv) {
+                maxv = row[v];
+                argmax = v;
+            }
+        }
+        const double mean = sum / (double) n_vocab;
+        // top-N via bounded insertion: keep an array of size topn, sort descending
+        // n_vocab is ~150K, topn is small (default 5) — O(n_vocab * topn) is fine.
+        std::vector<std::pair<int64_t, float>> top;
+        top.reserve((size_t) topn);
+        for (int64_t v = 0; v < n_vocab; ++v) {
+            const float val = row[v];
+            if ((int) top.size() < topn) {
+                top.push_back({v, val});
+                // bubble the new entry into place
+                for (int i = (int) top.size() - 1; i > 0; --i) {
+                    if (top[i].second > top[i - 1].second) {
+                        std::swap(top[i], top[i - 1]);
+                    } else {
+                        break;
+                    }
+                }
+            } else if (val > top.back().second) {
+                top.back() = {v, val};
+                for (int i = (int) top.size() - 1; i > 0; --i) {
+                    if (top[i].second > top[i - 1].second) {
+                        std::swap(top[i], top[i - 1]);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        // per-row hash so single-token divergence is detectable even if total hash collides
+        const uint64_t h_row = cgc_logits_fnv1a64(row, sizeof(float) * (size_t) n_vocab);
+        // build top JSON array inline
+        std::string top_json = "[";
+        for (size_t i = 0; i < top.size(); ++i) {
+            char tb[64];
+            if (i > 0) top_json += ",";
+            snprintf(tb, sizeof(tb), "{\"t\":%lld,\"v\":%.6f}",
+                    (long long) top[i].first, (double) top[i].second);
+            top_json += tb;
+        }
+        top_json += "]";
+
+        fprintf(f_out,
+            "{\"step\":%d,\"token_idx\":%lld,\"n_tokens\":%lld,\"n_vocab\":%lld,\"ctx_type\":\"%s\","
+            "\"logits_fnv1a64\":\"%016llx\",\"row_fnv1a64\":\"%016llx\","
+            "\"sum\":%.6f,\"mean\":%.6e,"
+            "\"argmax_token\":%lld,\"argmax_logit\":%.6f,"
+            "\"top\":%s}\n",
+            dump_seq, (long long) t, (long long) n_tok, (long long) n_vocab, ctype,
+            (unsigned long long) h_full, (unsigned long long) h_row,
+            sum, mean,
+            (long long) argmax, (double) maxv,
+            top_json.c_str());
+    }
+    dump_seq++;
+    fflush(f_out);
 }
 
 void llama_context::expert_cache_on_topk(ggml_tensor * t) {

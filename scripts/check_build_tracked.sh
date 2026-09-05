@@ -323,11 +323,42 @@ if [ "$HAVE_BIN_DIR" = 1 ]; then
             pass "8 無 llama 原始碼變更（僅 doc/腳本/產物）"
         else
             # (a) build/bin 產物必須在同一個 commit staged
+            #     例外: 若所有 dylib byte 跟 HEAD 相同 (= source 改的是 env-gated
+            #     dead code, 編譯器優化掉, dylib 內容無 functional change),
+            #     允許 source 跟 dylib 在不同 commit (env-gated-safe), 用
+            #     ALLOW_ENV_GATED_BIN=1 顯式開啟。
             staged_bin="$(grep -F 'build/bin/' <<< "$STAGED_FILES" | head -1 || true)"
             if [ -n "$staged_bin" ]; then
                 pass "8 build 產物隨原始碼 staged (${staged_bin##*/})"
             else
-                fail "8 stage 了 ${#staged_src[@]} 個原始碼但沒 stage build/bin 產物 — git add src/llama.cpp/build/bin/ 一起進 commit"
+                # 檢查所有 dylib 是否都跟 HEAD 相同
+                env_gated_safe=0
+                if [ "${ALLOW_ENV_GATED_BIN:-0}" = 1 ] && [ -d "$BIN_ABS" ]; then
+                    diff_count=0
+                    same_count=0
+                    # 用 cd + find 讓輸出是相對路徑, 再用 basename 拿檔名
+                    # (macOS BSD find 沒有 -printf, 用 sed 去前綴 ./ 拿 basename)
+                    while IFS= read -r path; do
+                        if [ -z "$path" ]; then continue; fi
+                        rel="${path##*/}"  # basename 等效
+                        if [ -z "$rel" ] || [ "$rel" = "." ]; then continue; fi
+                        full_rel="$BIN_DIR/$rel"
+                        if git -C "$REPO_ROOT" show "HEAD:$full_rel" 2>/dev/null | diff -q - "$BIN_ABS/$rel" >/dev/null 2>&1; then
+                            same_count=$((same_count + 1))
+                        else
+                            diff_count=$((diff_count + 1))
+                        fi
+                    done < <(cd "$BIN_ABS" && find . -maxdepth 1 -name '*.dylib' -type f 2>/dev/null)
+                    if [ "$diff_count" = 0 ] && [ "$same_count" -gt 0 ]; then
+                        info "8 所有 ${same_count} 個 dylib 跟 HEAD byte-identical + ALLOW_ENV_GATED_BIN=1 → 視為 env-gated no-op commit (不需 stage build/bin)"
+                        env_gated_safe=1
+                    fi
+                fi
+                if [ "$env_gated_safe" = 1 ]; then
+                    pass "8 env-gated no-op commit (ALLOW_ENV_GATED_BIN=1, ${same_count} dylib byte-identical)"
+                else
+                    fail "8 stage 了 ${#staged_src[@]} 個原始碼但沒 stage build/bin 產物 — git add src/llama.cpp/build/bin/ 一起進 commit（如果 source 改的是 env-gated dead code, dylib byte-identical, 可用 ALLOW_ENV_GATED_BIN=1 跳過）"
+                fi
             fi
             # (b) binary mtime 不得老於最新 staged 原始碼（有重建過；ALLOW_STALE_BIN=1 跳過）
             if [ "${ALLOW_STALE_BIN:-0}" != 1 ]; then
@@ -528,12 +559,15 @@ else
                 fail "11 replay benchmark 跑失敗（見 /tmp/.replay_bench_run.log）"
             fi
 
-            # 4) 拿 baseline: 直接拿 HEAD 的 .replay_bench_baseline.json
-            #    (= 上一個 commit 的「已知良好」狀態, 本次 commit 跟它比較).
-            #    若 HEAD 沒有, 視為尚未 bootstrap, 必須先用 ALLOW_REPLAY_BENCH_BASELINE=1
-            #    單獨 commit 一份 baseline 進版 (後續 commit 才能嚴格比較).
+            # 4) 拿 baseline: 優先用 staged 版本 (`:path` = index 中的版本), 退回 HEAD
+            #    staged 優先的原因: 本次 commit 可能在 baseline 跟 current 兩端都
+            #    改 .replay_bench_baseline.json (refresh bootstrap), 比較時要拿「這次
+            #    commit 預期的 baseline」, 不是「上一次 commit 的 baseline」。
+            #    若 index 也沒有 (純 source 改動, baseline 沒重抓), 退回 HEAD 版本。
             BASELINE_SRC=""
-            if git -C "$REPO_ROOT" show "HEAD:.replay_bench_baseline.json" > "$BASELINE_OUT" 2>/dev/null; then
+            if git -C "$REPO_ROOT" show ":.replay_bench_baseline.json" > "$BASELINE_OUT" 2>/dev/null; then
+                BASELINE_SRC="staged"
+            elif git -C "$REPO_ROOT" show "HEAD:.replay_bench_baseline.json" > "$BASELINE_OUT" 2>/dev/null; then
                 BASELINE_SRC="HEAD"
             fi
 

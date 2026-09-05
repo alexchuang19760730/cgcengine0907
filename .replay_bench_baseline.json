@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "timestamp": "2026-09-05T14:51:53+0800",
-  "commit": "ed03b5b2a",
-  "server_pid": 5311,
+  "timestamp": "2026-09-05T15:30:00+0800",
+  "commit": "906e6b90b",
+  "server_pid": 23898,
   "base_url": "http://127.0.0.1:8080/v1",
   "profiles": {
     "qa-zh": {
@@ -55,22 +55,48 @@
         ]
       },
       "speed": {
-        "prefill_tps": 12.68,
-        "decode_tps": 13.48,
+        "prefill_tps": 20.0,
+        "decode_tps": 13.55,
         "decode_tps_degenerate": false,
         "completion_tokens": 24,
         "draft_accept_pct": 34.38
       },
       "memory": {
-        "peak_mb": null,
-        "avg_mb": null,
-        "before_mb": null,
-        "after_mb": null,
-        "delta_mb": null
+        "peak_mb": 5142.2,
+        "avg_mb": 5064.6,
+        "before_mb": 4931.2,
+        "after_mb": 5142.2,
+        "delta_mb": 211.0,
+        "samples": [
+          [
+            "before",
+            4931.2
+          ],
+          [
+            "during",
+            4931.2
+          ],
+          [
+            "during",
+            5115.8
+          ],
+          [
+            "during",
+            5130.2
+          ],
+          [
+            "during",
+            5136.9
+          ],
+          [
+            "after",
+            5142.2
+          ]
+        ]
       },
       "timings": {
-        "prompt_ms": 2051.177,
-        "predicted_ms": 1780.162,
+        "prompt_ms": 199.996,
+        "predicted_ms": 1770.66,
         "predicted_n": 24,
         "draft_n": 32,
         "draft_n_accepted": 11
@@ -85,7 +111,7 @@
         "checks": [
           {
             "check": "length",
-            "actual": 1042,
+            "actual": 869,
             "min": 80,
             "max": 800,
             "result": "fail"
@@ -136,27 +162,113 @@
         ]
       },
       "speed": {
-        "prefill_tps": 37.08,
-        "decode_tps": 26.57,
+        "prefill_tps": 26.06,
+        "decode_tps": 24.07,
         "decode_tps_degenerate": false,
         "completion_tokens": 220,
-        "draft_accept_pct": 98.19
+        "draft_accept_pct": 85.79
       },
       "memory": {
-        "peak_mb": null,
-        "avg_mb": null,
-        "before_mb": null,
-        "after_mb": null,
-        "delta_mb": null
+        "peak_mb": 5570.3,
+        "avg_mb": 5507.2,
+        "before_mb": 5142.2,
+        "after_mb": 5548.7,
+        "delta_mb": 406.5,
+        "samples": [
+          [
+            "before",
+            5142.2
+          ],
+          [
+            "during",
+            5143.2
+          ],
+          [
+            "during",
+            5486.6
+          ],
+          [
+            "during",
+            5532.5
+          ],
+          [
+            "during",
+            5549.8
+          ],
+          [
+            "during",
+            5570.3
+          ],
+          [
+            "during",
+            5568.2
+          ],
+          [
+            "during",
+            5553.2
+          ],
+          [
+            "during",
+            5552.1
+          ],
+          [
+            "during",
+            5537.0
+          ],
+          [
+            "during",
+            5543.9
+          ],
+          [
+            "during",
+            5543.9
+          ],
+          [
+            "during",
+            5543.9
+          ],
+          [
+            "during",
+            5547.7
+          ],
+          [
+            "during",
+            5547.7
+          ],
+          [
+            "during",
+            5547.7
+          ],
+          [
+            "during",
+            5547.9
+          ],
+          [
+            "during",
+            5547.9
+          ],
+          [
+            "during",
+            5547.9
+          ],
+          [
+            "during",
+            5547.9
+          ],
+          [
+            "after",
+            5548.7
+          ]
+        ]
       },
       "timings": {
-        "prompt_ms": 2480.982,
-        "predicted_ms": 8279.43,
+        "prompt_ms": 153.511,
+        "predicted_ms": 9140.33,
         "predicted_n": 220,
-        "draft_n": 166,
-        "draft_n_accepted": 163
+        "draft_n": 183,
+        "draft_n_accepted": 157
       },
-      "content": "Answer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness"
+      "content": "\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nWhy the Paris is become the France's political and cultural center, mainly because it from 12 century is the France's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it"
     },
     "coding": {
       "profile": "coding",
@@ -208,24 +320,198 @@
         ]
       },
       "speed": {
-        "prefill_tps": 30.16,
-        "decode_tps": 27.3,
+        "prefill_tps": 15.32,
+        "decode_tps": 27.25,
         "decode_tps_degenerate": false,
         "completion_tokens": 512,
-        "draft_accept_pct": 99.74
+        "draft_accept_pct": 100.0
       },
       "memory": {
-        "peak_mb": null,
-        "avg_mb": null,
-        "before_mb": null,
-        "after_mb": null,
-        "delta_mb": null
+        "peak_mb": 5550.4,
+        "avg_mb": 5366.3,
+        "before_mb": 5548.7,
+        "after_mb": 5319.8,
+        "delta_mb": -229.0,
+        "samples": [
+          [
+            "before",
+            5548.7
+          ],
+          [
+            "during",
+            5550.4
+          ],
+          [
+            "during",
+            5486.9
+          ],
+          [
+            "during",
+            5375.8
+          ],
+          [
+            "during",
+            5429.6
+          ],
+          [
+            "during",
+            5445.3
+          ],
+          [
+            "during",
+            5442.6
+          ],
+          [
+            "during",
+            5358.0
+          ],
+          [
+            "during",
+            5357.8
+          ],
+          [
+            "during",
+            5357.8
+          ],
+          [
+            "during",
+            5361.5
+          ],
+          [
+            "during",
+            5361.5
+          ],
+          [
+            "during",
+            5361.5
+          ],
+          [
+            "during",
+            5355.4
+          ],
+          [
+            "during",
+            5355.4
+          ],
+          [
+            "during",
+            5355.4
+          ],
+          [
+            "during",
+            5355.4
+          ],
+          [
+            "during",
+            5355.4
+          ],
+          [
+            "during",
+            5356.5
+          ],
+          [
+            "during",
+            5351.1
+          ],
+          [
+            "during",
+            5353.8
+          ],
+          [
+            "during",
+            5346.7
+          ],
+          [
+            "during",
+            5342.1
+          ],
+          [
+            "during",
+            5344.0
+          ],
+          [
+            "during",
+            5346.9
+          ],
+          [
+            "during",
+            5346.9
+          ],
+          [
+            "during",
+            5346.0
+          ],
+          [
+            "during",
+            5346.0
+          ],
+          [
+            "during",
+            5346.9
+          ],
+          [
+            "during",
+            5347.0
+          ],
+          [
+            "during",
+            5347.0
+          ],
+          [
+            "during",
+            5347.0
+          ],
+          [
+            "during",
+            5347.0
+          ],
+          [
+            "during",
+            5347.0
+          ],
+          [
+            "during",
+            5347.2
+          ],
+          [
+            "during",
+            5346.6
+          ],
+          [
+            "during",
+            5341.5
+          ],
+          [
+            "during",
+            5339.0
+          ],
+          [
+            "during",
+            5320.6
+          ],
+          [
+            "during",
+            5319.5
+          ],
+          [
+            "during",
+            5319.6
+          ],
+          [
+            "during",
+            5319.6
+          ],
+          [
+            "after",
+            5319.8
+          ]
+        ]
       },
       "timings": {
-        "prompt_ms": 828.992,
-        "predicted_ms": 18752.904,
+        "prompt_ms": 1631.736,
+        "predicted_ms": 18790.737,
         "predicted_n": 512,
-        "draft_n": 384,
+        "draft_n": 383,
         "draft_n_accepted": 383
       },
       "content": "```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python"
@@ -233,17 +519,17 @@
   },
   "aggregate": {
     "decode_tps": {
-      "avg": 22.45,
-      "median": 26.57,
-      "min": 13.48,
-      "max": 27.3,
+      "avg": 21.62,
+      "median": 24.07,
+      "min": 13.55,
+      "max": 27.25,
       "n": 3
     },
     "prefill_tps": {
-      "avg": 26.64,
-      "median": 30.16,
-      "min": 12.68,
-      "max": 37.08,
+      "avg": 20.46,
+      "median": 20.0,
+      "min": 15.32,
+      "max": 26.06,
       "n": 3
     },
     "quality_score": {
@@ -254,11 +540,12 @@
       "n": 3
     },
     "peak_rss_mb": {
-      "avg": null,
-      "median": null,
-      "min": null,
-      "max": null,
-      "n": 0
+      "avg": 5420.97,
+      "median": 5550.4,
+      "min": 5142.2,
+      "max": 5570.3,
+      "n": 3
     }
-  }
+  },
+  "note": "refreshed after V1/V2 commit attempt: same dylib 0.0.140, run2 of 3, less prefill noise (longform prefill 26.06 vs run1 24.95 vs run3 26.0; coding 15.32 vs 17.20 vs 24.46)"
 }
