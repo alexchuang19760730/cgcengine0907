@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>CGC 品質優先修復說明書 — 2026-09-05</title>
+<style>
+body { font-family: -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif; max-width: 960px; margin: 32px auto; padding: 0 24px; line-height: 1.75; color: #1a1a1a; background: #fafafa; }
+h1 { color: #c0392b; border-bottom: 3px solid #c0392b; padding-bottom: 8px; }
+h2 { color: #2c3e50; border-bottom: 1px solid #bdc3c7; padding-bottom: 4px; margin-top: 32px; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 0.95em; }
+th, td { border: 1px solid #bdc3c7; padding: 8px 12px; text-align: left; }
+th { background: #34495e; color: #fff; }
+tr:nth-child(even) { background: #ecf0f1; }
+.ok { color: #27ae60; font-weight: bold; }
+.bad { color: #e74c3c; font-weight: bold; }
+.warn { color: #f39c12; font-weight: bold; }
+code { background: #ecf0f1; padding: 2px 6px; border-radius: 3px; font-size: 0.92em; }
+pre { background: #2c3e50; color: #ecf0f1; padding: 12px; border-radius: 6px; overflow-x: auto; }
+.summary-box { background: #fef9e7; border: 1px solid #f1c40f; padding: 12px 16px; border-radius: 4px; margin: 12px 0; }
+</style>
+</head>
+<body>
+
+<h1>CGC 品質優先修復說明書</h1>
+<p>日期：2026-09-05 ｜ 分支：devserver ｜ Commit：<code>5d677093e</code></p>
+
+<div class="summary-box">
+<b>目標</b>：修復 devserver 的品質退化問題（think loop、重複輸出、echo prompt），
+先確保語意正確，再於下一個里程碑恢復 25+ t/s 速度。
+</div>
+
+<h2>一、問題背景</h2>
+<p>devserver 使用 Qwen3.6-35B-A3B-MTP IQ3_XXS（denseIQ4X）＋ MTP 投機解碼 ＋
+expert cache 4GB ＋ ngl=99。先前對拍發現：</p>
+<table>
+<tr><th>Profile</th><th>品質分數（修復前）</th><th>症狀</th></tr>
+<tr><td>qa-zh</td><td class="bad">0.500</td><td>echo prompt / think loop</td></tr>
+<tr><td>longform-zh</td><td class="bad">0.333</td><td>0000 或重複輸出</td></tr>
+<tr><td>coding</td><td class="bad">0.667</td><td>重複「```python」</td></tr>
+</table>
+
+<h2>二、根因分析（三層）</h2>
+<ol>
+<li><b>expert cache pool 路徑</b>：ngl=99 全 offload 時，pool 的 ZERO-slot 路徑
+（cold expert 未填入 → 零權重）會造成品質退化。Cold Guard 強制 <code>ensure_batch</code>
+填滿 cold expert 可恢復品質，但速度會掉（這是速度問題的根源，下一里程碑處理）。</li>
+<li><b>think loop</b>：Qwen3.6 原生模板在 assistant 前不加任何東西，模型自行決定是否
+進入 <code> thinking</code> 思考模式。IQ3_XXS 量化下首 token 分布被噪聲主導，
+模型頻繁誤入 think loop（<code> thinking\n\n response\n\n</code> 無限循環）。</li>
+<li><b>重複輸出</b>：IQ3_XXS（3.0625 bpw）低比特量化下，默認採樣參數過「鬆」，
+放大首 token 噪聲 → 模型進入重複循環（echo prompt 或重複短句）。</li>
+</ol>
+
+<h2>三、修復內容</h2>
+
+<h3>1. no-think ChatML 模板（新增）</h3>
+<p>新增 <code>src/llama.cpp/models/templates/Qwen3-nothink-ChatML.jinja</code>，
+在 assistant header 後注入 <code> response</code> 前綴，直接告訴模型
+「思考已結束，開始回答」：</p>
+<pre>
+{%- if add_generation_prompt %}
+&lt;im_start&gt;assistant
+ response{%- if prefill_text %}
+{{ prefill_text }}
+{%- endif -%}
+{%- endif %}
+</pre>
+<p>效果：完全消除 think loop。qa-zh 品質從 0.5 → 1.0。</p>
+
+<h3>2. IQ3_XXS 採樣參數（run_server.sh）</h3>
+<table>
+<tr><th>參數</th><th>修復前</th><th>修復後</th><th>作用</th></tr>
+<tr><td><code>--temp</code></td><td>0.7（默認）</td><td class="ok">0.4</td><td>降低採樣隨機性</td></tr>
+<tr><td><code>--top-k</code></td><td>40</td><td class="ok">0（禁用）</td><td>固定閾值保留噪聲 token</td></tr>
+<tr><td><code>--top-p</code></td><td>0.8</td><td class="ok">0.8</td><td>保持 Qwen 官方 no-think 推薦</td></tr>
+</table>
+
+<h3>3. reasoning-format deepseek</h3>
+<p><code>--reasoning-format deepseek</code>：即使模型偶爾生成 think 內容，
+server 會將其移入 <code>reasoning_content</code> 欄位，主內容保持乾淨。</p>
+
+<h3>4. Cold Guard 恢復 ON（已含於上一 commit 96522f4f9）</h3>
+<p>Cold Guard 閾值 0.30：當某層 top-k expert 的 cold 比例 &gt; 30% 時強制走
+<code>ensure_batch</code> 填滿，避免 ZERO-slot 零權重污染。這是品質正確的核心。</p>
+
+<h2>四、驗證結果（replay benchmark）</h2>
+<table>
+<tr><th>Profile</th><th>品質（修復前）</th><th>品質（修復後）</th><th>狀態</th></tr>
+<tr><td>qa-zh</td><td>0.500</td><td class="ok">1.000</td><td class="ok">✅ 達標</td></tr>
+<tr><td>longform-zh</td><td>0.333</td><td class="ok">1.000</td><td class="ok">✅ 達標</td></tr>
+<tr><td>coding</td><td>0.667</td><td class="warn">0.667</td><td class="warn">⚠️ 維持（偶發重複）</td></tr>
+<tr><td><b>平均</b></td><td><b>0.500</b></td><td class="ok"><b>0.889</b></td><td class="ok">✅ +0.39</td></tr>
+</table>
+<p>語意驗證：巴黎=法國首都、2+2=4 等 QA 均正確回答。</p>
+
+<h2>五、已知取捨（下一里程碑）</h2>
+<table>
+<tr><th>指標</th><th>修復前</th><th>修復後</th><th>說明</th></tr>
+<tr><td>decode 速度</td><td>~26 t/s</td><td class="warn">~3-17 t/s</td><td>Cold Guard 強制 ensure_batch（CPU 填充）</td></tr>
+<tr><td>prefill 速度</td><td>~29 t/s</td><td class="warn">~4-6 t/s</td><td>同上</td></tr>
+</table>
+<div class="summary-box">
+<b>下一里程碑</b>：恢復 25+ t/s。方向：優化 pool hit rate（提高 pool 容量 / L0-L1
+分層 / LRU 精準化），讓 fast path 在品質不降的前提下更常被觸發，
+或在 16GB Mac 上改採 <code>ngl=30 + expert cache</code> 的折衷配置。
+</div>
+
+<h2>六、Commit 內容</h2>
+<pre>
+5d677093e CGC FIX: Quality-first server config — no-think ChatML template + IQ3_XXS sampling + deepseek reasoning format
+  - src/llama.cpp/models/templates/Qwen3-nothink-ChatML.jinja  (新增)
+  - scripts/run_server.sh  (模板路徑 / reasoning-format / 採樣參數)
+  - src/llama.cpp/build/bin/*  (重建 binaries, 含 Cold Guard 0.30)
+  - .replay_bench_baseline.json  (品質基線 0.5 → 0.89)
+</pre>
+
+<h2>七、如何還原 / 調整</h2>
+<ul>
+<li>停用 no-think 模板：<code>CGC_SERVER_CHAT_TEMPLATE_FILE=""</code>（回到 embedded GGUF）</li>
+<li>關閉 Cold Guard：<code>CGC_FAST_COLD_MAX=0</code>（恢復速度、犧牲品質）</li>
+<li>調整採樣：直接改 <code>scripts/run_server.sh</code> 中的 <code>--temp</code> / <code>--top-k</code> / <code>--top-p</code></li>
+</ul>
+
+</body>
+</html>
