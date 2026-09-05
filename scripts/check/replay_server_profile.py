@@ -183,6 +183,46 @@ def summarize_rss(samples):
 # 質量評分 (啟發式, 從 --reference 讀 rules)
 # ---------------------------------------------------------------------------
 
+def detect_phrase_loop(text, min_unit=6, max_unit=300, min_repeat=3):
+    """偵測片語級重複迴圈: 相同長度 >= min_unit 的片語連續重複 >= min_repeat 次。
+
+    例: 「從12世紀起就是法國王國的首都,並且匯聚了」連續重複 3 次 → 回傳
+    (unit, start, count)。在 raw text 與移除全部空白後的 text 上各檢查一次,
+    避免換行/空白打斷連續性 (例如每行重複的長句)。回傳 None 代表沒有片語迴圈。
+
+    i 用 step=1 掃描 (不能用 p 步進), 否則會跳過前面有前綴文字時的真實起點。
+    """
+    def _find(t):
+        n = len(t)
+        if n < min_unit * min_repeat:
+            return None
+        max_len = min(max_unit, n // min_repeat)
+        for p in range(min_unit, max_len + 1):
+            limit = n - p * min_repeat
+            i = 0
+            while i <= limit:
+                block = t[i:i + p]
+                cnt = 1
+                j = i + p
+                while j + p <= n and t[j:j + p] == block:
+                    cnt += 1
+                    j += p
+                    if cnt >= min_repeat:
+                        return (block, i, cnt)
+                i += 1
+        return None
+
+    if not text:
+        return None
+    found = _find(text)
+    if found:
+        return found
+    collapsed = "".join(text.split())  # 移除全部空白, 抓跨行/跨模板標記重複
+    if collapsed == text:
+        return None
+    return _find(collapsed)
+
+
 def evaluate_quality(profile, content, finish_reason, reference_rules):
     """根據 reference rules 給 0.0-1.0 score。回傳 (score, checks_list)。"""
     rules = reference_rules.get(profile, {}) if reference_rules else {}
@@ -245,7 +285,8 @@ def evaluate_quality(profile, content, finish_reason, reference_rules):
         score += (1.0 if ok else 0.0) * w
         weight_sum += w
 
-    # 6) loop detection (consecutive identical chars / words)
+    # 6) loop detection (consecutive identical chars)
+    loop_ok = True
     loop_max_run = rules.get("loop_max_run", 8)
     if content:
         max_run = 1
@@ -257,15 +298,42 @@ def evaluate_quality(profile, content, finish_reason, reference_rules):
                     max_run = cur_run
             else:
                 cur_run = 1
-        ok = max_run <= loop_max_run
-        checks.append({"check": "loop_run", "max_run": max_run, "limit": loop_max_run, "result": "pass" if ok else "fail"})
+        loop_ok = max_run <= loop_max_run
+        checks.append({"check": "loop_run", "max_run": max_run, "limit": loop_max_run, "result": "pass" if loop_ok else "fail"})
         w = 0.2
-        score += (1.0 if ok else 0.0) * w
+        score += (1.0 if loop_ok else 0.0) * w
         weight_sum += w
+
+    # 7) phrase-level loop detection: 相同 6+ 字元片語連續重複 >= 3 次 = 語意迴圈
+    #    舊 loop_run 只抓連續相同字元, 抓不到片語級重複 (如長句迴圈輸出),
+    #    造成 loop 內容仍拿 1.0 高分。此 check 權重最高 + 硬閘門壓分。
+    phrase_loop = detect_phrase_loop(content) if content else None
+    if phrase_loop is not None:
+        unit, start, cnt = phrase_loop
+    else:
+        unit = start = cnt = None
+    checks.append({
+        "check": "loop_phrase",
+        "result": "pass" if phrase_loop is None else "fail",
+        "min_unit": 6,
+        "max_unit": 300,
+        "min_repeat": 3,
+        "unit": unit,
+        "start": start,
+        "count": cnt,
+    })
+    w = 0.5
+    score += (1.0 if phrase_loop is None else 0.0) * w
+    weight_sum += w
 
     if weight_sum == 0:
         return 1.0, checks
-    return round(score / weight_sum, 3), checks
+    final = score / weight_sum
+    # 硬閘門: 偵測到語意迴圈 (片語重複 或 連續字元爆量) 時壓到 0.3 以下,
+    # 不讓迴圈輸出靠 required_any 命中關鍵字而拿到 0.5+ 的假高分。
+    if phrase_loop is not None or not loop_ok:
+        final = min(final, 0.3)
+    return round(final, 3), checks
 
 
 # ---------------------------------------------------------------------------

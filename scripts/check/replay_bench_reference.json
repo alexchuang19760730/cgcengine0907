@@ -1,5 +1,5 @@
 {
-  "_doc": "replay_server_profile.py 的 reference rules (啟發式質量檢查)。每個 profile 一個 rules 區塊, 用 6 個 check: length / required_any / required_all / forbidden / ok_finish_reasons / loop_max_run。score = 加權 pass 比例 (0.0-1.0)。precommit hook 用 score < 0.5 視為 quality regression。",
+  "_doc": "replay_server_profile.py 的 reference rules (啟發式質量檢查)。每個 profile 一個 rules 區塊, 用 7 個 check: length / required_any / required_all / forbidden / ok_finish_reasons / loop_max_run / loop_phrase。score = 加權 pass 比例 (0.0-1.0)。loop_phrase (相同 6+ 字元片語連續重複 >=3 次) 與 loop_run 為硬閘門: 偵測到迴圈時最終 score 壓到 <=0.3, 不讓迴圈輸出拿到高分。precommit hook 用 score < 0.5 視為 quality regression。",
 
   "qa-zh": {
     "length_min": 4,

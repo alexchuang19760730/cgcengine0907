@@ -1,25 +1,25 @@
 {
   "schema_version": 1,
-  "timestamp": "2026-09-05T23:53:13+0800",
-  "commit": "5d677093e+gate-v2-rebaseline",
+  "timestamp": "2026-09-06T00:43:01+0800",
+  "commit": "5d677093e+gate-v2-rebaseline-phrase-loop",
   "server_pid": 70006,
   "base_url": "http://127.0.0.1:8080/v1",
   "profiles": {
     "qa-zh": {
       "profile": "qa-zh",
-      "finish_reason": "stop",
+      "finish_reason": "length",
       "quality": {
-        "score": 0.667,
+        "score": 1.0,
         "scores": [
-          0.667,
           1.0,
-          0.667
+          1.0,
+          1.0
         ],
-        "variance": 0.025,
+        "variance": 0.0,
         "checks": [
           {
             "check": "length",
-            "actual": 18,
+            "actual": 77,
             "min": 4,
             "max": 80,
             "result": "pass"
@@ -30,7 +30,7 @@
               "巴黎",
               "法國"
             ],
-            "result": "fail"
+            "result": "pass"
           },
           {
             "check": "forbidden",
@@ -45,7 +45,7 @@
           },
           {
             "check": "finish_reason",
-            "actual": "stop",
+            "actual": "length",
             "ok": [
               "stop",
               "length"
@@ -54,88 +54,114 @@
           },
           {
             "check": "loop_run",
-            "max_run": 1,
+            "max_run": 2,
             "limit": 8,
             "result": "pass"
+          },
+          {
+            "check": "loop_phrase",
+            "result": "pass",
+            "min_unit": 6,
+            "max_unit": 300,
+            "min_repeat": 3,
+            "unit": null,
+            "start": null,
+            "count": null
           }
         ]
       },
       "speed": {
-        "prefill_tps": 15.06,
-        "decode_tps": 8.48,
+        "prefill_tps": 16.54,
+        "decode_tps": 14.25,
         "decode_tps_degenerate": false,
-        "completion_tokens": 11,
-        "draft_accept_pct": 77.78,
+        "completion_tokens": 24,
+        "draft_accept_pct": 46.43,
         "decode_tps_runs": [
-          9.17,
-          8.48,
-          7.88
+          7.75,
+          14.25,
+          15.27
         ],
         "prefill_tps_runs": [
-          15.06,
-          9.81,
-          16.04
+          12.51,
+          16.54,
+          24.53
         ]
       },
       "memory": {
-        "peak_mb": 5505.8,
-        "avg_mb": 5302.4,
-        "before_mb": 5332.3,
-        "after_mb": 5304.6,
-        "delta_mb": -27.7,
+        "peak_mb": 5534.6,
+        "avg_mb": 5516.1,
+        "before_mb": 5513.7,
+        "after_mb": 5515.7,
+        "delta_mb": 2.0,
         "samples": [
           [
             "before",
-            5332.3
+            5513.7
           ],
           [
             "during",
-            5332.3
+            5513.7
           ],
           [
             "during",
-            5257.3
+            5501.2
           ],
           [
             "during",
-            5285.5
+            5514.0
+          ],
+          [
+            "during",
+            5524.6
+          ],
+          [
+            "during",
+            5534.6
+          ],
+          [
+            "during",
+            5513.0
+          ],
+          [
+            "during",
+            5514.5
           ],
           [
             "after",
-            5304.6
+            5515.7
           ]
         ],
         "peak_runs": [
-          5332.3,
-          5420.8,
-          5505.8
+          5534.6,
+          5522.6,
+          5513.3
         ]
       },
       "timings": {
-        "prompt_ms": 265.65,
-        "predicted_ms": 1199.751,
-        "predicted_n": 11,
-        "draft_n": 9,
-        "draft_n_accepted": 7
+        "prompt_ms": 319.626,
+        "predicted_ms": 3098.739,
+        "predicted_n": 24,
+        "draft_n": 29,
+        "draft_n_accepted": 12
       },
-      "content": "是哪個國家的首都？請只用一句中文回答",
+      "content": "\nim_end\nim_start>assistant\n response答:巴黎\nim_end\nim_start>assistant\n response答",
       "runs": 3
     },
     "longform-zh": {
       "profile": "longform-zh",
       "finish_reason": "length",
       "quality": {
-        "score": 1.0,
+        "score": 0.3,
         "scores": [
-          1.0,
-          1.0,
-          1.0
+          0.3,
+          0.3,
+          0.3
         ],
         "variance": 0.0,
         "checks": [
           {
             "check": "length",
-            "actual": 289,
+            "actual": 439,
             "min": 80,
             "max": 800,
             "result": "pass"
@@ -179,268 +205,370 @@
           },
           {
             "check": "loop_run",
-            "max_run": 1,
+            "max_run": 2,
             "limit": 12,
             "result": "pass"
+          },
+          {
+            "check": "loop_phrase",
+            "result": "fail",
+            "min_unit": 6,
+            "max_unit": 300,
+            "min_repeat": 3,
+            "unit": "從12世紀起就是法國王國。\n\n<im_end><im_start>assistant\n response答:巴黎之所以成為法國的政治與文化中心，主要是因為它從12世紀起就是法國王國的首都，並且匯聚了",
+            "start": 0,
+            "count": 3
           }
         ]
       },
       "speed": {
-        "prefill_tps": 4.75,
-        "decode_tps": 6.09,
+        "prefill_tps": 4.45,
+        "decode_tps": 10.01,
         "decode_tps_degenerate": false,
         "completion_tokens": 220,
-        "draft_accept_pct": 85.79,
+        "draft_accept_pct": 98.19,
         "decode_tps_runs": [
-          9.6,
-          5.01,
-          6.09
+          6.28,
+          10.01,
+          10.11
         ],
         "prefill_tps_runs": [
-          4.75,
-          4.95,
-          4.42
+          4.45,
+          4.44,
+          5.5
         ]
       },
       "memory": {
-        "peak_mb": 5463.9,
-        "avg_mb": 5290.4,
-        "before_mb": 5355.0,
-        "after_mb": 5235.0,
-        "delta_mb": -120.0,
+        "peak_mb": 5542.3,
+        "avg_mb": 5521.4,
+        "before_mb": 5536.0,
+        "after_mb": 5516.7,
+        "delta_mb": -19.4,
         "samples": [
           [
             "before",
-            5355.0
+            5536.0
           ],
           [
             "during",
-            5355.0
+            5536.0
           ],
           [
             "during",
-            5463.9
+            5537.2
           ],
           [
             "during",
-            5455.4
+            5537.1
           ],
           [
             "during",
-            5411.3
+            5537.1
           ],
           [
             "during",
-            5404.2
+            5542.2
           ],
           [
             "during",
-            5384.0
+            5542.2
           ],
           [
             "during",
-            5379.6
+            5542.3
           ],
           [
             "during",
-            5383.1
+            5542.3
           ],
           [
             "during",
-            5384.2
+            5542.3
           ],
           [
             "during",
-            5383.2
+            5542.3
           ],
           [
             "during",
-            5377.8
+            5541.3
           ],
           [
             "during",
-            5361.1
+            5541.2
           ],
           [
             "during",
-            5354.9
+            5534.0
           ],
           [
             "during",
-            5335.1
+            5535.6
           ],
           [
             "during",
-            5312.5
+            5535.1
           ],
           [
             "during",
-            5270.3
+            5535.1
           ],
           [
             "during",
-            5268.8
+            5523.0
           ],
           [
             "during",
-            5266.6
+            5510.0
           ],
           [
             "during",
-            5272.0
+            5511.2
           ],
           [
             "during",
-            5272.0
+            5511.2
           ],
           [
             "during",
-            5270.9
+            5511.2
           ],
           [
             "during",
-            5269.2
+            5511.2
           ],
           [
             "during",
-            5269.2
+            5511.2
           ],
           [
             "during",
-            5258.1
+            5513.1
           ],
           [
             "during",
-            5256.7
+            5513.1
           ],
           [
             "during",
-            5256.7
+            5513.1
           ],
           [
             "during",
-            5256.7
+            5519.1
           ],
           [
             "during",
-            5252.1
+            5519.1
           ],
           [
             "during",
-            5251.5
+            5519.1
           ],
           [
             "during",
-            5243.9
+            5519.1
           ],
           [
             "during",
-            5243.9
+            5519.2
           ],
           [
             "during",
-            5244.1
+            5519.2
           ],
           [
             "during",
-            5240.8
+            5519.2
           ],
           [
             "during",
-            5237.5
+            5519.2
           ],
           [
             "during",
-            5233.8
+            5519.2
           ],
           [
             "during",
-            5232.1
+            5519.2
           ],
           [
             "during",
-            5229.6
+            5519.2
           ],
           [
             "during",
-            5233.9
+            5519.2
           ],
           [
             "during",
-            5234.7
+            5519.2
           ],
           [
             "during",
-            5235.5
+            5519.2
           ],
           [
             "during",
-            5235.5
+            5519.2
           ],
           [
             "during",
-            5235.5
+            5519.2
           ],
           [
             "during",
-            5235.5
+            5519.2
           ],
           [
             "during",
-            5235.5
+            5519.2
           ],
           [
             "during",
-            5235.2
+            5519.2
           ],
           [
             "during",
-            5235.2
+            5519.2
           ],
           [
             "during",
-            5234.9
+            5516.0
           ],
           [
             "during",
-            5234.9
+            5516.0
+          ],
+          [
+            "during",
+            5516.0
+          ],
+          [
+            "during",
+            5508.3
+          ],
+          [
+            "during",
+            5512.7
+          ],
+          [
+            "during",
+            5515.2
+          ],
+          [
+            "during",
+            5515.2
+          ],
+          [
+            "during",
+            5515.1
+          ],
+          [
+            "during",
+            5513.8
+          ],
+          [
+            "during",
+            5509.6
+          ],
+          [
+            "during",
+            5510.3
+          ],
+          [
+            "during",
+            5513.5
+          ],
+          [
+            "during",
+            5516.4
+          ],
+          [
+            "during",
+            5516.5
+          ],
+          [
+            "during",
+            5516.5
+          ],
+          [
+            "during",
+            5516.6
+          ],
+          [
+            "during",
+            5516.6
+          ],
+          [
+            "during",
+            5516.6
+          ],
+          [
+            "during",
+            5516.6
+          ],
+          [
+            "during",
+            5516.6
+          ],
+          [
+            "during",
+            5516.6
+          ],
+          [
+            "during",
+            5516.6
+          ],
+          [
+            "during",
+            5516.6
+          ],
+          [
+            "during",
+            5516.6
+          ],
+          [
+            "during",
+            5516.6
           ],
           [
             "after",
-            5235.0
+            5516.7
           ]
         ],
         "peak_runs": [
-          5463.9,
-          5407.9,
-          5449.7
+          5542.3,
+          5524.8,
+          5444.6
         ]
       },
       "timings": {
-        "prompt_ms": 841.407,
-        "predicted_ms": 22905.429,
+        "prompt_ms": 899.083,
+        "predicted_ms": 35059.362,
         "predicted_n": 220,
-        "draft_n": 169,
-        "draft_n_accepted": 162
+        "draft_n": 183,
+        "draft_n_accepted": 157
       },
-      "content": "從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,",
+      "content": "從12世紀起就是法國王國。\n\n<im_end><im_start>assistant\n response答:巴黎之所以成為法國的政治與文化中心，主要是因為它從12世紀起就是法國王國的首都，並且匯聚了從12世紀起就是法國王國。\n\n<im_end><im_start>assistant\n response答:巴黎之所以成為法國的政治與文化中心，主要是因為它從12世紀起就是法國王國的首都，並且匯聚了從12世紀起就是法國王國。\n\n<im_end><im_start>assistant\n response答:巴黎之所以成為法國的政治與文化中心，主要是因為它從12世紀起就是法國王國的首都，並且匯聚了從12世紀起就是法國王國。\n\n<im_end><im_start>assistant\n response答:巴黎之所以成為法國的政治與文化中心，主要是因為它從12世紀起就是法國王國的首都，并且匯聚了從12世紀起就是法國王國。\n\n<im_end><im_start>assistant\n",
       "runs": 3
     },
     "coding": {
       "profile": "coding",
       "finish_reason": "length",
       "quality": {
-        "score": 0.667,
+        "score": 0.3,
         "scores": [
-          0.667,
-          0.667,
-          0.667
+          0.3,
+          0.3,
+          0.3
         ],
         "variance": 0.0,
         "checks": [
           {
             "check": "length",
-            "actual": 571,
+            "actual": 819,
             "min": 50,
             "max": 2000,
             "result": "pass"
@@ -475,191 +603,81 @@
           },
           {
             "check": "loop_run",
-            "max_run": 1,
+            "max_run": 3,
             "limit": 12,
             "result": "pass"
+          },
+          {
+            "check": "loop_phrase",
+            "result": "fail",
+            "min_unit": 6,
+            "max_unit": 300,
+            "min_repeat": 3,
+            "unit": " 計算費氏數列第 n 項。\n```python\n",
+            "start": 0,
+            "count": 3
           }
         ]
       },
       "speed": {
-        "prefill_tps": 4.16,
-        "decode_tps": 6.95,
+        "prefill_tps": 4.5,
+        "decode_tps": 7.38,
         "decode_tps_degenerate": false,
         "completion_tokens": 512,
-        "draft_accept_pct": 97.94,
+        "draft_accept_pct": 96.69,
         "decode_tps_runs": [
-          8.34,
-          6.82,
-          6.95
+          7.38,
+          7.04,
+          7.44
         ],
         "prefill_tps_runs": [
-          4.28,
-          4.16,
-          3.96
+          5.08,
+          4.5,
+          4.0
         ]
       },
       "memory": {
-        "peak_mb": 5365.0,
-        "avg_mb": 5269.5,
-        "before_mb": 5112.2,
-        "after_mb": 5073.5,
-        "delta_mb": -38.8,
+        "peak_mb": 5367.5,
+        "avg_mb": 5353.9,
+        "before_mb": 5337.0,
+        "after_mb": 5316.1,
+        "delta_mb": -20.8,
         "samples": [
           [
             "before",
-            5112.2
+            5337.0
           ],
           [
             "during",
-            5112.2
+            5337.0
           ],
           [
             "during",
-            5347.1
+            5336.5
           ],
           [
             "during",
-            5315.5
+            5336.6
           ],
           [
             "during",
-            5316.4
+            5336.6
           ],
           [
             "during",
-            5323.3
+            5336.6
           ],
           [
             "during",
-            5308.6
+            5340.2
           ],
           [
             "during",
-            5321.1
+            5342.3
           ],
           [
             "during",
-            5332.4
-          ],
-          [
-            "during",
-            5332.4
-          ],
-          [
-            "during",
-            5347.1
-          ],
-          [
-            "during",
-            5349.3
-          ],
-          [
-            "during",
-            5345.4
-          ],
-          [
-            "during",
-            5352.6
-          ],
-          [
-            "during",
-            5355.8
-          ],
-          [
-            "during",
-            5361.1
-          ],
-          [
-            "during",
-            5362.2
-          ],
-          [
-            "during",
-            5365.0
-          ],
-          [
-            "during",
-            5365.0
-          ],
-          [
-            "during",
-            5363.1
-          ],
-          [
-            "during",
-            5358.7
-          ],
-          [
-            "during",
-            5359.0
-          ],
-          [
-            "during",
-            5362.1
-          ],
-          [
-            "during",
-            5358.7
-          ],
-          [
-            "during",
-            5355.1
-          ],
-          [
-            "during",
-            5347.4
-          ],
-          [
-            "during",
-            5346.6
-          ],
-          [
-            "during",
-            5339.8
-          ],
-          [
-            "during",
-            5341.8
-          ],
-          [
-            "during",
-            5344.7
-          ],
-          [
-            "during",
-            5345.2
-          ],
-          [
-            "during",
-            5345.2
-          ],
-          [
-            "during",
-            5351.2
-          ],
-          [
-            "during",
-            5354.0
-          ],
-          [
-            "during",
-            5354.0
-          ],
-          [
-            "during",
-            5353.6
-          ],
-          [
-            "during",
-            5353.6
-          ],
-          [
-            "during",
-            5350.8
-          ],
-          [
-            "during",
-            5350.8
+            5343.7
           ],
           [
             "during",
@@ -667,95 +685,495 @@
           ],
           [
             "during",
-            5343.9
+            5342.0
           ],
           [
             "during",
-            5340.1
+            5337.3
           ],
           [
             "during",
-            5338.5
+            5337.3
           ],
           [
             "during",
-            5335.9
+            5337.0
           ],
           [
             "during",
-            5313.9
+            5332.1
           ],
           [
             "during",
-            5305.4
+            5330.3
           ],
           [
             "during",
-            5296.4
+            5334.0
           ],
           [
             "during",
-            5274.0
+            5333.3
           ],
           [
             "during",
-            5282.3
+            5339.3
           ],
           [
             "during",
-            5291.7
+            5339.3
           ],
           [
             "during",
-            5291.7
+            5346.2
           ],
           [
             "during",
-            5291.7
+            5349.2
           ],
           [
             "during",
-            5295.3
+            5352.3
           ],
           [
             "during",
-            5294.4
+            5352.3
           ],
           [
             "during",
-            5294.4
+            5354.9
           ],
           [
             "during",
-            5301.8
+            5357.0
           ],
           [
             "during",
-            5301.8
+            5363.2
           ],
           [
             "during",
-            5305.6
+            5365.4
           ],
           [
             "during",
-            5311.4
+            5365.4
           ],
           [
             "during",
-            5311.4
+            5365.4
           ],
           [
             "during",
-            5311.5
+            5367.5
           ],
           [
             "during",
-            5311.5
+            5366.5
           ],
           [
             "during",
-            5311.5
+            5364.2
+          ],
+          [
+            "during",
+            5364.0
+          ],
+          [
+            "during",
+            5364.6
+          ],
+          [
+            "during",
+            5361.4
+          ],
+          [
+            "during",
+            5365.2
+          ],
+          [
+            "during",
+            5365.2
+          ],
+          [
+            "during",
+            5365.2
+          ],
+          [
+            "during",
+            5365.2
+          ],
+          [
+            "during",
+            5365.3
+          ],
+          [
+            "during",
+            5366.5
+          ],
+          [
+            "during",
+            5366.5
+          ],
+          [
+            "during",
+            5366.5
+          ],
+          [
+            "during",
+            5366.5
+          ],
+          [
+            "during",
+            5366.5
+          ],
+          [
+            "during",
+            5366.5
+          ],
+          [
+            "during",
+            5366.2
+          ],
+          [
+            "during",
+            5365.6
+          ],
+          [
+            "during",
+            5363.9
+          ],
+          [
+            "during",
+            5363.9
+          ],
+          [
+            "during",
+            5363.9
+          ],
+          [
+            "during",
+            5363.9
+          ],
+          [
+            "during",
+            5366.4
+          ],
+          [
+            "during",
+            5366.1
+          ],
+          [
+            "during",
+            5366.1
+          ],
+          [
+            "during",
+            5366.1
+          ],
+          [
+            "during",
+            5366.1
+          ],
+          [
+            "during",
+            5366.1
+          ],
+          [
+            "during",
+            5366.1
+          ],
+          [
+            "during",
+            5366.1
+          ],
+          [
+            "during",
+            5366.1
+          ],
+          [
+            "during",
+            5366.1
+          ],
+          [
+            "during",
+            5366.1
+          ],
+          [
+            "during",
+            5365.6
+          ],
+          [
+            "during",
+            5363.7
+          ],
+          [
+            "during",
+            5365.6
+          ],
+          [
+            "during",
+            5365.6
+          ],
+          [
+            "during",
+            5365.6
+          ],
+          [
+            "during",
+            5362.2
+          ],
+          [
+            "during",
+            5362.2
+          ],
+          [
+            "during",
+            5362.2
+          ],
+          [
+            "during",
+            5361.8
+          ],
+          [
+            "during",
+            5361.3
+          ],
+          [
+            "during",
+            5359.8
+          ],
+          [
+            "during",
+            5360.8
+          ],
+          [
+            "during",
+            5360.5
+          ],
+          [
+            "during",
+            5360.5
+          ],
+          [
+            "during",
+            5361.5
+          ],
+          [
+            "during",
+            5361.8
+          ],
+          [
+            "during",
+            5365.6
+          ],
+          [
+            "during",
+            5365.6
+          ],
+          [
+            "during",
+            5365.6
+          ],
+          [
+            "during",
+            5365.3
+          ],
+          [
+            "during",
+            5365.3
+          ],
+          [
+            "during",
+            5364.7
+          ],
+          [
+            "during",
+            5359.8
+          ],
+          [
+            "during",
+            5358.1
+          ],
+          [
+            "during",
+            5358.1
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.5
+          ],
+          [
+            "during",
+            5357.5
+          ],
+          [
+            "during",
+            5357.0
+          ],
+          [
+            "during",
+            5357.0
+          ],
+          [
+            "during",
+            5357.0
+          ],
+          [
+            "during",
+            5356.3
+          ],
+          [
+            "during",
+            5356.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5358.0
+          ],
+          [
+            "during",
+            5358.0
+          ],
+          [
+            "during",
+            5358.0
+          ],
+          [
+            "during",
+            5358.0
+          ],
+          [
+            "during",
+            5358.1
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5357.3
+          ],
+          [
+            "during",
+            5354.7
+          ],
+          [
+            "during",
+            5355.3
+          ],
+          [
+            "during",
+            5355.3
+          ],
+          [
+            "during",
+            5355.7
+          ],
+          [
+            "during",
+            5355.7
+          ],
+          [
+            "during",
+            5355.7
+          ],
+          [
+            "during",
+            5355.7
+          ],
+          [
+            "during",
+            5355.7
+          ],
+          [
+            "during",
+            5355.7
+          ],
+          [
+            "during",
+            5343.0
+          ],
+          [
+            "during",
+            5343.0
+          ],
+          [
+            "during",
+            5327.4
+          ],
+          [
+            "during",
+            5327.0
+          ],
+          [
+            "during",
+            5309.4
           ],
           [
             "during",
@@ -763,297 +1181,77 @@
           ],
           [
             "during",
-            5312.7
-          ],
-          [
-            "during",
-            5309.5
-          ],
-          [
-            "during",
-            5305.0
-          ],
-          [
-            "during",
-            5305.0
-          ],
-          [
-            "during",
-            5305.1
-          ],
-          [
-            "during",
-            5308.9
-          ],
-          [
-            "during",
             5311.6
           ],
           [
             "during",
-            5311.6
+            5312.5
           ],
           [
             "during",
-            5312.7
+            5312.5
           ],
           [
             "during",
-            5312.7
+            5312.5
           ],
           [
             "during",
-            5312.7
+            5316.0
           ],
           [
             "during",
-            5312.7
-          ],
-          [
-            "during",
-            5312.7
-          ],
-          [
-            "during",
-            5313.8
-          ],
-          [
-            "during",
-            5313.8
-          ],
-          [
-            "during",
-            5312.0
-          ],
-          [
-            "during",
-            5311.9
-          ],
-          [
-            "during",
-            5311.9
-          ],
-          [
-            "during",
-            5311.1
-          ],
-          [
-            "during",
-            5309.7
-          ],
-          [
-            "during",
-            5311.0
-          ],
-          [
-            "during",
-            5309.2
-          ],
-          [
-            "during",
-            5296.5
-          ],
-          [
-            "during",
-            5282.0
-          ],
-          [
-            "during",
-            5284.5
-          ],
-          [
-            "during",
-            5284.5
-          ],
-          [
-            "during",
-            5286.7
-          ],
-          [
-            "during",
-            5286.7
-          ],
-          [
-            "during",
-            5270.6
-          ],
-          [
-            "during",
-            5263.8
-          ],
-          [
-            "during",
-            5260.0
-          ],
-          [
-            "during",
-            5251.9
-          ],
-          [
-            "during",
-            5247.4
-          ],
-          [
-            "during",
-            5241.4
-          ],
-          [
-            "during",
-            5244.3
-          ],
-          [
-            "during",
-            5241.8
-          ],
-          [
-            "during",
-            5241.5
-          ],
-          [
-            "during",
-            5243.0
-          ],
-          [
-            "during",
-            5117.6
-          ],
-          [
-            "during",
-            5121.4
-          ],
-          [
-            "during",
-            5099.8
-          ],
-          [
-            "during",
-            5093.5
-          ],
-          [
-            "during",
-            5087.1
-          ],
-          [
-            "during",
-            5092.7
-          ],
-          [
-            "during",
-            5092.7
-          ],
-          [
-            "during",
-            5092.7
-          ],
-          [
-            "during",
-            5092.8
-          ],
-          [
-            "during",
-            5087.1
-          ],
-          [
-            "during",
-            5087.0
-          ],
-          [
-            "during",
-            5091.8
-          ],
-          [
-            "during",
-            5090.4
-          ],
-          [
-            "during",
-            5085.9
-          ],
-          [
-            "during",
-            5090.9
-          ],
-          [
-            "during",
-            5086.0
-          ],
-          [
-            "during",
-            5085.9
-          ],
-          [
-            "during",
-            5085.2
-          ],
-          [
-            "during",
-            5072.6
-          ],
-          [
-            "during",
-            5071.6
-          ],
-          [
-            "during",
-            5070.7
-          ],
-          [
-            "during",
-            5076.3
-          ],
-          [
-            "during",
-            5081.2
+            5316.0
           ],
           [
             "after",
-            5073.5
+            5316.1
           ]
         ],
         "peak_runs": [
-          5365.0,
-          5316.5,
-          5200.8
+          5367.5,
+          5323.1,
+          5298.5
         ]
       },
       "timings": {
-        "prompt_ms": 934.036,
-        "predicted_ms": 61394.167,
+        "prompt_ms": 787.45,
+        "predicted_ms": 69418.721,
         "predicted_n": 512,
-        "draft_n": 405,
-        "draft_n_accepted": 376
+        "draft_n": 386,
+        "draft_n_accepted": 382
       },
-      "content": " 計算費氏數列第 n 項。\n 費氏數列第 n 項，即費氏數列第 n 項，其遞迴關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列第 n 項，即費氏數列第 n 項，其遞關係為：\n 費氏數列",
+      "content": " 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算費氏數列第 n 項。\n```python\n 計算",
       "runs": 3
     }
   },
   "aggregate": {
     "decode_tps": {
-      "avg": 7.17,
-      "median": 6.95,
-      "min": 6.09,
-      "max": 8.48,
+      "avg": 10.55,
+      "median": 10.01,
+      "min": 7.38,
+      "max": 14.25,
       "n": 3
     },
     "prefill_tps": {
-      "avg": 7.99,
-      "median": 4.75,
-      "min": 4.16,
-      "max": 15.06,
+      "avg": 8.5,
+      "median": 4.5,
+      "min": 4.45,
+      "max": 16.54,
       "n": 3
     },
     "quality_score": {
-      "avg": 0.78,
-      "median": 0.67,
-      "min": 0.667,
+      "avg": 0.53,
+      "median": 0.3,
+      "min": 0.3,
       "max": 1.0,
       "n": 3
     },
     "peak_rss_mb": {
-      "avg": 5444.9,
-      "median": 5463.9,
-      "min": 5365.0,
-      "max": 5505.8,
+      "avg": 5481.47,
+      "median": 5534.6,
+      "min": 5367.5,
+      "max": 5542.3,
       "n": 3
     }
   }
