@@ -1,0 +1,160 @@
+# CGC Replay Benchmark — Pull Request Gate
+#
+# 設計 (2026-09-05):
+#   - PR 開啟 / 同步時自動跑 replay benchmark, 跟 origin/main baseline 比較
+#   - 結果用 sticky comment 自動 post 在 PR 上
+#   - 失敗不 block merge (warn-only), 但要明確標示 verdict, 讓 reviewer 自行判斷
+#
+# 觸發: pull_request (open, synchronize, reopened), workflow_dispatch
+# 環境: macos-14 (Apple Silicon Metal, 才能跑 Qwen3.6 + Expert Cache)
+#
+# 已知限制:
+#   - macOS GitHub Actions runner 沒有真實 Metal GPU (virtual display),
+#     decode_tps 會跟本機差很多, 主要看「相對 baseline」, 不用絕對值
+#   - 若需要絕對值驗證, 改用 self-hosted macOS runner (Apple Silicon Mac mini)
+#   - 量測時間 ~3-5 分鐘 (3 profile × ~60s/profile + build)
+
+name: CGC Replay Bench
+
+on:
+  pull_request:
+    branches: [main, devserver]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:  # 允許手動觸發
+
+concurrency:
+  group: cgc-replay-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true  # 新 push 自動 cancel 上一次跑的
+
+jobs:
+  replay-bench:
+    name: Replay benchmark vs baseline
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    # 跳過純 doc PR (沒 source 改動) 跟 fork (沒 secrets)
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository)
+
+    env:
+      CGC_CI_BASE_URL: http://127.0.0.1:8080/v1
+      CGC_CI_BASELINE_REF: origin/${{ github.base_ref }}
+      CGC_CI_PR_COMMENT: '1'
+      CGC_CI_SKIP_START: '1'  # workflow 自己起 server, 不用 ci 腳本起
+
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 需要完整 history 才能 fetch baseline
+
+          # PR 模式: checkout PR head (覆蓋 baseline ref 行為)
+          # workflow_dispatch 模式: 留在 HEAD
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up build cache (ccache + sccache)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/ccache
+            ~/.cache/sccache
+            src/llama.cpp/build
+            src/llama.cpp/src/llama.cpp.build
+          key: cgc-build-${{ runner.os }}-${{ hashFiles('src/llama.cpp/CMakeLists.txt', 'src/llama.cpp/ggml/src/CMakeLists.txt') }}
+          restore-keys: |
+            cgc-build-${{ runner.os }}-
+
+      - name: Build llama-server (CGC Expert Cache)
+        timeout-minutes: 20
+        run: |
+          cd src/llama.cpp
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+                -DGGML_METAL=ON -DGGML_METAL_USE_BF16=ON \
+                -DGGML_NATIVE=ON -DCMAKE_OSX_ARCHITECTURES=arm64 \
+                2>&1 | tail -5
+          cmake --build build --config Release -j 4 llama-server \
+                2>&1 | tail -5
+
+      - name: Start llama-server in background
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          MODEL_PATH="$HOME/models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf"
+          if [ ! -f "$MODEL_PATH" ]; then
+            echo "::error::Model file not found at $MODEL_PATH"
+            echo "請先在 self-hosted runner 上預下載 model, 或改用 artifact cache"
+            exit 2
+          fi
+          src/llama.cpp/build/bin/llama-server \
+              -m "$MODEL_PATH" \
+              -expert-cache 4294967296 -ngl 99 --no-mmap -t 8 -c 3072 -np 1 \
+              --no-kv-unified -sps 0 --host 127.0.0.1 --port 8080 \
+              --jinja --spec-type draft-mtp --spec-draft-n-max 3 \
+              --temp 0 \
+              --chat-template-file src/llama.cpp/models/templates/Nail-Qwen3.6-Minimal-Chat.jinja \
+              --reasoning off --reasoning-format none \
+              > /tmp/llama-server.log 2>&1 &
+          echo $! > /tmp/llama-server.pid
+          # 等待 server ready
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8080/health >/dev/null; then
+              echo "server ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          if ! curl -sf http://127.0.0.1:8080/health >/dev/null; then
+            echo "::error::llama-server failed to start within 60s"
+            tail -50 /tmp/llama-server.log
+            exit 2
+          fi
+
+      - name: Run replay benchmark + compare vs baseline
+        id: bench
+        run: |
+          bash scripts/ci/cgc_replay_ci.sh 2>&1 | tee /tmp/cgc-ci.log
+          rc=${PIPESTATUS[0]}
+          echo "verdict_rc=$rc" >> "$GITHUB_OUTPUT"
+          # 不 block merge, 但要 fail job 讓 reviewer 看到
+          if [ "$rc" = 1 ]; then
+            echo "::warning::replay bench FAIL — regression >= 2 or improvement = 0"
+            exit 1
+          fi
+          if [ "$rc" = 2 ]; then
+            echo "::error::replay bench ERROR — toolchain / baseline missing"
+            exit 2
+          fi
+          echo "::notice::replay bench PASS"
+
+      - name: Post PR comment (sticky)
+        if: always() && steps.bench.outputs.verdict_rc != ''
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: cgc-replay-bench
+          message: ${{ steps.bench.outputs.verdict_rc != '' && env.PR_COMMENT_BODY || 'skipped' }}
+        env:
+          PR_COMMENT_BODY: ${{ steps.bench.outputs.comment_body || 'see job log' }}
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cgc-replay-bench-${{ github.event.pull_request.number || github.run_id }}
+          path: |
+            .replay_bench_current.json
+            .replay_bench_report.json
+            /tmp/llama-server.log
+            /tmp/cgc-ci.log
+          retention-days: 14
+
+      - name: Stop llama-server
+        if: always()
+        run: |
+          if [ -f /tmp/llama-server.pid ]; then
+            kill $(cat /tmp/llama-server.pid) 2>/dev/null || true
+          fi
