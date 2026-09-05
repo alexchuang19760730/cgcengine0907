@@ -3370,7 +3370,35 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         const char * cgc_warm_env = getenv("CGC_WARM_NPAST");
         const long long cgc_warm_npast = cgc_warm_env ? atoll(cgc_warm_env) : 256;
         const bool cgc_warm_gate = cgc_n_past < cgc_warm_npast;
-        const bool cgc_fast_eligible = !cgc_warm_gate;
+        bool cgc_fast_eligible = !cgc_warm_gate;
+
+        // [CGC Fast-Path Cold Guard] When too many of this step's top-k experts are cold
+        // (slot_table == -1), the ZERO-slot contamination exceeds softmax's absorption
+        // capacity -> uniform softmax -> deterministic sequential top-k -> 0000 garbage.
+        // Disable fast path so cold experts get filled via ensure_batch.
+        if (cgc_fast_eligible && cache != nullptr && il >= 0 &&
+            (uint32_t) il < cache->slot_owner.size()) {
+            const char * cgc_cold_env = getenv("CGC_FAST_COLD_MAX");
+            const double cgc_fast_cold_max = cgc_cold_env ? atof(cgc_cold_env) : 0.30;
+            if (cgc_fast_cold_max > 0.0) {
+                const int32_t * cgc_st = cache->slot_table.data() + (size_t) il * cache->n_expert;
+                size_t cgc_cold_count = 0;
+                for (size_t i = 0; i < uni.size(); ++i) {
+                    uint32_t e = uni[i];
+                    if (e < cache->n_expert && cgc_st[e] < 0) {
+                        cgc_cold_count++;
+                    }
+                }
+                const double cgc_cold_ratio = uni.size() > 0 ? (double) cgc_cold_count / uni.size() : 0.0;
+                if (cgc_cold_ratio > cgc_fast_cold_max) {
+                    cgc_fast_eligible = false;
+                    if (il <= 1) {
+                        fprintf(stderr, "CGC-COLD-GUARD: il=%d cold=%zu/%zu (%.0f%% > %.0f%%) -> ensure_batch\n",
+                                il, cgc_cold_count, uni.size(), cgc_cold_ratio * 100.0, cgc_fast_cold_max * 100.0);
+                    }
+                }
+            }
+        }
         static int cgc_warm_dbg = 0;
         if (cgc_warm_dbg < 24 && il <= 1) {
             cgc_warm_dbg++;
