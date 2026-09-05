@@ -93,6 +93,24 @@ scripts/build_cgc_llama.sh          # cmake --build，產物進 src/llama.cpp/bu
 | watchdog | `--steady` 自動開；`N30CACHE_WATCHDOG=0` 顯式關 |
 | seed | `N30CACHE_SEED`（bit-identity 對照必設固定值） |
 
+## 驗證 Gates (預設全 OFF，不污染生產路徑)
+
+> 詳見 [`docs/CGC_EXPERT_CACHE_HYBRID_DESIGN_2026-09-05.html` §10](docs/CGC_EXPERT_CACHE_HYBRID_DESIGN_2026-09-05.html)。
+
+| Gate | Env var | 預設 | 用途 |
+|------|---------|------|------|
+| Soft Pool L0 | `CGC_SOFT_POOL_L0` | 32 | L0 固定 hot 集 slot 數 |
+| Soft Pool L1 | `CGC_SOFT_POOL_L1` | 32 | L1 LRU 動態 slot 數 |
+| **V1 hash verify** | `CGC_EXACT_CACHE_VERIFY` | **OFF** | fill 後 byte-by-byte 對比 fresh-fd GGUF bytes |
+| V1 segments cap | `CGC_EXACT_CACHE_VERIFY_FIRST_N` | 256 | 限制去重後 segments 數 |
+| **V2 logits oracle** | `CGC_LOGITS_ORACLE_DUMP` | **OFF** | 每 ubatch dump logits summary (JSONL) |
+| V2 top-N | `CGC_LOGITS_ORACLE_TOPN` | 5 | top-k token 記錄數 |
+| V2 dump cap | `CGC_LOGITS_ORACLE_FIRST_N` | 0=unlimited | 限制 dump 的 ubatch 數 |
+
+**原則**：所有驗證 gate **預設全 OFF**，不設 env 時 function 第一行就 return，
+**完全 zero cost**。只 CI / A/B 調查時手動開。A/B 比較工具：
+[`scripts/check/cgc_logits_oracle_compare.py`](scripts/check/cgc_logits_oracle_compare.py)。
+
 ## 平台差異
 
 | 平台 | 狀態 |

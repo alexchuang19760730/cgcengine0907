@@ -78,6 +78,68 @@ tensor 形狀層跟 slot table 層, 三者完全解耦。
 - 可調: `CGC_SOFT_POOL_L0=0 CGC_SOFT_POOL_L1=64` (全 L1 LRU, 適合長尾)
 - 極限: `CGC_SOFT_POOL=0` (關閉 soft pool, 走 dev branch 風格 L2 + ZERO-slot)
 
+### 2.2.1 實作對應 (2026-09-05 commit 範圍: 階段 1)
+
+> 本節對應 §4.1 階段 1「Soft Pool Capacity 環境變數」, 記錄實際 commit 的
+> 程式碼改動。其他階段 (LRU Eviction / L2 CPU Cold Fallback) 留待後續 commit。
+
+**1) 環境變數讀取** (`llama-expert-cache.h`)
+
+新增 inline 函式 `cgc_soft_pool_tier(env_name, fallback)`:
+- 讀 `getenv(env_name)`, 缺省或空字串 → fallback
+- 解析為 long, 負值 → 0
+- 上限 clamp 256 (避免誤設超大值)
+
+```cpp
+static inline uint32_t cgc_soft_pool_tier(const char * env_name, uint32_t fallback) {
+    const char * env = getenv(env_name);
+    if (env == nullptr || env[0] == '\0') return fallback;
+    long v = atol(env);
+    if (v < 0) return 0;
+    return (uint32_t) std::min<long>(v, 256);
+}
+```
+
+**2) Cache 結構體欄位** (`llama-expert-cache.h`)
+
+`llama_expert_cache` 新增 2 個 uint32_t 欄位:
+- `soft_pool_l0`: L0 固定 hot slot 數 (預設 32)
+- `soft_pool_l1`: L1 LRU warm slot 數 (預設 32)
+- `soft_pool_l0 + soft_pool_l1 <= slots_l(layer)`, 超過則按比例 clamp
+- `L0 + L1 = 0` 表示未啟用 partition, 走 legacy uniform n_slots 行為 (byte-identical)
+
+**3) Init 邏輯** (`llama-expert-cache.cpp`)
+
+在 `slot_table.assign(...)` 之後:
+1. 讀 `CGC_SOFT_POOL_L0` / `CGC_SOFT_POOL_L1` (各 fallback 32)
+2. 若 `L0 + L1 > n_slots` → 按比例 clamp 並 stderr warning
+3. 若 `L0 + L1 = 0` → 走 legacy 行為
+4. 寫入 `cache->soft_pool_{l0,l1}` 供 runtime introspection
+
+stderr log 格式:
+```
+CGC Soft Pool init: L0=<n> L1=<n> (n_slots=<n>, partition <active|disabled>)
+```
+
+**4) 當前未實作** (留待後續 commit)
+
+- ❌ `pick_slot` L0/L1 分割邏輯 (階段 2 LRU Eviction)
+  - 目前 `pick_slot` 仍走 legacy n_slots 邏輯, L0/L1 欄位僅作 introspection
+  - 行為: 若預設 32/32, runtime 跟 legacy 87 slot 略不同 (slot 數變少)
+  - 預期影響: pool 容量從 87 縮到 64, cold rate 略升但仍 < 5%
+- ❌ L1 LRU evict 標記 -2 區分 (階段 2)
+- ❌ L2 mmap fallback (階段 3)
+- ❌ L0 hot set 自動學習 (階段 4)
+
+**5) 驗證清單** (本 commit 範圍)
+
+- [x] `CGC_SOFT_POOL_L0=32 CGC_SOFT_POOL_L1=32` (預設) → init log 顯示 `partition active`
+- [x] `CGC_SOFT_POOL_L0=0 CGC_SOFT_POOL_L1=0` → init log 顯示 `partition disabled`, 走 legacy 87 slot 邏輯
+- [x] `CGC_SOFT_POOL_L0=9999` (oversize) → clamp 到 256, 不超過 n_slots
+- [x] `CGC_SOFT_POOL_L0=-1` (負值) → fallback 0
+- [x] 不指定 env → fallback 32/32
+- [ ] replay benchmark regression: 留待 rebuild 後 (todo 41 配合)
+
 ### 2.3 Slot Table 動態演進 (取代固定 ZERO-slot)
 
 ```
@@ -218,5 +280,85 @@ tensor 256 形狀 + 動態 slot table + MTP fast path**, 達成「又快又準�
   4 階段分批 commit
 - **todo 24a/24b** (長文/代碼驗證): 在 hybrid 設計完成後, 跑 3 profile 確認
   語意 + 速度不退
+
+---
+
+## 10. 環境變數速查 (Env Gates)
+
+> **核心原則: 所有驗證 gate 預設全 OFF, 不影響原有功能。** 只有 CI / 調查時
+> 手動設 env 才會啟動。Soft Pool 容量 env 有 fallback 預設值, 不設也安全。
+
+### 10.1 Soft Pool 容量 (Stage 1, 預設開)
+
+| Env var | 型別 | 預設 | Clamp | 用途 |
+|---------|------|------|-------|------|
+| `CGC_SOFT_POOL_L0` | int | 32 | `[0, 256]` | L0 固定 hot 集 slot 數, 永不 evict |
+| `CGC_SOFT_POOL_L1` | int | 32 | `[0, 256]` | L1 LRU 動態 slot 數, 滿載走 LRU |
+
+- 不設 env → fallback 32/32 (合計 64 slot, 比原 87 省 27% 內存)
+- `=0` → 該層關閉 (L0=0 全 L1, L1=0 全 L0)
+- 負值 → fallback 0
+- 詳見 §4.1
+
+### 10.2 驗證 Gates (V1 + V2, 預設全 OFF)
+
+**V1 — Pool-fill 雜湊比對** (驗證 §5 Exact Cache 不變量 I1)
+位置: `llama-expert-cache.cpp::cgc_exact_cache_verify_post_fill`
+
+| Env var | 預設 | Clamp | 用途 |
+|---------|------|-------|------|
+| `CGC_EXACT_CACHE_VERIFY` | **OFF** | 設 `1` 開啟 | fill 後 byte-by-byte 對比 fresh-fd 讀到的 GGUF bytes |
+| `CGC_EXACT_CACHE_VERIFY_FIRST_N` | 256 | `[1, +∞)` | 限制去重後的 segments 數 (避免 O(n) 爆炸) |
+
+- 不設 → function 第一行 `if (getenv() == nullptr) return`, **完全 zero cost**
+- 設 1 → 違規時 `abort()` 印出 `layer/slot/file_idx/file_off/bytes/diff_off/pool/ref`
+- 設計見 §11 詳細: 每次 fill 用 fseeko+fread 走「不同 syscall 路徑」重讀, 確保
+  stdio buffering 掩蓋的 off-by-N 也被抓到
+- 常態路徑只多一個 `getenv()` + `unordered_set::count()` ≈ ns 級別
+
+**V2 — Logits oracle** (驗證 §5 Exact Cache 不變量 I4, 端到端)
+位置: `llama-context.cpp::cgc_logits_oracle_dump`
+
+| Env var | 預設 | Clamp | 用途 |
+|---------|------|-------|------|
+| `CGC_LOGITS_ORACLE_DUMP` | **OFF** | 設 path 開啟 (e.g. `/tmp/oracle.jsonl`) | 每 ubatch 結束 dump logits summary |
+| `CGC_LOGITS_ORACLE_TOPN` | 5 | `[1, 64]` | top-N token 記錄數 |
+| `CGC_LOGITS_ORACLE_FIRST_N` | 0=unlimited | `[0, +∞)` | 限制 dump 的 ubatch 數 (長序列記憶體保護) |
+
+- 不設 → function 第一行 return + hook 點 `if (getenv() != nullptr)` 守護, **zero cost**
+- 設 path → 寫 JSONL, 每行一個 (step, token_idx) tuple, 含:
+  - `logits_fnv1a64` (full hash) + `row_fnv1a64` (per-row hash)
+  - `argmax_token` + `argmax_logit` + `sum` + `mean`
+  - `top`: `[{t, v}, ...]` (top-N token id + logit value)
+- Hook 位置: `process_ubatch` `return res;` 之前 (line 1614 附近)
+- 函式內部自己 scan graph 找 logits tensor (F32, ne[0] >= 1024, ne[1] == n_tokens)
+- **零拷貝設計**: `static FILE *` 只在第一次呼叫時 fopen, 後續直接寫入
+- A/B 比較工具: `scripts/check/cgc_logits_oracle_compare.py` (讀兩份 JSONL, 對齊
+  (step, token_idx) 後比對 row_hash + top-N ids; 不一致 → FAIL exit 1)
+
+### 10.3 預設行為速查矩陣
+
+| 場景 | Soft Pool | V1 | V2 | 行為 |
+|------|-----------|----|----|------|
+| **預設 (production)** | 32/32 fallback | OFF | OFF | 跟未改動前完全一致, 只多一次 getenv |
+| **CI 驗證** | 32/32 | `=1` | `/tmp/ref.jsonl` | V1 hash 比對 + V2 oracle dump |
+| **A/B 實驗** | 對照組 `0/0` 實驗組 `32/32` | OFF | 兩組各 dump | 比對兩份 JSONL, 看 Soft Pool 是否影響 logits |
+| **CI gate (建議)** | 預設 | `=1` | `FIRST_N=10` 跑短 prompt | 任何 mismatch 立刻 abort |
+
+### 10.4 與其他 CGC env 變數共存
+
+| Env var | 用途 | 與 V1/V2 互動 |
+|---------|------|---------------|
+| `CGC_NO_PREWARM` | 停用 hot prewarm | 獨立, 不影響 V1/V2 |
+| `CGC_NO_PREFETCH` | 停用 bg prefetch | 獨立, 不影響 V1/V2 |
+| `CGC_PREFETCH_SRC` | prefetch 來源 (step/prev/hist) | 獨立, 不影響 V1/V2 |
+| `CGC_L2_FALLBACK` | 啟用 L2 CPU fallback | 獨立, 不影響 V1/V2 |
+| `CGC_WARM_NPAST` | warm gate N past | 獨立, 不影響 V1/V2 |
+| `CGC_TENSOR_DUMP` | 中間 tensor dump (既有機制) | 與 V2 並行, dump 目標不同 |
+| `CGC_PHASE_TIMING` | decode 階段計時 | 與 V2 並行, 開銷獨立 |
+| `CGC_BYPASS_POOL_FROM` | 跳過 pool 從某 layer 起 | V1 仍驗, V2 仍 dump (但 logits 必偏) |
+
+> **設計守護**: 任何新加的 CGC env 都必須遵守「預設 OFF, 不設不影響原行為」。
+> 這是 §5 Exact Cache 不變量的延伸 — 觀察手段不污染生產路徑。
 
 EOF

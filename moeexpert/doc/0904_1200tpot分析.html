@@ -284,7 +284,31 @@
   </div>
 
   <div class="card">
-    <h2>⑤ 最新 legacy-25plus 槓桿更新</h2>
+    <h2>⑤ verify wait 再切一刀：<code>idx 64</code> 邊界後其實是一條天然 stage 鏈</h2>
+    <p class="desc">前面已經用 <code>CGC-SEG-WAIT-SPLIT</code> 確認：verify wait 的主體是 scheduler <code>poll_wait</code>，不是額外的 fallback sync。這一輪再把原本只看「最慢 worker」的視角，擴成所有 worker CB 的 <code>worker_chain</code>，直接回答 <b>為什麼把 <code>bufs</code> 繼續壓低沒有帶來單調收益</b>。</p>
+    <table>
+      <tr><th>配置</th><th>fresh replay / heavy segment</th><th>worker_chain 觀察</th><th>判讀</th></tr>
+      <tr>
+        <td><b><code>n_cb=1</code> / <code>bufs=2</code></b></td>
+        <td><code>26.62 t/s</code>、<code>163/168 accepted</code>；heavy verify 例子：<code>tail_after_main=2.52 ms</code>、<code>slow_other_detail=ADD=1,MUL=2,RMS_NORM=2,L2_NORM=2,SSM_CONV=1,GATED_DELTA_NET=1,UNARY=3</code></td>
+        <td><code>cb0: a_softplus -&gt; gate -&gt; SSM_CONV -&gt; conv_output_silu -&gt; L2_NORM -&gt; GATED_DELTA_NET -&gt; linear_attn_out -&gt; attn_residual -&gt; RMS_NORM -&gt; ffn_moe_logits -&gt; SOFT_MAX/ARGSORT</code></td>
+        <td>整條 verify resident bundle 被塞進單一 worker。先前看到的 <code>other=12</code> 不是噪音，而是 <b>SSM / delta / norm / unary</b> 這串常駐 kernel 被整包吞進同一個 CB。</td>
+      </tr>
+      <tr>
+        <td><b><code>n_cb=4</code> / <code>bufs=5</code></b></td>
+        <td><code>26.58 t/s</code>、<code>163/168 accepted</code>；heavy verify 例子：<code>tail_after_main=2.50 ms</code>、<code>slow_other_detail=ADD=1,RMS_NORM=1</code></td>
+        <td><code>cb0: a_softplus / gate</code><br><code>cb1: SSM_CONV / conv_output_silu / L2_NORM</code><br><code>cb2: GATED_DELTA_NET / UNARY / RMS_NORM</code><br><code>cb3: attn_residual / RMS_NORM / ffn_moe_logits / SOFT_MAX / ARGSORT</code></td>
+        <td>同一條 resident bundle 被切成四段天然子 stage。也就是說，<b><code>n_cb=4</code> 真正對齊的是 graph 邊界，不只是把 completion buffer 數改小</b>。</td>
+      </tr>
+    </table>
+    <p style="margin-top:12px">這張 chain 也補全了之前的 <code>main_tail</code> / <code>slow_head</code> 結論：固定的 main 頭部大致停在 <code>CONCAT / SCALE / ADD / beta_sigmoid / CPY / GET_ROWS</code> 一帶，而 worker 真正接手的第一段則從 <code>a_softplus</code> 與 gate/cache writeback 開始。之後會依序流過 <b>SSM_CONV</b>、<b>L2_NORM</b>、<b>GATED_DELTA_NET</b>、<b>linear-attn</b>，最後才進入 <b>attn_residual / RMS_NORM / ffn_moe_logits / SOFT_MAX / ARGSORT</b>。這說明目前 verify wait 的難點，不是單純「worker 太慢」，而是 scheduler 正在輪詢一條具有明顯 stage 邊界、但 completion 仍以整段 CB 為粒度的依賴鏈。</p>
+    <p style="margin-top:12px">因此，這一頁對 <code>n_cb</code> 的最新說法需要更新成兩句：<b>第一</b>，把 <code>bufs</code> 從 5 再壓到 2，並不會單調縮掉 <code>poll_wait</code>；<b>第二</b>，先前 A/B 之所以看到 <code>n_cb=4</code> 比更低的 <code>n_cb</code> 更像甜點，是因為它最接近這條天然 stage 鏈，而不是因為 worker tail 完全消失。</p>
+    <p style="margin-top:12px">在這個基礎上，我們又做了一輪更激進的 <code>stage-aware completion</code> runtime A/B：嘗試把 verify segment 的放行時點從「整段 worker CB 完成」提前到「hook-ready CB 完成」。結果顯示，吞吐只維持在 <code>26.61 ~ 26.67 t/s</code>、<code>163/168 accepted</code>，但 longform 語意退化成重複 <code>1.</code>。進一步 trace 發現，這條子線至少在一部分 segment 上會早於 whole-segment 安全點放行，因此這一刀 <b>只能作為反證，不納入有效基準</b>。</p>
+    <p style="margin-top:12px">所以，這一節最後要加上一句約束：<b>有效基準仍維持在先前那個健康 commit 的 <code>legacy-25plus</code> 線</b>。`worker_chain` 觀察依然成立，證明 verify wait 背後確實有天然 stage 邊界；但目前這條「直接把 completion 往 stage-aware 推一層」的實作，尚不足以在不破壞語意的前提下把 <code>26.x</code> 真正往上抬。</p>
+  </div>
+
+  <div class="card">
+    <h2>⑥ 最新 legacy-25plus 槓桿更新</h2>
   <p class="desc">這裡直接用 CPOT 白皮書已經做過的實驗，把 legacy 線上哪些槓桿仍然打得開、哪些已經關閉，重新整理成可執行結論。</p>
   <table>
     <tr><th>槓桿</th><th>現況</th><th>對 legacy-25plus 的意義</th><th>是否繼續追</th></tr>
@@ -314,9 +338,9 @@
     </tr>
     <tr>
       <td><b>verify wait / GPU 依賴鏈縮短</b></td>
-      <td>fresh 直接量測後，仍是最大桶：<code>67% ~ 74%</code> wall</td>
-      <td>如果 legacy 要從 <code>26.3</code> 再往 <code>30+</code> 推，幾乎只能從這裡吃時間。</td>
-      <td><span class="accent">主開放槓桿</span></td>
+      <td>fresh 直接量測後，仍是最大桶：<code>67% ~ 74%</code> wall；wait split 顯示主體是 <code>poll_wait</code>，而最新 <code>worker_chain</code> 顯示這條 wait 背後是一串 <code>a_softplus -&gt; SSM_CONV -&gt; GATED_DELTA -&gt; linear_attn -&gt; ffn router</code> 的天然 stage。<br>但最新 <code>stage-aware completion</code> A/B 雖保住 <code>26.61 ~ 26.67 t/s</code>，卻造成 longform 語意退化，因此這條具體子實作目前不採用。</td>
+      <td>如果 legacy 要從 <code>26.3</code> 再往 <code>30+</code> 推，總方向仍幾乎只能從這裡吃時間；只是這次可以明確排除一種過早的實作方式：<b>不能直接把 hook-ready completion 當成新的有效基準</b>。報告口徑維持先前健康 commit 的 <code>legacy-25plus</code> 線。</td>
+      <td><span class="accent">主槓桿仍開放</span><br><span class="warn">本輪子線暫停</span></td>
     </tr>
     <tr>
       <td><b>draft force-sync（<code>CGC_DRAFT_FORCE_SYNC=1</code>）</b></td>
@@ -334,7 +358,7 @@
 </div>
 
   <div class="card">
-    <h2>⑥ 依 CPOT 規則，legacy-25plus 離 30+ 還差什麼？</h2>
+    <h2>⑦ 依 CPOT 規則，legacy-25plus 離 30+ 還差什麼？</h2>
   <p class="desc">現在基準線已不是 <code>14.5 t/s</code> 的 debug 狀態，而是 <code>26.31 t/s</code> 的健康 longform 線，所以要到 30+ 並不是遙不可及的大修，而是要再吃掉 <code>4.68 ms/token</code>。</p>
   <table>
     <tr><th>槓桿</th><th>預估收益</th><th>依據</th><th>備註</th></tr>
@@ -385,7 +409,7 @@
 </div>
 
   <div class="card">
-    <h2>⑦ 可重跑命令</h2>
+    <h2>⑧ 可重跑命令</h2>
   <pre><code># A. legacy-25plus server（當前 longform benchmark 線）
 CGC_SERVER_MODEL_ROOT=/Users/alexchuang/Documents/flashkv0516/models/gguf \
 CGC_SERVER_PROFILE=legacy-25plus \
@@ -460,7 +484,7 @@ Invoke-RestMethod -Method Post `
 </div>
 
 <div class="sub" style="margin-top:22px">
-數據來源：2026-09-04 本地實測 + <code>CGC_CPOT_分析工具白皮書_2026-08-29</code>。legacy-25plus longform server = <code>26.2197 ~ 26.4062 t/s</code>、<code>163/168 accepted</code>；isolated CLI steady = <code>24.296 t/s</code>、accept <code>99.187%</code>、hit <code>88.9%</code>。fresh <code>CGC-SEG + decode_breakdown.py</code> 直接量測結果：verify = <code>99.3 ~ 109.1 ms/step</code>、fill = <code>3.2 ~ 3.5 ms/step</code>、submit = <code>3.0 ~ 3.3 ms/step</code>、residual = <code>31.3 ~ 41.7 ms/step</code>。最新 residual telemetry 再向下收斂為：<code>draft=16.735 ms/call</code>、其中 <code>draft llama_decode=2.710</code>、<code>pick_writeback=16.379</code>、而 <code>pick sampler=16.373</code> 幾乎全由 <code>common_sampler_sample() → llama_synchronize(ctx_dft)</code> 構成（<code>5.428 ms/sample</code>，占 sample total <code>99.89%</code>）。另外，串行 <code>CGC_DRAFT_FORCE_SYNC=1</code> A/B 已確認同 accept 下僅把 longform 吞吐壓到 <code>17.0156 t/s</code>，因此本頁對 CPU/GPU overlap 的最新結論是：<b>GPU verify wait 仍主導整體 decode，而 CPU residual 裡最大的可改子桶雖已定位為 draft sampler sync wait，但不能靠 force-sync 直接消除</b>。
+數據來源：2026-09-04 本地實測 + <code>CGC_CPOT_分析工具白皮書_2026-08-29</code>。本頁的<b>有效基準</b>維持在先前健康 commit 的 <code>legacy-25plus</code> longform server：<code>26.22 ~ 26.62 t/s</code>、<code>163/168 accepted</code>；isolated CLI steady = <code>24.296 t/s</code>、accept <code>99.187%</code>、hit <code>88.9%</code>。fresh <code>CGC-SEG + decode_breakdown.py</code> 直接量測結果：verify = <code>99.3 ~ 109.1 ms/step</code>、fill = <code>3.2 ~ 3.5 ms/step</code>、submit = <code>3.0 ~ 3.3 ms/step</code>、residual = <code>31.3 ~ 41.7 ms/step</code>。最新 residual telemetry 再向下收斂為：<code>draft=16.735 ms/call</code>、其中 <code>draft llama_decode=2.710</code>、<code>pick_writeback=16.379</code>、而 <code>pick sampler=16.373</code> 幾乎全由 <code>common_sampler_sample() → llama_synchronize(ctx_dft)</code> 構成（<code>5.428 ms/sample</code>，占 sample total <code>99.89%</code>）。verify 側 boundary telemetry 補上：wait 的主體仍是 scheduler <code>poll_wait</code>；<code>n_cb=1</code> 時單一 worker 會吞下 <code>a_softplus / SSM_CONV / L2_NORM / GATED_DELTA_NET / linear_attn / ffn router</code> 整條 resident bundle，而 <code>n_cb=4</code> 時同一 bundle 會拆成四個天然子 stage。另有一輪 <code>stage-aware completion</code> runtime A/B 曾跑到 <code>26.61 ~ 26.67 t/s</code>，但 longform 語意退化為重複 <code>1.</code>，因此只作為反證、不更新基準。故本頁對 CPU/GPU overlap 與 30+ 槓桿的最新結論是：<b>GPU verify wait 仍主導整體 decode；驗證過的有效基準仍是先前健康 commit，而不是這輪 stage-aware completion 實驗線</b>。
 </div>
 
 </div>
