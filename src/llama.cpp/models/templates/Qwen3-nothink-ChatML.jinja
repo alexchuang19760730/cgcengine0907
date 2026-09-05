@@ -1,0 +1,11 @@
+{%- set prefill_text = assistant_prefill if assistant_prefill is defined and assistant_prefill is string else '' -%}
+{%- for message in messages %}
+<im_start>{{ message.role }}
+{{ message.content | trim }}<im_end>
+{%- endfor %}
+{%- if add_generation_prompt %}
+<im_start>assistant
+ response{%- if prefill_text %}
+{{ prefill_text }}
+{%- endif -%}
+{%- endif %}

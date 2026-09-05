@@ -74,7 +74,7 @@ fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/src/llama.cpp/build/bin/llama-server"
-SERVER_MINIMAL_CHAT_TEMPLATE="$ROOT/src/llama.cpp/models/templates/Nail-Qwen3.6-Minimal-Chat.jinja"
+SERVER_MINIMAL_CHAT_TEMPLATE="$ROOT/src/llama.cpp/models/templates/Qwen3-nothink-ChatML.jinja"
 MODEL_ROOT="${CGC_SERVER_MODEL_ROOT:-$ROOT/models/gguf}"
 Q36="$MODEL_ROOT/Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf"
 Q36_MTP="$MODEL_ROOT/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS.gguf"
@@ -96,7 +96,7 @@ SERVER_CHAT_TEMPLATE_FILE="${CGC_SERVER_CHAT_TEMPLATE_FILE:-}"
 SERVER_CHAT_TEMPLATE_KWARGS="${CGC_SERVER_CHAT_TEMPLATE_KWARGS:-}"
 SERVER_LOG_PROMPTS_DIR="${CGC_SERVER_LOG_PROMPTS_DIR:-}"
 SERVER_REASONING="${CGC_SERVER_REASONING:-off}"
-SERVER_REASONING_FORMAT="${CGC_SERVER_REASONING_FORMAT:-none}"
+SERVER_REASONING_FORMAT="${CGC_SERVER_REASONING_FORMAT:-deepseek}"
 SERVER_REASONING_PRESERVE="${CGC_SERVER_REASONING_PRESERVE:-0}"  # 2026-09-05：預設關，b66e0eaf7 原版沒開；只在明確要 preserve reasoning 時才 CGC_SERVER_REASONING_PRESERVE=1
 SERVER_SKIP_CHAT_PARSING="${CGC_SERVER_SKIP_CHAT_PARSING:-0}"
 SERVER_CHAT_AB="${CGC_SERVER_CHAT_AB:-off}"
@@ -145,6 +145,7 @@ if [ -z "$SERVER_CHAT_TEMPLATE" ] && [ -z "$SERVER_CHAT_TEMPLATE_FILE" ]; then
     # ChatML 風格,行為等同 GGUF embedded + 額外支援 prefill。Nail jinja header 含
     # "Minimal chat template for Nail-Qwen3.6-MTP" + "<think>" 兩個字串,會 dispatch 進 chat.cpp
     # Nail handler,啟用 THINK_SEED 注入 (v4 fix)。
+    # CGC FIX 2026-09-05: Use Qwen3 no-think ChatML template to eliminate think loops
     SERVER_CHAT_TEMPLATE_FILE="$SERVER_MINIMAL_CHAT_TEMPLATE"
 fi
 if [ -z "${CGC_SERVER_SKIP_CHAT_PARSING:-}" ]; then
@@ -530,6 +531,14 @@ fi
 if [ "$SERVER_SKIP_CHAT_PARSING" = "1" ]; then
     SERVER_ARGS+=(--skip-chat-parsing)
 fi
+# [CGC IQ3_XXS Sampling] Optimized for low-bit quantization quality
+# presence_penalty breaks repetition loops; min_p cuts noisy tail; temp reduces randomness
+SERVER_ARGS+=(--temp "0.4")
+#SERVER_ARGS+=(--min-p "0.05")
+#SERVER_ARGS+=(--presence-penalty "1.5")
+SERVER_ARGS+=(--top-k "0")
+SERVER_ARGS+=(--top-p "0.8")
+
 SERVER_ENV=(
     CGC_EXPERT_CACHE_BYTES="$BUDGET"
     LLAMA_EXPERT_CACHE_ALLOW_NGL=1

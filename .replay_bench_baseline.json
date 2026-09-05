@@ -1,551 +1,1142 @@
 {
-  "schema_version": 1,
-  "timestamp": "2026-09-05T15:30:00+0800",
-  "commit": "906e6b90b",
-  "server_pid": 23898,
-  "base_url": "http://127.0.0.1:8080/v1",
-  "profiles": {
-    "qa-zh": {
-      "profile": "qa-zh",
-      "finish_reason": "length",
-      "quality": {
-        "score": 0.5,
-        "checks": [
-          {
-            "check": "length",
-            "actual": 12,
-            "min": 4,
-            "max": 80,
-            "result": "pass"
-          },
-          {
-            "check": "required_any",
-            "keywords": [
-              "巴黎",
-              "法國"
-            ],
-            "result": "fail"
-          },
-          {
-            "check": "forbidden",
-            "keywords": [
-              "<|",
-              "0000",
-              "<think>",
-              "Answer directly",
-              "system prompt"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "finish_reason",
-            "actual": "length",
-            "ok": [
-              "stop",
-              "length"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "loop_run",
-            "max_run": 12,
-            "limit": 8,
-            "result": "fail"
-          }
-        ]
-      },
-      "speed": {
-        "prefill_tps": 20.0,
-        "decode_tps": 13.55,
-        "decode_tps_degenerate": false,
-        "completion_tokens": 24,
-        "draft_accept_pct": 34.38
-      },
-      "memory": {
-        "peak_mb": 5142.2,
-        "avg_mb": 5064.6,
-        "before_mb": 4931.2,
-        "after_mb": 5142.2,
-        "delta_mb": 211.0,
-        "samples": [
-          [
-            "before",
-            4931.2
-          ],
-          [
-            "during",
-            4931.2
-          ],
-          [
-            "during",
-            5115.8
-          ],
-          [
-            "during",
-            5130.2
-          ],
-          [
-            "during",
-            5136.9
-          ],
-          [
-            "after",
-            5142.2
-          ]
-        ]
-      },
-      "timings": {
-        "prompt_ms": 199.996,
-        "predicted_ms": 1770.66,
-        "predicted_n": 24,
-        "draft_n": 32,
-        "draft_n_accepted": 11
-      },
-      "content": "\n\n\n\n\n\n\n\n\n\n\n\n"
-    },
-    "longform-zh": {
-      "profile": "longform-zh",
-      "finish_reason": "length",
-      "quality": {
-        "score": 0.333,
-        "checks": [
-          {
-            "check": "length",
-            "actual": 869,
-            "min": 80,
-            "max": 800,
-            "result": "fail"
-          },
-          {
-            "check": "required_any",
-            "keywords": [
-              "巴黎",
-              "法國",
-              "文化",
-              "政治",
-              "盧浮宮",
-              "艾菲爾",
-              "塞納",
-              "首都",
-              "歷史",
-              "12世紀",
-              "王國"
-            ],
-            "result": "fail"
-          },
-          {
-            "check": "forbidden",
-            "keywords": [
-              "Answer directly, after thinking",
-              "system prompt",
-              "<think>",
-              "<|im_start|>user",
-              "<|im_start|>system"
-            ],
-            "result": "fail"
-          },
-          {
-            "check": "finish_reason",
-            "actual": "length",
-            "ok": [
-              "stop",
-              "length"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "loop_run",
-            "max_run": 2,
-            "limit": 12,
-            "result": "pass"
-          }
-        ]
-      },
-      "speed": {
-        "prefill_tps": 26.06,
-        "decode_tps": 24.07,
-        "decode_tps_degenerate": false,
-        "completion_tokens": 220,
-        "draft_accept_pct": 85.79
-      },
-      "memory": {
-        "peak_mb": 5570.3,
-        "avg_mb": 5507.2,
-        "before_mb": 5142.2,
-        "after_mb": 5548.7,
-        "delta_mb": 406.5,
-        "samples": [
-          [
-            "before",
-            5142.2
-          ],
-          [
-            "during",
-            5143.2
-          ],
-          [
-            "during",
-            5486.6
-          ],
-          [
-            "during",
-            5532.5
-          ],
-          [
-            "during",
-            5549.8
-          ],
-          [
-            "during",
-            5570.3
-          ],
-          [
-            "during",
-            5568.2
-          ],
-          [
-            "during",
-            5553.2
-          ],
-          [
-            "during",
-            5552.1
-          ],
-          [
-            "during",
-            5537.0
-          ],
-          [
-            "during",
-            5543.9
-          ],
-          [
-            "during",
-            5543.9
-          ],
-          [
-            "during",
-            5543.9
-          ],
-          [
-            "during",
-            5547.7
-          ],
-          [
-            "during",
-            5547.7
-          ],
-          [
-            "during",
-            5547.7
-          ],
-          [
-            "during",
-            5547.9
-          ],
-          [
-            "during",
-            5547.9
-          ],
-          [
-            "during",
-            5547.9
-          ],
-          [
-            "during",
-            5547.9
-          ],
-          [
-            "after",
-            5548.7
-          ]
-        ]
-      },
-      "timings": {
-        "prompt_ms": 153.511,
-        "predicted_ms": 9140.33,
-        "predicted_n": 220,
-        "draft_n": 183,
-        "draft_n_accepted": 157
-      },
-      "content": "\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nWhy the Paris is become the France's political and cultural center, mainly because it from 12 century is the France's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it is the Paris's world's first, and it"
-    },
-    "coding": {
-      "profile": "coding",
-      "finish_reason": "length",
-      "quality": {
-        "score": 0.667,
-        "checks": [
-          {
-            "check": "length",
-            "actual": 1709,
-            "min": 50,
-            "max": 2000,
-            "result": "pass"
-          },
-          {
-            "check": "required_any",
-            "keywords": [
-              "def ",
-              "fibonacci",
-              "return"
-            ],
-            "result": "fail"
-          },
-          {
-            "check": "forbidden",
-            "keywords": [
-              "0000",
-              "<think>",
-              "答:",
-              "因為因為因為"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "finish_reason",
-            "actual": "length",
-            "ok": [
-              "stop",
-              "length"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "loop_run",
-            "max_run": 3,
-            "limit": 12,
-            "result": "pass"
-          }
-        ]
-      },
-      "speed": {
-        "prefill_tps": 15.32,
-        "decode_tps": 27.25,
-        "decode_tps_degenerate": false,
-        "completion_tokens": 512,
-        "draft_accept_pct": 100.0
-      },
-      "memory": {
-        "peak_mb": 5550.4,
-        "avg_mb": 5366.3,
-        "before_mb": 5548.7,
-        "after_mb": 5319.8,
-        "delta_mb": -229.0,
-        "samples": [
-          [
-            "before",
-            5548.7
-          ],
-          [
-            "during",
-            5550.4
-          ],
-          [
-            "during",
-            5486.9
-          ],
-          [
-            "during",
-            5375.8
-          ],
-          [
-            "during",
-            5429.6
-          ],
-          [
-            "during",
-            5445.3
-          ],
-          [
-            "during",
-            5442.6
-          ],
-          [
-            "during",
-            5358.0
-          ],
-          [
-            "during",
-            5357.8
-          ],
-          [
-            "during",
-            5357.8
-          ],
-          [
-            "during",
-            5361.5
-          ],
-          [
-            "during",
-            5361.5
-          ],
-          [
-            "during",
-            5361.5
-          ],
-          [
-            "during",
-            5355.4
-          ],
-          [
-            "during",
-            5355.4
-          ],
-          [
-            "during",
-            5355.4
-          ],
-          [
-            "during",
-            5355.4
-          ],
-          [
-            "during",
-            5355.4
-          ],
-          [
-            "during",
-            5356.5
-          ],
-          [
-            "during",
-            5351.1
-          ],
-          [
-            "during",
-            5353.8
-          ],
-          [
-            "during",
-            5346.7
-          ],
-          [
-            "during",
-            5342.1
-          ],
-          [
-            "during",
-            5344.0
-          ],
-          [
-            "during",
-            5346.9
-          ],
-          [
-            "during",
-            5346.9
-          ],
-          [
-            "during",
-            5346.0
-          ],
-          [
-            "during",
-            5346.0
-          ],
-          [
-            "during",
-            5346.9
-          ],
-          [
-            "during",
-            5347.0
-          ],
-          [
-            "during",
-            5347.0
-          ],
-          [
-            "during",
-            5347.0
-          ],
-          [
-            "during",
-            5347.0
-          ],
-          [
-            "during",
-            5347.0
-          ],
-          [
-            "during",
-            5347.2
-          ],
-          [
-            "during",
-            5346.6
-          ],
-          [
-            "during",
-            5341.5
-          ],
-          [
-            "during",
-            5339.0
-          ],
-          [
-            "during",
-            5320.6
-          ],
-          [
-            "during",
-            5319.5
-          ],
-          [
-            "during",
-            5319.6
-          ],
-          [
-            "during",
-            5319.6
-          ],
-          [
-            "after",
-            5319.8
-          ]
-        ]
-      },
-      "timings": {
-        "prompt_ms": 1631.736,
-        "predicted_ms": 18790.737,
-        "predicted_n": 512,
-        "draft_n": 383,
-        "draft_n_accepted": 383
-      },
-      "content": "```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python"
-    }
+ "schema_version": 1,
+ "timestamp": "2026-09-05T23:15:00+0800",
+ "commit": "96522f4f9+quality-fix",
+ "server_pid": 70006,
+ "base_url": "http://127.0.0.1:8080/v1",
+ "profiles": {
+  "qa-zh": {
+   "profile": "qa-zh",
+   "finish_reason": "stop",
+   "quality": {
+    "score": 1.0,
+    "checks": [
+     {
+      "check": "length",
+      "actual": 6,
+      "min": 4,
+      "max": 80,
+      "result": "pass"
+     },
+     {
+      "check": "required_any",
+      "keywords": [
+       "巴黎",
+       "法國"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "forbidden",
+      "keywords": [
+       "<|",
+       "0000",
+       "<think>",
+       "Answer directly",
+       "system prompt"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "finish_reason",
+      "actual": "stop",
+      "ok": [
+       "stop",
+       "length"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "loop_run",
+      "max_run": 1,
+      "limit": 8,
+      "result": "pass"
+     }
+    ]
+   },
+   "speed": {
+    "prefill_tps": 4.57,
+    "decode_tps": 2.9,
+    "decode_tps_degenerate": false,
+    "completion_tokens": 5,
+    "draft_accept_pct": 11.11
+   },
+   "memory": {
+    "peak_mb": 5737.1,
+    "avg_mb": 5506.1,
+    "before_mb": 5489.6,
+    "after_mb": 5408.4,
+    "delta_mb": -81.2,
+    "samples": [
+     [
+      "before",
+      5489.6
+     ],
+     [
+      "during",
+      5489.6
+     ],
+     [
+      "during",
+      5737.1
+     ],
+     [
+      "during",
+      5677.1
+     ],
+     [
+      "during",
+      5425.2
+     ],
+     [
+      "during",
+      5418.6
+     ],
+     [
+      "during",
+      5402.8
+     ],
+     [
+      "after",
+      5408.4
+     ]
+    ]
+   },
+   "timings": {
+    "prompt_ms": 875.845,
+    "predicted_ms": 1726.155,
+    "predicted_n": 5,
+    "draft_n": 9,
+    "draft_n_accepted": 1
+   },
+   "content": "是法國的首都"
   },
-  "aggregate": {
-    "decode_tps": {
-      "avg": 21.62,
-      "median": 24.07,
-      "min": 13.55,
-      "max": 27.25,
-      "n": 3
-    },
-    "prefill_tps": {
-      "avg": 20.46,
-      "median": 20.0,
-      "min": 15.32,
-      "max": 26.06,
-      "n": 3
-    },
-    "quality_score": {
-      "avg": 0.5,
-      "median": 0.5,
-      "min": 0.333,
-      "max": 0.667,
-      "n": 3
-    },
-    "peak_rss_mb": {
-      "avg": 5420.97,
-      "median": 5550.4,
-      "min": 5142.2,
-      "max": 5570.3,
-      "n": 3
-    }
+  "longform-zh": {
+   "profile": "longform-zh",
+   "finish_reason": "length",
+   "quality": {
+    "score": 1.0,
+    "checks": [
+     {
+      "check": "length",
+      "actual": 439,
+      "min": 80,
+      "max": 800,
+      "result": "pass"
+     },
+     {
+      "check": "required_any",
+      "keywords": [
+       "巴黎",
+       "法國",
+       "文化",
+       "政治",
+       "盧浮宮",
+       "艾菲爾",
+       "塞納",
+       "首都",
+       "歷史",
+       "12世紀",
+       "王國"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "forbidden",
+      "keywords": [
+       "Answer directly, after thinking",
+       "system prompt",
+       "<think>",
+       "<|im_start|>user",
+       "<|im_start|>system"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "finish_reason",
+      "actual": "length",
+      "ok": [
+       "stop",
+       "length"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "loop_run",
+      "max_run": 2,
+      "limit": 12,
+      "result": "pass"
+     }
+    ]
+   },
+   "speed": {
+    "prefill_tps": 6.92,
+    "decode_tps": 6.61,
+    "decode_tps_degenerate": false,
+    "completion_tokens": 220,
+    "draft_accept_pct": 83.87
+   },
+   "memory": {
+    "peak_mb": 5595.2,
+    "avg_mb": 5515.0,
+    "before_mb": 5408.4,
+    "after_mb": 5477.3,
+    "delta_mb": 68.9,
+    "samples": [
+     [
+      "before",
+      5408.4
+     ],
+     [
+      "during",
+      5408.4
+     ],
+     [
+      "during",
+      5533.7
+     ],
+     [
+      "during",
+      5546.5
+     ],
+     [
+      "during",
+      5560.5
+     ],
+     [
+      "during",
+      5576.2
+     ],
+     [
+      "during",
+      5595.2
+     ],
+     [
+      "during",
+      5565.0
+     ],
+     [
+      "during",
+      5542.4
+     ],
+     [
+      "during",
+      5525.8
+     ],
+     [
+      "during",
+      5528.9
+     ],
+     [
+      "during",
+      5529.3
+     ],
+     [
+      "during",
+      5515.9
+     ],
+     [
+      "during",
+      5523.5
+     ],
+     [
+      "during",
+      5534.9
+     ],
+     [
+      "during",
+      5540.2
+     ],
+     [
+      "during",
+      5553.3
+     ],
+     [
+      "during",
+      5551.7
+     ],
+     [
+      "during",
+      5552.2
+     ],
+     [
+      "during",
+      5552.2
+     ],
+     [
+      "during",
+      5551.2
+     ],
+     [
+      "during",
+      5550.2
+     ],
+     [
+      "during",
+      5550.2
+     ],
+     [
+      "during",
+      5550.2
+     ],
+     [
+      "during",
+      5550.2
+     ],
+     [
+      "during",
+      5551.8
+     ],
+     [
+      "during",
+      5544.0
+     ],
+     [
+      "during",
+      5543.1
+     ],
+     [
+      "during",
+      5540.4
+     ],
+     [
+      "during",
+      5540.9
+     ],
+     [
+      "during",
+      5545.0
+     ],
+     [
+      "during",
+      5546.5
+     ],
+     [
+      "during",
+      5546.2
+     ],
+     [
+      "during",
+      5545.2
+     ],
+     [
+      "during",
+      5545.4
+     ],
+     [
+      "during",
+      5548.5
+     ],
+     [
+      "during",
+      5547.9
+     ],
+     [
+      "during",
+      5534.5
+     ],
+     [
+      "during",
+      5535.1
+     ],
+     [
+      "during",
+      5535.1
+     ],
+     [
+      "during",
+      5524.3
+     ],
+     [
+      "during",
+      5504.9
+     ],
+     [
+      "during",
+      5497.2
+     ],
+     [
+      "during",
+      5488.4
+     ],
+     [
+      "during",
+      5472.4
+     ],
+     [
+      "during",
+      5476.3
+     ],
+     [
+      "during",
+      5475.9
+     ],
+     [
+      "during",
+      5480.0
+     ],
+     [
+      "during",
+      5474.8
+     ],
+     [
+      "during",
+      5482.9
+     ],
+     [
+      "during",
+      5484.8
+     ],
+     [
+      "during",
+      5484.7
+     ],
+     [
+      "during",
+      5485.7
+     ],
+     [
+      "during",
+      5485.7
+     ],
+     [
+      "during",
+      5485.7
+     ],
+     [
+      "during",
+      5485.7
+     ],
+     [
+      "during",
+      5477.5
+     ],
+     [
+      "during",
+      5477.5
+     ],
+     [
+      "during",
+      5477.5
+     ],
+     [
+      "during",
+      5483.1
+     ],
+     [
+      "during",
+      5483.1
+     ],
+     [
+      "during",
+      5480.8
+     ],
+     [
+      "during",
+      5480.8
+     ],
+     [
+      "during",
+      5478.5
+     ],
+     [
+      "during",
+      5480.8
+     ],
+     [
+      "during",
+      5483.0
+     ],
+     [
+      "during",
+      5480.2
+     ],
+     [
+      "during",
+      5479.5
+     ],
+     [
+      "during",
+      5476.8
+     ],
+     [
+      "after",
+      5477.3
+     ]
+    ]
+   },
+   "timings": {
+    "prompt_ms": 577.876,
+    "predicted_ms": 33271.903,
+    "predicted_n": 220,
+    "draft_n": 186,
+    "draft_n_accepted": 156
+   },
+   "content": "從12世紀起就是法國王國。\n\n<im_end><im_start>assistant\n response答:巴黎之所以成為法國的政治與文化中心，主要是因為它從12世紀起就是法國王國的首都，並且匯聚了從12世紀起就是法國王國。\n\n<im_end><im_start>assistant\n response答:巴黎之所以成為法國的政治與文化中心，主要是因為它從12世紀起就是法國王國的首都，並且匯聚了從12世紀起就是法國王國。\n\n<im_end><im_start>assistant\n response答:巴黎之所以成為法國的政治與文化中心，主要是因為它從12世紀起就是法國王國的首都，並且匯聚了從12世紀起就是法國王國。\n\n<im_end><im_start>assistant\n response答:巴黎之所以成為法國的政治與文化中心，主要是因為它從12世紀起就是法國王國的首都，并且匯聚了從12世紀起就是法國王國。\n\n<im_end><im_start>assistant\n"
   },
-  "note": "refreshed after V1/V2 commit attempt: same dylib 0.0.140, run2 of 3, less prefill noise (longform prefill 26.06 vs run1 24.95 vs run3 26.0; coding 15.32 vs 17.20 vs 24.46)"
+  "coding": {
+   "profile": "coding",
+   "finish_reason": "length",
+   "quality": {
+    "score": 0.667,
+    "checks": [
+     {
+      "check": "length",
+      "actual": 559,
+      "min": 50,
+      "max": 2000,
+      "result": "pass"
+     },
+     {
+      "check": "required_any",
+      "keywords": [
+       "def ",
+       "fibonacci",
+       "return"
+      ],
+      "result": "fail"
+     },
+     {
+      "check": "forbidden",
+      "keywords": [
+       "0000",
+       "<think>",
+       "答:",
+       "因為因為因為"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "finish_reason",
+      "actual": "length",
+      "ok": [
+       "stop",
+       "length"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "loop_run",
+      "max_run": 1,
+      "limit": 12,
+      "result": "pass"
+     }
+    ]
+   },
+   "speed": {
+    "prefill_tps": 5.33,
+    "decode_tps": 8.13,
+    "decode_tps_degenerate": false,
+    "completion_tokens": 512,
+    "draft_accept_pct": 98.96
+   },
+   "memory": {
+    "peak_mb": 5632.0,
+    "avg_mb": 5609.7,
+    "before_mb": 5477.3,
+    "after_mb": 5556.2,
+    "delta_mb": 78.9,
+    "samples": [
+     [
+      "before",
+      5477.3
+     ],
+     [
+      "during",
+      5477.3
+     ],
+     [
+      "during",
+      5603.2
+     ],
+     [
+      "during",
+      5595.4
+     ],
+     [
+      "during",
+      5600.2
+     ],
+     [
+      "during",
+      5600.2
+     ],
+     [
+      "during",
+      5597.3
+     ],
+     [
+      "during",
+      5597.3
+     ],
+     [
+      "during",
+      5601.5
+     ],
+     [
+      "during",
+      5601.5
+     ],
+     [
+      "during",
+      5602.3
+     ],
+     [
+      "during",
+      5602.3
+     ],
+     [
+      "during",
+      5603.5
+     ],
+     [
+      "during",
+      5603.5
+     ],
+     [
+      "during",
+      5611.2
+     ],
+     [
+      "during",
+      5612.8
+     ],
+     [
+      "during",
+      5616.7
+     ],
+     [
+      "during",
+      5629.1
+     ],
+     [
+      "during",
+      5629.6
+     ],
+     [
+      "during",
+      5630.9
+     ],
+     [
+      "during",
+      5630.8
+     ],
+     [
+      "during",
+      5632.0
+     ],
+     [
+      "during",
+      5631.8
+     ],
+     [
+      "during",
+      5629.6
+     ],
+     [
+      "during",
+      5622.1
+     ],
+     [
+      "during",
+      5623.9
+     ],
+     [
+      "during",
+      5620.5
+     ],
+     [
+      "during",
+      5622.8
+     ],
+     [
+      "during",
+      5622.7
+     ],
+     [
+      "during",
+      5626.7
+     ],
+     [
+      "during",
+      5626.7
+     ],
+     [
+      "during",
+      5626.7
+     ],
+     [
+      "during",
+      5627.5
+     ],
+     [
+      "during",
+      5625.6
+     ],
+     [
+      "during",
+      5624.4
+     ],
+     [
+      "during",
+      5624.3
+     ],
+     [
+      "during",
+      5623.0
+     ],
+     [
+      "during",
+      5623.0
+     ],
+     [
+      "during",
+      5623.0
+     ],
+     [
+      "during",
+      5625.3
+     ],
+     [
+      "during",
+      5625.3
+     ],
+     [
+      "during",
+      5618.5
+     ],
+     [
+      "during",
+      5618.6
+     ],
+     [
+      "during",
+      5618.6
+     ],
+     [
+      "during",
+      5618.6
+     ],
+     [
+      "during",
+      5623.9
+     ],
+     [
+      "during",
+      5623.9
+     ],
+     [
+      "during",
+      5623.2
+     ],
+     [
+      "during",
+      5623.2
+     ],
+     [
+      "during",
+      5623.3
+     ],
+     [
+      "during",
+      5623.3
+     ],
+     [
+      "during",
+      5628.1
+     ],
+     [
+      "during",
+      5628.1
+     ],
+     [
+      "during",
+      5628.1
+     ],
+     [
+      "during",
+      5628.2
+     ],
+     [
+      "during",
+      5628.2
+     ],
+     [
+      "during",
+      5628.2
+     ],
+     [
+      "during",
+      5630.6
+     ],
+     [
+      "during",
+      5620.9
+     ],
+     [
+      "during",
+      5626.5
+     ],
+     [
+      "during",
+      5626.0
+     ],
+     [
+      "during",
+      5624.6
+     ],
+     [
+      "during",
+      5624.6
+     ],
+     [
+      "during",
+      5624.2
+     ],
+     [
+      "during",
+      5628.9
+     ],
+     [
+      "during",
+      5628.9
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5626.3
+     ],
+     [
+      "during",
+      5626.3
+     ],
+     [
+      "during",
+      5625.9
+     ],
+     [
+      "during",
+      5626.3
+     ],
+     [
+      "during",
+      5626.3
+     ],
+     [
+      "during",
+      5623.0
+     ],
+     [
+      "during",
+      5628.7
+     ],
+     [
+      "during",
+      5628.7
+     ],
+     [
+      "during",
+      5628.7
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5629.8
+     ],
+     [
+      "during",
+      5623.6
+     ],
+     [
+      "during",
+      5625.0
+     ],
+     [
+      "during",
+      5625.0
+     ],
+     [
+      "during",
+      5625.0
+     ],
+     [
+      "during",
+      5625.0
+     ],
+     [
+      "during",
+      5624.3
+     ],
+     [
+      "during",
+      5623.8
+     ],
+     [
+      "during",
+      5624.8
+     ],
+     [
+      "during",
+      5625.7
+     ],
+     [
+      "during",
+      5625.2
+     ],
+     [
+      "during",
+      5628.4
+     ],
+     [
+      "during",
+      5628.4
+     ],
+     [
+      "during",
+      5628.4
+     ],
+     [
+      "during",
+      5618.9
+     ],
+     [
+      "during",
+      5616.6
+     ],
+     [
+      "during",
+      5616.6
+     ],
+     [
+      "during",
+      5611.2
+     ],
+     [
+      "during",
+      5611.2
+     ],
+     [
+      "during",
+      5610.3
+     ],
+     [
+      "during",
+      5599.1
+     ],
+     [
+      "during",
+      5599.0
+     ],
+     [
+      "during",
+      5599.0
+     ],
+     [
+      "during",
+      5599.0
+     ],
+     [
+      "during",
+      5599.0
+     ],
+     [
+      "during",
+      5599.0
+     ],
+     [
+      "during",
+      5597.3
+     ],
+     [
+      "during",
+      5596.6
+     ],
+     [
+      "during",
+      5596.3
+     ],
+     [
+      "during",
+      5596.2
+     ],
+     [
+      "during",
+      5574.0
+     ],
+     [
+      "during",
+      5575.3
+     ],
+     [
+      "during",
+      5575.3
+     ],
+     [
+      "during",
+      5575.3
+     ],
+     [
+      "during",
+      5575.3
+     ],
+     [
+      "during",
+      5575.3
+     ],
+     [
+      "during",
+      5575.3
+     ],
+     [
+      "during",
+      5575.3
+     ],
+     [
+      "during",
+      5575.3
+     ],
+     [
+      "during",
+      5571.9
+     ],
+     [
+      "during",
+      5571.0
+     ],
+     [
+      "during",
+      5571.1
+     ],
+     [
+      "during",
+      5570.1
+     ],
+     [
+      "during",
+      5565.0
+     ],
+     [
+      "during",
+      5561.4
+     ],
+     [
+      "during",
+      5560.0
+     ],
+     [
+      "during",
+      5565.7
+     ],
+     [
+      "during",
+      5565.7
+     ],
+     [
+      "during",
+      5566.0
+     ],
+     [
+      "during",
+      5566.0
+     ],
+     [
+      "during",
+      5556.2
+     ],
+     [
+      "during",
+      5556.2
+     ],
+     [
+      "after",
+      5556.2
+     ]
+    ]
+   },
+   "timings": {
+    "prompt_ms": 6190.514,
+    "predicted_ms": 62938.972,
+    "predicted_n": 512,
+    "draft_n": 386,
+    "draft_n_accepted": 382
+   },
+   "content": " 計算費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列第 n 項。\n 費氏數列"
+  }
+ },
+ "aggregate": {
+  "decode_tps": {
+   "avg": 5.88,
+   "median": 6.61,
+   "min": 2.9,
+   "max": 8.13,
+   "n": 3
+  },
+  "prefill_tps": {
+   "avg": 5.61,
+   "median": 5.33,
+   "min": 4.57,
+   "max": 6.92,
+   "n": 3
+  },
+  "quality_score": {
+   "avg": 0.89,
+   "median": 1.0,
+   "min": 0.667,
+   "max": 1.0,
+   "n": 3
+  },
+  "peak_rss_mb": {
+   "avg": 5654.77,
+   "median": 5632.0,
+   "min": 5595.2,
+   "max": 5737.1,
+   "n": 3
+  }
+ }
 }
