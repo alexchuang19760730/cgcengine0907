@@ -1,3 +1,9 @@
+{# Minimal ChatML template for Qwen3.6 (no-think).
+   CGC FIX 2026-09-06: removed the stray literal " response" token that the
+   previous version inserted between <im_start>assistant and the prefill —
+   the model was echoing it back ("response答:...") causing marker loops.
+   Now renders standard ChatML: <im_start>assistant\n{{ prefill }}\n
+#}
 {%- set prefill_text = assistant_prefill if assistant_prefill is defined and assistant_prefill is string else '' -%}
 {%- for message in messages %}
 <im_start>{{ message.role }}
@@ -5,7 +11,5 @@
 {%- endfor %}
 {%- if add_generation_prompt %}
 <im_start>assistant
- response{%- if prefill_text %}
 {{ prefill_text }}
-{%- endif -%}
 {%- endif %}
