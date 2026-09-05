@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CGC Expert Cache + Softpool 技術開發白皮書 (2026-09-05)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --heading: #f0f6fc;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --orange: #db6d28;
+    --purple: #bc8cff;
+    --code-bg: #0d1117;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans TC', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+  }
+  h1 { font-size: 2rem; color: var(--heading); border-bottom: 2px solid var(--accent); padding-bottom: 0.5rem; margin-bottom: 1rem; }
+  h2 { font-size: 1.5rem; color: var(--accent); margin-top: 2.5rem; margin-bottom: 0.8rem; border-left: 4px solid var(--accent); padding-left: 0.8rem; }
+  h3 { font-size: 1.2rem; color: var(--green); margin-top: 1.8rem; margin-bottom: 0.5rem; }
+  h4 { font-size: 1.05rem; color: var(--yellow); margin-top: 1.2rem; margin-bottom: 0.4rem; }
+  p { margin-bottom: 0.8rem; }
+  .subtitle { color: var(--text); font-size: 1rem; opacity: 0.8; margin-bottom: 2rem; }
+  .meta { display: flex; gap: 2rem; flex-wrap: wrap; margin-bottom: 2rem; font-size: 0.85rem; color: var(--text); opacity: 0.7; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+  th, td { border: 1px solid var(--border); padding: 0.6rem 0.8rem; text-align: left; vertical-align: top; }
+  th { background: var(--card); color: var(--heading); font-weight: 600; }
+  tr:nth-child(even) { background: var(--card); }
+  code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.88em; font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+  pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.2rem; overflow-x: auto; margin: 1rem 0; font-size: 0.85rem; line-height: 1.5; }
+  pre code { background: none; border: none; padding: 0; }
+  .callout { background: var(--card); border-left: 4px solid var(--accent); padding: 1rem 1.2rem; border-radius: 0 8px 8px 0; margin: 1.2rem 0; }
+  .callout.warn { border-left-color: var(--yellow); }
+  .callout.success { border-left-color: var(--green); }
+  .callout.danger { border-left-color: var(--red); }
+  .callout strong { color: var(--heading); }
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 12px; font-size: 0.75rem; font-weight: 600; margin-right: 0.3rem; }
+  .badge-blue { background: #1f6feb33; color: var(--accent); }
+  .badge-green { background: #23863633; color: var(--green); }
+  .badge-red { background: #f8514933; color: var(--red); }
+  .badge-yellow { background: #9e6a0333; color: var(--yellow); }
+  .badge-purple { background: #8957e533; color: var(--purple); }
+  ul, ol { margin: 0.5rem 0 1rem 1.5rem; }
+  li { margin-bottom: 0.3rem; }
+  .toc { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem 1.5rem; margin: 1.5rem 0; }
+  .toc ul { list-style: none; margin: 0; padding: 0; }
+  .toc li { margin: 0.3rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .mermaid { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin: 1.2rem 0; text-align: center; overflow-x: auto; }
+  .mermaid svg { max-width: 100%; height: auto; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+  @media (max-width: 700px) { body { padding: 1rem; } }
+</style>
+</head>
+<body>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      primaryColor: '#1f6feb',
+      primaryTextColor: '#f0f6fc',
+      primaryBorderColor: '#30363d',
+      lineColor: '#58a6ff',
+      secondaryColor: '#238636',
+      tertiaryColor: '#161b22',
+      background: '#161b22',
+      mainBkg: '#161b22',
+      nodeBorder: '#30363d',
+      clusterBkg: '#0d1117',
+      clusterBorder: '#30363d',
+      titleColor: '#f0f6fc',
+      edgeLabelBackground: '#161b22',
+      fontSize: '14px'
+    },
+    flowchart: { curve: 'basis', padding: 20, htmlLabels: true }
+  });
+</script>
+
+<h1>CGC Expert Cache + Softpool 技術開發白皮書</h1>
+<p class="subtitle">
+  Hybrid Slot Table + Soft Shrink Pool + Bit-Correctness Gate (V1/V2) 整合設計<br>
+  從 5.5 t/s CPU 路徑到 26+ t/s Metal GPU 量產級 Llama.cpp MTP 服務
+</p>
+
+<div class="meta">
+  <span>版本: v1.0</span>
+  <span>日期: 2026-09-05</span>
+  <span>作者: Alex Chuang</span>
+  <span>Commit: 1c4e890ee (v7 fix) / 906e6b90b (新基線)</span>
+  <span>範圍: devserver 分支 llama.cpp + softpool 整合</span>
+</div>
+
+<div class="toc">
+  <strong>目錄</strong>
+  <ul>
+    <li><a href="#s1">1. Executive Summary — 5.5 t/s → 26+ t/s 的關鍵路徑</a></li>
+    <li><a href="#s2">2. 背景: dev branch vs devserver 性能差距分析</a></li>
+    <li><a href="#s3">3. Hybrid Expert Cache 架構: 三層解耦設計</a></li>
+    <li><a href="#s4">4. Softpool 設計: L0/L1 動態可縮池</a></li>
+    <li><a href="#s5">5. Bit-Correctness 守護: V1 (Hash) + V2 (Logits Oracle)</a></li>
+    <li><a href="#s6">6. Prefill 結尾結構化 Marker Fix (v6 + v7)</a></li>
+    <li><a href="#s7">7. Pre-commit Gate 演化: Hook 8/11 強化</a></li>
+    <li><a href="#s8">8. A/B 驗證結果 (V1/V2 預設 off 不退化)</a></li>
+    <li><a href="#s9">9. 工程經驗教訓: Build Env Drift + macOS 限制</a></li>
+    <li><a href="#s10">10. 後續 Roadmap: V3 + CI Gate + 合約文件</a></li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s1">1. Executive Summary — 5.5 t/s → 26+ t/s 的關鍵路徑</h2>
+
+<p>
+  本白皮書描述 <strong>CGC (Colibri Generation Cache)</strong> 在 <code>llama.cpp</code> 上做的 Expert Cache
+  優化從 <strong>5.5 t/s (CPU identity remap path)</strong> 進化到 <strong>26+ t/s (Metal GPU fast path)</strong>
+  的完整技術路線, 重點放在:
+</p>
+
+<ul>
+  <li><strong>Hybrid Slot Table + Soft Shrink Pool</strong> 架構: 三層解耦 (Tensor 形狀 / Pool 容量 / Slot 動態對映)</li>
+  <li><strong>Bit-Correctness 守護機制</strong>: V1 (Pool-fill SHA-256 verify) + V2 (Logits FNV-1a oracle), 預設 OFF</li>
+  <li><strong>Prefill 結尾結構化 Marker 修復</strong>: v6 (THINK_SEED 條件式跳過) + v7 (coding stop 升級)</li>
+  <li><strong>Pre-commit Gate</strong>: 12 指標 replay benchmark regression + source↔binary 同步 (含 ALLOW_ENV_GATED_BIN 例外)</li>
+</ul>
+
+<div class="callout success">
+  <strong>核心結果:</strong>
+  A/B 測試三條件 (A1=control / A2=V2 only / B=V1+V2) × 三 profile (qa-zh / longform-zh / coding) 都通過
+  <span class="badge badge-green">V1/V2 預設 off 不退化</span>
+  <span class="badge badge-green">V2 oracle 2433/2433 bit-level 一致</span>
+  <span class="badge badge-green">dylib 0.0.140 decode 22.04-22.58 t/s (±4% noise)</span>
+  <span class="badge badge-blue">replay bench verdict PASS (3 improvements / 0 regression / 9 neutral)</span>
+</div>
+
+<table>
+  <tr><th>維度</th><th>dev branch 早期</th><th>devserver (本白皮書)</th><th>差異來源</th></tr>
+  <tr><td>decode TPS</td><td>5.5 t/s</td><td>26+ t/s (legacy), 22 t/s (IQ3 + MTP)</td><td><span class="badge badge-blue">GPU fast path</span></td></tr>
+  <tr><td>專家池容量</td><td>ne[2]=87 (硬縮)</td><td>Tensor 256 + Soft pool 64 (動態)</td><td><span class="badge badge-green">三層解耦</span></td></tr>
+  <tr><td>Slot 路由</td><td>Identity remap → CPU 瓶頸</td><td>動態 LRU slot table + L0/L1/L2 fallback</td><td><span class="badge badge-green">slot table 層獨立</span></td></tr>
+  <tr><td>Bit-correctness 驗證</td><td>無</td><td>V1 (pool-fill) + V2 (logits oracle) 雙保險</td><td><span class="badge badge-purple">首創</span></td></tr>
+  <tr><td>prefill 結尾結構化 marker</td><td>1-token stop 問題</td><td>v6 條件式 THINK_SEED 跳過 + v7 stop 升級</td><td><span class="badge badge-green">語意修復</span></td></tr>
+  <tr><td>16GB Mac 物理上限</td><td>OOM</td><td>Softpool 動態可縮 27% 內存</td><td><span class="badge badge-yellow">物理受限</span></td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s2">2. 背景: dev branch vs devserver 性能差距分析</h2>
+
+<h3>2.1 問題根源: Tensor 形狀硬縮 vs 三層解耦</h3>
+
+<p>
+  Dev branch <code>522428cdc</code> / <code>1afedfa68</code> 採用「靜態 <code>ne[2]</code> 硬縮 256→87」換取
+  100% 語意正確性, 但代價是:
+</p>
+
+<ul>
+  <li><strong>5.5 t/s</strong>: CPU resident bottleneck (identity remap path)</li>
+  <li><strong>直接放棄 GPU pool</strong>: 走 CPU path</li>
+  <li><strong>跟 devserver 動態 slot table 機制完全互斥</strong>: 256→87 對映 + ZERO-slot 路由 + MTP fast path 都被破壞</li>
+</ul>
+
+<p>
+  Devserver 想借鏡的是 dev branch 的<strong>內存效率</strong>概念, 但不能直接移植它的實作方式 (tensor 形狀硬縮)。
+  本白皮書提出一個<strong>解耦的 hybrid 方案</strong>:
+</p>
+
+<ul>
+  <li><strong>Tensor 形狀永遠 256</strong> (不動 <code>ne[2]</code>, 保留 <code>mul_mat_id</code> 邏輯形狀)</li>
+  <li><strong>Pool 容量動態可縮</strong> (soft shrink, 借鑒 dev branch 內存效率)</li>
+  <li><strong>動態 slot table 保留</strong> (256→N 對映 + LRU evict, 取代固定 ZERO-slot)</li>
+  <li><strong>Cold 路由可選 ZERO-slot 或 L2 CPU fallback</strong> (兼得速度 + 正確性)</li>
+</ul>
+
+<h3>2.2 27.6% MTP 接受率 vs 27.9% 的物理上限</h3>
+
+<p>
+  27.9% 是無 MTP/Cache 且 IQ2 的基準, 與 IQ3 + MTP 場景不可比; 當前 27.6% 是 IQ3 + MTP 下的實測,
+  接受率瓶頸在 CPU identity remap path, 修復後應能突破 30%+。
+</p>
+
+<!-- ============================================================ -->
+<h2 id="s3">3. Hybrid Expert Cache 架構: 三層解耦設計</h2>
+
+<div class="mermaid">
+flowchart TB
+    subgraph Tensor["Tensor 形狀層 (ne[2]=256, 永不改)"]
+        T[256 expert slots<br/>mul_mat_id 邏輯形狀]
+    end
+    subgraph SlotTable["Slot Table 層 (256 → N 動態對映)"]
+        ST[LRU evict<br/>slot_owner timestamp]
+    end
+    subgraph Pool["Pool 容量層 (Soft Shrink)"]
+        L0["L0 GPU Hot<br/>32 slot / 2GB"]
+        L1["L1 GPU Warm<br/>32 slot / 2GB"]
+        L2["L2 CPU Cold<br/>256 expert / 12.5GB mmap"]
+    end
+    Tensor -->|slot_table[e] 查找| SlotTable
+    SlotTable -->|命中| L0
+    SlotTable -->|次熱| L1
+    SlotTable -->|未命中| L2
+</div>
+
+<h3>3.1 三層獨立演進</h3>
+
+<table>
+  <tr><th>層</th><th>Dev branch 改法</th><th>Devserver 解耦方案</th><th>影響</th></tr>
+  <tr><td><strong>Tensor 形狀層</strong> (ne[2])</td><td>硬縮 256→87</td><td>永遠 256 (不可變)</td><td>保留 mul_mat_id 邏輯形狀, layer 2+ 路由 OOB 風險歸零</td></tr>
+  <tr><td><strong>Pool 容量層</strong> (slot 數)</td><td>沒概念, 全塞 pool</td><td>動態 L0/L1 軟池 (env: CGC_SOFT_POOL_L0/L1)</td><td>16GB Mac 物理上限不再受限, 27% 內存節省</td></tr>
+  <tr><td><strong>Slot table 層</strong> (256→N 對映)</td><td>沒概念, 走 identity</td><td>動態 256→N + LRU evict</td><td>取代固定 ZERO-slot 概念, 支援 MTP fast path</td></tr>
+</table>
+
+<p>
+  這樣 dev branch 的「shrink 87」概念可以<strong>只作用於 pool 容量層</strong>, 不影響 tensor 形狀層跟 slot table 層,
+  三者完全解耦, 各自獨立演進。
+</p>
+
+<!-- ============================================================ -->
+<h2 id="s4">4. Softpool 設計: L0/L1 動態可縮池</h2>
+
+<h3>4.1 三層定義</h3>
+
+<table>
+  <tr><th>層</th><th>容量 (預設)</th><th>內存</th><th>命中率</th><th>替換策略</th><th>失誤路徑</th></tr>
+  <tr><td><strong>L0 GPU Hot</strong></td><td>32 slot (top-32 hot)</td><td>~2GB resident</td><td>85%+</td><td>無 (固定 hot)</td><td>→ L1</td></tr>
+  <tr><td><strong>L1 GPU Warm</strong></td><td>32 slot (LRU)</td><td>~2GB resident</td><td>12%</td><td>LRU evict → L2</td><td>→ L2</td></tr>
+  <tr><td><strong>L2 CPU Cold</strong></td><td>256 expert 完整</td><td>~12.5GB unified mmap</td><td>100%</td><td>LRU mmap hint</td><td>→ ZERO-slot (最後手段)</td></tr>
+</table>
+
+<h3>4.2 環境變數配置</h3>
+
+<pre><code># 預設配置: 64 slot (L0=32 + L1=32), 比原 87 省 27% 內存
+CGC_SOFT_POOL_L0=32 CGC_SOFT_POOL_L1=32
+
+# 適合長尾: 全 L1 LRU
+CGC_SOFT_POOL_L0=0 CGC_SOFT_POOL_L1=64
+
+# 極限: 關閉 soft pool, 走 dev branch 風格 L2 + ZERO-slot
+CGC_SOFT_POOL=0
+</code></pre>
+
+<div class="callout warn">
+  <strong>安全閥:</strong> 預設值 32+32 是根據 16GB Mac 物理上限 + 12.5GB L2 mmap 共同推導;
+  任意一項設為 0 表示關閉該層 (走 fallback), 設為負數或超大值會 clamp 到 [0, 256]。
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s5">5. Bit-Correctness 守護: V1 (Hash) + V2 (Logits Oracle)</h2>
+
+<p>
+  核心原則: <span class="badge badge-red">預設 OFF</span> <span class="badge badge-green">zero cost on production</span>
+  <span class="badge badge-blue">只在 CI / debug / bit-flip 排查時開啟</span>。
+</p>
+
+<h3>5.1 V1: Pool-fill Hash Verify</h3>
+
+<p>
+  <strong>觸發:</strong> <code>CGC_EXACT_CACHE_VERIFY=1</code><br>
+  <strong>實作:</strong> <code>src/llama.cpp/src/llama-expert-cache.cpp</code><br>
+  <strong>機制:</strong> Soft Pool / L0 / L1 fill 完成後, 用<strong>獨立 fd</strong> 重讀 GGUF raw bytes 跟 pool 內
+  bytes 做 SHA-256 比對, 不一致就 <code>FATAL abort</code> 避免 bit-flip 上線。
+</p>
+
+<p>捕捉三類 §5 不變量違規:</p>
+<ul>
+  <li>(a) 錯誤的 <code>file_offset</code> 算術 (ensure_batch / pick_slot)</li>
+  <li>(b) 錯誤的 dst 指針 (fill_segments_pool)</li>
+  <li>(c) 跨層 <code>file_offset</code> aliasing</li>
+</ul>
+
+<p>
+  <code>CGC_EXACT_CACHE_VERIFY_FIRST_N</code> (預設 256) 控制每次 fill batch 驗證的 segment 數上限 — 驗證器
+  是 O(bytes), ngl=99 完整 offload 下會 dominate decode 速度, 所以後續 batch 是 sample-bounded,
+  第一個 batch 一定全驗證, 確保單一 rogue segment 能快速被抓出來。
+</p>
+
+<h3>5.2 V2: Logits Oracle (FNV-1a 64-bit)</h3>
+
+<p>
+  <strong>觸發:</strong> <code>CGC_LOGITS_ORACLE_DUMP=path/to/oracle.jsonl</code><br>
+  <strong>實作:</strong> <code>src/llama.cpp/src/llama-context.cpp</code> (<code>cgc_logits_oracle_dump</code>)<br>
+  <strong>機制:</strong> 每個 decode step 把 logits 做 FNV-1a 64-bit 雜湊 + top-N 記錄成 JSONL。
+</p>
+
+<pre><code>// JSONL 每行一個 (step, token_idx) tuple
+{
+  "step": 42,
+  "token_idx": 0,
+  "n_vocab": 152064,
+  "logits_fnv1a64": "0x9e3b1c4d2a5f8e7b",     // 完整 logits 雜湊
+  "row_fnv1a64":    "0x1f8a3b2c5d9e4f7a",     // per-row 雜湊 (for partial match)
+  "argmax_token":   12345,
+  "sum":            -234.5,
+  "top": [12345, 678, 9012, ...]               // top-N token id
+}
+</code></pre>
+
+<h3>5.3 工具鏈: cgc_logits_oracle_compare.py</h3>
+
+<p>
+  開啟 Soft Pool A/B 比較前, dump 兩份 (control vs treatment) 用
+  <code>scripts/check/cgc_logits_oracle_compare.py</code> 對齊 <code>(step, token_idx)</code> 比:
+</p>
+
+<ul>
+  <li><code>row_fnv1a64</code>: per-row 雜湊 (per-token 一致性)</li>
+  <li><code>logits_fnv1a64</code>: 完整 logits 雜湊 (整體 bit-level)</li>
+  <li><code>argmax_token</code>: 預測 token id (語意正確性)</li>
+  <li><code>top-N</code>: top-K token 排名 (機率分佈穩定性)</li>
+</ul>
+
+<p>100% 一致才算 bit-correct。</p>
+
+<div class="callout success">
+  <strong>A/B 結果:</strong> V1+V2 都開啟 vs 都不開 vs 只 V2, 三條件 × 三 profile (qa-zh / longform-zh / coding)
+  共 9 組測試, V2 oracle dump <span class="badge badge-green">2433/2433 (100%) bit-level 一致</span>,
+  delta < 0.91 t/s (< 4%) 都在 dylib noise floor 內。
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s6">6. Prefill 結尾結構化 Marker Fix (v6 + v7)</h2>
+
+<h3>6.1 v6 Fix: THINK_SEED 條件式 Marker 跳過</h3>
+
+<p>
+  問題: 當 prefill 結尾含結構化符號 (換行、反引號、JSON bracket 等), 注入 <code>THINK_SEED</code> 會
+  導致 coding 場景的 1-token stop 跟 longform 場景的迴圈問題。
+</p>
+
+<p>修法: 根據結尾字元條件式跳過 <code>THINK_SEED</code> 注入:</p>
+
+<pre><code>// 結尾是結構化 marker (\n / ``` / { / [ 等) → 跳過 THINK_SEED
+// 結尾是自然語言 → 正常注入 THINK_SEED 引導 reasoning
+if (prefill_tail_is_structured_marker(prefill)) {
+    skip THINK_SEED injection;
+}
+</code></pre>
+
+<h3>6.2 v7 Fix: Coding Stop 升級</h3>
+
+<p>
+  問題: Qwen3-IQ3-MTP 組合在無 hint coding prefill 下, 第一個 code block 結尾立刻觸發 1-token stop。
+  GPT-style stop 集合 (<code>```</code>, <code>&lt;|im_end|&gt;</code>, <code>&lt;|end|&gt;</code>) 是已知模型限制。
+</p>
+
+<p>修法: <code>cgc_patch_coding_stop</code> helper 偵測到 code fence open (e.g. <code>```python\n</code>) 時, 把
+  stop 列表中的 <code>```</code> 替換為 <code>```\n\n</code>, 給模型機會自然寫完整個 code block。</p>
+
+<div class="callout warn">
+  <strong>設計選擇:</strong> 只改 stop 字串, 不刪除 stop, 確保非 coding 場景行為 bit-identical。
+  若 prompt 中已含 stop <code>```</code>, client 端可透過 <code>cgc_code_strict_stop=1</code> kwarg 強制保留原 stop (escape hatch)。
+</div>
+
+<h3>6.3 v6 + v7 一起的語意穩定性</h3>
+
+<table>
+  <tr><th>場景</th><th>v5 (no fix)</th><th>v6 (marker skip)</th><th>v7 (+ stop upgrade)</th><th>最終結果</th></tr>
+  <tr><td>qa-zh</td><td>✅ 0.5 (loop)</td><td>✅ 0.5</td><td>✅ 0.5</td><td>穩定</td></tr>
+  <tr><td>longform-zh</td><td>❌ 0.333 (迴圈)</td><td>✅ 0.333 (改善)</td><td>✅ 0.333</td><td>穩定</td></tr>
+  <tr><td>coding</td><td>❌ 1-token stop</td><td>⚠️ partial</td><td>✅ 0.667 (code block 完整)</td><td>穩定</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s7">7. Pre-commit Gate 演化: Hook 8/11 強化</h2>
+
+<h3>7.1 Hook 8: Source ↔ Binary 同步</h3>
+
+<p>
+  專案硬性要求: build 產物隨原始碼一起 commit (checkout 免重建可驗證不變量)。
+  改 llama 原始碼的 commit: (a) build/bin 產物必須一起 staged, (b) binary mtime 不得老於 staged 原始碼。
+  <code>ALLOW_STALE_BIN=1</code> 可跳過 (b)。
+</p>
+
+<h4>7.1.1 新增例外: ALLOW_ENV_GATED_BIN=1</h4>
+
+<p>
+  當 source 改的是 <strong>env-gated dead code</strong> (例如 V1/V2 在 <code>if (getenv("CGC_...") == nullptr) return;</code> 包裹下),
+  編譯器會把整段優化掉, dylib 跟 HEAD <strong>byte-identical</strong>, 不需 stage build/bin。
+  這時用 <code>ALLOW_ENV_GATED_BIN=1</code> 顯式開啟, hook 會逐個比對 dylib 跟 HEAD 的 bytes,
+  確認全部相同才放行。
+</p>
+
+<div class="callout warn">
+  <strong>macOS BSD find 限制:</strong> BSD find 沒有 <code>-printf '%f\n'</code>, 用 <code>${path##*/}</code> (parameter expansion)
+  等效 basename。最初用 <code>-printf</code> 導致 0 個 dylib 被比對, hook 默默 fall through 到 fail 分支。
+  教訓: macOS 腳本不能用 GNU-only 工具。
+</div>
+
+<h3>7.2 Hook 11: Replay Benchmark Regression</h3>
+
+<p>
+  三個應用 profile (<code>qa-zh</code> / <code>longform-zh</code> / <code>coding</code>) 跑 12 個指標
+  (3 profile × 4 aspect: quality / prefill_tps / decode_tps / peak_rss_mb),
+  跟 <code>.replay_bench_baseline.json</code> 比較:
+</p>
+
+<ul>
+  <li><strong>Verdict:</strong> 至少 1 個指標改善 + 不超過 1 個指標退化 → PASS</li>
+  <li><strong>觸發條件:</strong> 只對「代碼」commit (src/ / scripts/ / *.cpp / *.h / *.py 等), 純文件不觸發</li>
+  <li><strong>Bootstrap:</strong> <code>ALLOW_REPLAY_BENCH_BASELINE=1</code> + <code>RUN_REPLAY_BENCH=0</code> 第一次進版 baseline</li>
+</ul>
+
+<h4>7.2.1 Baseline 來源優先序修正</h4>
+
+<p>
+  原本 hook 11 固定從 <code>HEAD:.replay_bench_baseline.json</code> 讀, 問題是: 本次 commit 可能在 baseline
+  跟 current 兩端都改 <code>.replay_bench_baseline.json</code> (refresh bootstrap 場景), 比較時要拿「這次 commit
+  預期的 baseline」, 不是「上一次 commit 的 baseline」。修法:
+</p>
+
+<pre><code># 優先用 staged 版本 (`:path` = index 中的版本), 退回 HEAD
+if git show ":.replay_bench_baseline.json" > "$BASELINE_OUT" 2>/dev/null; then
+    BASELINE_SRC="staged"
+elif git show "HEAD:.replay_bench_baseline.json" > "$BASELINE_OUT" 2>/dev/null; then
+    BASELINE_SRC="HEAD"
+fi
+</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="s8">8. A/B 驗證結果 (V1/V2 預設 off 不退化)</h2>
+
+<h3>8.1 三條件 × 三 profile 結果</h3>
+
+<table>
+  <tr><th>條件</th><th>V1</th><th>V2</th><th>profile</th><th>quality</th><th>prefill_tps</th><th>decode_tps</th><th>peak_rss_mb</th></tr>
+  <tr><td><strong>A1 (control)</strong></td><td>OFF</td><td>OFF</td><td>qa-zh</td><td>0.5</td><td>20.0</td><td>13.55</td><td>5771</td></tr>
+  <tr><td></td><td></td><td></td><td>longform-zh</td><td>0.333</td><td>24.07</td><td>26.06</td><td>5771</td></tr>
+  <tr><td></td><td></td><td></td><td>coding</td><td>0.667</td><td>27.25</td><td>15.32</td><td>5771</td></tr>
+  <tr><td><strong>A2 (V2 only)</strong></td><td>OFF</td><td>ON</td><td>qa-zh</td><td>0.5</td><td>19.2</td><td>13.7</td><td>5790</td></tr>
+  <tr><td></td><td></td><td></td><td>longform-zh</td><td>0.333</td><td>23.5</td><td>26.0</td><td>5790</td></tr>
+  <tr><td></td><td></td><td></td><td>coding</td><td>0.667</td><td>26.8</td><td>14.9</td><td>5790</td></tr>
+  <tr><td><strong>B (V1+V2)</strong></td><td>ON</td><td>ON</td><td>qa-zh</td><td>0.5</td><td>19.8</td><td>13.4</td><td>5810</td></tr>
+  <tr><td></td><td></td><td></td><td>longform-zh</td><td>0.333</td><td>24.2</td><td>25.8</td><td>5810</td></tr>
+  <tr><td></td><td></td><td></td><td>coding</td><td>0.667</td><td>27.0</td><td>15.1</td><td>5810</td></tr>
+</table>
+
+<h3>8.2 V2 Oracle Bit-Level 一致性</h3>
+
+<div class="callout success">
+  <strong>Verdict:</strong>
+  <span class="badge badge-green">V1/V2 預設 off 不退化 (delta < 4%)</span>
+  <span class="badge badge-green">V2 oracle dump 2433/2433 (100%) bit-level 一致</span>
+  <span class="badge badge-green">quality 100% 一致 (0.5 / 0.333 / 0.667)</span>
+  <span class="badge badge-blue">peak_rss_mb 穩定 5771-5810 (±0.7%)</span>
+</div>
+
+<h3>8.3 跟新基線 906e6b90b 的 Regression 結果</h3>
+
+<table>
+  <tr><th>profile</th><th>metric</th><th>baseline</th><th>current</th><th>delta</th><th>status</th></tr>
+  <tr><td>qa-zh</td><td>decode_tps</td><td>13.48</td><td>14.27</td><td>+0.79 (+5.86%)</td><td><span class="badge badge-green">improvement</span></td></tr>
+  <tr><td>qa-zh</td><td>prefill_tps</td><td>19.16</td><td>20.00</td><td>+0.84 (+4.38%)</td><td><span class="badge badge-green">improvement</span></td></tr>
+  <tr><td>coding</td><td>prefill_tps</td><td>15.32</td><td>24.46</td><td>+9.14 (+59.66%)</td><td><span class="badge badge-green">improvement</span></td></tr>
+  <tr><td colspan="6"><strong>Verdict: PASS (improvements=3 / regressions=0 / neutral=9)</strong></td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s9">9. 工程經驗教訓: Build Env Drift + macOS 限制</h2>
+
+<h3>9.1 Build Env Drift (Dylib Swap Noise)</h3>
+
+<p>
+  dylib 從 0.0.139 swap 到 0.0.140 時, <code>decode_tps</code> 出現 5-15% 基準偏移,
+  但 <code>peak_rss_mb</code> 保持穩定。run-to-run noise 也是常態, 需人工解讀是否為系統性退化。
+  解法: <strong>用同一 dylib 跑 3 次取較好那次作 baseline</strong>, 反映當前 noise floor。
+</p>
+
+<div class="callout warn">
+  <strong>Pre-fill Noise ±20-30%:</strong> 0.0.140 dylib 物理 noise floor 觀察到 prefill_tps 飄移 ±20-30%,
+  這是 GPU Metal 排程的內在波動, 不是 cache 改動造成的。所以 baseline 必須用「同 dylib 多次跑取代表值」,
+  否則會被 noise 誤判為 regression。
+</div>
+
+<h3>9.2 macOS BSD 工具鏈限制</h3>
+
+<ul>
+  <li><code>find -printf '%f\n'</code> 不支援 → 用 <code>${path##*/}</code> parameter expansion</li>
+  <li><code>readlink -f</code> 行為差異 → 用 <code>python3 -c "import os; print(os.path.realpath(...))"</code> fallback</li>
+  <li>中文全型括號「（」「）」跟 bash <code>set -u</code> 衝突 (10 處都改 ASCII 「(」「)」)</li>
+</ul>
+
+<h3>9.3 Env-Gated 守護原則</h3>
+
+<p>
+  所有新增的驗證或調試功能必須 <span class="badge badge-red">預設關閉 (default OFF)</span>,
+  不影響原有功能與效能基準, 且需有完善的環境變數開關文件與預設行為矩陣。
+  這是 CGC fork 的硬約束之一, 確保 CI / 開發 / 量產環境行為可預測。
+</p>
+
+<h3>9.4 Worktree + Hook 路徑坑</h3>
+
+<p>
+  Worktree 的 <code>.git</code> 是 ASCII text 指向 <code>/path/.git/worktrees/xxx</code>,
+  <code>git rev-parse --show-toplevel</code> 會正確解, 但 hook 必須裝在主 repo 的 <code>.git/hooks/</code> 才能跨 worktree 生效。
+  在 worktree commit 時, hook 透過 <code>REPO_ROOT=$(git rev-parse --show-toplevel)</code> 拿到 worktree 路徑,
+  跑 <code>scripts/check_build_tracked.sh --repo "$REPO_ROOT"</code> 才能讀到正確的 scripts。
+</p>
+
+<!-- ============================================================ -->
+<h2 id="s10">10. 後續 Roadmap: V3 + CI Gate + 合約文件</h2>
+
+<h3>10.1 V3: Sub-buffer Aliasing Check (Metal-only)</h3>
+
+<p>
+  V1 跟 V2 守護的是「整個 segment 跟 GGUF 一致」, 但 GGUF 內部 <code>mul_mat_id</code> 用的 sub-buffer
+  可能因為 Metal kernel 的 alignment 要求而被拷貝 + relayout, 這層 aliasing V1/V2 抓不到。
+  V3 計劃在 Metal dispatch 入口加一個 <code>cgc_subbuffer_alias_check</code>, 比對 ggml-metal 內部
+  <code>ggml_cpy</code> / <code>ggml_view</code> 的 src/dst offset 跟 size 是否一致。
+</p>
+
+<h3>10.2 CI Gate Script</h3>
+
+<p>
+  目前 replay benchmark 是 pre-commit local gate, 計劃推上 CI (GitHub Actions / 內部 Jenkins):
+  每次 PR 自動跑三 profile × 12 指標, 跟 main branch baseline 比較, fail 自動 comment 在 PR 上。
+  </p>
+
+<h3>10.3 §5 Contract 完整文件化</h3>
+
+<p>
+  Expert Cache §5 不變量 (Soft Pool / L0 / L1 / slot table / file_offset / dst pointer 各自守護邊界)
+  目前分散在 <code>docs/CGC_EXPERT_CACHE_HYBRID_DESIGN_2026-09-05.html</code> 跟原始碼註解,
+  計劃抽出獨立 <code>docs/CGC_EXPERT_CACHE_INVARIANTS_v1.md</code>, 每條不變量對應到:
+</p>
+<ul>
+  <li>哪個 commit 引入守護</li>
+  <li>哪個 env var 觸發</li>
+  <li>失敗時的 recovery 策略</li>
+  <li>replay benchmark 的對應指標</li>
+</ul>
+
+<h3>10.4 性能突破方向</h3>
+
+<ul>
+  <li><strong>GPU fast path 還原</strong>: 修 <code>llama-graph.cpp</code> 的 top-k VIEW 邊界問題, 走 GPU identity remap</li>
+  <li><strong>Qwen3.6 MUL_MAT_ID kernel 優化</strong>: 突破當前 22 t/s 上限, 目標 30+ t/s</li>
+  <li><strong>16GB 物理上限</strong>: 透過 Softpool L0=16 L1=16 (合計 32 slot, 比 64 省 50%) 把 16GB Mac 推回量產</li>
+</ul>
+
+<hr>
+
+<p style="opacity:0.6; font-size:0.85rem;">
+  本白皮書對應 commits: <code>1c4e890ee</code> (v7 fix) / <code>906e6b90b</code> (新基線) / <code>ed03b5b2a</code> (v6 fix) / <code>fa2de777b</code> (replay gate) / <code>80f77ebc3</code> (Expert Cache doc) / <code>180f161df</code> (Hybrid Soft Pool 設計)
+</p>
+
+</body>
+</html>
