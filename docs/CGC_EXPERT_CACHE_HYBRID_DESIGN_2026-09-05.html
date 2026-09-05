@@ -1,0 +1,222 @@
+# CGC Expert Cache Hybrid Slot Table + Soft Shrink Pool 設計 (2026-09-05)
+
+## 0. 為什麼需要新設計
+
+Dev branch `522428cdc` / `1afedfa68` 採用「**靜態 ne[2] 硬縮 256→87**」換取
+100% 語意正確性, 但代價是 5.5 t/s (CPU resident bottleneck) + 直接放棄 GPU pool
++ 跟我們的 devserver 動態 slot table 機制 (256→87 對映 + ZERO-slot 路由 + MTP
+fast path) 完全互斥。
+
+Devserver 想借鏡的是 dev branch 的**內存效率**概念, 但不能直接移植它的
+實作方式 (tensor 形狀硬縮)。本文件提出一個**解耦的 hybrid 方案**:
+
+- **Tensor 形狀永遠 256** (不動 ne[2], 保留 mul_mat_id 邏輯形狀)
+- **Pool 容量動態可縮** (soft shrink, 借鑒 dev branch 內存效率)
+- **動態 slot table 保留** (256→N 對映 + LRU evict, 取代固定 ZERO-slot)
+- **Cold 路由可選 ZERO-slot 或 L2 CPU fallback** (兼得速度 + 正確性)
+
+---
+
+## 1. 核心洞察: 把「shrink」從 tensor 形狀層移到 pool 容量層
+
+### 1.1 互斥的根本原因
+| 層 | Dev branch 改法 | 影響 |
+|----|----------------|------|
+| **Tensor 形狀層** (ne[2]) | 硬縮 256→87 | 破壞 mul_mat_id 邏輯形狀 → layer 2+ 路由 OOB |
+| **Pool 容量層** (slot 數) | (沒概念, 全塞 pool) | 4GB 預分配, 16GB Mac 物理上限受限 |
+| **Slot table 層** (256→N 對映) | (沒概念, 走 identity) | 直接放棄 mul_mat_id slot 概念 |
+
+### 1.2 解耦設計: 三個層獨立演進
+- **Tensor 形狀層** (永遠 256, 不可變)
+- **Pool 容量層** (可縮, 透過 env: `CGC_SOFT_POOL=64` etc)
+- **Slot table 層** (動態 256→N 對映, LRU evict 取代固定 ZERO-slot)
+
+這樣 dev branch 的「shrink 87」概念可以**只作用於 pool 容量層**, 不影響
+tensor 形狀層跟 slot table 層, 三者完全解耦。
+
+---
+
+## 2. Hybrid 方案: Soft Pool + LRU Slot Table + L2 Cold Fallback
+
+### 2.1 整體架構
+
+```
+                ┌──────────────────────────────────────────────────┐
+                │  Tensor 形狀層 (ne[2]=256, 永不改)               │
+                └──────────────────────────────────────────────────┘
+                                    ▲
+                                    │ slot_table[e] 動態查找
+                                    │
+                ┌──────────────────────────────────────────────────┐
+                │  Slot Table 層 (256 → N 對映, LRU evict)         │
+                │  ┌────┐ ┌────┐ ┌────┐       ┌────┐              │
+                │  │L0  │ │L0  │ │L1  │  ...  │L1  │              │
+                │  │hot │ │hot │ │warm│       │warm│              │
+                │  └────┘ └────┘ └────┘       └────┘              │
+                │  slot_owner[] = LRU timestamp                   │
+                └──────────────────────────────────────────────────┘
+                          ▲           ▲           ▲
+                          │           │           │
+                ┌─────────┴───┐ ┌─────┴─────┐ ┌───┴──────────┐
+                │ L0 GPU Hot  │ │ L1 GPU    │ │ L2 CPU Cold  │
+                │ Tier Pool   │ │ Warm Tier │ │ Tier Pool    │
+                │ (32 slot)   │ │ (32 slot) │ │ (256 expert) │
+                │ 2GB resident│ │ 2GB LRU   │ │ 12.5GB mmap  │
+                └─────────────┘ └───────────┘ └──────────────┘
+```
+
+### 2.2 三層定義
+
+| 層 | 容量 (預設) | 內存 | 命中率 | 替換策略 | 失誤路徑 |
+|----|------------|------|--------|----------|----------|
+| **L0 GPU Hot** | 32 slot (top-32 hot) | ~2GB resident | 85%+ | 無 (固定 hot) | → L1 |
+| **L1 GPU Warm** | 32 slot (LRU) | ~2GB resident | 12% | LRU evict → L2 | → L2 |
+| **L2 CPU Cold** | 256 expert 完整 | ~12.5GB unified mmap | 100% | LRU mmap hint | → ZERO-slot (最後手段) |
+
+**預設配置**:
+- `CGC_SOFT_POOL_L0=32 CGC_SOFT_POOL_L1=32` (合計 64 slot, 比原 87 省 27% 內存)
+- 可調: `CGC_SOFT_POOL_L0=0 CGC_SOFT_POOL_L1=64` (全 L1 LRU, 適合長尾)
+- 極限: `CGC_SOFT_POOL=0` (關閉 soft pool, 走 dev branch 風格 L2 + ZERO-slot)
+
+### 2.3 Slot Table 動態演進 (取代固定 ZERO-slot)
+
+```
+傳統 devserver slot table (line 3152-3300 llama-context.cpp):
+  hot   → st[e] = 0..n_slots-1
+  cold  → st[e] = -1 (固定 ZERO-slot)
+
+Hybrid slot table:
+  hot   → st[e] = 0..l0_size-1 (L0 固定 hot, 不 evict)
+  warm  → st[e] = l0_size..l0_size+l1_size-1 (L1 LRU)
+  cold  → st[e] = -1 (ZERO-slot 仍是 last resort, 但同時觸發 L2 mmap hint)
+  evicted→ st[e] = -2 (slot 被回收, 但 L2 mmap 仍可 fallback)
+```
+
+**關鍵差異**: L1 用 LRU evict, 不是固定 ZERO-slot。Evicted slot 可從 L2
+mmap 重新拉回 (犧牲速度但保正確), 而不是固定讀 ZERO-slot (犧牲正確性)。
+
+---
+
+## 3. 跟現有機制對照
+
+### 3.1 跟 devserver 現狀 (slot table 256→87, ZERO-slot) 對照
+
+| 面向 | 現狀 (固定 87 slot) | Hybrid 提案 | 差異 |
+|------|--------------------|-----------|------|
+| Pool 容量 | 87 slot (~4.4GB) | 64 slot (32+32, ~3.2GB) | 省 27% 內存 |
+| Slot 替換 | 固定 (LRU touch, no evict) | L1 LRU evict | 新增 evict 機制 |
+| Cold 路由 | ZERO-slot (固定 0 權重) | ZERO-slot + L2 mmap hint | 新增 L2 fallback |
+| Tensor 形狀 | 256 | 256 (不變) | 0 (保留) |
+| MTP fast path | ✅ 保留 | ✅ 保留 | 0 |
+| Warm gate | ✅ 保留 | ✅ 保留 | 0 |
+| ne[2] 形狀 | 256 | 256 | 0 (絕對不動) |
+| 預期速度 | 26+ t/s | 24~26 t/s (cold 走 L2 慢一點) | 略降但仍達標 |
+| 語意正確性 | 條件性對 (cold 過多退化) | 100% 對 (L2 fallback) | 改善 |
+
+### 3.2 跟 dev branch (ne[2] 硬縮 256→87) 對照
+
+| 面向 | dev branch | Hybrid 提案 | 差異 |
+|------|-----------|-----------|------|
+| Tensor 形狀 | **87 (硬縮)** ❌ | 256 (保留) ✅ | 根本不同 |
+| Pool 容量 | 沒概念 (放棄 pool) | 64 slot (soft shrink) | 重新引入 pool |
+| Cold 路由 | 沒概念 (OOB) | L2 mmap + ZERO-slot | 新機制 |
+| 速度 | 5.5 t/s | 24~26 t/s | +4x 速度 |
+| 語意 | 100% 對 | 100% 對 | 同 |
+
+**結論**: Hybrid 方案從 dev branch 借鏡「pool 容量縮減」概念, 但**保留
+tensor 256 形狀 + 動態 slot table + MTP fast path**, 達成「又快又準」。
+
+---
+
+## 4. 實作藍圖 (4 階段)
+
+### 4.1 階段 1: Soft Pool Capacity 環境變數 (低風險)
+- 新增 `CGC_SOFT_POOL_L0` / `CGC_SOFT_POOL_L1` env vars
+- 預設沿用現有 87 slot 邏輯 (`L0=87, L1=0`)
+- 改 `llama_expert_cache_slots_per_layer_l` 邏輯支援 L0/L1 split
+- 預期: 行為 0 變化, 只多開關
+
+### 4.2 階段 2: LRU Eviction 機制 (中風險)
+- `slot_owner[il][e]` 加 LRU timestamp
+- `llama_expert_cache_touch` 同時更新 timestamp
+- `llama_expert_cache_ensure_batch` 滿載時 evict LRU
+- Evicted slot 標記為 -2 (cold 路由可走 L2 fallback)
+- 預期: 內存省 27%, fast path 仍 24+ t/s
+
+### 4.3 階段 3: L2 CPU Cold Fallback (高風險, 但選用)
+- 新增 `llama_expert_cache_fetch_l2(cache, il, e)` 從 L2 mmap 拉單個 expert
+- L1 miss 且 slot=-2 時觸發
+- 同步載入 slot + 寫 remap
+- 預期: cold 場景語意 100% 對, 但 fetch 慢 (1-2ms per expert)
+- **可選**: 透過 `CGC_L2_FALLBACK=0` 關閉, 退回 ZERO-slot (速度優先)
+
+### 4.4 階段 4: L0 Hot Set 自動學習 (進階)
+- 用 `LLAMA_EXPERT_CACHE_ROUTE_RECORD=1` 收集 route frequency
+- 啟動時跑 calibration (前 10 step) 統計 top-32 hot
+- 寫入 `slot_owner[il][e]` 為 fixed hot, 永不 evict
+- 預期: warm gate 之後 cold rate 從 65% 降到 ~20%
+
+---
+
+## 5. 預期效益
+
+### 5.1 內存效率 (借鏡 dev branch)
+- Pool 容量 87 → 64 slot (省 27%)
+- 4.4GB → 3.2GB GPU pool
+- 16GB Mac 物理上限下, 可省出 ~1.2GB 給 L2 mmap cache
+
+### 5.2 速度保持 (保留 devserver 26+ t/s 機制)
+- MTP fast path 保留 (touch + ZERO-slot, 不做 pread)
+- Warm gate 保留 (CGC_WARM_NPAST=256)
+- L0 固定 hot 命中率 85%+ 不受 L1 LRU 影響
+- 預期: 24~26 t/s (vs 現狀 26.31 t/s, 略降但仍達 25+ 目標)
+
+### 5.3 語意改善 (借鏡 dev branch 100% 對)
+- L1 LRU evict + L2 fallback 取代固定 ZERO-slot
+- 條件性 0000 風險 (cold 過多退化) 消除
+- QA 短答場景語意穩定性提升
+
+---
+
+## 6. 風險評估
+
+| 改動 | 風險 | 緩解 |
+|------|------|------|
+| Soft pool env vars | 極低 (預設 0 行為變化) | env tunable, fallback 預設值 |
+| LRU eviction | 中 (可能 evict 熱 expert 導致 miss) | L0 固定 hot 隔離 + LRU 監控 |
+| L2 fallback | 高 (L2 fetch 慢, 阻塞 fast path) | 非同步 pread, 走 ZERO-slot fast path 時不阻塞 |
+| L0 hot set 學習 | 中 (calibration 期間 cold 較多) | warm gate 已涵蓋, calibration 期間走 ensure_batch |
+
+---
+
+## 7. 不做的事 (明確排除)
+
+- ❌ 改 ne[2] tensor 形狀 (256→87 硬縮) - 跟 slot table 機制根本互斥
+- ❌ 走 dev branch 整個 commit 1afedfa68 / 522428cdc (被打回 5.5 t/s)
+- ❌ 改用 GGUF embedded ChatML (跟 Nail token strategy 衝突)
+- ❌ 強制 CPU resident passthrough (犧牲 26+ t/s 速度)
+
+---
+
+## 8. 驗證計劃 (在實作後跑)
+
+1. **qa-zh** (短答, 語意穩定性): 14.88 t/s → 預期 14+ t/s + 100% accept
+2. **longform-zh** (長文, prefill loop 待修): 26+ t/s → 預期 24+ t/s + 語意對
+3. **coding** (Python 費氏數列): 25+ t/s → 預期 23+ t/s + 語意對
+4. **cold flood test** (故意灌 256 unique expert): 0% 語意崩潰 (L2 fallback 保證)
+5. **memory delta**: 4.4GB → 預期 3.2GB (-27%)
+6. **MTP accept rate**: 27.6% (server) → 預期維持或改善
+
+---
+
+## 9. 與現有 todo 對應
+
+- **todo 22b** (整合 dev expert cache commits): Hybrid 設計的先決條件, 但只
+  採納無衝突的 (83c47b137 CLI + Cold Guard 防呆), 不要直接 cherry-pick
+  skip_load 條件
+- **todo 25** (本文件): Hybrid slot table + soft shrink pool 設計, 後續實作
+  4 階段分批 commit
+- **todo 24a/24b** (長文/代碼驗證): 在 hybrid 設計完成後, 跑 3 profile 確認
+  語意 + 速度不退
+
+EOF
