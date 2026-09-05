@@ -25,7 +25,13 @@ import time
 from urllib import request as urlrequest
 
 
-LONGFORM_STOP = ["<|end|>", "<|output|>", "<|user|>"]
+# ChatML 模板會 render <im_start>/<im_end> (無 | ) 這兩個 literal marker;
+# 不加進 stop 的話, model 重開 assistant turn (echo <im_end><im_start>assistant)
+# 時 server 不會停, 造成整段 marker 迴圈輸出。
+# Nail GGUF 的 tokenizer 把這兩個字串 tokenize 成多個 sub-token (非 special token),
+# 所以 stop 要用純文字 '<im_end>' / '<im_start>' (無 pipe) 才會 match。
+CHATML_STOPS = ["<im_end>", "<im_start>"]
+LONGFORM_STOP = ["<|end|>", "<|output|>", "<|user|>"] + CHATML_STOPS
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +71,7 @@ def build_payload(profile, model, max_tokens, seed=0):
             "chat_template_kwargs": {
                 "assistant_prefill": "答:巴黎",
             },
-            "stop": ["。", "<|end|>", "<|output|>", "<|user|>"],
+            "stop": ["。", "<|end|>", "<|output|>", "<|user|>"] + CHATML_STOPS,
         }
 
     if profile == "longform-zh":
@@ -81,9 +87,15 @@ def build_payload(profile, model, max_tokens, seed=0):
             "temperature": 0,
             "seed": seed,
             "max_tokens": max_tokens or 220,
+            # CGC FIX 2026-09-06: 舊 prefill 以 ",並且匯聚了" 收尾,
+            # IQ3_XXS 會 tail-copy 這一段造成迴圈。改成 open-ended 因果錨定
+            # (",主要因為" 未完成, model 被迫生成新內容),
+            # 配 presence_penalty 1.5 打破 copy-attractor,
+            # 再配 <im_end>/<im_start> stop 截斷 marker 迴圈。
             "chat_template_kwargs": {
-                "assistant_prefill": "答:巴黎之所以成為法國的政治與文化中心,主要是因為它從12世紀起就是法國王國的首都,並且匯聚了",
+                "assistant_prefill": "答:巴黎之所以成為法國的政治與文化中心,主要因為",
             },
+            "presence_penalty": 1.5,
             "stop": LONGFORM_STOP,
         }
 
@@ -102,7 +114,7 @@ def build_payload(profile, model, max_tokens, seed=0):
             "chat_template_kwargs": {
                 "assistant_prefill": "```python\ndef fibonacci(n):\n    ",
             },
-            "stop": ["```", "<|end|>", "<|output|>", "<|user|>"],
+            "stop": ["```", "<|end|>", "<|output|>", "<|user|>"] + CHATML_STOPS,
         }
 
     raise ValueError(f"unsupported profile: {profile}")

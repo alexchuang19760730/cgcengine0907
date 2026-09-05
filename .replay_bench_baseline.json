@@ -1,722 +1,490 @@
 {
-  "schema_version": 1,
-  "timestamp": "2026-09-06T01:24:11+0800",
-  "commit": "template-response-fix+rebaseline",
-  "server_pid": 9597,
-  "base_url": "http://127.0.0.1:8080/v1",
-  "profiles": {
-    "qa-zh": {
-      "profile": "qa-zh",
-      "finish_reason": "stop",
-      "quality": {
-        "score": 1.0,
-        "scores": [
-          1.0,
-          1.0,
-          1.0
-        ],
-        "variance": 0.0,
-        "checks": [
-          {
-            "check": "length",
-            "actual": 6,
-            "min": 4,
-            "max": 80,
-            "result": "pass"
-          },
-          {
-            "check": "required_any",
-            "keywords": [
-              "巴黎",
-              "法國"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "forbidden",
-            "keywords": [
-              "<|",
-              "0000",
-              "<think>",
-              "Answer directly",
-              "system prompt"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "finish_reason",
-            "actual": "stop",
-            "ok": [
-              "stop",
-              "length"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "loop_run",
-            "max_run": 1,
-            "limit": 8,
-            "result": "pass"
-          },
-          {
-            "check": "loop_phrase",
-            "result": "pass",
-            "min_unit": 6,
-            "max_unit": 300,
-            "min_repeat": 3,
-            "unit": null,
-            "start": null,
-            "count": null
-          }
-        ]
-      },
-      "speed": {
-        "prefill_tps": 29.91,
-        "decode_tps": 10.78,
-        "decode_tps_degenerate": false,
-        "completion_tokens": 5,
-        "draft_accept_pct": 11.11,
-        "decode_tps_runs": [
-          10.16,
-          10.79,
-          10.78
-        ],
-        "prefill_tps_runs": [
-          29.91,
-          29.78,
-          29.96
-        ]
-      },
-      "memory": {
-        "peak_mb": 6362.4,
-        "avg_mb": 6361.8,
-        "before_mb": 6361.2,
-        "after_mb": 6362.4,
-        "delta_mb": 1.1,
-        "samples": [
-          [
-            "before",
-            6361.2
-          ],
-          [
-            "during",
-            6361.2
-          ],
-          [
-            "during",
-            6362.4
-          ],
-          [
-            "after",
-            6362.4
-          ]
-        ],
-        "peak_runs": [
-          6362.4,
-          6362.4,
-          6362.4
-        ]
-      },
-      "timings": {
-        "prompt_ms": 133.741,
-        "predicted_ms": 492.265,
-        "predicted_n": 5,
-        "draft_n": 9,
-        "draft_n_accepted": 1
-      },
-      "content": "是法國的首都",
-      "runs": 3
-    },
-    "longform-zh": {
-      "profile": "longform-zh",
-      "finish_reason": "length",
-      "quality": {
-        "score": 0.3,
-        "scores": [
-          0.3,
-          1.0,
-          0.3
-        ],
-        "variance": 0.109,
-        "checks": [
-          {
-            "check": "length",
-            "actual": 289,
-            "min": 80,
-            "max": 800,
-            "result": "pass"
-          },
-          {
-            "check": "required_any",
-            "keywords": [
-              "巴黎",
-              "法國",
-              "文化",
-              "政治",
-              "盧浮宮",
-              "艾菲爾",
-              "塞納",
-              "首都",
-              "歷史",
-              "12世紀",
-              "王國"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "forbidden",
-            "keywords": [
-              "Answer directly, after thinking",
-              "system prompt",
-              "<think>",
-              "<|im_start|>user",
-              "<|im_start|>system"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "finish_reason",
-            "actual": "length",
-            "ok": [
-              "stop",
-              "length"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "loop_run",
-            "max_run": 1,
-            "limit": 12,
-            "result": "pass"
-          },
-          {
-            "check": "loop_phrase",
-            "result": "fail",
-            "min_unit": 6,
-            "max_unit": 300,
-            "min_repeat": 3,
-            "unit": "從12世紀起就是法國王國的首都,並且匯聚了",
-            "start": 0,
-            "count": 3
-          }
-        ]
-      },
-      "speed": {
-        "prefill_tps": 6.59,
-        "decode_tps": 13.62,
-        "decode_tps_degenerate": false,
-        "completion_tokens": 220,
-        "draft_accept_pct": 93.6,
-        "decode_tps_runs": [
-          14.19,
-          7.63,
-          13.62
-        ],
-        "prefill_tps_runs": [
-          6.59,
-          6.86,
-          6.33
-        ]
-      },
-      "memory": {
-        "peak_mb": 6629.4,
-        "avg_mb": 6547.7,
-        "before_mb": 6363.7,
-        "after_mb": 6559.5,
-        "delta_mb": 195.8,
-        "samples": [
-          [
-            "before",
-            6363.7
-          ],
-          [
-            "during",
-            6363.7
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6558.5
-          ],
-          [
-            "during",
-            6559.5
-          ],
-          [
-            "during",
-            6559.5
-          ],
-          [
-            "during",
-            6559.5
-          ],
-          [
-            "during",
-            6559.5
-          ],
-          [
-            "during",
-            6559.5
-          ],
-          [
-            "during",
-            6559.5
-          ],
-          [
-            "during",
-            6559.5
-          ],
-          [
-            "during",
-            6559.6
-          ],
-          [
-            "during",
-            6559.5
-          ],
-          [
-            "during",
-            6559.5
-          ],
-          [
-            "during",
-            6559.5
-          ],
-          [
-            "during",
-            6559.5
-          ],
-          [
-            "after",
-            6559.5
-          ]
-        ],
-        "peak_runs": [
-          6559.6,
-          6560.5,
-          6629.4
-        ]
-      },
-      "timings": {
-        "prompt_ms": 607.285,
-        "predicted_ms": 15507.128,
-        "predicted_n": 220,
-        "draft_n": 172,
-        "draft_n_accepted": 161
-      },
-      "content": "從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,並且匯聚了從12世紀起就是法國王國的首都,",
-      "runs": 3
-    },
-    "coding": {
-      "profile": "coding",
-      "finish_reason": "length",
-      "quality": {
-        "score": 0.3,
-        "scores": [
-          0.3,
-          0.3,
-          0.3
-        ],
-        "variance": 0.0,
-        "checks": [
-          {
-            "check": "length",
-            "actual": 1709,
-            "min": 50,
-            "max": 2000,
-            "result": "pass"
-          },
-          {
-            "check": "required_any",
-            "keywords": [
-              "def ",
-              "fibonacci",
-              "return"
-            ],
-            "result": "fail"
-          },
-          {
-            "check": "forbidden",
-            "keywords": [
-              "0000",
-              "<think>",
-              "答:",
-              "因為因為因為"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "finish_reason",
-            "actual": "length",
-            "ok": [
-              "stop",
-              "length"
-            ],
-            "result": "pass"
-          },
-          {
-            "check": "loop_run",
-            "max_run": 3,
-            "limit": 12,
-            "result": "pass"
-          },
-          {
-            "check": "loop_phrase",
-            "result": "fail",
-            "min_unit": 6,
-            "max_unit": 300,
-            "min_repeat": 3,
-            "unit": "```python\n",
-            "start": 0,
-            "count": 3
-          }
-        ]
-      },
-      "speed": {
-        "prefill_tps": 8.4,
-        "decode_tps": 20.76,
-        "decode_tps_degenerate": false,
-        "completion_tokens": 512,
-        "draft_accept_pct": 100.0,
-        "decode_tps_runs": [
-          21.74,
-          20.76,
-          19.3
-        ],
-        "prefill_tps_runs": [
-          8.4,
-          8.73,
-          7.69
-        ]
-      },
-      "memory": {
-        "peak_mb": 6676.9,
-        "avg_mb": 6656.2,
-        "before_mb": 6506.0,
-        "after_mb": 6635.2,
-        "delta_mb": 129.2,
-        "samples": [
-          [
-            "before",
-            6506.0
-          ],
-          [
-            "during",
-            6506.0
-          ],
-          [
-            "during",
-            6676.9
-          ],
-          [
-            "during",
-            6672.1
-          ],
-          [
-            "during",
-            6671.8
-          ],
-          [
-            "during",
-            6671.8
-          ],
-          [
-            "during",
-            6671.8
-          ],
-          [
-            "during",
-            6671.8
-          ],
-          [
-            "during",
-            6671.8
-          ],
-          [
-            "during",
-            6671.8
-          ],
-          [
-            "during",
-            6671.8
-          ],
-          [
-            "during",
-            6671.8
-          ],
-          [
-            "during",
-            6669.9
-          ],
-          [
-            "during",
-            6669.9
-          ],
-          [
-            "during",
-            6669.9
-          ],
-          [
-            "during",
-            6669.9
-          ],
-          [
-            "during",
-            6669.9
-          ],
-          [
-            "during",
-            6669.9
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.1
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6670.0
-          ],
-          [
-            "during",
-            6641.9
-          ],
-          [
-            "during",
-            6641.9
-          ],
-          [
-            "during",
-            6646.7
-          ],
-          [
-            "during",
-            6636.9
-          ],
-          [
-            "during",
-            6636.0
-          ],
-          [
-            "during",
-            6636.0
-          ],
-          [
-            "during",
-            6636.0
-          ],
-          [
-            "during",
-            6636.0
-          ],
-          [
-            "during",
-            6636.0
-          ],
-          [
-            "during",
-            6635.2
-          ],
-          [
-            "during",
-            6635.2
-          ],
-          [
-            "after",
-            6635.2
-          ]
-        ],
-        "peak_runs": [
-          6676.9,
-          6635.2,
-          6620.9
-        ]
-      },
-      "timings": {
-        "prompt_ms": 475.941,
-        "predicted_ms": 23550.154,
-        "predicted_n": 512,
-        "draft_n": 383,
-        "draft_n_accepted": 383
-      },
-      "content": "```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python\n```python",
-      "runs": 3
-    }
+ "schema_version": 1,
+ "timestamp": "2026-09-06 baseline refresh (longform fix)",
+ "commit": "WORKTREE",
+ "server_pid": 44911,
+ "base_url": "http://127.0.0.1:8080",
+ "profiles": {
+  "qa-zh": {
+   "profile": "qa-zh",
+   "finish_reason": "stop",
+   "quality": {
+    "score": 0.6,
+    "scores": [
+     1.0,
+     0.6,
+     0.6
+    ],
+    "variance": 0.036,
+    "checks": [
+     {
+      "check": "length",
+      "actual": 0,
+      "min": 4,
+      "max": 80,
+      "result": "fail"
+     },
+     {
+      "check": "required_any",
+      "keywords": [
+       "巴黎",
+       "法國"
+      ],
+      "result": "fail"
+     },
+     {
+      "check": "forbidden",
+      "keywords": [
+       "<|",
+       "0000",
+       "<think>",
+       "Answer directly",
+       "system prompt"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "finish_reason",
+      "actual": "stop",
+      "ok": [
+       "stop",
+       "length"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "loop_phrase",
+      "result": "pass",
+      "min_unit": 6,
+      "max_unit": 300,
+      "min_repeat": 3,
+      "unit": null,
+      "start": null,
+      "count": null
+     }
+    ]
+   },
+   "speed": {
+    "prefill_tps": 24.12,
+    "decode_tps": 7.79,
+    "decode_tps_degenerate": true,
+    "completion_tokens": 1,
+    "draft_accept_pct": 11.11,
+    "decode_tps_runs": [
+     7.79
+    ],
+    "prefill_tps_runs": [
+     9.98,
+     24.12,
+     28.58
+    ]
+   },
+   "memory": {
+    "peak_mb": 5311.3,
+    "avg_mb": 5308.6,
+    "before_mb": 5307.3,
+    "after_mb": 5311.3,
+    "delta_mb": 4.0,
+    "samples": [
+     [
+      "before",
+      5307.3
+     ],
+     [
+      "during",
+      5307.3
+     ],
+     [
+      "after",
+      5311.3
+     ]
+    ],
+    "peak_runs": [
+     5307.3,
+     5311.3,
+     5311.3
+    ]
+   },
+   "timings": {
+    "prompt_ms": 165.858,
+    "predicted_ms": 0.001,
+    "predicted_n": 1,
+    "draft_n": null,
+    "draft_n_accepted": null
+   },
+   "content": "",
+   "runs": 3
   },
-  "aggregate": {
-    "decode_tps": {
-      "avg": 15.05,
-      "median": 13.62,
-      "min": 10.78,
-      "max": 20.76,
-      "n": 3
-    },
-    "prefill_tps": {
-      "avg": 14.97,
-      "median": 8.4,
-      "min": 6.59,
-      "max": 29.91,
-      "n": 3
-    },
-    "quality_score": {
-      "avg": 0.53,
-      "median": 0.3,
-      "min": 0.3,
-      "max": 1.0,
-      "n": 3
-    },
-    "peak_rss_mb": {
-      "avg": 6556.23,
-      "median": 6629.4,
-      "min": 6362.4,
-      "max": 6676.9,
-      "n": 3
-    }
+  "longform-zh": {
+   "profile": "longform-zh",
+   "finish_reason": "stop",
+   "quality": {
+    "score": 0.882,
+    "scores": [
+     0.882,
+     0.882,
+     0.647
+    ],
+    "variance": 0.012,
+    "checks": [
+     {
+      "check": "length",
+      "actual": 15,
+      "min": 80,
+      "max": 800,
+      "result": "fail"
+     },
+     {
+      "check": "required_any",
+      "keywords": [
+       "巴黎",
+       "法國",
+       "文化",
+       "政治",
+       "盧浮宮",
+       "艾菲爾",
+       "塞納",
+       "首都",
+       "歷史",
+       "12世紀",
+       "王國"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "forbidden",
+      "keywords": [
+       "Answer directly, after thinking",
+       "system prompt",
+       "<think>",
+       "<|im_start|>user",
+       "<|im_start|>system"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "finish_reason",
+      "actual": "stop",
+      "ok": [
+       "stop",
+       "length"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "loop_run",
+      "max_run": 1,
+      "limit": 12,
+      "result": "pass"
+     },
+     {
+      "check": "loop_phrase",
+      "result": "pass",
+      "min_unit": 6,
+      "max_unit": 300,
+      "min_repeat": 3,
+      "unit": null,
+      "start": null,
+      "count": null
+     }
+    ]
+   },
+   "speed": {
+    "prefill_tps": 14.2,
+    "decode_tps": 5.65,
+    "decode_tps_degenerate": false,
+    "completion_tokens": 13,
+    "draft_accept_pct": 33.33,
+    "decode_tps_runs": [
+     5.35,
+     5.65,
+     7.26
+    ],
+    "prefill_tps_runs": [
+     18.39,
+     14.2,
+     5.41
+    ]
+   },
+   "memory": {
+    "peak_mb": 5572.5,
+    "avg_mb": 5499.9,
+    "before_mb": 5462.6,
+    "after_mb": 5525.8,
+    "delta_mb": 63.2,
+    "samples": [
+     [
+      "before",
+      5462.6
+     ],
+     [
+      "during",
+      5462.6
+     ],
+     [
+      "during",
+      5484.8
+     ],
+     [
+      "during",
+      5499.4
+     ],
+     [
+      "during",
+      5514.0
+     ],
+     [
+      "during",
+      5524.8
+     ],
+     [
+      "during",
+      5524.8
+     ],
+     [
+      "after",
+      5525.8
+     ]
+    ],
+    "peak_runs": [
+     5525.8,
+     5525.8,
+     5572.5
+    ]
+   },
+   "timings": {
+    "prompt_ms": 217.456,
+    "predicted_ms": 2430.555,
+    "predicted_n": 13,
+    "draft_n": 18,
+    "draft_n_accepted": 7
+   },
+   "content": "其歷史地位、政治與文化影響力。",
+   "runs": 3
+  },
+  "coding": {
+   "profile": "coding",
+   "finish_reason": "stop",
+   "quality": {
+    "score": 1.0,
+    "scores": [
+     1.0,
+     0.3,
+     1.0
+    ],
+    "variance": 0.109,
+    "checks": [
+     {
+      "check": "length",
+      "actual": 99,
+      "min": 50,
+      "max": 2000,
+      "result": "pass"
+     },
+     {
+      "check": "required_any",
+      "keywords": [
+       "def ",
+       "fibonacci",
+       "return"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "forbidden",
+      "keywords": [
+       "0000",
+       "<think>",
+       "答:",
+       "因為因為因為"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "finish_reason",
+      "actual": "stop",
+      "ok": [
+       "stop",
+       "length"
+      ],
+      "result": "pass"
+     },
+     {
+      "check": "loop_run",
+      "max_run": 5,
+      "limit": 12,
+      "result": "pass"
+     },
+     {
+      "check": "loop_phrase",
+      "result": "pass",
+      "min_unit": 6,
+      "max_unit": 300,
+      "min_repeat": 3,
+      "unit": null,
+      "start": null,
+      "count": null
+     }
+    ]
+   },
+   "speed": {
+    "prefill_tps": 5.64,
+    "decode_tps": 6.18,
+    "decode_tps_degenerate": false,
+    "completion_tokens": 52,
+    "draft_accept_pct": 60.0,
+    "decode_tps_runs": [
+     5.91,
+     19.1,
+     6.18
+    ],
+    "prefill_tps_runs": [
+     5.33,
+     6.37,
+     5.64
+    ]
+   },
+   "memory": {
+    "peak_mb": 5358.5,
+    "avg_mb": 5197.9,
+    "before_mb": 5160.6,
+    "after_mb": 5104.5,
+    "delta_mb": -56.1,
+    "samples": [
+     [
+      "before",
+      5160.6
+     ],
+     [
+      "during",
+      5160.6
+     ],
+     [
+      "during",
+      5278.3
+     ],
+     [
+      "during",
+      5253.5
+     ],
+     [
+      "during",
+      5183.1
+     ],
+     [
+      "during",
+      5203.6
+     ],
+     [
+      "during",
+      5191.4
+     ],
+     [
+      "during",
+      5202.3
+     ],
+     [
+      "during",
+      5192.8
+     ],
+     [
+      "during",
+      5206.1
+     ],
+     [
+      "during",
+      5200.6
+     ],
+     [
+      "during",
+      5241.9
+     ],
+     [
+      "during",
+      5230.5
+     ],
+     [
+      "during",
+      5246.7
+     ],
+     [
+      "during",
+      5251.9
+     ],
+     [
+      "during",
+      5254.1
+     ],
+     [
+      "during",
+      5192.0
+     ],
+     [
+      "during",
+      5191.9
+     ],
+     [
+      "during",
+      5152.4
+     ],
+     [
+      "during",
+      5142.3
+     ],
+     [
+      "during",
+      5111.5
+     ],
+     [
+      "after",
+      5104.5
+     ]
+    ],
+    "peak_runs": [
+     5278.3,
+     5357.2,
+     5358.5
+    ]
+   },
+   "timings": {
+    "prompt_ms": 750.227,
+    "predicted_ms": 8800.371,
+    "predicted_n": 52,
+    "draft_n": 57,
+    "draft_n_accepted": 34
+   },
+   "content": " 計算費氏數列第 n 項\n\"\"\"\nif n <= 0:\n     return 0\nif n == 1:\n     return 1\nreturn fibonacci(n + 1) + 1 + 2\n",
+   "runs": 3
   }
+ },
+ "aggregate": {
+  "decode_tps": {
+   "avg": 6.54,
+   "median": 6.18,
+   "min": 5.65,
+   "max": 7.79,
+   "n": 3
+  },
+  "prefill_tps": {
+   "avg": 14.65,
+   "median": 14.2,
+   "min": 5.64,
+   "max": 24.12,
+   "n": 3
+  },
+  "quality_score": {
+   "avg": 0.83,
+   "median": 0.88,
+   "min": 0.6,
+   "max": 1.0,
+   "n": 3
+  },
+  "peak_rss_mb": {
+   "avg": 5414.1,
+   "median": 5358.5,
+   "min": 5311.3,
+   "max": 5572.5,
+   "n": 3
+  }
+ }
 }
