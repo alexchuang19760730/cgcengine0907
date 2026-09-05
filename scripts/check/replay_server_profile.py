@@ -49,9 +49,31 @@ def build_payload(profile, model, max_tokens):
             ],
             "temperature": 0,
             "max_tokens": max_tokens or 220,
+            # disable_think_scaffold=true 把模型從 <think> 起手拉回 content 軌，
+            # 否則 Qwen3.6 預設 ChatML 會跑 reasoning loop 把 <|im_start|>assistant 重複灌回 content。
+            "chat_template_kwargs": {
+                "disable_think_scaffold": True,
+            },
             # Keep explicit stops on the request path so replay stays aligned with the
             # launcher hint and does not leak template delimiters back into content.
             "stop": LONGFORM_STOP,
+        }
+
+    if profile == "coding":
+        return {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "寫一個 Python function，計算費氏數列第 n 項。",
+                }
+            ],
+            "temperature": 0,
+            "max_tokens": max_tokens or 512,
+            "chat_template_kwargs": {
+                "disable_think_scaffold": True,
+            },
+            "stop": ["```", "<|end|>", "<|output|>", "<|user|>"],
         }
 
     raise ValueError(f"unsupported profile: {profile}")
@@ -60,7 +82,7 @@ def build_payload(profile, model, max_tokens):
 def parse_args():
     parser = argparse.ArgumentParser(description="Replay fixed profile payloads against llama-server")
     parser.add_argument("--base-url", default="http://127.0.0.1:8080/v1")
-    parser.add_argument("--profile", choices=["qa-zh", "longform-zh"], required=True)
+    parser.add_argument("--profile", choices=["qa-zh", "longform-zh", "coding"], required=True)
     parser.add_argument("--model", default="test")
     parser.add_argument("--max-tokens", type=int, default=0)
     parser.add_argument("--timeout", type=int, default=180)

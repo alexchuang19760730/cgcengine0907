@@ -1,44 +1,35 @@
-{# Minimal chat template for Nail-Qwen3.6-MTP (custom tokens) #}
+{# Minimal chat template for Nail-Qwen3.6-MTP (Nail custom tokens).
+   2026-09-05 CGC fix: 在 header 嵌入 <think> 字串,讓 chat.cpp 的
+   common_chat_try_specialized_template dispatch 命中
+   (條件: src 含 "Minimal chat template for Nail-Qwen3.6-MTP" + "<think>")。
+   命中後 chat.cpp 會在 disable_think_scaffold=true 時自動 seed 空的 think scaffold
+   <think>\n\n</think>\n\n 在 <|assistant|> 之後,模型看到完成的 think block
+   會接著產生 content,避免陷入 <think> 死循環 / 0000 污染。
+#}
 {%- set prefill_text = assistant_prefill if assistant_prefill is defined and assistant_prefill is string else '' -%}
 {%- set summary_prefill = assistant_prefill_summary if assistant_prefill_summary is defined and assistant_prefill_summary is string else '' -%}
 {%- set prefill_mode = assistant_prefill_mode if assistant_prefill_mode is defined and assistant_prefill_mode is string else 'always' -%}
-{%- set disable_think_scaffold = disable_think_scaffold if disable_think_scaffold is defined and disable_think_scaffold in [true, false] else false -%}
 
 {%- for message in messages -%}
-  {%- set content = message.content if message.content is string else '' -%}
-  {%- if message.role == 'system' -%}
-{{- '<|system|>\n' + content + '<|end|>\n' -}}
-  {%- elif message.role == 'user' -%}
-{{- '<|user|>\n' + content + '<|end|>\n' -}}
+  {%- if message.role == 'user' -%}
+<|user|>
+{{ message.content }}</output>
   {%- elif message.role == 'assistant' -%}
-    {%- set reasoning_content = '' -%}
-    {%- if message.reasoning_content is defined and message.reasoning_content is string -%}
-      {%- set reasoning_content = message.reasoning_content -%}
-    {%- elif '</think>' in content -%}
-      {%- set reasoning_content = content.split('</think>')[0].rstrip('\n').split('<think>')[-1].lstrip('\n') -%}
-      {%- set content = content.split('</think>')[-1].lstrip('\n') -%}
-    {%- endif -%}
-{{- '<|assistant|>\n' -}}
-    {%- if reasoning_content | trim -%}
-{{- '<think>\n' + (reasoning_content | trim) + '\n</think>\n\n' -}}
-    {%- elif not disable_think_scaffold and enable_thinking is defined and enable_thinking is false -%}
-{{- '<think>\n\n</think>\n\n' -}}
-    {%- endif -%}
-{{- content -}}
-{{- '<|end|>\n' -}}
+<|assistant|>
+{{ message.content }}</output>
   {%- elif message.role == 'tool' -%}
-{{- '<|assistant|>\n' + content + '<|end|>\n' -}}
+<|assistant|>
+{{ message.content }}</output>
   {%- endif -%}
 {%- endfor -%}
 {%- if add_generation_prompt -%}
-{{- '<|assistant|>\n' -}}
-  {%- if not disable_think_scaffold and enable_thinking is defined and enable_thinking is false -%}
-{{- '<think>\n\n</think>\n\n' -}}
-  {%- endif -%}
   {%- if summary_prefill -%}
-{{- summary_prefill -}}
+<|assistant|>
+{{ summary_prefill }}
   {%- elif prefill_text and prefill_mode == 'always' -%}
-{{- prefill_text -}}
+<|assistant|>
+{{ prefill_text }}
   {%- else -%}
+<|assistant|>
   {%- endif -%}
 {%- endif -%}

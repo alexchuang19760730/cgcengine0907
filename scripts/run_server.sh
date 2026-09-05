@@ -97,6 +97,7 @@ SERVER_CHAT_TEMPLATE_KWARGS="${CGC_SERVER_CHAT_TEMPLATE_KWARGS:-}"
 SERVER_LOG_PROMPTS_DIR="${CGC_SERVER_LOG_PROMPTS_DIR:-}"
 SERVER_REASONING="${CGC_SERVER_REASONING:-off}"
 SERVER_REASONING_FORMAT="${CGC_SERVER_REASONING_FORMAT:-none}"
+SERVER_REASONING_PRESERVE="${CGC_SERVER_REASONING_PRESERVE:-0}"  # 2026-09-05：預設關，b66e0eaf7 原版沒開；只在明確要 preserve reasoning 時才 CGC_SERVER_REASONING_PRESERVE=1
 SERVER_SKIP_CHAT_PARSING="${CGC_SERVER_SKIP_CHAT_PARSING:-0}"
 SERVER_CHAT_AB="${CGC_SERVER_CHAT_AB:-off}"
 SERVER_CHAT_AB_PREFIX="${CGC_SERVER_CHAT_AB_PREFIX:-巴黎是法國的首都。}"
@@ -134,10 +135,13 @@ PHYS_MEM_BYTES="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
 PHYS_MEM_GB=$(( PHYS_MEM_BYTES / 1024 / 1024 / 1024 ))
 SERVER_OOM_SAFE="${CGC_SERVER_OOM_SAFE:-0}"
 
-# qwen36 的 server chat 默認走最小模板。
+# qwen36 的 server chat 預設走 GGUF embedded ChatML（b66e0eaf7 驗證：Nail jinja 的
+# <|user|> token model 訓練不認，會重複 <|user|> 而非回答；只有明確想用 Nail jinja 的
+# profile 才傳 --chat-template-file Nail-Qwen3.6-Minimal-Chat.jinja）。
 # prefill 改成 profile-aware：longform 可用，qa 預設不用，避免把長文前綴誤塞到短答。
 if [ -z "$SERVER_CHAT_TEMPLATE" ] && [ -z "$SERVER_CHAT_TEMPLATE_FILE" ]; then
-    SERVER_CHAT_TEMPLATE_FILE="$SERVER_MINIMAL_CHAT_TEMPLATE"
+    # 不預設：走 GGUF embedded ChatML。legacy-25plus / longform-zh 若要 Nail jinja 自行加 CGC_SERVER_CHAT_TEMPLATE_FILE。
+    :
 fi
 if [ -z "${CGC_SERVER_SKIP_CHAT_PARSING:-}" ]; then
     SERVER_SKIP_CHAT_PARSING=0
@@ -148,19 +152,45 @@ fi
 case "$SERVER_PROFILE" in
     ''|off) ;;
     qa-zh)
-        # QA 不再默認注入全域 prefill，避免把不相關的首 token 錨點套到短答。
+        # 2026-09-05：Nail jinja 的 <|user|> token model 訓練不認，會重複 <|user|>
+        # 而非回答。改走 GGUF embedded ChatML(<|im_start|>/im_end|>)，b66e0eaf7 已驗證。
+        # --reasoning off + --reasoning-format none 是 b66e0eaf7 的原版設定。
         [ -z "${CGC_SERVER_CHAT_AB+x}" ] && SERVER_CHAT_AB="off"
         [ -z "${CGC_SERVER_CHAT_AB_MAX_TOKENS+x}" ] && SERVER_CHAT_AB_MAX_TOKENS="24"
         [ -z "${CGC_SERVER_CHAT_AB_STOP+x}" ] && SERVER_CHAT_AB_STOP="。"
-        if [ -z "$SERVER_CHAT_TEMPLATE_KWARGS" ]; then
-            SERVER_CHAT_TEMPLATE_KWARGS='{"disable_think_scaffold":true}'
+        # 不預設 Nail jinja → 走 GGUF embedded ChatML
+        if [ -z "${CGC_SERVER_CHAT_TEMPLATE_FILE:-}" ] && [ -z "${CGC_SERVER_CHAT_TEMPLATE:-}" ]; then
+            SERVER_CHAT_TEMPLATE_FILE=""
         fi
         ;;
     longform-zh)
+        # 2026-09-05：跟 qa-zh 一致走 GGUF embedded ChatML，避免 Nail jinja 的 <|user|> 不被認。
         [ -z "${CGC_SERVER_CHAT_AB+x}" ] && SERVER_CHAT_AB="custom-prefix"
         [ -z "${CGC_SERVER_CHAT_AB_PREFIX+x}" ] && SERVER_CHAT_AB_PREFIX="巴黎之所以成為法國的政治與文化中心，主要是因為"
         [ -z "${CGC_SERVER_CHAT_AB_MAX_TOKENS+x}" ] && SERVER_CHAT_AB_MAX_TOKENS="220"
         [ -z "${CGC_SERVER_CHAT_AB_STOP+x}" ] && SERVER_CHAT_AB_STOP="<|end|>,<|output|>,<|user|>"
+        # 不預設 Nail jinja → 走 GGUF embedded ChatML
+        if [ -z "${CGC_SERVER_CHAT_TEMPLATE_FILE:-}" ] && [ -z "${CGC_SERVER_CHAT_TEMPLATE:-}" ]; then
+            SERVER_CHAT_TEMPLATE_FILE=""
+        fi
+        ;;
+    coding)
+        # 2026-09-05：代碼生成 profile。
+        # - 用 ```python\n# ``` code block prefill 把模型從 <think> 起手拉回代碼正文
+        # - 長 max_tokens 適合函數/類生成
+        # - ctx=4096 預留較長的輸入空間（檔案級 prompt）
+        # - 走 GGUF embedded ChatML (跟 qa-zh / longform-zh 一致)
+        # 注意：prefix 的 \n 用 literal backslash-n（不要用 $'\n' 變成真的 LF）
+        #   這樣經 SERVER_CHAT_TEMPLATE_KWARGS 包成 JSON 時，JSON parser 會把 \n 轉成 LF。
+        [ -z "${CGC_SERVER_CHAT_AB+x}" ] && SERVER_CHAT_AB="custom-prefix"
+        [ -z "${CGC_SERVER_CHAT_AB_PREFIX+x}" ] && SERVER_CHAT_AB_PREFIX='```python\n# '
+        [ -z "${CGC_SERVER_CHAT_AB_MAX_TOKENS+x}" ] && SERVER_CHAT_AB_MAX_TOKENS="512"
+        [ -z "${CGC_SERVER_CHAT_AB_STOP+x}" ] && SERVER_CHAT_AB_STOP='```'
+        [ -z "${CGC_SERVER_CTX+x}" ] && CTX_DEFAULT=4096
+        # 不預設 Nail jinja → 走 GGUF embedded ChatML
+        if [ -z "${CGC_SERVER_CHAT_TEMPLATE_FILE:-}" ] && [ -z "${CGC_SERVER_CHAT_TEMPLATE:-}" ]; then
+            SERVER_CHAT_TEMPLATE_FILE=""
+        fi
         ;;
     legacy-25plus)
         # 2026-09-04 第一個 25+ server 狀態：
@@ -177,9 +207,13 @@ case "$SERVER_PROFILE" in
         [ -z "${CGC_SERVER_CHAT_AB_PREFIX+x}" ] && SERVER_CHAT_AB_PREFIX="巴黎之所以成為法國的政治與文化中心，主要是因為"
         [ -z "${CGC_SERVER_CHAT_AB_MAX_TOKENS+x}" ] && SERVER_CHAT_AB_MAX_TOKENS="220"
         [ -z "${CGC_SERVER_CHAT_AB_STOP+x}" ] && SERVER_CHAT_AB_STOP="<|end|>,<|output|>,<|user|>"
+        # 走 GGUF embedded ChatML（b66e0eaf7 設定）
+        if [ -z "${CGC_SERVER_CHAT_TEMPLATE_FILE:-}" ] && [ -z "${CGC_SERVER_CHAT_TEMPLATE:-}" ]; then
+            SERVER_CHAT_TEMPLATE_FILE=""
+        fi
         ;;
     *)
-        echo "error: CGC_SERVER_PROFILE must be off|qa-zh|longform-zh|legacy-25plus (got $SERVER_PROFILE)" >&2
+        echo "error: CGC_SERVER_PROFILE must be off|qa-zh|longform-zh|coding|legacy-25plus (got $SERVER_PROFILE)" >&2
         exit 2
         ;;
 esac
@@ -450,6 +484,7 @@ SERVER_ARGS=(
     -sps 0
     --host "$HOST_BIND"
     --port "$PORT"
+    --jinja
 )
 if [ -n "$SERVER_BATCH" ]; then
     SERVER_ARGS+=(-b "$SERVER_BATCH")
@@ -484,6 +519,9 @@ if [ -n "$SERVER_REASONING" ]; then
 fi
 if [ -n "$SERVER_REASONING_FORMAT" ]; then
     SERVER_ARGS+=(--reasoning-format "$SERVER_REASONING_FORMAT")
+fi
+if [ "${SERVER_REASONING_PRESERVE:-0}" = "1" ]; then
+    SERVER_ARGS+=(--reasoning-preserve)
 fi
 if [ "$SERVER_SKIP_CHAT_PARSING" = "1" ]; then
     SERVER_ARGS+=(--skip-chat-parsing)

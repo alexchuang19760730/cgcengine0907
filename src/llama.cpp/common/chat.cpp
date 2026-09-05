@@ -1424,6 +1424,45 @@ static common_chat_params common_chat_params_init_nail_qwen3_6_minimal(const com
 
     const bool extract_reasoning = inputs.reasoning_format != COMMON_REASONING_FORMAT_NONE;
 
+    // 2026-09-05 CGC fix (chat template):
+    // Nail-Qwen3.6-MTP is an inference MTP carrier — reasoning is harmful because the model
+    // gets trapped in <think>…</think> loops and emits 0000/<|assistant|> padding.
+    // When `disable_think_scaffold=true` is set via chat_template_kwargs, force the
+    // jinja generation_prompt to include an empty think scaffold so the model
+    // continues from a completed think block instead of starting its own.
+    const bool disable_think_scaffold =
+        inputs.extra_context.is_object() &&
+        inputs.extra_context.contains("disable_think_scaffold") &&
+        inputs.extra_context.at("disable_think_scaffold").is_boolean() &&
+        inputs.extra_context.at("disable_think_scaffold").get<bool>();
+    const bool wants_think_scaffold_seed = disable_think_scaffold;
+
+    // 2026-09-05 CGC fix v2: 用 startsWith 而非 ==,因為 prefill 套用後
+    // data.generation_prompt 是 "<|assistant|>\n答：" 而不是裸 "<|assistant|>\n"。
+    // 之前用 == 永遠不命中,think scaffold 不會被 seed,模型看到 prefill 後
+    // 沒有完成的 think block,直接接 content → 陷入 ```/<think> 死循環。
+    //
+    // 同時也要把 think scaffold 注入到 data.prompt(實際送給 model 的 prompt)
+    // 因為 server 只用 data.prompt 送進 decode,data.generation_prompt 僅作 parser prefix。
+    if (wants_think_scaffold_seed &&
+        data.generation_prompt.rfind("<|assistant|>\n", 0) == 0) {
+        // Jinja omits the empty think scaffold when enable_thinking=true. We append it
+        // manually here so the model sees a completed think block and continues.
+        const std::string THINK_SEED = "<think>\n\n</think>\n\n";
+        data.generation_prompt += THINK_SEED;
+        // 同步注入到實際 prompt(data.prompt 已含 "<|assistant|>\n答:" 結尾)
+        // 若 data.prompt 不以 generation_prompt 結尾,直接 append(防呆)
+        if (data.prompt.size() >= data.generation_prompt.size() &&
+            data.prompt.compare(data.prompt.size() - data.generation_prompt.size(),
+                                data.generation_prompt.size(),
+                                data.generation_prompt) == 0) {
+            data.prompt += THINK_SEED;
+        } else {
+            // fallback: 直接 append
+            data.prompt += THINK_SEED;
+        }
+    }
+
     post_chat_debug_event(
         "A",
         "chat.cpp:nail-qwen3.6-minimal",
@@ -1436,6 +1475,7 @@ static common_chat_params common_chat_params_init_nail_qwen3_6_minimal(const com
             {"messages_tail", chat_messages_tail(inputs.messages)},
             {"chat_template_kwargs", inputs.extra_context.contains("assistant_prefill") || inputs.extra_context.contains("assistant_prefill_summary") || inputs.extra_context.contains("disable_think_scaffold") ? inputs.extra_context : json()},
             {"enable_thinking", inputs.enable_thinking},
+            {"wants_think_scaffold_seed", wants_think_scaffold_seed},
             {"extract_reasoning", extract_reasoning},
             {"has_continuation", inputs.has_continuation()},
             {"continue_final_message", inputs.continue_final_message},
@@ -3578,9 +3618,14 @@ std::optional<common_chat_params> common_chat_try_specialized_template(
     }
 
     if (src.find("Minimal chat template for Nail-Qwen3.6-MTP") != std::string::npos &&
-        src.find("<|assistant|>") != std::string::npos &&
-        src.find("<|user|>") != std::string::npos &&
         src.find("<think>") != std::string::npos) {
+        // 2026-09-05 CGC fix: dispatch 放寬,不再強制要求 <|assistant|>/<|user|> token 字串。
+        // 只要 jinja header 含 "Minimal chat template for Nail-Qwen3.6-MTP" + "<think>"
+        // 兩個字串錨點即可命中 specialized path。
+        // 注意:common_chat_params_init_nail_qwen3_6_minimal 內部仍假設 Nail tokens
+        // (line ~1440 比對 data.generation_prompt.rfind("<|assistant|>\n", 0) == 0),
+        // 所以命中的 jinja 必須用 <|user|>/<|assistant|>/<|end|> 系列 token,
+        // 不能是 ChatML (<|im_start|>/<|im_end|>)。
         LOG_DBG("Using specialized template: Nail-Qwen3.6-Minimal\n");
         return common_chat_params_init_nail_qwen3_6_minimal(tmpl, params);
     }
