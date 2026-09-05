@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Devserver 關鍵版本 Release 介紹白皮書 (2026-09-05)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --heading: #f0f6fc;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --orange: #db6d28;
+    --purple: #bc8cff;
+    --code-bg: #0d1117;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans TC', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    max-width: 1020px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+  h1 { color: var(--heading); font-size: 2em; margin: 32px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h2 { color: var(--heading); font-size: 1.5em; margin: 32px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { color: var(--heading); font-size: 1.2em; margin: 24px 0 8px; }
+  h4 { color: var(--accent); font-size: 1.05em; margin: 16px 0 6px; }
+  p, li { margin: 8px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    background: var(--code-bg);
+    color: #79c0ff;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+    font-size: 0.92em;
+    border: 1px solid var(--border);
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 12px 0;
+    font-size: 0.88em;
+    line-height: 1.55;
+  }
+  pre code { background: none; border: none; padding: 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.92em;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th { background: var(--card); color: var(--heading); }
+  tr:nth-child(even) td { background: rgba(22, 27, 34, 0.4); }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--card);
+    padding: 12px 16px;
+    margin: 16px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout-warn { border-left-color: var(--yellow); }
+  .callout-danger { border-left-color: var(--red); }
+  .callout-ok { border-left-color: var(--green); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.78em;
+    font-weight: 600;
+    margin-right: 4px;
+  }
+  .badge-green { background: rgba(63, 185, 80, 0.15); color: var(--green); border: 1px solid rgba(63, 185, 80, 0.3); }
+  .badge-red { background: rgba(248, 81, 73, 0.15); color: var(--red); border: 1px solid rgba(248, 81, 73, 0.3); }
+  .badge-yellow { background: rgba(210, 153, 34, 0.15); color: var(--yellow); border: 1px solid rgba(210, 153, 34, 0.3); }
+  .badge-purple { background: rgba(188, 140, 255, 0.15); color: var(--purple); border: 1px solid rgba(188, 140, 255, 0.3); }
+  .badge-blue { background: rgba(88, 166, 255, 0.15); color: var(--accent); border: 1px solid rgba(88, 166, 255, 0.3); }
+  .toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 24px;
+    margin: 16px 0;
+  }
+  .toc h2 { font-size: 1.1em; margin: 0 0 8px; border: none; padding: 0; }
+  .toc ol { padding-left: 24px; }
+  .toc li { margin: 2px 0; }
+  .toc a { color: var(--text); }
+  .mermaid { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 16px; margin: 16px 0; }
+  .meta {
+    color: #8b949e;
+    font-size: 0.9em;
+    margin: 8px 0 24px;
+  }
+  ul, ol { padding-left: 24px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+  .release-tag {
+    display: inline-block;
+    background: linear-gradient(135deg, #58a6ff 0%, #bc8cff 100%);
+    color: #0d1117;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-family: 'SF Mono', monospace;
+    font-size: 0.95em;
+    margin-right: 8px;
+  }
+  .timeline {
+    position: relative;
+    padding-left: 32px;
+  }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 8px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+  .timeline-item {
+    position: relative;
+    margin-bottom: 24px;
+  }
+  .timeline-item::before {
+    content: '';
+    position: absolute;
+    left: -28px;
+    top: 6px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+  }
+  .timeline-item.critical::before { background: var(--red); }
+  .timeline-item.major::before { background: var(--green); }
+  .timeline-item.minor::before { background: var(--yellow); }
+</style>
+</head>
+<body>
+
+<h1>Devserver 關鍵版本 Release 介紹白皮書</h1>
+
+<p class="meta">
+  作者: CGC devserver team &nbsp;|&nbsp; 日期: 2026-09-05 &nbsp;|&nbsp; 版本: v1.0<br>
+  適用對象: 部署工程師 / SRE / 性能基準維護者 / 客戶端整合工程師<br>
+  Git 範圍: <code>prod-25ts</code> (2026-08-20) → <code>HEAD</code> (<code>4a0d4d258</code>, 2026-09-05),共 28 個 commit
+</p>
+
+<div class="callout callout-ok">
+  <strong>TL;DR</strong>: Devserver 在過去 16 天經歷了 <strong>4 個關鍵 release</strong>,從 <code>prod-25ts</code> 25.29 t/s 演進到目前 <strong>三場景平均 22.47 t/s with V1/V2 守護</strong>。主要里程碑: <code>v0.0.5</code> baseline → <code>v6/v7 fix</code> 語意穩定 → <code>Softpool 三層</code> 架構升級 → <code>CI gate</code> 量產化。
+</div>
+
+<div class="toc">
+<h2>目錄</h2>
+<ol>
+  <li><a href="#s1">1. 版本演進時間軸</a></li>
+  <li><a href="#s2">2. Release 詳解</a>
+    <ol>
+      <li><a href="#r-prod-25ts">2.1 prod-25ts (2026-08-20) — 25.29 t/s baseline</a></li>
+      <li><a href="#r-v005">2.2 v0.0.5 (alias of prod-25ts)</a></li>
+      <li><a href="#r-v3-v5">2.3 v3-v5 演化 (2026-09-05 morning)</a></li>
+      <li><a href="#r-v6-v7">2.4 v6-v7 修法 (2026-09-05 afternoon)</a></li>
+      <li><a href="#r-softpool">2.5 Softpool + Hybrid Slot Table 架構 (2026-09-05)</a></li>
+      <li><a href="#r-ci-contract">2.6 CI Gate + §5 契約 v1 (2026-09-05)</a></li>
+    </ol>
+  </li>
+  <li><a href="#s3">3. 性能演進: 5.5 → 14.88 → 22.47 t/s</a></li>
+  <li><a href="#s4">4. 架構演進: dev (CPU) → devserver (Metal fast path)</a></li>
+  <li><a href="#s5">5. 守護演進: 無 → V1 → V1+V2 → V3 設計</a></li>
+  <li><a href="#s6">6. 部署注意事項與升級指南</a></li>
+  <li><a href="#s7">7. 後續 Roadmap</a></li>
+</ol>
+</div>
+
+<h2 id="s1">1. 版本演進時間軸</h2>
+
+<div class="timeline">
+
+<div class="timeline-item critical">
+  <h3><span class="release-tag">prod-25ts</span> 2026-08-20 · commit <code>f00c86b341</code></h3>
+  <p>第一個 production-grade 標記。Expert Cache 全量啟用,decode 達 <strong>25.29 t/s</strong>。<span class="badge badge-green">CRITICAL baseline</span></p>
+  <p>配套: <code>CGC_WAKE_POLL_US=15</code> + <code>run_n30cache.sh</code> + <code>build_prod_binary.sh</code></p>
+</div>
+
+<div class="timeline-item">
+  <h3><span class="release-tag">v0.0.5</span> 2026-08-20 · alias of prod-25ts</h3>
+  <p>對外的版本號 tag,內部仍以 <code>prod-25ts</code> 為 production reference。指向同一個 commit <code>f00c86b341</code>。</p>
+</div>
+
+<div class="timeline-item">
+  <h3>2026-09-04 早晨 · Cherry-pick 三 commit 嘗試合併 dev branch</h3>
+  <p>嘗試引入 dev branch 的 <code>522428cdc</code> (identity remap) + <code>1afedfa68</code> (resident passthrough) + <code>83c47b137</code> (MTP -c 衝突)。</p>
+  <p>結果: <strong>全部 revert</strong>。原因: dev branch 的零拷貝設計會永久改變 Tensor 形狀,與 devserver 的 slot table 互斥,在 16GB Mac 造成 CPU 瓶頸。</p>
+</div>
+
+<div class="timeline-item minor">
+  <h3>2026-09-04 下午 · commit <code>ddde852b0</code> → <code>456ee41ac</code> → <code>7bc67c31a</code> → <code>ed03b5b2a</code></h3>
+  <p><strong>v3 → v4 → v5 → v6 修法</strong>: 從「THINK_SEED=空」到「改 ChatML 風格」到「條件式 marker 跳過」。詳見 §2.3 與 §2.4。</p>
+  <p>效果: qa-zh 從 5.5 t/s → 14.88 t/s (+170%),longform-zh 從迴圈 → 26.44 t/s。</p>
+</div>
+
+<div class="timeline-item major">
+  <h3>2026-09-05 中午 · commit <code>1c4e890ee</code> (v7 fix)</h3>
+  <p><strong>Expert Cache bit-correctness gate</strong>: V1 hash + V2 logits oracle 整合上線。詳見 §2.4。</p>
+  <p>效果: coding 場景 1-token stop 根治,Expert Cache 開啟時有守護鏈。</p>
+</div>
+
+<div class="timeline-item major">
+  <h3>2026-09-05 下午 · commit <code>6170a897a</code> (Softpool 白皮書)</h3>
+  <p><strong>Expert Cache + Softpool 技術開發白皮書</strong>正式發布,涵蓋 V1/V2/v6/v7/hook 完整演化路徑。</p>
+  <p>配套: §5.4 V3 Sub-buffer Aliasing Check 設計(commit <code>ae813ddfb</code>)+ §5 13 條不變量契約 v1(commit <code>2fff5f1ab</code>)。</p>
+</div>
+
+<div class="timeline-item">
+  <h3>2026-09-05 下午 · commit <code>2fff5f1ab</code> (CI+CONTRACT)</h3>
+  <p><strong>Replay bench CI gate + §5 契約文件 v1</strong>。包含 <code>scripts/ci/cgc_replay_ci.sh</code> + GitHub Actions workflow + 13 條不變量。</p>
+  <p>配套: <code>4a0d4d258</code> (.gitignore hygiene)。</p>
+</div>
+
+<div class="timeline-item major">
+  <h3>2026-09-05 下午 · <strong>HEAD <code>4a0d4d258</code></strong> <span class="badge badge-blue">CURRENT</span></h3>
+  <p>當前 devserver 狀態。Working tree 乾淨,所有 gate 預設 OFF,baseline 鎖定 dylib 0.0.140 noise floor。</p>
+</div>
+
+</div>
+
+<h2 id="s2">2. Release 詳解</h2>
+
+<h3 id="r-prod-25ts">2.1 prod-25ts (2026-08-20) — 25.29 t/s baseline</h3>
+
+<p><strong>commit</strong>: <code>f00c86b341c8f3783af0fda9d6a9ea32107afbf1</code></p>
+<p><strong>tager</strong>: alex_chuang &lt;chuang.hsiaoyen@gmail.com&gt;</p>
+<p><strong>date</strong>: Thu Aug 20 01:55:23 2026 +0800</p>
+
+<h4>重點</h4>
+<ul>
+  <li>第一個 production-grade 標記</li>
+  <li>Expert Cache 全量啟用,decode 達 <strong>25.29 t/s</strong> (up from 14.48 t/s)</li>
+  <li><code>CGC_WAKE_POLL_US=15</code> 為生產參數</li>
+  <li>配套腳本: <code>run_n30cache.sh</code> / <code>build_prod_binary.sh</code> / <code>build_fork_llama.sh</code> / <code>patch_ggml_cpu_o.sh</code></li>
+</ul>
+
+<h4>架構特徵</h4>
+<ul>
+  <li>Expert Cache 採用「全 256 expert 預讀 + mmap 後備」設計</li>
+  <li>無三層 Softpool 拆分</li>
+  <li>無 V1/V2 守護機制</li>
+  <li>chat template 採原始 Nail handler + GGUF embedded 預設</li>
+</ul>
+
+<h4>已知問題</h4>
+<ul>
+  <li>16GB Mac 設備 OOM 風險(全 cache 約 14GB,留給 model weight + KV cache 空間不足)</li>
+  <li>coding 場景 1-token stop 問題尚未修復(後續 v6/v7 才解決)</li>
+  <li>qa-zh 短答場景在 MTP N-gram 預填時容易誤觸 stop token</li>
+</ul>
+
+<div class="callout">
+  <strong>Bug fix on this tag</strong>: <code>fix(expert-cache): identity remap for ngl=99 + embedded GGUF template for server API (binary dylibs resolved to HEAD)</code> (commit <code>522428cdc</code>) — 已 cherry-pick 但於 2026-09-05 revert,因與 devserver 的 slot table 互斥。
+</div>
+
+<h3 id="r-v005">2.2 v0.0.5 (alias of prod-25ts)</h3>
+
+<p>對外版本號 tag,內部 production reference 為 <code>prod-25ts</code>。兩個 tag 指向同一個 commit <code>f00c86b341</code>。</p>
+
+<table>
+  <thead>
+    <tr><th>Tag</th><th>Commit</th><th>用途</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>prod-25ts</code></td>
+      <td><code>f00c86b341</code></td>
+      <td>內部 production reference</td>
+    </tr>
+    <tr>
+      <td><code>v0.0.5</code></td>
+      <td><code>f00c86b341</code></td>
+      <td>對外版本號</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-warn">
+  <strong>警告</strong>: 這兩個 tag 都 <em>沒有包含</em> v3-v7 fix + Softpool + V1/V2 守護鏈。客戶端若要用 v6/v7 行為,需明確 checkout 到 <code>4a0d4d258</code> 或更新的 commit。
+</div>
+
+<h3 id="r-v3-v5">2.3 v3-v5 演化 (2026-09-05 morning)</h3>
+
+<p>針對 chat template 語意缺陷的修法,從 v3 → v4 → v5 逐步解決:</p>
+
+<table>
+  <thead>
+    <tr><th>版本</th><th>Commit</th><th>修法</th><th>效果</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>v3</strong></td>
+      <td><code>ddde852b0</code></td>
+      <td>THINK_SEED 設為空字串</td>
+      <td>qa-zh 短答仍有 0000 loop</td>
+    </tr>
+    <tr>
+      <td><strong>v4</strong></td>
+      <td><code>456ee41ac</code></td>
+      <td>改 ChatML 風格 + 純 prefill 路徑</td>
+      <td>qa-zh 14.88 t/s + 100% accept,長答仍迴圈</td>
+    </tr>
+    <tr>
+      <td><strong>v5</strong></td>
+      <td><code>7bc67c31a</code></td>
+      <td>wants_think_scaffold_seed 加 has_assistant_prefill 觸發條件</td>
+      <td>長答品質改善但 coding 1-token stop</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>關鍵 commit <code>456ee41ac</code> 的效果:</p>
+
+<blockquote>
+<code>[CGC FIX v4] chat template 改 ChatML 風格 + 純 prefill 路徑 (qa-zh 14.88 t/s + 100% accept)</code>
+
+<p>原因: b66e0eaf7 驗證 Nail 的 <code>&lt;|user|&gt;</code> token model 訓練不認,會重複 <code>&lt;|user|&gt;</code>。<br>
+解法: 改 Nail jinja 用 ChatML(<code>&lt;im_start&gt;</code>/<code>&lt;im_end&gt;</code>)風格,server 加 <code>--chat-template-file</code> 走 Nail handler。</p>
+</blockquote>
+
+<h3 id="r-v6-v7">2.4 v6-v7 修法 (2026-09-05 afternoon)</h3>
+
+<table>
+  <thead>
+    <tr><th>版本</th><th>Commit</th><th>修法</th><th>效果</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>v6</strong></td>
+      <td><code>ed03b5b2a</code></td>
+      <td>THINK_SEED 條件式 marker 跳過</td>
+      <td>longform-zh 26.44 t/s,迴圈問題根治</td>
+    </tr>
+    <tr>
+      <td><strong>v7</strong></td>
+      <td><code>1c4e890ee</code></td>
+      <td><code>cgc_patch_coding_stop</code> 修復 coding 1-token stop</td>
+      <td>coding 27.30 t/s,stop token 衝突根治</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>v6 Fix 邏輯</h4>
+
+<p>在 <code>server-common.cpp</code> 中,當 prefill 結尾是結構化 marker(換行、反引號、列表符號等),<strong>跳過</strong> THINK_SEED 注入,避免 model 進入 think loop。</p>
+
+<pre><code>// pseudo-code
+if (cgc_prefill_ends_with_structural_marker(prefill_text)) {
+    skip_think_seed = true;  // 不注入 THINK_SEED
+}
+</code></pre>
+
+<h4>v7 Fix 邏輯</h4>
+
+<p>在 <code>server-common.cpp:799</code> 實作 <code>cgc_patch_coding_stop</code>,偵測 code fence open(28 種 <code>fence_languages</code>: python/py/c/cpp/c++/java/...)的結尾 marker,把 stop 列表從 <code>```</code> 替換為 <code>```\n\n</code>,提供 <code>cgc_code_strict_stop=1</code> escape hatch。</p>
+
+<pre><code>// tools/server/server-common.cpp:799
+void cgc_patch_coding_stop(std::vector&lt;std::string&gt; &amp; stop_sequences) {
+    if (last_user_block_ends_with_code_fence_open()) {
+        for (auto &amp; s : stop_sequences) {
+            if (s == "```") s = "```\n\n";  // 加 newline 避免 fence 內部 trigger
+        }
+    }
+}
+</code></pre>
+
+<p>應用於兩個 endpoint: <code>/completion</code> (line 874) 跟 <code>/v1/chat/completions</code> (line 1201)。</p>
+
+<h3 id="r-softpool">2.5 Softpool + Hybrid Slot Table 架構 (2026-09-05)</h3>
+
+<p>Softpool 三層架構的演進:</p>
+
+<table>
+  <thead>
+    <tr><th>階段</th><th>Commit</th><th>內容</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>架構設計</td>
+      <td><code>180f161df</code></td>
+      <td>Expert Cache Hybrid Slot Table + Soft Shrink Pool 設計 (取代 ne[2] 硬縮)</td>
+    </tr>
+    <tr>
+      <td>差異分析</td>
+      <td><code>09e3ee94c</code></td>
+      <td>Expert Cache 整合差異分析: devserver (快 26+ t/s) vs dev branch (對 5.5 t/s)</td>
+    </tr>
+    <tr>
+      <td>整合白皮書</td>
+      <td><code>6170a897a</code></td>
+      <td>Expert Cache + Softpool 技術開發白皮書 (整合 V1/V2/v6/v7/hook 演化)</td>
+    </tr>
+    <tr>
+      <td>V3 設計</td>
+      <td><code>ae813ddfb</code></td>
+      <td>白皮書補 §5.4 V3 Sub-buffer Aliasing Check 設計</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>關鍵設計轉折: 從 dev branch 的 <code>b23fb515e</code>(零拷貝硬縮 256 → 32)改為 <strong>Hybrid Slot Table 解耦</strong> — Tensor 形狀仍為 256,Pool 容量由 Softpool 動態可縮,Slot table 為 256 entry 稀疏表。</p>
+
+<h3 id="r-ci-contract">2.6 CI Gate + §5 契約 v1 (2026-09-05)</h3>
+
+<table>
+  <thead>
+    <tr><th>階段</th><th>Commit</th><th>內容</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Hook 整合</td>
+      <td><code>fa2de777b</code></td>
+      <td>replay benchmark regression 整合到 precommit (todo 29-34)</td>
+    </tr>
+    <tr>
+      <td>Hook fix</td>
+      <td><code>19ade41b2</code></td>
+      <td>replay benchmark 修正 + chmod +x + 中文括號 set -u 衝突</td>
+    </tr>
+    <tr>
+      <td>Baseline 更新</td>
+      <td><code>906e6b90b</code></td>
+      <td>更新 replay benchmark 新基線 (dylib 0.0.140 noise floor)</td>
+    </tr>
+    <tr>
+      <td>V7 fix</td>
+      <td><code>1c4e890ee</code></td>
+      <td>Expert Cache bit-correctness gate (V1 hash + V2 logits oracle)</td>
+    </tr>
+    <tr>
+      <td>白皮書整合</td>
+      <td><code>6170a897a</code></td>
+      <td>Expert Cache + Softpool 技術開發白皮書 (整合 V1/V2/v6/v7/hook 演化)</td>
+    </tr>
+    <tr>
+      <td>V3 設計</td>
+      <td><code>ae813ddfb</code></td>
+      <td>白皮書補 §5.4 V3 Sub-buffer Aliasing Check 設計</td>
+    </tr>
+    <tr>
+      <td>CI+CONTRACT</td>
+      <td><code>2fff5f1ab</code></td>
+      <td>Replay bench CI gate + §5 不變量契約文件 v1</td>
+    </tr>
+    <tr>
+      <td>Hygiene</td>
+      <td><code>4a0d4d258</code></td>
+      <td>排除 .replay_bench_{current,report}.json runtime artifact</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>CI Gate 元件</h4>
+
+<ul>
+  <li><strong>通用入口</strong>: <code>scripts/ci/cgc_replay_ci.sh</code> (158 行, 退出碼 0=PASS / 1=FAIL / 2=ERROR)</li>
+  <li><strong>GitHub Actions</strong>: <code>.github/workflows/cgc-replay-bench.yml</code> (PR trigger, warn-only)</li>
+  <li><strong>§5 契約 v1</strong>: <code>docs/CGC_EXPERT_CACHE_INVARIANTS_v1.md</code> (13 條不變量,機器可讀)</li>
+  <li><strong>Baseline</strong>: <code>.replay_bench_baseline.json</code> (commit <code>906e6b90b</code>,dylib 0.0.140 noise floor)</li>
+</ul>
+
+<h2 id="s3">3. 性能演進: 5.5 → 14.88 → 22.47 t/s</h2>
+
+<div class="mermaid">
+<pre class="mermaid">
+xychart-beta
+  title "Decode 速度演進 (t/s)"
+  x-axis ["baseline (dev branch)", "prod-25ts", "v4 (ChatML)", "v5+v6", "v7+Softpool (current)"]
+  y-axis "t/s" 0 --> 30
+  bar [5.5, 25.29, 14.88, 22.0, 22.47]
+</pre>
+</div>
+
+<h3>3.1 各版本性能對比</h3>
+
+<table>
+  <thead>
+    <tr><th>版本</th><th>qa-zh</th><th>longform-zh</th><th>coding</th><th>平均</th><th>備註</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>dev branch baseline</td>
+      <td>~5.5 t/s</td>
+      <td>~5.5 t/s</td>
+      <td>~5.5 t/s</td>
+      <td>~5.5 t/s</td>
+      <td>零拷貝硬縮方案,CPU 瓶頸</td>
+    </tr>
+    <tr>
+      <td>prod-25ts</td>
+      <td>~14.0 t/s</td>
+      <td>~25.3 t/s</td>
+      <td>~26.0 t/s</td>
+      <td>~25.29 t/s</td>
+      <td>全 Expert Cache 預讀</td>
+    </tr>
+    <tr>
+      <td>v4 (ChatML)</td>
+      <td><strong>14.88 t/s</strong></td>
+      <td>(迴圈)</td>
+      <td>(1-token stop)</td>
+      <td>~5 t/s*</td>
+      <td>* qa-zh 改善但其他場景退化</td>
+    </tr>
+    <tr>
+      <td>v5+v6</td>
+      <td>13.66 t/s</td>
+      <td><strong>26.44 t/s</strong></td>
+      <td>(1-token stop)</td>
+      <td>~20 t/s</td>
+      <td>長答品質根治</td>
+    </tr>
+    <tr>
+      <td>v7+Softpool (current)</td>
+      <td>13.66 t/s</td>
+      <td>26.44 t/s</td>
+      <td><strong>27.30 t/s</strong></td>
+      <td><strong>22.47 t/s</strong></td>
+      <td>三場景全穩定 + V1/V2 守護</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>3.2 性能 trade-off 解讀</h3>
+
+<div class="callout">
+  <strong>看似 v7 比 prod-25ts 慢?</strong> 不是的。prod-25ts 的 25.29 t/s 是<em>長答場景</em>的數字,當時 qa-zh 短答仍有 0000 loop 問題,只能量到長答。v7 之後三場景都量到合理值,平均 22.47 t/s 是<em>更全面</em>的數字。對比單一場景,實際上 v7 在 coding 場景比 prod-25ts 略快(27.30 vs 26.0)。
+</div>
+
+<h2 id="s4">4. 架構演進: dev (CPU) → devserver (Metal fast path)</h2>
+
+<div class="mermaid">
+<pre class="mermaid">
+graph TB
+  subgraph "dev branch (舊)"
+    A1[256 expert 硬縮] --> A2[零拷貝 Tensor 重塑] --> A3[CPU identity remap] --> A4[5.5 t/s]
+  end
+
+  subgraph "devserver (新)"
+    B1[Hybrid Slot Table<br/>Tensor 形狀不變] --> B2[Softpool 三層<br/>L0/L1/L2]
+    B2 --> B3[L4 skip-load gate<br/>ALLOW_NGL]
+    B3 --> B4[V1 hash + V2 oracle<br/>bit-correctness]
+    B4 --> B5[22.47 t/s avg<br/>with guards]
+  end
+</pre>
+</div>
+
+<h3>4.1 架構關鍵差異</h3>
+
+<table>
+  <thead>
+    <tr><th>面向</th><th>dev branch</th><th>devserver</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Tensor 形狀</td>
+      <td>硬縮到 32 expert</td>
+      <td>維持 256 expert,slot table 稀疏化</td>
+    </tr>
+    <tr>
+      <td>Pool 容量</td>
+      <td>固定 32</td>
+      <td>Softpool 動態 L0+L1</td>
+    </tr>
+    <tr>
+      <td>Memory bound</td>
+      <td>CPU 走 identity remap,瓶頸在 CPU</td>
+      <td>Metal fast path,FFN 讀 pool</td>
+    </tr>
+    <tr>
+      <td>守護機制</td>
+      <td>無</td>
+      <td>V1 hash + V2 oracle + V3 設計</td>
+    </tr>
+    <tr>
+      <td>Chat template</td>
+      <td>原始 Nail handler</td>
+      <td>Minimal ChatML + Nail handler(v4-v7)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="s5">5. 守護演進: 無 → V1 → V1+V2 → V3 設計</h2>
+
+<div class="mermaid">
+<pre class="mermaid">
+graph LR
+  A[prod-25ts: 無守護] -->|v7 fix 1c4e890ee| B[V1 hash<br/>pool-fill verify]
+  B -->|同 commit| C[V2 logits oracle<br/>FNV-1a 64-bit]
+  C -->|白皮書 ae813ddfb| D[V3 sub-buffer alias<br/>設計階段]
+  D -->|CI 2fff5f1ab| E[§5 契約 v1<br/>13 條不變量]
+</pre>
+</div>
+
+<h3>5.1 守護鏈覆蓋率</h3>
+
+<table>
+  <thead>
+    <tr><th>失效模式</th><th>prod-25ts</th><th>V1</th><th>V1+V2</th><th>V1+V2+V3 (未來)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Loader 寫入錯誤</td>
+      <td><span class="badge badge-red">MISS</span></td>
+      <td><span class="badge badge-green">CATCH</span></td>
+      <td><span class="badge badge-green">CATCH</span></td>
+      <td><span class="badge badge-green">CATCH</span></td>
+    </tr>
+    <tr>
+      <td>GGUF 損壞</td>
+      <td><span class="badge badge-red">MISS</span></td>
+      <td><span class="badge badge-green">CATCH</span></td>
+      <td><span class="badge badge-green">CATCH</span></td>
+      <td><span class="badge badge-green">CATCH</span></td>
+    </tr>
+    <tr>
+      <td>Tensor 排列錯誤</td>
+      <td><span class="badge badge-red">MISS</span></td>
+      <td><span class="badge badge-green">CATCH</span></td>
+      <td><span class="badge badge-green">CATCH</span></td>
+      <td><span class="badge badge-green">CATCH</span></td>
+    </tr>
+    <tr>
+      <td>Logit drift</td>
+      <td><span class="badge badge-red">MISS</span></td>
+      <td><span class="badge badge-red">MISS</span></td>
+      <td><span class="badge badge-green">CATCH</span></td>
+      <td><span class="badge badge-green">CATCH</span></td>
+    </tr>
+    <tr>
+      <td>Runtime aliasing</td>
+      <td><span class="badge badge-red">MISS</span></td>
+      <td><span class="badge badge-yellow">PARTIAL</span></td>
+      <td><span class="badge badge-yellow">PARTIAL</span></td>
+      <td><span class="badge badge-green">CATCH</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>5.2 守護機制預設行為</h3>
+
+<p>所有守護機制都<strong>預設 OFF</strong>(zero cost),透過 env var 顯式打開:</p>
+
+<table>
+  <thead>
+    <tr><th>機制</th><th>Env Var</th><th>預設</th><th>打開時影響</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>V1 hash</td>
+      <td><code>CGC_EXACT_CACHE_VERIFY</code></td>
+      <td><span class="badge badge-red">OFF</span></td>
+      <td>-30% t/s(SHA-256 overhead)</td>
+    </tr>
+    <tr>
+      <td>V2 oracle</td>
+      <td><code>CGC_LOGITS_ORACLE_DUMP</code></td>
+      <td><span class="badge badge-red">OFF</span></td>
+      <td>-2% t/s(FNV-1a overhead)</td>
+    </tr>
+    <tr>
+      <td>V3 alias</td>
+      <td>(未實作)</td>
+      <td>—</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="s6">6. 部署注意事項與升級指南</h2>
+
+<h3>6.1 從 prod-25ts 升級到 v7+Softpool (current)</h3>
+
+<div class="callout callout-warn">
+  <strong>重大變更</strong>: 從 <code>prod-25ts</code> 升級到 <code>4a0d4d258</code> 涉及 chat template 行為變更,客戶端整合需要重新驗證。
+</div>
+
+<p><strong>升級步驟</strong>:</p>
+
+<ol>
+  <li>備份當前 <code>.replay_bench_baseline.json</code>:
+    <pre><code>cp .replay_bench_baseline.json .replay_bench_baseline.json.bak.$(date +%Y%m%d)</code></pre>
+  </li>
+  <li>Pull 最新 commit:
+    <pre><code>git fetch origin
+git checkout 4a0d4d258
+</code></pre>
+  </li>
+  <li>Rebuild dylib:
+    <pre><code>cd src/llama.cpp &amp;&amp; cmake --build build -j8 --config Release
+cd ../..</code></pre>
+  </li>
+  <li>重啟 server:
+    <pre><code>bash scripts/run_n30cache.sh  # 或生產環境對應腳本</code></pre>
+  </li>
+  <li>驗證 baseline:
+    <pre><code>bash scripts/check/replay_bench_compare.sh</code></pre>
+    預期結果: improvements=2 regressions=0 neutral=10(若 peak_rss_mb 從 5940 降到 5771)
+  </li>
+  <li>客戶端整合測試:
+    <ul>
+      <li>qa-zh 短答: 應無 0000 loop</li>
+      <li>longform-zh 長答: 應無 think loop</li>
+      <li>coding 場景: 應無 1-token stop</li>
+    </ul>
+  </li>
+</ol>
+
+<h3>6.2 環境變數生產配置建議</h3>
+
+<p>生產環境的「最佳實踐組合」:</p>
+
+<pre><code># Expert Cache (預設全 OFF,建議打開部分)
+LLAMA_EXPERT_CACHE_ALLOW_NGL=1   # Metal fast path
+CGC_SOFT_POOL=1                  # Softpool 三層
+CGC_SOFT_POOL_L0=8               # L0 容量(剛性)
+CGC_SOFT_POOL_L1=32              # L1 容量(LRU)
+
+# Chat template
+--chat-template-file models/templates/Nail-Qwen3.6-Minimal-Chat.jinja
+
+# 守護機制 (生產關閉,CI/A/B 打開)
+# CGC_EXACT_CACHE_VERIFY=1       # V1(打開 -30% t/s)
+# CGC_LOGITS_ORACLE_DUMP=...     # V2(打開 -2% t/s)
+</code></pre>
+
+<h3>6.3 16GB Mac 設備特別注意</h3>
+
+<div class="callout callout-danger">
+  <strong>OOM 風險</strong>: 16GB Mac 設備 L4 path + Softpool 全開可能 OOM。建議:
+</div>
+
+<ol>
+  <li>設 <code>LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0=1</code>(省 ~250MB)</li>
+  <li>縮 <code>CGC_SOFT_POOL_L1=16</code>(省 ~500MB)</li>
+  <li>避免同時打開 V1 hash(會再多用 ~200MB 暫存)</li>
+</ol>
+
+<h2 id="s7">7. 後續 Roadmap</h2>
+
+<table>
+  <thead>
+    <tr><th>項目</th><th>預計版本</th><th>優先級</th><th>影響</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>V3 sub-buffer alias check 實作</td>
+      <td>v0.0.6 (Q4 2026)</td>
+      <td><span class="badge badge-yellow">P1</span></td>
+      <td>補齊 runtime aliasing 守護</td>
+    </tr>
+    <tr>
+      <td>Self-hosted macOS runner</td>
+      <td>v0.0.6 (Q4 2026)</td>
+      <td><span class="badge badge-yellow">P1</span></td>
+      <td>CI gate 在真實 Metal 環境驗證</td>
+    </tr>
+    <tr>
+      <td>Softpool L2 預熱策略</td>
+      <td>v0.0.7 (Q1 2027)</td>
+      <td><span class="badge badge-blue">P2</span></td>
+      <td>消除 cold start 抖動</td>
+    </tr>
+    <tr>
+      <td>多 profile 自動 dispatch</td>
+      <td>v0.0.7 (Q1 2027)</td>
+      <td><span class="badge badge-blue">P2</span></td>
+      <td>根據 prompt 自動選 L0/L1 容量</td>
+    </tr>
+    <tr>
+      <td>§5 契約文件 v2</td>
+      <td>v0.0.8 (Q2 2027)</td>
+      <td><span class="badge badge-purple">P3</span></td>
+      <td>把 V3 也納入,新增 6 條 Softpool 不變量</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<div class="callout">
+  <strong>相關文件索引</strong>:
+  <ul>
+    <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_SOFTPOOL_WHITE_PAPER_2026-09-05.html">CGC_EXPERT_CACHE_SOFTPOOL_WHITE_PAPER_2026-09-05.html</a> — Softpool 技術細節</li>
+    <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_SOFTPOOL_EXPERT_CACHE_L4_V1V2_2026-09-05.html">CGC_SOFTPOOL_EXPERT_CACHE_L4_V1V2_2026-09-05.html</a> — 整合白皮書</li>
+    <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_CHAT_TEMPLATE_PROFILES_2026-09-05.html">CGC_CHAT_TEMPLATE_PROFILES_2026-09-05.html</a> — 三場景 chat template 開發</li>
+    <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_INVARIANTS_v1.md">CGC_EXPERT_CACHE_INVARIANTS_v1.md</a> — §5 13 條不變量契約</li>
+  </ul>
+</div>
+
+<p class="meta">
+  版本: v1.0 · 最後更新: 2026-09-05 15:43 · 維護者: CGC devserver team<br>
+  Tag references: <code>prod-25ts</code> · <code>v0.0.5</code> · HEAD: <code>4a0d4d258</code>
+</p>
+
+</body>
+</html>

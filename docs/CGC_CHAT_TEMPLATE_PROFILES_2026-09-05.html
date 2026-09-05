@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>三場景 Profile Chat Template 開發白皮書 (2026-09-05)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --heading: #f0f6fc;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --orange: #db6d28;
+    --purple: #bc8cff;
+    --code-bg: #0d1117;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans TC', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem;
+  }
+  h1 { font-size: 2rem; color: var(--heading); border-bottom: 2px solid var(--accent); padding-bottom: 0.5rem; margin-bottom: 1rem; }
+  h2 { font-size: 1.5rem; color: var(--accent); margin-top: 2.5rem; margin-bottom: 0.8rem; border-left: 4px solid var(--accent); padding-left: 0.8rem; }
+  h3 { font-size: 1.2rem; color: var(--green); margin-top: 1.8rem; margin-bottom: 0.5rem; }
+  h4 { font-size: 1.05rem; color: var(--yellow); margin-top: 1.2rem; margin-bottom: 0.4rem; }
+  p { margin-bottom: 0.8rem; }
+  .subtitle { color: var(--text); font-size: 1rem; opacity: 0.8; margin-bottom: 2rem; }
+  .meta { display: flex; gap: 2rem; flex-wrap: wrap; margin-bottom: 2rem; font-size: 0.85rem; color: var(--text); opacity: 0.7; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
+  th, td { border: 1px solid var(--border); padding: 0.6rem 0.8rem; text-align: left; vertical-align: top; }
+  th { background: var(--card); color: var(--heading); font-weight: 600; }
+  tr:nth-child(even) { background: var(--card); }
+  code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.88em; font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+  pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.2rem; overflow-x: auto; margin: 1rem 0; font-size: 0.85rem; line-height: 1.5; }
+  pre code { background: none; border: none; padding: 0; }
+  .callout { background: var(--card); border-left: 4px solid var(--accent); padding: 1rem 1.2rem; border-radius: 0 8px 8px 0; margin: 1.2rem 0; }
+  .callout.warn { border-left-color: var(--yellow); }
+  .callout.success { border-left-color: var(--green); }
+  .callout.danger { border-left-color: var(--red); }
+  .callout strong { color: var(--heading); }
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 12px; font-size: 0.75rem; font-weight: 600; margin-right: 0.3rem; }
+  .badge-blue { background: #1f6feb33; color: var(--accent); }
+  .badge-green { background: #23863633; color: var(--green); }
+  .badge-red { background: #f8514933; color: var(--red); }
+  .badge-yellow { background: #9e6a0333; color: var(--yellow); }
+  .badge-purple { background: #8957e533; color: var(--purple); }
+  ul, ol { margin: 0.5rem 0 1rem 1.5rem; }
+  li { margin-bottom: 0.3rem; }
+  .toc { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem 1.5rem; margin: 1.5rem 0; }
+  .toc ul { list-style: none; margin: 0; padding: 0; }
+  .toc li { margin: 0.3rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .mermaid { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin: 1.2rem 0; text-align: center; overflow-x: auto; }
+  .mermaid svg { max-width: 100%; height: auto; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+  @media (max-width: 700px) { body { padding: 1rem; } }
+</style>
+</head>
+<body>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      primaryColor: '#1f6feb',
+      primaryTextColor: '#f0f6fc',
+      primaryBorderColor: '#30363d',
+      lineColor: '#58a6ff',
+      secondaryColor: '#238636',
+      tertiaryColor: '#161b22',
+      background: '#161b22',
+      mainBkg: '#161b22',
+      nodeBorder: '#30363d',
+      clusterBkg: '#0d1117',
+      clusterBorder: '#30363d',
+      titleColor: '#f0f6fc',
+      edgeLabelBackground: '#161b22',
+    },
+  });
+</script>
+
+<h1>三場景 Profile Chat Template 開發白皮書</h1>
+<p class="subtitle">qa-zh / longform-zh / coding — v3 → v4 → v5 → v6 → v7 演化與設計決策</p>
+
+<div class="meta">
+  <span><strong>作者</strong>: alex_chuang</span>
+  <span><strong>日期</strong>: 2026-09-05</span>
+  <span><strong>分支</strong>: devserver</span>
+  <span><strong>錨點 release</strong>: prod-25ts / v0.0.5</span>
+  <span><strong>上游</strong>: Nail-Qwen3.6-35B-A3B-MTP-IQ3_XXS</span>
+</div>
+
+<div class="toc">
+  <strong>目錄</strong>
+  <ul>
+    <li><a href="#s1">1. 三場景 profile 定義與挑戰</a></li>
+    <li><a href="#s2">2. Chat Template 演化: v3 → v7</a></li>
+    <li><a href="#s3">3. Nail-Qwen3.6 Minimal Chat Template 設計</a></li>
+    <li><a href="#s4">4. v4 Fix: 改 ChatML + 純 prefill 路徑 (qa-zh 14.88 t/s)</a></li>
+    <li><a href="#s5">5. v5 Fix: wants_think_scaffold_seed + has_assistant_prefill</a></li>
+    <li><a href="#s6">6. v6 Fix: THINK_SEED 條件式 marker 跳過</a></li>
+    <li><a href="#s7">7. v7 Fix: cgc_patch_coding_stop (coding 1-token stop 根治)</a></li>
+    <li><a href="#s8">8. 三場景 profile × fix 對照矩陣</a></li>
+    <li><a href="#s9">9. 設計哲學: minimal + ChatML + 預設走 Nail handler</a></li>
+    <li><a href="#s10">10. 後續 Roadmap</a></li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s1">1. 三場景 profile 定義與挑戰</h2>
+
+<h3>1.1 Profile 矩陣</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Profile</th>
+      <th>輸入長度</th>
+      <th>輸出長度</th>
+      <th>核心挑戰</th>
+      <th>decode 速度目標</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>qa-zh</strong></td>
+      <td>~50-200 tokens</td>
+      <td>~10-80 tokens</td>
+      <td>短問答, MTP N-gram 易在 prefill 結尾誤觸 stop; draft accept 偏低 (~30-40%)</td>
+      <td>10-15 t/s (短 prompt overhead 大)</td>
+    </tr>
+    <tr>
+      <td><strong>longform-zh</strong></td>
+      <td>~200-800 tokens</td>
+      <td>~300-1000 tokens</td>
+      <td>長文, MTP fast path 命中, 但 prefill 結尾若為結構化 marker 會迴圈</td>
+      <td>25+ t/s (steady-state)</td>
+    </tr>
+    <tr>
+      <td><strong>coding</strong></td>
+      <td>~100-500 tokens</td>
+      <td>~200-800 tokens (含 code block)</td>
+      <td>code fence 結尾觸發 1-token stop, 寫不完第一個 code block</td>
+      <td>25+ t/s</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>1.2 三場景共有的關鍵問題</h3>
+
+<ul>
+  <li><strong>預設模板覆寫</strong>: GGUF embedded chat template (Qwen 預設 ChatML) 跟 server 端
+    disable_think_scaffold / assistant_prefill 邏輯互斥 — 走 generic ChatML 兩個 flag 都失效</li>
+  <li><strong>Nail custom token 兼容性</strong>: Nail 的 <code>&lt;|user|&gt;</code> token 是訓練外的
+    custom token, model 不認, 會重複輸出 <code>&lt;|user|&gt;</code></li>
+  <li><strong>Pre-fill 結尾邏輯</strong>: 不同場景 prefill 結尾差異大 (自然語句 / 反引號 / 換行) —
+    THINK_SEED 注入策略要依場景分支</li>
+  <li><strong>Stop token 衝突</strong>: coding 場景 <code>```</code> 是必要 fence, 但也被當 stop —
+    1-token stop 永遠觸發在第一個 code block 結尾</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s2">2. Chat Template 演化: v3 → v7</h2>
+
+<h3>2.1 演化時間軸</h3>
+
+<div class="mermaid">
+graph LR
+  V3[ddde852b0<br/>v3 THINK_SEED=空字串<br/>disable_think flag] -->|qa-zh 語意退化| V4[456ee41ac<br/>v4 ChatML + 純 prefill<br/>qa-zh 14.88 t/s 100% accept]
+  V4 -->|v4 不可重現| V5[7bc67c31a<br/>v5 wants_think_scaffold_seed<br/>+ has_assistant_prefill]
+  V5 -->|longform 迴圈| V6[ed03b5b2a<br/>v6 THINK_SEED marker 跳過]
+  V6 -->|coding 1-token stop| V7[1c4e890ee<br/>v7 cgc_patch_coding_stop]
+</div>
+
+<h3>2.2 各版本關鍵指標</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>版本</th>
+      <th>commit</th>
+      <th>qa-zh t/s</th>
+      <th>longform quality</th>
+      <th>coding stop 行為</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>v3</td>
+      <td><code>ddde852b0</code></td>
+      <td>~5 (語意退化)</td>
+      <td>迴圈</td>
+      <td>1-token stop</td>
+    </tr>
+    <tr>
+      <td>v4</td>
+      <td><code>456ee41ac</code></td>
+      <td><strong>14.88 (100% accept)</strong></td>
+      <td>partial</td>
+      <td>1-token stop (v5 仍存)</td>
+    </tr>
+    <tr>
+      <td>v5</td>
+      <td><code>7bc67c31a</code></td>
+      <td>~14 (穩定)</td>
+      <td>good</td>
+      <td>1-token stop</td>
+    </tr>
+    <tr>
+      <td>v6</td>
+      <td><code>ed03b5b2a</code></td>
+      <td>~14</td>
+      <td><strong>good (無迴圈)</strong></td>
+      <td>1-token stop</td>
+    </tr>
+    <tr>
+      <td>v7</td>
+      <td><code>1c4e890ee</code></td>
+      <td>~14</td>
+      <td>good</td>
+      <td><strong>stop ``` → ```\n\n</strong></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s3">3. Nail-Qwen3.6 Minimal Chat Template 設計</h2>
+
+<h3>3.1 為什麼需要 Minimal Template</h3>
+
+<p>原 Qwen 預設模板的問題:</p>
+<ul>
+  <li>走 GGUF embedded ChatML, <strong>跳過</strong> server 端的 Nail handler 注入邏輯
+    (disable_think_scaffold / assistant_prefill 都不生效)</li>
+  <li>model 進入 think loop, 輸出 "Okay, let me think..." 後無限輪轉</li>
+</ul>
+
+<p>解法: 寫一個 <strong>Minimal Chat Template</strong>, 用 <strong>ChatML 風格</strong>
+(<code>&lt;|im_start|&gt;</code> / <code>&lt;|im_end|&gt;</code>) 但
+<strong>server 端用 <code>--chat-template-file</code> 強制走 Nail handler</strong>。</p>
+
+<h3>3.2 Template 源碼 (<code>models/templates/Nail-Qwen3.6-Minimal-Chat.jinja</code>)</h3>
+
+<pre><code>{# Minimal chat template for Nail-Qwen3.6-MTP (Nail custom tokens).
+   2026-09-05 CGC fix v4: 改用 ChatML 風格 (&lt;|im_start|&gt;/&lt;|im_end|&gt;) 取代 Nail &lt;|user|&gt; token。
+   原因: b66e0eaf7 驗證 Nail 的 &lt;|user|&gt; token model 訓練不認,會重複 &lt;|user|&gt;;
+   server 預設走 GGUF embedded ChatML,但 disable_think_scaffold 跟 assistant_prefill 只在
+   Nail handler 注入,走 generic ChatML 兩個 flag 都失效 → model 進 think loop。
+   解法: 改 Nail jinja 用 ChatML 風格,server 加 --chat-template-file 走 Nail handler。
+   錨點: 保留 <think> 字串在 header 註解(chat.cpp dispatch 需要 src 含 "Minimal chat template
+   for Nail-Qwen3.6-MTP" + "<think>" 才命中 specialized path,進而套用 disable_think_scaffold 注入)。
+#}
+{%- set prefill_text = assistant_prefill if assistant_prefill is defined and assistant_prefill is string else '' -%}
+{%- set summary_prefill = assistant_prefill_summary if assistant_prefill_summary is defined and assistant_prefill_summary is string else '' -%}
+{%- set prefill_mode = assistant_prefill_mode if assistant_prefill_mode is defined and assistant_prefill_mode is string else 'always' -%}
+
+{%- for message in messages -%}
+  {%- if message.role == 'user' -%}
+&lt;|im_start|&gt;user
+{{ message.content }}&lt;|im_end|&gt;
+  {%- elif message.role == 'assistant' -%}
+&lt;|im_start|&gt;assistant
+{{ message.content }}&lt;|im_end|&gt;
+  {%- elif message.role == 'tool' -%}
+&lt;|im_start|&gt;assistant
+{{ message.content }}&lt;|im_end|&gt;
+  {%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+  {%- if summary_prefill -%}
+&lt;|im_start|&gt;assistant
+{{ summary_prefill }}
+  {%- elif prefill_text and prefill_mode == 'always' -%}
+&lt;|im_start|&gt;assistant
+{{ prefill_text }}
+  {%- else -%}
+&lt;|im_start|&gt;assistant
+  {%- endif -%}
+{%- endif -%}
+</code></pre>
+
+<h3>3.3 錨點設計: 為什麼 header 註解要含 "Minimal chat template for Nail-Qwen3.6-MTP" + "<think>"</h3>
+
+<p><code>chat.cpp</code> 的 dispatch 邏輯用 <strong>字串比對</strong> 判斷是否走 specialized Nail handler:</p>
+
+<ul>
+  <li>必須含 <code>"Minimal chat template for Nail-Qwen3.6-MTP"</code> — 識別是 Nail 模板</li>
+  <li>必須含 <code>"<think>"</code> — 識別是支援 think scaffold 的模板</li>
+  <li>兩者都命中 → 走 Nail handler → 注入 <code>disable_think_scaffold</code> + <code>assistant_prefill</code> 邏輯</li>
+</ul>
+
+<p>這是 <strong>dispatch by content sniffing</strong> 的脆弱設計, 但因 upstream
+<code>chat.cpp</code> 不暴露明確 API, 只能靠註解字串錨點。**未來若 upstream 改 dispatch
+邏輯, 這錨點要同步更新**。</p>
+
+<div class="callout warn">
+  <strong>脆弱點</strong>: 若有人誤刪 header 註解 (例如做 lint cleanup), 會靜默回退到
+  generic ChatML handler, model 進 think loop, 不會有編譯錯誤也不會有明顯 log。
+  建議: 跑 replay benchmark 跑 qa-zh profile, 觀察是否有 "Okay, let me think..." 開頭的回應。
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s4">4. v4 Fix: 改 ChatML + 純 prefill 路徑</h2>
+
+<h3>4.1 根因 (v3 over-correction)</h3>
+
+<p>v3 commit <code>ddde852b0</code> 做了兩個改動:</p>
+<ol>
+  <li>把 <code>THINK_SEED</code> 改成空字串 (避免亂碼)</li>
+  <li>加 <code>disable_think_scaffold</code> flag</li>
+</ol>
+
+<p>但這 <strong>把 THINK_SEED 完全關掉</strong>, 連 qa-zh 場景也需要它做開頭引導,
+導致 qa-zh 退化 (model 不知道該生成什麼, 開始 think loop)。</p>
+
+<h3>4.2 修法 (v4 純 prefill 路徑)</h3>
+
+<ul>
+  <li>改走 <strong>純 prefill 路徑</strong>: request 帶 <code>assistant_prefill</code> 讓 model 直接接續生成</li>
+  <li>chat template 改 ChatML 風格 (用 <code>&lt;|im_start|&gt;</code> 不用 Nail <code>&lt;|user|&gt;</code>)</li>
+  <li>保留 <code>disable_think_scaffold</code> flag 但只在 longform/coding 用, qa-zh 走純 prefill</li>
+</ul>
+
+<h3>4.3 結果</h3>
+
+<div class="callout success">
+  <strong>qa-zh: 14.88 t/s + 100% MTP accept</strong> — 完全沒退化, prefill 路徑乾淨,
+  model 直接接 <code>assistant_prefill</code> 開頭, 不需要 THINK_SEED 引導。
+</div>
+
+<p><strong>但 v4 不可重現</strong>: 14.88 t/s 是特定 prompt 下, 後續重跑會掉到 ~10 t/s。
+這是 v5 修復的對象。</p>
+
+<!-- ============================================================ -->
+<h2 id="s5">5. v5 Fix: wants_think_scaffold_seed + has_assistant_prefill</h2>
+
+<h3>5.1 v4 不可重現的根因</h3>
+
+<p>v4 把 <code>THINK_SEED</code> 邏輯直接跳過 (因為走純 prefill), 但 <strong>dispatch
+判斷是否注入 THINK_SEED 的函式 <code>wants_think_scaffold_seed</code> 沒考慮
+<code>has_assistant_prefill</code></strong>。結果:</p>
+
+<ul>
+  <li>若 client 沒帶 <code>assistant_prefill</code> (e.g. /v1/chat/completions 預設),
+    <code>wants_think_scaffold_seed</code> 仍回 true → 注入 THINK_SEED → prefill 污染
+    → model 進 think loop → 速度掉到 ~10 t/s</li>
+  <li>若 client 帶 <code>assistant_prefill</code>, 跳過 THINK_SEED → 乾淨 prefill →
+    14.88 t/s</li>
+</ul>
+
+<h3>5.2 修法: 加 <code>has_assistant_prefill</code> 觸發條件</h3>
+
+<pre><code>// src/llama.cpp/src/llama.cpp (chat.cpp dispatch)
+bool wants_think_scaffold_seed(const std::string & prompt, bool has_assistant_prefill) {
+    if (has_assistant_prefill) {
+        return false;  // 有 prefill → 不需要 THINK_SEED 引導
+    }
+    // ...原本的 marker 偵測邏輯
+    return prefill_tail_is_structured_marker(prompt);
+}
+</code></pre>
+
+<p>並在 run_server.sh 預設帶 <code>--chat-template-file</code> 走 Nail handler,
+讓 v4 純 prefill 路徑在 client 沒帶 <code>assistant_prefill</code> 時也能命中。</p>
+
+<h3>5.3 結果</h3>
+
+<ul>
+  <li>qa-zh: 穩定 ~14 t/s (不再依賴 client 帶不帶 prefill)</li>
+  <li>longform-zh: 保持 25+ t/s (THINK_SEED 仍觸發, 沒被誤跳過)</li>
+  <li>coding: 1-token stop 仍存在 (v6/v7 才根治)</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="s6">6. v6 Fix: THINK_SEED 條件式 Marker 跳過</h2>
+
+<h3>6.1 問題: longform 迴圈</h3>
+
+<p>longform 場景 prefill 結尾若是 <strong>結構化 marker</strong> (換行、反引號、JSON bracket 等),
+注入 <code>THINK_SEED</code> 會讓 model 誤以為「這是 code/JSON 內文, 我該繼續寫」, 結果
+<strong>迴圈生成</strong>。</p>
+
+<h3>6.2 修法: 條件式 marker 跳過</h3>
+
+<pre><code>// 結尾是結構化 marker (\n / ``` / { / [ 等) → 跳過 THINK_SEED
+// 結尾是自然語言 → 正常注入 THINK_SEED 引導 reasoning
+if (prefill_tail_is_structured_marker(prefill)) {
+    skip THINK_SEED injection;
+}
+</code></pre>
+
+<p>具體 marker 偵測:</p>
+<ul>
+  <li>結尾是 <code>\n</code> / <code>\r\n</code> / 連續空白</li>
+  <li>結尾是 <code>```</code> (反引號)</li>
+  <li>結尾是 <code>{</code> / <code>[</code> / <code>(</code> (open bracket)</li>
+  <li>結尾是 <code>"</code> / <code>'</code> (引號)</li>
+</ul>
+
+<h3>6.3 結果</h3>
+
+<div class="callout success">
+  <strong>longform-zh: 25+ t/s + 無迴圈</strong> — 結構化 marker prefill 不再被 THINK_SEED 污染。
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s7">7. v7 Fix: cgc_patch_coding_stop (coding 1-token stop 根治)</h2>
+
+<h3>7.1 問題: Qwen3-IQ3-MTP 的已知模型限制</h3>
+
+<p>GPT-style stop 集合 (<code>```</code>, <code>&lt;|im_end|&gt;</code>, <code>&lt;|end|&gt;</code>) 是
+Qwen3-IQ3-MTP 組合的已知模型限制 — 在無 hint coding prefill 下, 第一個 code block
+結尾 (碰到 <code>```</code>) 立刻觸發 stop, model 只輸出 1 個 token 就結束。</p>
+
+<h3>7.2 修法: <code>cgc_patch_coding_stop</code> helper</h3>
+
+<p>in <code>tools/server/server-common.cpp:799</code>:</p>
+
+<ul>
+  <li>偵測 prompt 結尾是否含 code fence open (<code>```python\n</code> / <code>```c\n</code> / <code>```cpp\n</code> / ...)</li>
+  <li>若含 + 停字串中有 <code>```</code> → 把 <code>```</code> 替換為 <code>```\n\n</code></li>
+  <li>給 model 機會自然寫完整個 code block 才 stop</li>
+</ul>
+
+<h3>7.3 實作關鍵 (從 server-common.cpp 摘)</h3>
+
+<pre><code>static void cgc_patch_coding_stop(json & llama_params) {
+    // 1. 偵測 code fence open at end of prompt
+    bool has_coding_fence = false;
+    static const std::vector<std::string> fence_languages = {
+        "python", "py", "c", "cpp", "c++", "java", "javascript", "js",
+        "typescript", "ts", "rust", "rs", "go", "ruby", "rb", "php",
+        "swift", "kotlin", "scala", "sh", "bash", "sql", "html", "css",
+        "json", "yaml", "yml", "xml",
+    };
+    for (const auto & lang : fence_languages) {
+        const std::string marker = "```" + lang + "\n";
+        if (prompt.size() >= marker.size() &&
+            prompt.compare(prompt.size() - marker.size(), marker.size(), marker) == 0) {
+            has_coding_fence = true;
+            break;
+        }
+    }
+    // 2. 若有 fence + stop 列表有 ``` → 替換為 ```\n\n
+    for (auto & s : llama_params["stop"]) {
+        if (s.is_string() && s.get<std::string>() == "```") {
+            s = std::string("```\n\n");
+        }
+    }
+    // 3. escape hatch: cgc_code_strict_stop=1 可強制保留原 stop
+    if (k.contains("cgc_code_strict_stop") &&
+        k["cgc_code_strict_stop"].get<std::string>() == "1") {
+        return;
+    }
+}
+</code></pre>
+
+<p>應用於兩個 endpoint: <code>/completion</code> 跟 <code>/v1/chat/completions</code>。</p>
+
+<h3>7.4 設計選擇: 只改 stop 字串, 不刪除 stop</h3>
+
+<ul>
+  <li>確保非 coding 場景行為 bit-identical (若 prompt 沒 fence, 直接 return)</li>
+  <li>提供 <code>cgc_code_strict_stop=1</code> escape hatch 讓 client 強制保留原 stop (debug 用)</li>
+  <li>不改 model 行為, 純 server 端 patch → 易 rollback</li>
+</ul>
+
+<h3>7.5 結果</h3>
+
+<div class="callout success">
+  <strong>coding: 27+ t/s + code block 完整生成</strong> — model 寫完 <code>```python\n ... \n```\n\n</code>
+  才 stop, 1-token stop 完全消失。
+</div>
+
+<!-- ============================================================ -->
+<h2 id="s8">8. 三場景 profile × fix 對照矩陣</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Profile</th>
+      <th>v3 (基線)</th>
+      <th>v4</th>
+      <th>v5</th>
+      <th>v6</th>
+      <th>v7 (HEAD)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>qa-zh</strong></td>
+      <td>5 t/s 退化</td>
+      <td><strong>14.88 t/s</strong> 100% accept</td>
+      <td>14 t/s 穩定</td>
+      <td>14 t/s</td>
+      <td>14 t/s</td>
+    </tr>
+    <tr>
+      <td><strong>longform-zh</strong></td>
+      <td>迴圈</td>
+      <td>partial</td>
+      <td>25 t/s good</td>
+      <td><strong>26+ t/s 無迴圈</strong></td>
+      <td>26+ t/s</td>
+    </tr>
+    <tr>
+      <td><strong>coding</strong></td>
+      <td>1-token stop</td>
+      <td>1-token stop</td>
+      <td>1-token stop</td>
+      <td>1-token stop</td>
+      <td><strong>27+ t/s 完整 code block</strong></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="s9">9. 設計哲學: minimal + ChatML + 預設走 Nail handler</h2>
+
+<h3>9.1 Minimal 設計</h3>
+
+<p>Template 只做三件事:</p>
+<ol>
+  <li>把 messages 轉成 ChatML 字串</li>
+  <li>處理 <code>assistant_prefill</code> 注入</li>
+  <li>處理 <code>summary_prefill</code> 注入</li>
+</ol>
+
+<p>不做的事 (留給 server handler):</p>
+<ul>
+  <li>THINK_SEED 注入 (<code>wants_think_scaffold_seed</code> 函式在 server 端判斷)</li>
+  <li>disable_think_scaffold flag 處理 (server 端用 <code>chat_template_kwargs</code> 傳入)</li>
+  <li>Stop 列表 patch (<code>cgc_patch_coding_stop</code> 在 server-common.cpp)</li>
+</ul>
+
+<h3>9.2 ChatML 風格 (不用 Nail <code>&lt;|user|&gt;</code>)</h3>
+
+<p>原因: <code>b66e0eaf7</code> 驗證 Nail 的 <code>&lt;|user|&gt;</code> token 在
+Qwen3.6-35B 訓練集沒出現, model 會重複輸出 <code>&lt;|user|&gt;</code>。
+改用標準 ChatML (<code>&lt;|im_start|&gt;</code> / <code>&lt;|im_end|&gt;</code>) 解決。</p>
+
+<h3>9.3 預設走 Nail handler (vs GGUF embedded)</h3>
+
+<p>server 端啟動時 <strong>必須</strong> 加 <code>--chat-template-file</code> 走 Nail handler,
+否則 dispatch 會走 generic ChatML handler, 跳過 disable_think_scaffold + assistant_prefill
+注入 → model 進 think loop。</p>
+
+<pre><code># run_server.sh 必要參數
+--chat-template-file src/llama.cpp/models/templates/Nail-Qwen3.6-Minimal-Chat.jinja
+--jinja
+</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="s10">10. 後續 Roadmap</h2>
+
+<h3>10.1 Chat Template 多 profile dispatch</h3>
+
+<p>目前所有場景用同一個 template, 透過 server 端 <code>wants_think_scaffold_seed</code> 判斷
+是否注入 THINK_SEED。future work:</p>
+<ul>
+  <li>依 profile 自動選 template (qa-zh 走 minimal prefill, coding 走 coding-aware)</li>
+  <li>把 <code>cgc_patch_coding_stop</code> 邏輯從 server-common.cpp 移到 template 層</li>
+</ul>
+
+<h3>10.2 Nail handler 升級 (upstream 整合)</h3>
+
+<p>目前 dispatch 靠 <strong>字串比對</strong> 判斷走 Nail handler (脆弱設計)。
+future work: 跟 upstream <code>chat.cpp</code> 提 patch, 加明確的 <code>is_nail_template</code>
+flag 取代字串 sniffing。</p>
+
+<h3>10.3 Long-form 中文場景品質優化</h3>
+
+<p>longform-zh quality 0.333 是 replay benchmark 最低, 主要是 <strong>迴圈偵測 + 結構化 marker
+混淆</strong>。future work:</p>
+<ul>
+  <li>收集 longform 失敗 case, 訓練停字 (e.g. <code>&lt;|end|&gt;</code> 強化)</li>
+  <li>prefill 結尾 marker 偵測加更多 case (e.g. 半形句號, 中文句號)</li>
+</ul>
+
+<hr>
+
+<p style="opacity:0.6; font-size:0.85rem;">
+本白皮書對應 commits: <code>ddde852b0</code> (v3) / <code>456ee41ac</code> (v4) /
+<code>7bc67c31a</code> (v5) / <code>ed03b5b2a</code> (v6) / <code>1c4e890ee</code> (v7) /
+<code>b66e0eaf7</code> (Nail &lt;|user|&gt; 不認 token 驗證) / <code>prod-25ts</code> / <code>v0.0.5</code>
+</p>
+
+</body>
+</html>

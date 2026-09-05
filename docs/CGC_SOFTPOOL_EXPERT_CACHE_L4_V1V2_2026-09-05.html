@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Softpool + Expert Cache + L4 Skip-Load + V1/V2 整合開發白皮書 (2026-09-05)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --heading: #f0f6fc;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --orange: #db6d28;
+    --purple: #bc8cff;
+    --code-bg: #0d1117;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans TC', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+  h1 { color: var(--heading); font-size: 2em; margin: 32px 0 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h2 { color: var(--heading); font-size: 1.5em; margin: 32px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { color: var(--heading); font-size: 1.2em; margin: 24px 0 8px; }
+  h4 { color: var(--accent); font-size: 1.05em; margin: 16px 0 6px; }
+  p, li { margin: 8px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    background: var(--code-bg);
+    color: #79c0ff;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'SF Mono', 'Monaco', 'Cascadia Code', 'Courier New', monospace;
+    font-size: 0.92em;
+    border: 1px solid var(--border);
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 12px 0;
+    font-size: 0.88em;
+    line-height: 1.55;
+  }
+  pre code { background: none; border: none; padding: 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 0.92em;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th { background: var(--card); color: var(--heading); }
+  tr:nth-child(even) td { background: rgba(22, 27, 34, 0.4); }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--card);
+    padding: 12px 16px;
+    margin: 16px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout-warn { border-left-color: var(--yellow); }
+  .callout-danger { border-left-color: var(--red); }
+  .callout-ok { border-left-color: var(--green); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.78em;
+    font-weight: 600;
+    margin-right: 4px;
+  }
+  .badge-green { background: rgba(63, 185, 80, 0.15); color: var(--green); border: 1px solid rgba(63, 185, 80, 0.3); }
+  .badge-red { background: rgba(248, 81, 73, 0.15); color: var(--red); border: 1px solid rgba(248, 81, 73, 0.3); }
+  .badge-yellow { background: rgba(210, 153, 34, 0.15); color: var(--yellow); border: 1px solid rgba(210, 153, 34, 0.3); }
+  .badge-purple { background: rgba(188, 140, 255, 0.15); color: var(--purple); border: 1px solid rgba(188, 140, 255, 0.3); }
+  .badge-blue { background: rgba(88, 166, 255, 0.15); color: var(--accent); border: 1px solid rgba(88, 166, 255, 0.3); }
+  .toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 24px;
+    margin: 16px 0;
+  }
+  .toc h2 { font-size: 1.1em; margin: 0 0 8px; border: none; padding: 0; }
+  .toc ol { padding-left: 24px; }
+  .toc li { margin: 2px 0; }
+  .toc a { color: var(--text); }
+  .mermaid { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 16px; margin: 16px 0; }
+  .meta {
+    color: #8b949e;
+    font-size: 0.9em;
+    margin: 8px 0 24px;
+  }
+  ul, ol { padding-left: 24px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+</style>
+</head>
+<body>
+
+<h1>Softpool + Expert Cache + L4 Skip-Load + V1/V2 整合開發白皮書</h1>
+
+<p class="meta">
+  作者: CGC devserver team &nbsp;|&nbsp; 日期: 2026-09-05 &nbsp;|&nbsp; 版本: v1.0<br>
+  適用對象: Expert Cache 維護者 / Performance 工程師 / 品質守護閘 owner<br>
+  配套文件: <a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_SOFTPOOL_WHITE_PAPER_2026-09-05.html">CGC_EXPERT_CACHE_SOFTPOOL_WHITE_PAPER</a> · <a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_INVARIANTS_v1.md">INVARIANTS_v1</a> · <a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_HYBRID_DESIGN_2026-09-05.html">HYBRID_DESIGN</a>
+</p>
+
+<div class="callout callout-ok">
+  <strong>TL;DR</strong>: 本文件聚焦「Softpool + Expert Cache + L4 skip-load + V1/V2」四個子系統的<em>整合邊界</em>與<em>共同演化路徑</em>,不重述單一子系統的內部細節(那些在配套文件)。讀者應該已經理解 Softpool 三層分級、Expert Cache Hybrid slot table、MTP N-gram 接受率等基礎概念。
+</div>
+
+<div class="toc">
+<h2>目錄</h2>
+<ol>
+  <li><a href="#s1">1. 整合目標與設計哲學</a></li>
+  <li><a href="#s2">2. Softpool 三層架構: L0/L1/L2 動態可縮</a></li>
+  <li><a href="#s3">3. Expert Cache 與 Softpool 對接: Hybrid Slot Table</a></li>
+  <li><a href="#s4">4. L4 Skip-Load Gate: Metal Fast Path 的精準切片</a></li>
+  <li><a href="#s5">5. V1 Hash + V2 Logits Oracle 整合守護鏈</a></li>
+  <li><a href="#s6">6. Env Vars 總覽與默認行為矩陣</a></li>
+  <li><a href="#s7">7. 整合驗證: A/B 對照實驗設計</a></li>
+  <li><a href="#s8">8. 已知邊界與後續 Roadmap</a></li>
+</ol>
+</div>
+
+<h2 id="s1">1. 整合目標與設計哲學</h2>
+
+<h3>1.1 為什麼需要「整合」白皮書</h3>
+
+<p>Softpool、Expert Cache、L4 skip-load、V1/V2 是四個獨立的子系統,但在 16GB Mac 的 Metal MTP 部署中,它們必須<em>作為一個整體</em>共同工作才能達到 25+ t/s。單獨優化任一子系統都不夠——例如:</p>
+
+<ul>
+  <li>Softpool 動態可縮,但如果 Expert Cache 仍然寫死 256 expert 對映,池容量變化就會被忽略</li>
+  <li>L4 skip-load gate 預設 OFF,但若 Expert Cache 沒走 Metal fast path,skip-load 也無從談起</li>
+  <li>V1 hash 守護 pool-fill bit-correctness,但若 L4 採用 zero-copy sub-buffer,sub-buffer alias 邊界就需要 V3 介入</li>
+</ul>
+
+<p>本白皮書的目的,就是把這四個子系統的<strong>整合邊界</strong>(contract)、<strong>共同演化路徑</strong>(evolution)、<strong>預設行為矩陣</strong>(defaults)寫死,避免任何單獨改動破壞整體契約。</p>
+
+<h3>1.2 設計哲學: 「解耦 + 契約 + 預設 OFF」</h3>
+
+<p>整合的三大原則:</p>
+
+<ol>
+  <li><strong>解耦</strong>: Softpool 不知道 Expert Cache 存在,Expert Cache 不知道 L4 skip-load 存在,各自獨立可測</li>
+  <li><strong>契約</strong>: 子系統之間透過 env var + 結構性欄位(不是 function call)耦合,契約寫進 <a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_INVARIANTS_v1.md">INVARIANTS_v1.md</a> §5 13 條不變量</li>
+  <li><strong>預設 OFF</strong>: 所有 gate(V1 verify / V2 oracle / V3 alias check / L4 skip-load)預設關閉,不影響原有功能;只在 CI 與 on-demand A/B 測試中打開</li>
+</ol>
+
+<h2 id="s2">2. Softpool 三層架構: L0/L1/L2 動態可縮</h2>
+
+<h3>2.1 三層定義</h3>
+
+<p>Softpool 把傳統的單一「Expert Cache Pool」拆成三層,各層獨立配置:</p>
+
+<table>
+  <thead>
+    <tr><th>層級</th><th>用途</th><th>預設容量</th><th>縮放策略</th><th>對應欄位</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>L0 (hot)</strong></td>
+      <td>當前 batch 命中的 expert</td>
+      <td>8 experts / layer</td>
+      <td>剛性 — 必須容納 top-8 routing</td>
+      <td><code>expert_cache_l0_capacity</code></td>
+    </tr>
+    <tr>
+      <td><strong>L1 (warm)</strong></td>
+      <td>近期 N 個 token 命中的 expert</td>
+      <td>32 experts / layer</td>
+      <td>LRU 動態 — Soft shrink</td>
+      <td><code>expert_cache_l1_capacity</code></td>
+    </tr>
+    <tr>
+      <td><strong>L2 (cold)</strong></td>
+      <td>mmap-backed 持久層</td>
+      <td>全 256 experts</td>
+      <td>剛性 — GGUF 預讀 + mmap</td>
+      <td><code>expert_cache_bytes</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>2.2 為什麼要拆成三層</h3>
+
+<p>單層 Expert Cache 的問題是<strong>容量剛性</strong>:</p>
+
+<ul>
+  <li>256 expert × 60 layer × ~10 MB/expert ≈ 14 GB — 在 16GB Mac 上 OOM 風險高</li>
+  <li>熱點集中: 統計上 top-8 expert 佔 80%+ 訪問,但單層架構仍然全量分配</li>
+  <li>GC 顆粒度大: 一個 expert evict 觸發整層掃描,decode 階段卡頓明顯</li>
+</ul>
+
+<p>Softpool 三層把這些問題分散到不同時間尺度:</p>
+
+<div class="mermaid">
+<pre class="mermaid">
+graph LR
+  A[Token arrive] --> B[Top-k routing]
+  B --> C{L0 hit?}
+  C -- Yes --> Z[~0 us]
+  C -- No --> D{L1 hit?}
+  D -- Yes --> E[Promote to L0<br/>~5 us LRU update]
+  D -- No --> F[L2 mmap read<br/>~200 us]
+  F --> G[Promote to L1<br/>evict cold L1 entry]
+  E --> H[Metal FFN read]
+  G --> H
+  Z --> H
+</pre>
+</div>
+
+<p>關鍵設計: L0/L1 都是 <em>Metal-resident</em>(共享 GPU pool 容量),L2 是 <em>mmap-backed</em>(按需 pread)。Metal pool 容量是 <code>expert_cache_l0_capacity + expert_cache_l1_capacity</code> 的總和,透過 env var <code>CGC_SOFT_POOL_L0</code> / <code>CGC_SOFT_POOL_L1</code> 動態調整。</p>
+
+<h3>2.3 環境變數</h3>
+
+<pre><code># L0 容量(剛性,必須容納 top-k routing 全部命中)
+CGC_SOFT_POOL_L0=8          # 預設 8 experts / layer
+
+# L1 容量(可縮,LRU 動態,範圍 [16, 64])
+CGC_SOFT_POOL_L1=32         # 預設 32 experts / layer
+
+# Softpool 整體開關
+CGC_SOFT_POOL=1             # 預設 ON,所有 hook 走 Softpool 路徑
+CGC_SOFT_POOL=0             # 完全關閉,退回單層 Expert Cache
+</code></pre>
+
+<div class="callout callout-warn">
+  <strong>注意</strong>: 設 <code>CGC_SOFT_POOL_L1=0</code> 等同於關閉 L1 層,所有 warm miss 會直接落到 L2 mmap,decode 速度會掉到 14-18 t/s 區間。建議保持 ≥16。
+</div>
+
+<h2 id="s3">3. Expert Cache 與 Softpool 對接: Hybrid Slot Table</h2>
+
+<h3>3.1 為什麼 Expert Cache 不能直接寫死 256 expert</h3>
+
+<p>dev branch 的 <code>commit b23fb515e</code> 嘗試零拷貝優化,把 expert tensor 直接指向 Expert Cache 池。但這有兩個問題:</p>
+
+<ol>
+  <li><strong>Tensor 形狀硬縮</strong>: 256 expert 是 GGUF 定義,一旦縮到 32,後續 MUL_MAT_ID kernel 會 OOB</li>
+  <li><strong>Slot table 互斥</strong>: Softpool 的 LRU 動態 slot 跟 256 expert 固定 slot 互相覆蓋,造成混亂</li>
+</ol>
+
+<p>Hybrid Slot Table 的解法是<strong>解耦 Tensor 形狀、Pool 容量、Slot table</strong>:</p>
+
+<ul>
+  <li><strong>Tensor 形狀</strong>: 仍為 256 expert(來自 GGUF),不可縮</li>
+  <li><strong>Pool 容量</strong>: 由 Softpool 動態決定(預設 L0+L1 = 40 experts)</li>
+  <li><strong>Slot table</strong>: 256 entry 的稀疏表,entry[i] = {layer, kind, byte_offset, lru_ts} — entry 為 0 表示「不在池中」</li>
+</ul>
+
+<h3>3.2 Hybrid Slot Table 資料結構</h3>
+
+<pre><code>// src/llama-expert-cache.h
+struct llama_expert_slot {
+    int32_t  expert_id;     // 0..255, GGUF 內部 ID
+    int32_t  layer;         // 0..59
+    int32_t  kind;          // 0=ffn_gate, 1=ffn_up, 2=ffn_down
+    int64_t  byte_offset;   // 在池中的 byte 位置
+    int64_t  lru_ts;        // LRU 時間戳(用於 Softpool L1 淘汰)
+    uint32_t hash;          // V1 verify 用的 SHA-256 摘要(8 bytes 截斷)
+};
+
+struct llama_expert_cache {
+    llama_expert_slot slots[60 * 256];  // 60 layer × 256 expert
+    uint8_t * pool;                     // 池本體,L0+L1 大小
+    int64_t  pool_bytes;                // 池 byte 容量
+    int64_t  used_bytes;                // 已用 byte
+    int32_t  l0_capacity;               // L0 experts / layer
+    int32_t  l1_capacity;               // L1 experts / layer
+};
+</code></pre>
+
+<h3>3.3 對接關鍵: adopt_pool_region</h3>
+
+<p>在 L4 Metal fast path 中,Expert Cache 透過 <code>llama_expert_cache_adopt_pool_region</code> 直接採用每個 expert tensor 的 Metal storage 作為該 layer 的 pool region(zero copy)。Metal FFN 從 pool 直接讀,無需先 pread 到 host memory 再 upload 到 GPU。</p>
+
+<pre><code>// src/llama.cpp
+if (model->expert_cache_pool_capacity > 0) {
+    for (const auto &amp; ref : ml.l4_pool_tensors) {
+        if (ref.tensor == nullptr || ref.tensor-&gt;data == nullptr) continue;
+        llama_expert_cache_adopt_pool_region(model-&gt;expert_cache,
+            ref.layer, ref.kind, (const uint8_t *) ref.tensor-&gt;data,
+            (int64_t) model-&gt;expert_cache_pool_capacity, ref.expert_bytes);
+    }
+}
+</code></pre>
+
+<p>這裡 <code>ref.expert_bytes</code> 對應 Softpool 的 pool capacity,動態可縮。當 Softpool L1 因 LRU 縮小,會觸發 <code>llama_expert_cache_resize_pool</code>,把所有 entry 重新計算 byte_offset(但 Tensor 形狀仍為 256 expert,這是關鍵解耦點)。</p>
+
+<h2 id="s4">4. L4 Skip-Load Gate: Metal Fast Path 的精準切片</h2>
+
+<h3>4.1 設計動機</h3>
+
+<p>16GB Mac 的物理天花板是 16GB Unified Memory。Expert Cache 全量(256 expert × 60 layer × 10MB ≈ 14GB)會 OOM 整個系統,連 model weight + KV cache 都放不下。</p>
+
+<p>L4 skip-load 的策略是: <strong>放棄「先 load 全部 expert 再 cache」,改為「load 預算範圍內的 expert,其他走 mmap」</strong>。這需要在 loader 階段就決定哪些 expert 要實際 load tensor,哪些只記下 GGUF offset 留待 mmap。</p>
+
+<h3>4.2 Gate 邏輯: llama.cpp line 358-367</h3>
+
+<pre><code>// src/llama.cpp (line 358-367)
+// CGC: L4 skip-load gate — expert tensors stay on CPU (bounded residency). Same gate as
+// expert_cache_active below: -ngl&gt;0 only enables it with the explicit ALLOW_NGL override.
+const char * no_gather = getenv("LLAMA_EXPERT_CACHE_NOGATHER");
+ml.expert_cache_skip_load = (params.n_gpu_layers &lt;= 0 || getenv("LLAMA_EXPERT_CACHE_ALLOW_NGL")) &amp;&amp; !(no_gather &amp;&amp; no_gather[0]);
+model-&gt;expert_cache_skip_load = ml.expert_cache_skip_load;
+
+// CGC expert-cache L4: bounded Metal pool, only on the Metal path (-ngl &gt; 0 + ALLOW_NGL).
+ml.expert_cache_l4_skip_layer0 = getenv("LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0") != nullptr;
+const bool l4_path = params.n_gpu_layers &gt; 0 &amp;&amp; getenv("LLAMA_EXPERT_CACHE_ALLOW_NGL") &amp;&amp; !(no_gather &amp;&amp; no_gather[0]);
+if (l4_path) {
+    ml.compute_l4_pool_capacity();
+    model-&gt;expert_cache_pool_capacity = ml.expert_cache_pool_capacity;
+}
+</code></pre>
+
+<p>四個 env var 控制 L4 path:</p>
+
+<table>
+  <thead>
+    <tr><th>Env Var</th><th>作用</th><th>預設</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>LLAMA_EXPERT_CACHE_ALLOW_NGL</code></td>
+      <td>允許在 <code>-ngl &gt; 0</code> 時啟用 expert cache(預設只允許 <code>-ngl = 0</code>)</td>
+      <td><span class="badge badge-red">OFF</span></td>
+    </tr>
+    <tr>
+      <td><code>LLAMA_EXPERT_CACHE_NOGATHER</code></td>
+      <td>完全關閉 expert cache(包括 hook + gather)</td>
+      <td><span class="badge badge-red">OFF</span></td>
+    </tr>
+    <tr>
+      <td><code>LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0</code></td>
+      <td>L4 path 中額外跳過 layer 0 的 expert pool(只用 mmap)</td>
+      <td><span class="badge badge-red">OFF</span></td>
+    </tr>
+    <tr>
+      <td><code>LLAMA_EXPERT_CACHE_PIN_PROFILE</code></td>
+      <td>靜態 pin 一個 profile 檔,讓特定 expert 永久 resident</td>
+      <td><span class="badge badge-red">OFF</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>4.3 為什麼預設需要 ALLOW_NGL 顯式打開</h3>
+
+<p>在 production(-ngl = 99, 全 GPU)環境下啟用 Expert Cache 是<strong>雙刃劍</strong>:</p>
+
+<ul>
+  <li>好處: 把 expert tensor 從 host 拉到 Metal pool,FFN 計算 zero copy</li>
+  <li>風險: Metal pool 容量若算錯,會 OOM 整個 process,連 Q4 model weight 都救不回來</li>
+</ul>
+
+<p>預設 OFF + 顯式打開的設計哲學是<strong>「讓 production 配置主動承擔風險,而不是默認承擔」</strong>。A/B 對照實驗會用 <code>ALLOW_NGL=1</code> 確認效果後,才寫進 production script。</p>
+
+<h3>4.4 L4 Skip-Load 與 Softpool 的互動</h3>
+
+<p>L4 skip-load 決定<strong>哪些 expert tensor 會實際 load 到 memory</strong>,Softpool 決定<strong>loaded expert 在 Metal pool 中怎麼分層</strong>。兩者協同:</p>
+
+<ol>
+  <li>L4 skip-load 計算 pool capacity(透過 <code>compute_l4_pool_capacity</code> 掃 GGUF metadata)</li>
+  <li>Softpool 從 pool capacity 分配 L0(剛性) + L1(LRU 動態)</li>
+  <li>loader 把預算範圍內的 expert tensor 預讀到 pool,超過範圍的只記 GGUF offset</li>
+  <li>runtime 訪問超出預算的 expert 時,走 L2 mmap + promote 到 L1</li>
+</ol>
+
+<div class="mermaid">
+<pre class="mermaid">
+flowchart TB
+  A[compute_l4_pool_capacity] --> B[pool_capacity bytes]
+  B --> C[Softpool: L0 + L1 = pool_capacity]
+  C --> D{Loader 階段}
+  D -- expert in budget --> E[pread to Metal pool]
+  D -- expert over budget --> F[僅記 GGUF offset]
+  E --> G[Expert Cache init: adopt_pool_region]
+  F --> H[L2 mmap backed]
+  G --> I[Runtime: hit / promote / LRU]
+  H --> I
+</pre>
+</div>
+
+<h2 id="s5">5. V1 Hash + V2 Logits Oracle 整合守護鏈</h2>
+
+<h3>5.1 V1 vs V2 互補邊界</h3>
+
+<p>兩個守護機制覆蓋不同的失效面,不能互相替代:</p>
+
+<table>
+  <thead>
+    <tr><th>機制</th><th>守護邊界</th><th>能抓到</th><th>抓不到</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>V1 hash</strong></td>
+      <td>Pool-fill 階段: expert 進池時 byte 級驗證</td>
+      <td>loader 寫入錯誤 / GGUF 損壞 / Tensor 排列錯誤</td>
+      <td>runtime aliasing / Metal buffer 重疊</td>
+    </tr>
+    <tr>
+      <td><strong>V2 logits oracle</strong></td>
+      <td>端到端: 整個 forward pass 的 logits 跟 reference 對</td>
+      <td>任何引入 logits 偏差的 bug(包含 aliasing)</td>
+      <td>性能退化 / 邊界 case 不一致</td>
+    </tr>
+    <tr>
+      <td><strong>V3 sub-buffer alias</strong>(設計階段)</td>
+      <td>Metal <code>subBufferWithOffset:length:</code> 視圖層</td>
+      <td>V1 漏掉的 runtime aliasing</td>
+      <td>(不適用 — V3 設計在 V1/V2 之間)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>5.2 V1 Pool-fill Hash Verify</h3>
+
+<p>在 <code>llama-expert-cache.cpp</code> 的 <code>cgc_exact_cache_verify_post_fill</code> 中,每個 expert 進池後立刻算 SHA-256(8 bytes 截斷),存入 slot.hash。對照組是直接從 GGUF 讀取的 expert bytes 算同樣 hash。差異即代表 cache 與 GGUF 不一致。</p>
+
+<pre><code>// src/llama-expert-cache.cpp
+void cgc_exact_cache_verify_post_fill(llama_expert_cache * cache, int layer, int expert_id) {
+    if (getenv("CGC_EXACT_CACHE_VERIFY") == nullptr) return;  // 預設 OFF
+    const uint8_t * gguf_bytes = load_gguf_expert_raw(layer, expert_id);
+    const uint8_t * pool_bytes = cache-&gt;slots[layer * 256 + expert_id].data;
+    uint32_t gguf_hash = sha256_8(gguf_bytes, expert_bytes);
+    uint32_t pool_hash = sha256_8(pool_bytes, expert_bytes);
+    if (gguf_hash != pool_hash) {
+        LLAMA_LOG_ERROR("CGC V1 FAIL: layer=%d expert=%d gguf_hash=%08x pool_hash=%08x\n",
+            layer, expert_id, gguf_hash, pool_hash);
+    }
+}
+</code></pre>
+
+<p>預設 OFF 是因為 SHA-256 計算在 14GB 全 cache 場景下要 ~200ms,會把 baseline 速度從 25 t/s 拖到 18 t/s。只在 CI / on-demand A/B 中打開。</p>
+
+<h3>5.3 V2 Logits Oracle (FNV-1a 64-bit)</h3>
+
+<p>V2 透過 <code>cgc_logits_oracle_dump</code> 把 forward pass 的 logits 雜湊成 FNV-1a 64-bit,寫進 JSONL:</p>
+
+<pre><code>// src/llama-context.cpp
+void cgc_logits_oracle_dump(llama_context * ctx, int n_tokens) {
+    if (getenv("CGC_LOGITS_ORACLE_DUMP") == nullptr) return;  // 預設 OFF
+    const float * logits = llama_get_logits(ctx);
+    uint64_t h = 0xcbf29ce484222325ULL;  // FNV-1a offset basis
+    for (int i = 0; i &lt; n_tokens * n_vocab; i++) {
+        h ^= *(uint32_t *)&amp;logits[i];
+        h *= 0x100000001b3ULL;  // FNV prime
+    }
+    FILE * f = fopen(getenv("CGC_LOGITS_ORACLE_DUMP"), "a");
+    fprintf(f, "{\"prompt_hash\":\"%s\",\"logits_h\":\"%016llx\",\"n\":%d}\n",
+        current_prompt_hash(), h, n_tokens);
+    fclose(f);
+}
+</code></pre>
+
+<p>A/B 對照: 同一 prompt,Softpool ON vs OFF,兩份 JSONL 用 <code>cgc_logits_oracle_compare.py</code> 比對,所有 logit hash 都必須相同。</p>
+
+<h3>5.4 V1+V2 整合守護鏈的「覆蓋率」</h3>
+
+<div class="mermaid">
+<pre class="mermaid">
+graph TB
+  A[GGUF bytes] -->|load| B[Tensor in memory]
+  B -->|adopt_pool_region| C[Pool slot]
+  C -->|V1 hash| D{bit-equal?}
+  D -- No --> E[FAIL: cache corrupted]
+  D -- Yes --> F[FFN read]
+  F -->|forward pass| G[Logits]
+  G -->|V2 oracle| H{hash equal?}
+  H -- No --> I[FAIL: logit drift]
+  H -- Yes --> J[OK]
+
+  K[Metal sub-buffer] -.->|V3 design| F
+  K -->|alias risk| L[V1/V2 blind spot]
+  L -.->|V3 needed| M[未來實作]
+</pre>
+</div>
+
+<h2 id="s6">6. Env Vars 總覽與默認行為矩陣</h2>
+
+<table>
+  <thead>
+    <tr><th>Env Var</th><th>預設</th><th>影響子系統</th><th>影響效能</th><th>用途</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>LLAMA_EXPERT_CACHE_ALLOW_NGL</code></td>
+      <td><span class="badge badge-red">OFF</span></td>
+      <td>Expert Cache + L4</td>
+      <td>ON: +30% t/s, OFF: baseline</td>
+      <td>允許 ngl&gt;0 啟用 expert cache</td>
+    </tr>
+    <tr>
+      <td><code>LLAMA_EXPERT_CACHE_NOGATHER</code></td>
+      <td><span class="badge badge-red">OFF</span></td>
+      <td>Expert Cache</td>
+      <td>OFF (gather on) / ON (完全關閉)</td>
+      <td>完全關閉 expert cache(debug)</td>
+    </tr>
+    <tr>
+      <td><code>LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0</code></td>
+      <td><span class="badge badge-red">OFF</span></td>
+      <td>L4 skip-load</td>
+      <td>ON: 省 ~250MB, OFF: baseline</td>
+      <td>L4 中跳過 layer 0</td>
+    </tr>
+    <tr>
+      <td><code>LLAMA_EXPERT_CACHE_PIN_PROFILE</code></td>
+      <td><span class="badge badge-red">OFF</span></td>
+      <td>Expert Cache slot</td>
+      <td>影響 warmup latency</td>
+      <td>靜態 pin expert profile</td>
+    </tr>
+    <tr>
+      <td><code>CGC_SOFT_POOL</code></td>
+      <td><span class="badge badge-green">ON</span></td>
+      <td>Softpool</td>
+      <td>影響 LRU 行為</td>
+      <td>Softpool 整體開關</td>
+    </tr>
+    <tr>
+      <td><code>CGC_SOFT_POOL_L0</code></td>
+      <td>8</td>
+      <td>Softpool L0</td>
+      <td>影響 hot path 命中率</td>
+      <td>L0 容量(剛性)</td>
+    </tr>
+    <tr>
+      <td><code>CGC_SOFT_POOL_L1</code></td>
+      <td>32</td>
+      <td>Softpool L1</td>
+      <td>影響 warm miss → L2 mmap 比例</td>
+      <td>L1 容量(LRU)</td>
+    </tr>
+    <tr>
+      <td><code>CGC_EXACT_CACHE_VERIFY</code></td>
+      <td><span class="badge badge-red">OFF</span></td>
+      <td>V1 hash</td>
+      <td>ON: -30% t/s, OFF: zero cost</td>
+      <td>V1 pool-fill bit-correctness 守護</td>
+    </tr>
+    <tr>
+      <td><code>CGC_LOGITS_ORACLE_DUMP</code></td>
+      <td><span class="badge badge-red">OFF</span></td>
+      <td>V2 oracle</td>
+      <td>ON: -2% t/s, OFF: zero cost</td>
+      <td>V2 端到端 logit drift 守護</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-ok">
+  <strong>設計意圖</strong>: 效能影響為正的(Softpool L0/L1、ALLOW_NGL)預設 ON 或建議 ON;效能影響為負的(V1 hash、V2 oracle、V3 alias check)預設 OFF,只在 CI / A/B 中打開。這讓 baseline measurement 永遠是「zero cost zero overhead」的最高速度。
+</div>
+
+<h2 id="s7">7. 整合驗證: A/B 對照實驗設計</h2>
+
+<h3>7.1 5 組 A/B 對照</h3>
+
+<p>每組都跑 3 profile(qa-zh / longform-zh / coding),每 profile 3 trials,取中位數:</p>
+
+<table>
+  <thead>
+    <tr><th>組別</th><th>A 配置</th><th>B 配置</th><th>預期差異</th><th>守護機制</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1. Softpool ON vs OFF</td>
+      <td><code>CGC_SOFT_POOL=1 L0=8 L1=32</code></td>
+      <td><code>CGC_SOFT_POOL=0</code>(回 256 硬縮)</td>
+      <td>Softpool 應 +5-10%</td>
+      <td>V2 oracle 必須 logit-equal</td>
+    </tr>
+    <tr>
+      <td>2. L4 path ON vs OFF</td>
+      <td><code>ALLOW_NGL=1</code></td>
+      <td><code>ALLOW_NGL=0</code>(預設)</td>
+      <td>L4 應 +30%</td>
+      <td>V1 hash 必須 bit-equal</td>
+    </tr>
+    <tr>
+      <td>3. L4_SKIP_LAYER0 ON vs OFF</td>
+      <td><code>ALLOW_NGL=1 L4_SKIP_LAYER0=1</code></td>
+      <td><code>ALLOW_NGL=1 L4_SKIP_LAYER0=0</code></td>
+      <td>影響 memory 但 t/s 接近</td>
+      <td>V1 hash layer 0 應為 miss(預期)</td>
+    </tr>
+    <tr>
+      <td>4. PIN_PROFILE ON vs OFF</td>
+      <td><code>PIN_PROFILE=./top8.profile</code></td>
+      <td><code>PIN_PROFILE=</code>(unset)</td>
+      <td>影響 warmup latency</td>
+      <td>V1 hash pinned experts 必須 bit-equal</td>
+    </tr>
+    <tr>
+      <td>5. V1 hash ON vs OFF</td>
+      <td><code>CGC_EXACT_CACHE_VERIFY=1</code></td>
+      <td><code>CGC_EXACT_CACHE_VERIFY=0</code></td>
+      <td>V1 ON 應 -30% t/s(overhead)</td>
+      <td>V1 必須 PASS(0 fail)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>7.2 對照實驗守護鏈</h3>
+
+<div class="callout callout-ok">
+  <strong>守護鏈</strong>: A/B 對照不能只看 t/s 數字,必須搭配 V1/V2 一起跑,確認效能差異不是來自 bit-level 退化。
+</div>
+
+<ol>
+  <li>A 配置: 跑 3 profile × 3 trials,同時打開 V1+V2,記錄 logit hash + slot hash</li>
+  <li>B 配置: 同樣跑,記錄</li>
+  <li>比對:
+    <ul>
+      <li>V1: A 的 slot hash 必須 bit-equal B 的 slot hash(說明沒有 bit 變化)</li>
+      <li>V2: A 的 logit hash 必須 bit-equal B 的 logit hash(說明 forward 結果一致)</li>
+      <li>t/s: 差異 = 純效能差,不是 bit drift</li>
+    </ul>
+  </li>
+  <li>如果 V1/V2 出現不一致,即使 t/s 變好也視為退化(禁止合併)</li>
+</ol>
+
+<h2 id="s8">8. 已知邊界與後續 Roadmap</h2>
+
+<h3>8.1 已知邊界</h3>
+
+<ol>
+  <li><strong>V3 sub-buffer alias check 尚未實作</strong>: V1 + V2 已上線,V3 處於設計階段(見 <a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_SOFTPOOL_WHITE_PAPER_2026-09-05.html">CGC_EXPERT_CACHE_SOFTPOOL_WHITE_PAPER</a> §5.4)</li>
+  <li><strong>16GB Mac OOM 風險</strong>: L4 path 在 32GB+ 設備安全,16GB 設備仍可能 OOM,需透過 <code>LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0</code> + 調小 L0/L1 緩解</li>
+  <li><strong>16GB 物理天花板</strong>: 即便把所有 gate 開到最優,MTP 接受率 ~27.9% 是物理上限,decode 不可能超過 ~30 t/s</li>
+  <li><strong>profile dispatch 仍需改進</strong>: 目前 longform-zh 的 prefill 結尾 marker 偵測(v6 fix)仍有 ~5% 漏判</li>
+</ol>
+
+<h3>8.2 後續 Roadmap</h3>
+
+<table>
+  <thead>
+    <tr><th>項目</th><th>優先級</th><th>ETA</th><th>Owner</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>V3 sub-buffer alias check 實作(ggml-metal.metal 入口)</td>
+      <td><span class="badge badge-yellow">P1</span></td>
+      <td>Q4 2026</td>
+      <td>Performance team</td>
+    </tr>
+    <tr>
+      <td>Self-hosted macOS runner(CI 量產)</td>
+      <td><span class="badge badge-yellow">P1</span></td>
+      <td>Q4 2026</td>
+      <td>DevOps</td>
+    </tr>
+    <tr>
+      <td>Softpool L2 預熱策略(避免 cold start 抖動)</td>
+      <td><span class="badge badge-blue">P2</span></td>
+      <td>Q1 2027</td>
+      <td>Expert Cache team</td>
+    </tr>
+    <tr>
+      <td>多 profile 自動 dispatch(根據 prompt 內容自動選 L0/L1 容量)</td>
+      <td><span class="badge badge-blue">P2</span></td>
+      <td>Q1 2027</td>
+      <td>Routing team</td>
+    </tr>
+    <tr>
+      <td>§5 契約文件 v2(把 V3 也納入,並新增 6 條 Softpool 相關不變量)</td>
+      <td><span class="badge badge-purple">P3</span></td>
+      <td>Q2 2027</td>
+      <td>Doc team</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<div class="callout">
+  <strong>相關文件索引</strong>:
+  <ul>
+    <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_SOFTPOOL_WHITE_PAPER_2026-09-05.html">CGC_EXPERT_CACHE_SOFTPOOL_WHITE_PAPER_2026-09-05.html</a> — Softpool 內部細節 + V1/V2/V3 設計</li>
+    <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_HYBRID_DESIGN_2026-09-05.html">CGC_EXPERT_CACHE_HYBRID_DESIGN_2026-09-05.html</a> — Hybrid Slot Table + Soft Shrink Pool 取代 ne[2] 硬縮</li>
+    <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_INVARIANTS_v1.md">CGC_EXPERT_CACHE_INVARIANTS_v1.md</a> — §5 13 條不變量契約(機器可讀)</li>
+    <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_CHAT_TEMPLATE_PROFILES_2026-09-05.html">CGC_CHAT_TEMPLATE_PROFILES_2026-09-05.html</a> — 三場景 chat template 開發</li>
+  </ul>
+</div>
+
+<p class="meta">
+  版本: v1.0 · 最後更新: 2026-09-05 15:42 · 維護者: CGC devserver team<br>
+  配套 commit: <code>6170a897a</code> (V1/V2/v6/v7 整合) · <code>ae813ddfb</code> (V3 設計) · <code>2fff5f1ab</code> (CI+CONTRACT)
+</p>
+
+</body>
+</html>
