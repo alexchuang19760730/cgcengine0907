@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>CGC Expert Cache Commit Digest (2026-09-05)</title>
+<style>
+  body { font-family: -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif;
+         max-width: 1100px; margin: 24px auto; padding: 0 24px; line-height: 1.7;
+         color: #1a1a1a; background: #fafafa; }
+  h1 { color: #c0392b; border-bottom: 3px solid #c0392b; padding-bottom: 8px; }
+  h2 { color: #2c3e50; border-bottom: 1px solid #bdc3c7; padding-bottom: 4px; margin-top: 32px; }
+  h3 { color: #34495e; margin-top: 24px; }
+  code { background: #ecf0f1; padding: 2px 6px; border-radius: 3px; font-size: 0.95em; }
+  pre { background: #2c3e50; color: #ecf0f1; padding: 12px; border-radius: 6px; overflow-x: auto; }
+  .commit { background: #fff; border-left: 4px solid #3498db; padding: 12px 16px; margin: 16px 0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .commit.bad { border-left-color: #e74c3c; }
+  .commit.warn { border-left-color: #f39c12; }
+  .commit.good { border-left-color: #27ae60; }
+  .meta { color: #7f8c8d; font-size: 0.9em; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th, td { border: 1px solid #bdc3c7; padding: 8px 12px; text-align: left; }
+  th { background: #34495e; color: #fff; }
+  tr:nth-child(even) { background: #ecf0f1; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 0.85em;
+         font-weight: bold; color: #fff; }
+  .tag.red { background: #e74c3c; }
+  .tag.yellow { background: #f39c12; }
+  .tag.green { background: #27ae60; }
+  .tag.blue { background: #3498db; }
+  .summary-box { background: #fef9e7; border: 1px solid #f1c40f; padding: 12px 16px;
+                 border-radius: 4px; margin: 12px 0; }
+</style>
+</head>
+<body>
+
+<h1>CGC Expert Cache Commit Digest (2026-09-05)</h1>
+
+<p class="meta">
+  目的: 整理 <code>dev</code> branch 4 個 expert cache / MTP CLI 相關 commits 的核心改動、
+  問題、跟 devserver (HEAD <code>7bc67c31a</code>) 的相容性,作為 todo 22b 整合決策依據。
+  <br>
+  互補文件:
+  <a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_INTEGRATION_DIFF_2026-09-05.html">CGC_EXPERT_CACHE_INTEGRATION_DIFF_2026-09-05.html</a> (差異分析, 09e3ee94c)
+  /
+  <a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_HYBRID_DESIGN_2026-09-05.html">CGC_EXPERT_CACHE_HYBRID_DESIGN_2026-09-05.html</a> (Hybrid 設計, 180f161df)
+</p>
+
+<div class="summary-box">
+  <strong>核心結論先講 (4 commits 全貌):</strong>
+  <ol>
+    <li><span class="tag red">源頭</span> <code>b23fb515e</code> (2026-08-20) — L4 zero-copy Metal pool + ne[2] 硬縮 (256→87)。<strong>跟 devserver 動態 slot table 互斥</strong>,且違反 Exact Cache 原則。完全禁制 bulk-merge。</li>
+    <li><span class="tag yellow">修法 1</span> <code>522428cdc</code> (2026-09-05 00:41) — identity remap 修 0000 bug,但改走 CPU resident path (~3.4 t/s)。16GB Mac OOM 風險。</li>
+    <li><span class="tag yellow">修法 2</span> <code>1afedfa68</code> (2026-09-05 03:29) — resident passthrough 概念同 522428cdc,描述更完整。CPU bandwidth bound。</li>
+    <li><span class="tag green">低風險</span> <code>83c47b137</code> (2026-09-05 04:02) — 純 CLI -c flags 衝突修,跟 expert cache 邏輯無關。唯一可考慮整合。</li>
+  </ol>
+</div>
+
+<h2>1. Commit 時間線</h2>
+
+<table>
+  <tr><th>Commit</th><th>日期</th><th>類型</th><th>核心改動</th><th>跟 devserver 衝突</th></tr>
+  <tr>
+    <td><code>b23fb515e</code></td><td>2026-08-20</td>
+    <td><span class="tag red">源頭</span></td>
+    <td>L4 zero-copy pool + ne[2] 硬縮</td>
+    <td><span class="tag red">嚴重</span></td>
+  </tr>
+  <tr>
+    <td><code>522428cdc</code></td><td>2026-09-05 00:41</td>
+    <td><span class="tag yellow">修法 1</span></td>
+    <td>identity remap (CPU resident)</td>
+    <td><span class="tag yellow">中等</span></td>
+  </tr>
+  <tr>
+    <td><code>1afedfa68</code></td><td>2026-09-05 03:29</td>
+    <td><span class="tag yellow">修法 2</span></td>
+    <td>resident passthrough (CPU resident)</td>
+    <td><span class="tag yellow">中等</span></td>
+  </tr>
+  <tr>
+    <td><code>83c47b137</code></td><td>2026-09-05 04:02</td>
+    <td><span class="tag green">低風險</span></td>
+    <td>MTP CLI -c flags 衝突修</td>
+    <td><span class="tag green">低</span></td>
+  </tr>
+</table>
+
+<h2>2. b23fb515e — feat(expert-cache): L4 zero-copy Metal pool + CGC segmented async dispatch</h2>
+
+<div class="commit bad">
+  <p class="meta">2026-08-20 · <code>llama.cpp-master/...</code> · 改 6 檔案 +369 lines</p>
+
+  <h3>核心改動</h3>
+  <ul>
+    <li><strong>L4 bounded-residency (Metal zero-copy pool)</strong>:
+      <ul>
+        <li><code>llama-model-loader</code>: <code>compute_l4_pool_capacity</code> 掃 GGUF metadata,
+            <span style="color: #c0392b"><strong>shrink expert tensors ne[2] 到 bounded pool capacity</strong></span>
+            (256 → 87),存在 normal Metal buft 上,storage IS the pool region。</li>
+        <li>full expert count 保留給 L1 index,但 Tensor 形狀永久改變。</li>
+        <li><code>llama.cpp</code>: gate L4 path (<code>-ngl&gt;0 + ALLOW_NGL</code>),adopt 每個 expert
+            tensor 的 Metal storage 作為 per-layer pool region (zero copy)。</li>
+        <li><code>LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0</code>: blk.0 留 CPU (pool exclusion fix)。</li>
+      </ul>
+    </li>
+    <li><strong>CGC segmented async dispatch (ggml-backend)</strong>:
+      <ul>
+        <li><code>CGC_OA_ASYNC</code>: split Metal graphs at <code>ffn_moe_topk</code> nodes,
+            pipeline 一個 segment ahead (submit seg[i+1] before waiting seg[i])。</li>
+        <li>poll non-blocking completion via <code>ggml_metal_get_cgc_done</code>, fire
+            expert-cache hook on CPU path, GPU never drains。</li>
+        <li><code>ROUTER_CPU</code> pinning 保持 topk chain 在 CPU split → hook fires there
+            (hit rate 70%+, file_reads=0)。</li>
+      </ul>
+    </li>
+    <li><strong>Perf instrumentation</strong> (env-gated, zero default change):
+      <ul>
+        <li>simple.cpp <code>CGC_STEP_TIMING</code></li>
+        <li>llama-context.cpp <code>CGC_PHASE_TIMING</code></li>
+        <li>llama-sampler.cpp <code>CGC_SAMPLER_DBG</code></li>
+        <li>metal <code>CGC_METAL_DBG</code> / <code>CGC_TAIL_DBG</code></li>
+      </ul>
+    </li>
+  </ul>
+
+  <h3>為什麼跟 devserver 互斥</h3>
+  <ol>
+    <li><strong>違反 Exact Cache 原則</strong>: shrink Tensor ne[2] 永久改變模型形狀,
+        從 pool 讀出來的權重 byte 不等於直接從 GGUF 讀的 byte。</li>
+    <li><strong>跟 devserver 動態 slot table 互斥</strong>: devserver 假設 expert 數量
+        (256) 在所有 expert cache 操作期間保持不變,<code>mul_mat_id</code> 邏輯靠
+        ne[2]=256 來找 topk experts。硬縮後 <code>mul_mat_id</code> 找專家時
+        index 越界。</li>
+    <li><strong>16GB Mac OOM</strong>: 256 expert pool 需 12.5GB GPU memory, 16GB Mac
+        跑了 13GB model 後只剩 3GB → OOM。</li>
+    <li><strong>5.5 t/s CPU 瓶頸</strong>: 之前 bulk-merge 過此 commit,實際跑出 5.5 t/s
+        (CPU identity remap 走 <code>ggml_metal_get_cgc_done</code> polling 太慢)。</li>
+  </ol>
+
+  <h3>決策</h3>
+  <p><span class="tag red">禁制</span> 不單獨 cherry-pick、不 bulk-merge。Hybrid 方案 (180f161df)
+     走「soft pool env vars + 保留 Tensor 形狀」路線取代此 commit。</p>
+</div>
+
+<h2>3. 522428cdc — fix(expert-cache): identity remap for ngl=99 + embedded GGUF template</h2>
+
+<div class="commit warn">
+  <p class="meta">2026-09-05 00:41 · Author: alex_chuang</p>
+
+  <h3>Root cause (0000 bug)</h3>
+  <p>expert cache pool shrink ne[2] from 256 to 87 slots,但 model 仍有 256 experts。
+     當 gate route 到 expert &gt;= 87,map 到 slot 0 (zero weights) → uniform gate
+     logits → sequential IDs → garbage output。</p>
+
+  <h3>修法 (resident passthrough §7.3.5)</h3>
+  <ul>
+    <li>Model loader: 當 <code>expert_cache_skip_load=true</code> 時, expert tensors 留 CPU,
+        <code>ne[2]=256</code> (不 shrink)。Skip L4 pool capacity computation。</li>
+    <li>Graph build: 當 <code>skip_load=true</code> 時 skip FFN weight repointing 到 pool regions。</li>
+    <li>Eval hook: 強制 identity remap (real expert IDs 0..255),bypass pool path。
+        所有 41 layers 都得到 diverse gate routing。</li>
+  </ul>
+
+  <h3>Embedded GGUF template fix</h3>
+  <ul>
+    <li>Remove default <code>Nail-Qwen3.6-Minimal-Chat.jinja</code> template override</li>
+    <li>Remove default <code>--skip-chat-parsing</code> flag</li>
+    <li>Server uses GGUF-embedded ChatML template (<code>&lt;|im_start|&gt;/im_end</code>)</li>
+    <li>Code generation 修好</li>
+  </ul>
+
+  <h3>結果</h3>
+  <ul>
+    <li>Quality: ZH Q&amp;A ✅, Code ✅, Math ✅ (all expert IDs diverse at all layers)</li>
+    <li>Speed: <strong>~3.4 t/s (CPU bandwidth bound)</strong></li>
+    <li>16GB Mac: 需要 12.5GB 給 256-expert pool on GPU,OOM 風險</li>
+  </ul>
+
+  <h3>跟 devserver 衝突</h3>
+  <p>這個 commit 假設 <code>skip_load=true</code> 場景 (ngl=99 = 強制走 CPU path),
+     跟 devserver 預設 <code>ngl=99 + skip_load=0</code> (走 GPU pool path) 完全不同。
+     整合到 devserver 會把 26+ t/s 的 GPU path 打成 3-5 t/s 的 CPU path。</p>
+</div>
+
+<h2>4. 1afedfa68 — fix(expert-cache): resident passthrough for ngl=99 + embedded GGUF template</h2>
+
+<div class="commit warn">
+  <p class="meta">2026-09-05 03:29 · Author: alex_chuang</p>
+
+  <h3>跟 522428cdc 關係</h3>
+  <p>概念完全一致 (resident passthrough),但描述更完整,把 16GB Mac 限制明確寫出:</p>
+  <ul>
+    <li>Expert tensors 留 CPU with full <code>ne[2]=256</code></li>
+    <li>Identity remap (real expert IDs 0..255, no slot indirection)</li>
+    <li>Metal 從原始 full-size CPU tensor 透過 unified memory 讀</li>
+    <li>Quality correct at <strong>~3.4 t/s (CPU bandwidth bound)</strong></li>
+  </ul>
+
+  <h3>Test results (CLI ngl=99)</h3>
+  <ul>
+    <li>ZH QA: correct</li>
+    <li>Math: correct</li>
+    <li>Code: correct</li>
+    <li>Hit rate: 100%</li>
+  </ul>
+
+  <h3>Limitation (這個 commit 自己也承認)</h3>
+  <blockquote>16GB Mac cannot fit 256-expert pool on GPU (needs 12.5GB).</blockquote>
+
+  <h3>跟 522428cdc 差異</h3>
+  <p>幾乎是同一個 fix 的「更完整描述版」,實作應該相同 (或極相似)。可能 dev branch
+     經歷 522428cdc → 1afedfa68 的 rename + 補述流程。</p>
+</div>
+
+<h2>5. 83c47b137 — fix(mtp): resolve conflicting -c flags in MTP command line</h2>
+
+<div class="commit good">
+  <p class="meta">2026-09-05 04:02 · Author: alex_chuang</p>
+
+  <h3>Root cause</h3>
+  <p>當 MTP enabled, <code>MTP_ARG</code> 已包含 <code>-c $MTP_CTX (3072)</code>。
+     <code>CTX_ARG</code> 也傳 <code>-c $CTX (0 from default)</code>,造成兩個競爭的
+     <code>-c</code> flags。雖然第二個 <code>-c 3072</code> 會覆蓋 <code>-c 0</code>,
+     但這種混亂會在某些 configuration 造成 garbled output。</p>
+
+  <h3>修法</h3>
+  <p>當 MTP active 時 skip <code>CTX_ARG</code>,因為 <code>MTP_ARG</code> 已經處理
+     context size。</p>
+
+  <h3>跟 expert cache 無關</h3>
+  <p>純 CLI flag 處理,沒碰 expert cache / MTP model 邏輯。整合風險低。</p>
+
+  <h3>驗證</h3>
+  <ul>
+    <li>MTP + ngl=99 + denseIQ4X: correct output</li>
+    <li>Speed: ~2.7 t/s (CPU resident path on 16GB Mac)</li>
+    <li>Accept rate: 37.5%</li>
+    <li>Hit rate: 92.6%</li>
+  </ul>
+
+  <h3>決策</h3>
+  <p><span class="tag green">todo 22b 候選</span> 唯一可單獨整合的 commit。devserver 之前
+     cherry-pick + 立即 revert (因為同時把 binary dylib 一起帶進來 → hook 衝突 +
+     binary 版本 mismatch)。單純 source-level 整合風險低,但需要驗證 MTP CLI 不再衝突。</p>
+</div>
+
+<h2>6. 整合決策矩陣 (todo 22b)</h2>
+
+<table>
+  <tr><th>Commit</th><th>可單獨整合?</th><th>條件</th><th>預期效果</th></tr>
+  <tr>
+    <td><code>b23fb515e</code></td>
+    <td><span class="tag red">禁制</span></td>
+    <td>—</td>
+    <td>違反 Exact Cache + 跟 devserver 互斥,永遠不要 bulk-merge</td>
+  </tr>
+  <tr>
+    <td><code>522428cdc</code></td>
+    <td><span class="tag red">否</span></td>
+    <td>需要 Hybrid 方案先實作 (todo 28)</td>
+    <td>Identity remap 在 ngl=99 強制走 CPU,犧牲 26+ t/s 換 5.5 t/s</td>
+  </tr>
+  <tr>
+    <td><code>1afedfa68</code></td>
+    <td><span class="tag red">否</span></td>
+    <td>同 522428cdc</td>
+    <td>同 522428cdc</td>
+  </tr>
+  <tr>
+    <td><code>83c47b137</code></td>
+    <td><span class="tag green">是</span></td>
+    <td>只 source-level cherry-pick,不帶 binary dylib</td>
+    <td>MTP CLI -c flags 衝突修 (語意正確性,跟速度無關)</td>
+  </tr>
+</table>
+
+<h2>7. 跟既有兩份文件的關係</h2>
+
+<ul>
+  <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_INTEGRATION_DIFF_2026-09-05.html">CGC_EXPERT_CACHE_INTEGRATION_DIFF_2026-09-05.html</a>
+      (todo 27 = 09e3ee94c): 差異分析,專注 3 個 cherry-pick 失敗原因。</li>
+  <li><a href="file:///Users/alexchuang/Documents/flashkv-devserver/docs/CGC_EXPERT_CACHE_HYBRID_DESIGN_2026-09-05.html">CGC_EXPERT_CACHE_HYBRID_DESIGN_2026-09-05.html</a>
+      (todo 28 = 180f161df): Hybrid Slot Table + Soft Shrink Pool 設計,取代
+      ne[2] 硬縮的核心方案。</li>
+  <li><strong>本文件 (todo 26)</strong>: 4 個 dev branch commits 的 digest + 整合決策矩陣。
+      補前兩份文件漏掉的 <code>b23fb515e</code> 源頭分析。</li>
+</ul>
+
+<h2>8. 下一步 (todo 22b 執行計畫)</h2>
+
+<ol>
+  <li><strong>83c47b137 cherry-pick</strong> (source-level only, 不帶 binary dylib):
+    <ul>
+      <li>驗證 MTP CLI 不再衝突 (跑 qa-zh / longform-zh / coding 三個 profile)</li>
+      <li>若速度不下降 → commit</li>
+      <li>若速度下降 → 撤回, 改文件標記「不可整合」</li>
+    </ul>
+  </li>
+  <li><strong>522428cdc / 1afedfa68</strong>: 留給 todo 28 (Hybrid Soft Pool) 實作後再評估。
+    Hybrid 方案完成後, identity remap 的「CPU 瓶頸」會被 GPU pool 取代,5.5 t/s → 25+ t/s。</li>
+  <li><strong>b23fb515e</strong>: 永遠禁制 bulk-merge。Hybrid 方案完全取代此 commit 的功能。</li>
+</ol>
+
+</body>
+</html>
