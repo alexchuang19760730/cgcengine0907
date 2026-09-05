@@ -39,151 +39,6 @@ using json = nlohmann::ordered_json;
 
 constexpr int HTTP_POLLING_SECONDS = 1;
 
-namespace {
-struct cgc_server_split_kv_telemetry {
-    int64_t can_split_us = 0;
-    int64_t can_split_n = 0;
-    int64_t batch_gate_us = 0;
-    int64_t batch_gate_n = 0;
-    int64_t cache_reuse_us = 0;
-    int64_t cache_reuse_n = 0;
-    int64_t checkpoint_restore_us = 0;
-    int64_t checkpoint_restore_n = 0;
-    int64_t kv_cleanup_us = 0;
-    int64_t kv_cleanup_n = 0;
-};
-
-static cgc_server_split_kv_telemetry g_cgc_server_split_kv_telemetry;
-
-struct cgc_server_core_telemetry {
-    int64_t pre_decode_us = 0;
-    int64_t pre_decode_n = 0;
-    int64_t pre_ctx_shift_us = 0;
-    int64_t pre_gen_spec_prep_us = 0;
-    int64_t pre_spec_draft_post_us = 0;
-    int64_t pre_spec_draft_us = 0;
-    int64_t pre_spec_drafting_iter_us = 0;
-    int64_t pre_spec_handle_last_us = 0;
-    int64_t pre_prompt_setup_us = 0;
-    int64_t pre_prompt_fill_us = 0;
-    int64_t batch_render_us = 0;
-    int64_t batch_render_n = 0;
-    int64_t spec_logits_cache_us = 0;
-    int64_t spec_logits_cache_n = 0;
-    int64_t spec_verify_accept_us = 0;
-    int64_t spec_verify_accept_n = 0;
-    int64_t output_extract_us = 0;
-    int64_t output_extract_n = 0;
-    int64_t spec_output_extract_us = 0;
-    int64_t spec_output_extract_n = 0;
-};
-
-static cgc_server_core_telemetry g_cgc_server_core_telemetry;
-
-static inline bool cgc_server_split_kv_timing_enabled() {
-    return std::getenv("CGC_SERVER_SPLIT_KV_TIMING") != nullptr;
-}
-
-static inline bool cgc_server_core_timing_enabled() {
-    return std::getenv("CGC_SERVER_CORE_TIMING") != nullptr;
-}
-
-static void cgc_server_split_kv_print_if_needed() {
-    if (!cgc_server_split_kv_timing_enabled()) {
-        return;
-    }
-
-    const int64_t n = std::max<int64_t>({
-        g_cgc_server_split_kv_telemetry.can_split_n,
-        g_cgc_server_split_kv_telemetry.batch_gate_n,
-        g_cgc_server_split_kv_telemetry.cache_reuse_n,
-        g_cgc_server_split_kv_telemetry.checkpoint_restore_n,
-        g_cgc_server_split_kv_telemetry.kv_cleanup_n,
-    });
-
-    const bool should_print =
-        n <= 8 ||
-        (g_cgc_server_split_kv_telemetry.can_split_n > 0 && g_cgc_server_split_kv_telemetry.can_split_n % 32 == 0) ||
-        (g_cgc_server_split_kv_telemetry.batch_gate_n > 0 && g_cgc_server_split_kv_telemetry.batch_gate_n % 32 == 0) ||
-        (g_cgc_server_split_kv_telemetry.cache_reuse_n > 0 && g_cgc_server_split_kv_telemetry.cache_reuse_n % 32 == 0) ||
-        (g_cgc_server_split_kv_telemetry.checkpoint_restore_n > 0 && g_cgc_server_split_kv_telemetry.checkpoint_restore_n % 32 == 0) ||
-        (g_cgc_server_split_kv_telemetry.kv_cleanup_n > 0 && g_cgc_server_split_kv_telemetry.kv_cleanup_n % 32 == 0);
-
-    if (n <= 0 || !should_print) {
-        return;
-    }
-
-    auto mean_ms = [](int64_t total_us, int64_t count) {
-        return count > 0 ? total_us / 1000.0 / count : 0.0;
-    };
-
-    fprintf(stderr,
-            "CGC-SERVER-SPLIT-KV: n=%lld can_split=%.3f batch_gate=%.3f cache_reuse=%.3f checkpoint_restore=%.3f kv_cleanup=%.3f ms\n",
-            (long long) n,
-            mean_ms(g_cgc_server_split_kv_telemetry.can_split_us, g_cgc_server_split_kv_telemetry.can_split_n),
-            mean_ms(g_cgc_server_split_kv_telemetry.batch_gate_us, g_cgc_server_split_kv_telemetry.batch_gate_n),
-            mean_ms(g_cgc_server_split_kv_telemetry.cache_reuse_us, g_cgc_server_split_kv_telemetry.cache_reuse_n),
-            mean_ms(g_cgc_server_split_kv_telemetry.checkpoint_restore_us, g_cgc_server_split_kv_telemetry.checkpoint_restore_n),
-            mean_ms(g_cgc_server_split_kv_telemetry.kv_cleanup_us, g_cgc_server_split_kv_telemetry.kv_cleanup_n));
-}
-
-static void cgc_server_core_print_if_needed() {
-    if (!cgc_server_core_timing_enabled()) {
-        return;
-    }
-
-    const int64_t n = std::max<int64_t>({
-        g_cgc_server_core_telemetry.pre_decode_n,
-        g_cgc_server_core_telemetry.batch_render_n,
-        g_cgc_server_core_telemetry.spec_logits_cache_n,
-        g_cgc_server_core_telemetry.spec_verify_accept_n,
-        g_cgc_server_core_telemetry.output_extract_n,
-        g_cgc_server_core_telemetry.spec_output_extract_n,
-    });
-
-    const bool should_print =
-        n <= 8 ||
-        (g_cgc_server_core_telemetry.pre_decode_n > 0 && g_cgc_server_core_telemetry.pre_decode_n % 32 == 0) ||
-        (g_cgc_server_core_telemetry.batch_render_n > 0 && g_cgc_server_core_telemetry.batch_render_n % 32 == 0) ||
-        (g_cgc_server_core_telemetry.spec_logits_cache_n > 0 && g_cgc_server_core_telemetry.spec_logits_cache_n % 32 == 0) ||
-        (g_cgc_server_core_telemetry.spec_verify_accept_n > 0 && g_cgc_server_core_telemetry.spec_verify_accept_n % 32 == 0) ||
-        (g_cgc_server_core_telemetry.output_extract_n > 0 && g_cgc_server_core_telemetry.output_extract_n % 32 == 0) ||
-        (g_cgc_server_core_telemetry.spec_output_extract_n > 0 && g_cgc_server_core_telemetry.spec_output_extract_n % 32 == 0);
-
-    if (n <= 0 || !should_print) {
-        return;
-    }
-
-    auto mean_ms = [](int64_t total_us, int64_t count) {
-        return count > 0 ? total_us / 1000.0 / count : 0.0;
-    };
-
-    fprintf(stderr,
-            "CGC-SERVER-CORE: n=%lld pre_decode=%.3f batch_render=%.3f spec_logits_cache=%.3f spec_verify_accept=%.3f output_extract=%.3f spec_output_extract=%.3f ms\n",
-            (long long) n,
-            mean_ms(g_cgc_server_core_telemetry.pre_decode_us, g_cgc_server_core_telemetry.pre_decode_n),
-            mean_ms(g_cgc_server_core_telemetry.batch_render_us, g_cgc_server_core_telemetry.batch_render_n),
-            mean_ms(g_cgc_server_core_telemetry.spec_logits_cache_us, g_cgc_server_core_telemetry.spec_logits_cache_n),
-            mean_ms(g_cgc_server_core_telemetry.spec_verify_accept_us, g_cgc_server_core_telemetry.spec_verify_accept_n),
-            mean_ms(g_cgc_server_core_telemetry.output_extract_us, g_cgc_server_core_telemetry.output_extract_n),
-            mean_ms(g_cgc_server_core_telemetry.spec_output_extract_us, g_cgc_server_core_telemetry.spec_output_extract_n));
-    fprintf(stderr,
-            "CGC-PRE-DECODE-SPLIT: n=%lld context_shift=%.3f gen_spec_prep=%.3f spec_draft_post=%.3f prompt_setup=%.3f prompt_fill=%.3f ms\n",
-            (long long) g_cgc_server_core_telemetry.pre_decode_n,
-            mean_ms(g_cgc_server_core_telemetry.pre_ctx_shift_us, g_cgc_server_core_telemetry.pre_decode_n),
-            mean_ms(g_cgc_server_core_telemetry.pre_gen_spec_prep_us, g_cgc_server_core_telemetry.pre_decode_n),
-            mean_ms(g_cgc_server_core_telemetry.pre_spec_draft_post_us, g_cgc_server_core_telemetry.pre_decode_n),
-            mean_ms(g_cgc_server_core_telemetry.pre_prompt_setup_us, g_cgc_server_core_telemetry.pre_decode_n),
-            mean_ms(g_cgc_server_core_telemetry.pre_prompt_fill_us, g_cgc_server_core_telemetry.pre_decode_n));
-    fprintf(stderr,
-            "CGC-PRE-SPEC-DRAFT-POST-SPLIT: n=%lld draft=%.3f drafting_iter=%.3f handle_last=%.3f ms\n",
-            (long long) g_cgc_server_core_telemetry.pre_decode_n,
-            mean_ms(g_cgc_server_core_telemetry.pre_spec_draft_us, g_cgc_server_core_telemetry.pre_decode_n),
-            mean_ms(g_cgc_server_core_telemetry.pre_spec_drafting_iter_us, g_cgc_server_core_telemetry.pre_decode_n),
-            mean_ms(g_cgc_server_core_telemetry.pre_spec_handle_last_us, g_cgc_server_core_telemetry.pre_decode_n));
-}
-} // namespace
-
 static common_speculative_output_limits server_output_limits(const common_params & params) {
     if (params.embedding ||
             (params.pooling_type != LLAMA_POOLING_TYPE_UNSPECIFIED && params.pooling_type != LLAMA_POOLING_TYPE_NONE)) {
@@ -564,17 +419,10 @@ struct server_slot {
     // (MTP supports splitting — uses task->need_embd() not need_embd())
     bool can_split() const {
         GGML_ASSERT(task);
-        const bool cgc_timing = cgc_server_split_kv_timing_enabled();
-        const int64_t t0 = cgc_timing ? ggml_time_us() : 0;
-        const bool result =
+
+        return
             !task->need_embd() ||
             (llama_get_memory(ctx_tgt) && llama_pooling_type(ctx_tgt) == LLAMA_POOLING_TYPE_LAST);
-        if (cgc_timing) {
-            g_cgc_server_split_kv_telemetry.can_split_us += ggml_time_us() - t0;
-            g_cgc_server_split_kv_telemetry.can_split_n++;
-            cgc_server_split_kv_print_if_needed();
-        }
-        return result;
     }
 
     bool can_batch_with(server_slot & other_slot) const {
@@ -3051,21 +2899,8 @@ private:
 
         try {
             scoped_timer t(t_pre_decode, n_pre_decode);
-            const bool cgc_core_timing = cgc_server_core_timing_enabled();
-            const int64_t t_pre_0 = cgc_core_timing ? ggml_time_us() : 0;
             pre_decode();
-            if (cgc_core_timing) {
-                g_cgc_server_core_telemetry.pre_decode_us += ggml_time_us() - t_pre_0;
-                g_cgc_server_core_telemetry.pre_decode_n++;
-                cgc_server_core_print_if_needed();
-            }
-            const int64_t t_render_0 = cgc_core_timing ? ggml_time_us() : 0;
             batch.render();
-            if (cgc_core_timing) {
-                g_cgc_server_core_telemetry.batch_render_us += ggml_time_us() - t_render_0;
-                g_cgc_server_core_telemetry.batch_render_n++;
-                cgc_server_core_print_if_needed();
-            }
         } catch (const std::exception & e) {
             SRV_ERR("pre_decode() failed: %s\n", e.what());
             abort_all_slots("pre_decode() failed: " + std::string(e.what()));
@@ -3135,85 +2970,69 @@ private:
     }
 
     void pre_decode() {
-        const bool cgc_core_timing = cgc_server_core_timing_enabled();
-        int64_t cgc_pre_ctx_shift_us = 0;
-        int64_t cgc_pre_gen_spec_prep_us = 0;
-        int64_t cgc_pre_spec_draft_post_us = 0;
-        int64_t cgc_pre_spec_draft_us = 0;
-        int64_t cgc_pre_spec_drafting_iter_us = 0;
-        int64_t cgc_pre_spec_handle_last_us = 0;
-        int64_t cgc_pre_prompt_setup_us = 0;
-        int64_t cgc_pre_prompt_fill_us = 0;
-
         // apply context-shift if needed
         // TODO: simplify and improve
-        {
-            const int64_t t_ctx_shift_0 = cgc_core_timing ? ggml_time_us() : 0;
-            iterate(slots, [&](server_slot & slot) {
-                if (slot.state == SLOT_STATE_GENERATING && slot.prompt.n_tokens() + 1 >= slot.n_ctx) {
-                    if (!params_base.ctx_shift) {
-                        // this check is redundant (for good)
-                        // we should never get here, because generation should already stopped in process_token()
-                        send_error(slot, "context shift is disabled", ERROR_TYPE_SERVER);
-                        slot.release();
-                        return;
-                    }
-
-                    if (mctx) {
-                        // we should never reach this because params_base.ctx_shift is automatically disabled if mmproj is loaded
-                        // we don't support ctx_shift because an image chunk may contains multiple tokens
-                        GGML_ABORT("not supported by multimodal");
-                    }
-
-                    if (slot.task->is_parent() || slot.task->is_child()) {
-                        send_error(slot, "context shift cannot be used for shared prompt", ERROR_TYPE_SERVER);
-                        slot.release();
-                        return;
-                    }
-
-                    // Shift context
-                    int n_keep = slot.task->params.n_keep < 0 ? slot.task->n_tokens() : slot.task->params.n_keep;
-
-                    if (add_bos_token) {
-                        n_keep += 1;
-                    }
-
-                    n_keep = std::min(slot.n_ctx - 4, n_keep);
-
-                    const int n_left    = slot.prompt.n_tokens() - n_keep;
-                    int       n_discard = slot.task->params.n_discard ? slot.task->params.n_discard : (n_left / 2);
-
-                    // ref: https://github.com/ggml-org/llama.cpp/pull/24786
-                    n_discard = std::clamp(n_discard, 0, std::max(0, n_left - 1));
-
-                    SLT_WRN(slot, "slot context shift, n_keep = %d, n_left = %d, n_discard = %d\n", n_keep, n_left, n_discard);
-
-                    slot.mem.seq_rm (slot.id, n_keep            , n_keep + n_discard);
-                    slot.mem.seq_add(slot.id, n_keep + n_discard, slot.prompt.tokens.pos_next(), -n_discard);
-
-                    // add generated tokens to cache
-                    // ref: https://github.com/ggml-org/llama.cpp/pull/16818#discussion_r2473269481
-                    {
-                        GGML_ASSERT(!slot.prompt.tokens.has_mtmd);
-
-                        llama_tokens new_tokens = slot.prompt.tokens.get_tokens(); // copy
-                        for (size_t i = n_keep + n_discard; i < new_tokens.size(); i++) {
-                            new_tokens[i - n_discard] = new_tokens[i];
-                        }
-
-                        new_tokens.resize(slot.prompt.tokens.size() - n_discard);
-
-                        slot.prompt.clear();
-                        slot.prompt.tokens.insert(new_tokens);
-                    }
-
-                    slot.truncated = true;
+        iterate(slots, [&](server_slot & slot) {
+            if (slot.state == SLOT_STATE_GENERATING && slot.prompt.n_tokens() + 1 >= slot.n_ctx) {
+                if (!params_base.ctx_shift) {
+                    // this check is redundant (for good)
+                    // we should never get here, because generation should already stopped in process_token()
+                    send_error(slot, "context shift is disabled", ERROR_TYPE_SERVER);
+                    slot.release();
+                    return;
                 }
-            });
-            if (cgc_core_timing) {
-                cgc_pre_ctx_shift_us += ggml_time_us() - t_ctx_shift_0;
+
+                if (mctx) {
+                    // we should never reach this because params_base.ctx_shift is automatically disabled if mmproj is loaded
+                    // we don't support ctx_shift because an image chunk may contains multiple tokens
+                    GGML_ABORT("not supported by multimodal");
+                }
+
+                if (slot.task->is_parent() || slot.task->is_child()) {
+                    send_error(slot, "context shift cannot be used for shared prompt", ERROR_TYPE_SERVER);
+                    slot.release();
+                    return;
+                }
+
+                // Shift context
+                int n_keep = slot.task->params.n_keep < 0 ? slot.task->n_tokens() : slot.task->params.n_keep;
+
+                if (add_bos_token) {
+                    n_keep += 1;
+                }
+
+                n_keep = std::min(slot.n_ctx - 4, n_keep);
+
+                const int n_left    = slot.prompt.n_tokens() - n_keep;
+                int       n_discard = slot.task->params.n_discard ? slot.task->params.n_discard : (n_left / 2);
+
+                // ref: https://github.com/ggml-org/llama.cpp/pull/24786
+                n_discard = std::clamp(n_discard, 0, std::max(0, n_left - 1));
+
+                SLT_WRN(slot, "slot context shift, n_keep = %d, n_left = %d, n_discard = %d\n", n_keep, n_left, n_discard);
+
+                slot.mem.seq_rm (slot.id, n_keep            , n_keep + n_discard);
+                slot.mem.seq_add(slot.id, n_keep + n_discard, slot.prompt.tokens.pos_next(), -n_discard);
+
+                // add generated tokens to cache
+                // ref: https://github.com/ggml-org/llama.cpp/pull/16818#discussion_r2473269481
+                {
+                    GGML_ASSERT(!slot.prompt.tokens.has_mtmd);
+
+                    llama_tokens new_tokens = slot.prompt.tokens.get_tokens(); // copy
+                    for (size_t i = n_keep + n_discard; i < new_tokens.size(); i++) {
+                        new_tokens[i - n_discard] = new_tokens[i];
+                    }
+
+                    new_tokens.resize(slot.prompt.tokens.size() - n_discard);
+
+                    slot.prompt.clear();
+                    slot.prompt.tokens.insert(new_tokens);
+                }
+
+                slot.truncated = true;
             }
-        }
+        });
 
         // start populating the batch for this iteration
         batch.clear();
@@ -3224,145 +3043,123 @@ private:
         std::vector<server_slot *> generating;
         std::vector<server_slot *> drafting;
 
-        {
-            const int64_t t_gen_spec_prep_0 = cgc_core_timing ? ggml_time_us() : 0;
-            // determine which slots are generating and drafting
-            iterate(slots, [&](server_slot & slot) {
-                if (slot.state != SLOT_STATE_GENERATING) {
-                    return;
-                }
+        // determine which slots are generating and drafting
+        iterate(slots, [&](server_slot & slot) {
+            if (slot.state != SLOT_STATE_GENERATING) {
+                return;
+            }
 
-                // check if we can batch this slot with the previous one
-                if (!slot_batched) {
-                    slot_batched = &slot;
-                } else if (!slot_batched->can_batch_with(slot)) {
-                    return;
-                }
+            // check if we can batch this slot with the previous one
+            if (!slot_batched) {
+                slot_batched = &slot;
+            } else if (!slot_batched->can_batch_with(slot)) {
+                return;
+            }
 
-                generating.push_back(&slot);
+            generating.push_back(&slot);
 
-                if (spec) {
-                    common_speculative_get_draft_params(spec.get(), slot.id).drafting = false;
+            if (spec) {
+                common_speculative_get_draft_params(spec.get(), slot.id).drafting = false;
 
-                    const bool use_ckpt_tgt = ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
-                    const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+                const bool use_ckpt_tgt = ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+                const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
 
-                    const int n_draft_max = slot.get_n_draft_max();
+                const int n_draft_max = slot.get_n_draft_max();
 
-                    if (n_draft_max > 0) {
-                        GGML_ASSERT(slot.can_speculate());
+                if (n_draft_max > 0) {
+                    GGML_ASSERT(slot.can_speculate());
 
-                        if (!slot.spec_draft.empty()) {
-                            // we have a previous (partial) draft to reuse
-                            if (use_ckpt_tgt) {
-                                GGML_ASSERT(!slot.spec_ckpt.empty());
-                            }
-                        } else {
-                            GGML_ASSERT(slot.spec_i_batch.empty());
-
-                            slot.spec_ckpt.update_pos(
-                                    slot.prompt.n_tokens(),
-                                    llama_memory_seq_pos_min(llama_get_memory(ctx_tgt), slot.id),
-                                    llama_memory_seq_pos_max(llama_get_memory(ctx_tgt), slot.id));
-
-                            if (use_ckpt_dft) {
-                                slot.spec_ckpt.update_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-                            }
-
-                            slot.spec_prompt = slot.prompt.tokens.get_text_tokens();
-
-                            common_speculative_get_draft_params(spec.get(), slot.id) = {
-                                /* .drafting = */ true,
-                                /* .n_max    = */ n_draft_max,
-                                /* .n_past   = */ slot.prompt.n_tokens(),
-                                /* .id_last  = */ slot.sampled,
-                                /* .prompt   = */ &slot.spec_prompt,
-                                /* .result   = */ &slot.spec_draft,
-                            };
-
-                            drafting.push_back(&slot);
+                    if (!slot.spec_draft.empty()) {
+                        // we have a previous (partial) draft to reuse
+                        if (use_ckpt_tgt) {
+                            GGML_ASSERT(!slot.spec_ckpt.empty());
                         }
+                    } else {
+                        GGML_ASSERT(slot.spec_i_batch.empty());
+
+                        slot.spec_ckpt.update_pos(
+                                slot.prompt.n_tokens(),
+                                llama_memory_seq_pos_min(llama_get_memory(ctx_tgt), slot.id),
+                                llama_memory_seq_pos_max(llama_get_memory(ctx_tgt), slot.id));
+
+                        if (use_ckpt_dft) {
+                            slot.spec_ckpt.update_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                        }
+
+                        slot.spec_prompt = slot.prompt.tokens.get_text_tokens();
+
+                        common_speculative_get_draft_params(spec.get(), slot.id) = {
+                            /* .drafting = */ true,
+                            /* .n_max    = */ n_draft_max,
+                            /* .n_past   = */ slot.prompt.n_tokens(),
+                            /* .id_last  = */ slot.sampled,
+                            /* .prompt   = */ &slot.spec_prompt,
+                            /* .result   = */ &slot.spec_draft,
+                        };
+
+                        drafting.push_back(&slot);
                     }
                 }
-            });
-            if (cgc_core_timing) {
-                cgc_pre_gen_spec_prep_us += ggml_time_us() - t_gen_spec_prep_0;
             }
-        }
+        });
 
         // generate the actual drafts (if any)
         {
-            const int64_t t_spec_draft_post_0 = cgc_core_timing ? ggml_time_us() : 0;
-            const int64_t t_spec_draft_0 = cgc_core_timing ? ggml_time_us() : 0;
             common_speculative_draft(spec.get());
-            if (cgc_core_timing) {
-                cgc_pre_spec_draft_us += ggml_time_us() - t_spec_draft_0;
-            }
-
-            // make checkpoints if needed
-            const int64_t t_spec_drafting_iter_0 = cgc_core_timing ? ggml_time_us() : 0;
-            iterate(drafting, [&](server_slot & slot) {
-                auto & draft = slot.spec_draft;
-                auto & ckpt  = slot.spec_ckpt;
-
-                slot.n_draft_total += draft.size();
-
-                // TODO: avoid restoring the draft context and re-evaluating the drafted tokens when not needed [TAG_SPEC_AVOID_DRAFT_REEVAL]
-                const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
-
-                if (ctx_dft) {
-                    if (use_ckpt_dft) {
-                        ckpt.load_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-                    }
-
-                    if (!llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, ckpt.pos_max + 1, -1)) {
-                        GGML_ABORT("failed to remove sequence %d\n", slot.id);
-                    }
-                }
-
-                if (!draft.empty()) {
-                    const bool use_ckpt_tgt =
-                        ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
-                       (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && draft.size() > llama_n_rs_seq(ctx_tgt));
-
-                    const bool use_ckpt_dft =
-                       (ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && draft.size() > llama_n_rs_seq(ctx_dft));
-
-                    if (use_ckpt_tgt) {
-                        //const int64_t t_start = ggml_time_us();
-
-                        ckpt.update_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-
-                        //const int64_t t_total = ggml_time_us() - t_start;
-                        //printf("checkpoint total: %f ms\n", t_total / 1000.0);
-
-                        SLT_DBG(slot, "created speculative checkpoint (pos_min = %d, pos_max = %d, n_tokens = %d, size = %.3f MiB, draft = %.3f MiB)\n",
-                                ckpt.pos_min, ckpt.pos_max, slot.prompt.n_tokens(),
-                                (float) ckpt.size() / 1024 / 1024,
-                                (float) ckpt.data_dft.size() / 1024 / 1024);
-                    }
-
-                    if (use_ckpt_dft) {
-                        ckpt.update_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
-                    }
-                }
-            });
-            if (cgc_core_timing) {
-                cgc_pre_spec_drafting_iter_us += ggml_time_us() - t_spec_drafting_iter_0;
-            }
-
-            // update the batch with the sampled/drafted tokens
-            const int64_t t_spec_handle_last_0 = cgc_core_timing ? ggml_time_us() : 0;
-            iterate(generating, [&](server_slot & slot) {
-                slot.handle_last_sampled_token(batch);
-            });
-            if (cgc_core_timing) {
-                cgc_pre_spec_handle_last_us += ggml_time_us() - t_spec_handle_last_0;
-            }
-            if (cgc_core_timing) {
-                cgc_pre_spec_draft_post_us += ggml_time_us() - t_spec_draft_post_0;
-            }
         }
+
+        // make checkpoints if needed
+        iterate(drafting, [&](server_slot & slot) {
+            auto & draft = slot.spec_draft;
+            auto & ckpt  = slot.spec_ckpt;
+
+            slot.n_draft_total += draft.size();
+
+            // TODO: avoid restoring the draft context and re-evaluating the drafted tokens when not needed [TAG_SPEC_AVOID_DRAFT_REEVAL]
+            const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+
+            if (ctx_dft) {
+                if (use_ckpt_dft) {
+                    ckpt.load_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                }
+
+                if (!llama_memory_seq_rm(llama_get_memory(ctx_dft), slot.id, ckpt.pos_max + 1, -1)) {
+                    GGML_ABORT("failed to remove sequence %d\n", slot.id);
+                }
+            }
+
+            if (!draft.empty()) {
+                const bool use_ckpt_tgt =
+                    ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
+                   (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && draft.size() > llama_n_rs_seq(ctx_tgt));
+
+                const bool use_ckpt_dft =
+                   (ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && draft.size() > llama_n_rs_seq(ctx_dft));
+
+                if (use_ckpt_tgt) {
+                    //const int64_t t_start = ggml_time_us();
+
+                    ckpt.update_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+
+                    //const int64_t t_total = ggml_time_us() - t_start;
+                    //printf("checkpoint total: %f ms\n", t_total / 1000.0);
+
+                    SLT_DBG(slot, "created speculative checkpoint (pos_min = %d, pos_max = %d, n_tokens = %d, size = %.3f MiB, draft = %.3f MiB)\n",
+                            ckpt.pos_min, ckpt.pos_max, slot.prompt.n_tokens(),
+                            (float) ckpt.size() / 1024 / 1024,
+                            (float) ckpt.data_dft.size() / 1024 / 1024);
+                }
+
+                if (use_ckpt_dft) {
+                    ckpt.update_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                }
+            }
+        });
+
+        // update the batch with the sampled/drafted tokens
+        iterate(generating, [&](server_slot & slot) {
+            slot.handle_last_sampled_token(batch);
+        });
 
         // process in chunks of params.n_batch
         int32_t n_batch  = llama_n_batch(ctx_tgt);
@@ -3404,7 +3201,6 @@ private:
 
                     // TODO: maybe move branch to outside of this loop in the future
                     if (slot.state == SLOT_STATE_STARTED) {
-                        const int64_t t_prompt_setup_0 = cgc_core_timing ? ggml_time_us() : 0;
                         slot.t_start_process_prompt = ggml_time_us();
                         slot.t_start_generation = 0;
 
@@ -3436,9 +3232,6 @@ private:
                             slot.print_timings();
                             send_final_response(slot);
                             slot.release();
-                            if (cgc_core_timing) {
-                                cgc_pre_prompt_setup_us += ggml_time_us() - t_prompt_setup_0;
-                            }
 
                             return;
                         }
@@ -3447,9 +3240,6 @@ private:
                         if (slot.task->need_logits() && !llama_get_memory(ctx_tgt)) {
                             send_error(slot, "the current context does not logits computation. skipping", ERROR_TYPE_SERVER);
                             slot.release();
-                            if (cgc_core_timing) {
-                                cgc_pre_prompt_setup_us += ggml_time_us() - t_prompt_setup_0;
-                            }
                             return;
                         }
 
@@ -3462,9 +3252,6 @@ private:
                                                slot.task->n_tokens(), n_ubatch),
                                            ERROR_TYPE_SERVER);
                                 slot.release();
-                                if (cgc_core_timing) {
-                                    cgc_pre_prompt_setup_us += ggml_time_us() - t_prompt_setup_0;
-                                }
                                 return;
                             }
 
@@ -3476,9 +3263,6 @@ private:
                                         slot.task->n_tokens(), slot.n_ctx),
                                     ERROR_TYPE_EXCEED_CONTEXT_SIZE);
                                 slot.release();
-                                if (cgc_core_timing) {
-                                    cgc_pre_prompt_setup_us += ggml_time_us() - t_prompt_setup_0;
-                                }
                                 return;
                             }
                         } else {
@@ -3489,9 +3273,6 @@ private:
                                                          slot.task->n_tokens(), slot.n_ctx),
                                            ERROR_TYPE_EXCEED_CONTEXT_SIZE);
                                 slot.release();
-                                if (cgc_core_timing) {
-                                    cgc_pre_prompt_setup_us += ggml_time_us() - t_prompt_setup_0;
-                                }
                                 return;
                             }
 
@@ -3517,8 +3298,6 @@ private:
 
                                 // reuse chunks from the cached prompt by shifting their KV cache in the new position
                                 if (can_cache_reuse && n_cache_reuse > 0) {
-                                    const bool cgc_timing = cgc_server_split_kv_timing_enabled();
-                                    const int64_t t_cache_reuse_0 = cgc_timing ? ggml_time_us() : 0;
                                     GGML_ASSERT(!slot.prompt.tokens.has_mtmd);
 
                                     size_t head_c = n_past; // cache
@@ -3565,11 +3344,6 @@ private:
                                     }
 
                                     SLT_DBG(slot, "after context reuse, new n_past = %d\n", n_past);
-                                    if (cgc_timing) {
-                                        g_cgc_server_split_kv_telemetry.cache_reuse_us += ggml_time_us() - t_cache_reuse_0;
-                                        g_cgc_server_split_kv_telemetry.cache_reuse_n++;
-                                        cgc_server_split_kv_print_if_needed();
-                                    }
                                 }
                             } else {
                                 // if we don't cache the prompt, we have to remove all previous tokens
@@ -3653,8 +3427,6 @@ private:
                                     bool do_reset = it == slot.prompt.checkpoints.rend();
 
                                     if (!do_reset) {
-                                        const bool cgc_timing = cgc_server_split_kv_timing_enabled();
-                                        const int64_t t_ckpt_restore_0 = cgc_timing ? ggml_time_us() : 0;
                                         // restore the context checkpoint
                                         it->load_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
                                         it->load_dft(ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
@@ -3664,11 +3436,6 @@ private:
                                         pos_next = std::min(pos_next, std::max(it->pos_min + 1, it->pos_max));
                                         n_past   = std::min(slot.prompt.tokens.size_up_to_pos(pos_next), (size_t) it->n_tokens);
                                         SLT_TRC(slot, "restored context checkpoint (pos_min = %d, pos_max = %d, n_tokens = %" PRId64 ", n_past = %d, size = %.3f MiB)\n", it->pos_min, it->pos_max, it->n_tokens, n_past, (float) it->size() / 1024 / 1024);
-                                        if (cgc_timing) {
-                                            g_cgc_server_split_kv_telemetry.checkpoint_restore_us += ggml_time_us() - t_ckpt_restore_0;
-                                            g_cgc_server_split_kv_telemetry.checkpoint_restore_n++;
-                                            cgc_server_split_kv_print_if_needed();
-                                        }
                                     }
 
                                     if (do_reset) {
@@ -3704,16 +3471,7 @@ private:
                         slot.n_prompt_tokens_cache = n_past;
                         slot.n_prompt_tokens_processed = 0;
 
-                        {
-                            const bool cgc_timing = cgc_server_split_kv_timing_enabled();
-                            const int64_t t_kv_cleanup_0 = cgc_timing ? ggml_time_us() : 0;
-                            slot.prompt.tokens.keep_first(n_past);
-                            if (cgc_timing) {
-                                g_cgc_server_split_kv_telemetry.kv_cleanup_us += ggml_time_us() - t_kv_cleanup_0;
-                                g_cgc_server_split_kv_telemetry.kv_cleanup_n++;
-                                cgc_server_split_kv_print_if_needed();
-                            }
-                        }
+                        slot.prompt.tokens.keep_first(n_past);
 
                         // this is to signal the client that the request has started processing
                         if (slot.task->params.stream) {
@@ -3725,33 +3483,12 @@ private:
                                 send_partial_response(slot, {}, false, true);
                             }
                         }
-                        if (cgc_core_timing) {
-                            cgc_pre_prompt_setup_us += ggml_time_us() - t_prompt_setup_0;
-                        }
                     } // end of SLOT_STATE_STARTED
 
-                    const int64_t t_prompt_fill_0 = cgc_core_timing ? ggml_time_us() : 0;
-                    {
-                        const bool cgc_timing = cgc_server_split_kv_timing_enabled();
-                        const int64_t t_batch_gate_0 = cgc_timing ? ggml_time_us() : 0;
-                        if (!slot.can_split()) {
-                            // cannot fit the prompt in the current batch - will try next iter
-                            if (batch.size() + slot.task->n_tokens() > n_batch) {
-                                if (cgc_timing) {
-                                    g_cgc_server_split_kv_telemetry.batch_gate_us += ggml_time_us() - t_batch_gate_0;
-                                    g_cgc_server_split_kv_telemetry.batch_gate_n++;
-                                    cgc_server_split_kv_print_if_needed();
-                                }
-                                if (cgc_core_timing) {
-                                    cgc_pre_prompt_fill_us += ggml_time_us() - t_prompt_fill_0;
-                                }
-                                return;
-                            }
-                        }
-                        if (cgc_timing) {
-                            g_cgc_server_split_kv_telemetry.batch_gate_us += ggml_time_us() - t_batch_gate_0;
-                            g_cgc_server_split_kv_telemetry.batch_gate_n++;
-                            cgc_server_split_kv_print_if_needed();
+                    if (!slot.can_split()) {
+                        // cannot fit the prompt in the current batch - will try next iter
+                        if (batch.size() + slot.task->n_tokens() > n_batch) {
+                            return;
                         }
                     }
 
@@ -3764,16 +3501,7 @@ private:
 
                     SLT_TRC(slot, "cached n_tokens = %d, memory_seq_rm [%d, end)\n", slot.prompt.n_tokens(), p0);
 
-                    {
-                        const bool cgc_timing = cgc_server_split_kv_timing_enabled();
-                        const int64_t t_kv_cleanup_0 = cgc_timing ? ggml_time_us() : 0;
-                        slot.mem.seq_rm(slot.id, p0, -1);
-                        if (cgc_timing) {
-                            g_cgc_server_split_kv_telemetry.kv_cleanup_us += ggml_time_us() - t_kv_cleanup_0;
-                            g_cgc_server_split_kv_telemetry.kv_cleanup_n++;
-                            cgc_server_split_kv_print_if_needed();
-                        }
-                    }
+                    slot.mem.seq_rm(slot.id, p0, -1);
 
                     // If using an alora, there may be uncached tokens that come
                     // before the invocation sequence. When this happens, the
@@ -3823,9 +3551,6 @@ private:
                             SLT_ERR(slot, "failed to process image, res = %d\n", res);
                             send_error(slot, "failed to process image", ERROR_TYPE_SERVER);
                             slot.release();
-                            if (cgc_core_timing) {
-                                cgc_pre_prompt_fill_us += ggml_time_us() - t_prompt_fill_0;
-                            }
                             continue;
                         }
 
@@ -3957,25 +3682,12 @@ private:
                     if (do_checkpoint) {
                         create_checkpoint(slot, n_tokens_cur, pos_min, pos_max);
                     }
-                      if (cgc_core_timing) {
-                          cgc_pre_prompt_fill_us += ggml_time_us() - t_prompt_fill_0;
-                      }
                 }
 
                 if (!slot_batched) {
                     slot_batched = &slot;
                 }
             });
-        }
-        if (cgc_core_timing) {
-            g_cgc_server_core_telemetry.pre_ctx_shift_us += cgc_pre_ctx_shift_us;
-            g_cgc_server_core_telemetry.pre_gen_spec_prep_us += cgc_pre_gen_spec_prep_us;
-            g_cgc_server_core_telemetry.pre_spec_draft_post_us += cgc_pre_spec_draft_post_us;
-            g_cgc_server_core_telemetry.pre_spec_draft_us += cgc_pre_spec_draft_us;
-            g_cgc_server_core_telemetry.pre_spec_drafting_iter_us += cgc_pre_spec_drafting_iter_us;
-            g_cgc_server_core_telemetry.pre_spec_handle_last_us += cgc_pre_spec_handle_last_us;
-            g_cgc_server_core_telemetry.pre_prompt_setup_us += cgc_pre_prompt_setup_us;
-            g_cgc_server_core_telemetry.pre_prompt_fill_us += cgc_pre_prompt_fill_us;
         }
     }
 
@@ -4111,9 +3823,6 @@ private:
                 return;
             }
 
-            const bool cgc_core_timing = cgc_server_core_timing_enabled();
-            const int64_t t_spec_logits_0 = cgc_core_timing ? ggml_time_us() : 0;
-
             // lazy-allocate the cache on the first sub-batch of this speculative round
             if (slot.spec_logits_cache.size() != slot.spec_i_batch.size()) {
                 slot.spec_logits_cache.assign(slot.spec_i_batch.size(), {});
@@ -4136,12 +3845,6 @@ private:
                 }
                 slot.spec_logits_cache[i].assign(p, p + n_vocab);
                 slot.spec_logits_filled = i + 1;
-            }
-
-            if (cgc_core_timing) {
-                g_cgc_server_core_telemetry.spec_logits_cache_us += ggml_time_us() - t_spec_logits_0;
-                g_cgc_server_core_telemetry.spec_logits_cache_n++;
-                cgc_server_core_print_if_needed();
             }
         });
 
@@ -4223,9 +3926,6 @@ private:
 
             slot.t_token_generation = std::max<int64_t>(1, t_now - slot.t_start_generation) / 1e3;
 
-              const bool cgc_core_timing = cgc_server_core_timing_enabled();
-              const int64_t t_output_extract_0 = cgc_core_timing ? ggml_time_us() : 0;
-
             completion_token_output result;
             result.tok          = id;
             result.text_to_send = common_token_to_piece(slot.ctx_tgt, result.tok, accept_special_token(slot, result.tok));
@@ -4242,20 +3942,8 @@ private:
                 metrics.on_prediction(slot);
                 slot.release();
 
-                  if (cgc_core_timing) {
-                      g_cgc_server_core_telemetry.output_extract_us += ggml_time_us() - t_output_extract_0;
-                      g_cgc_server_core_telemetry.output_extract_n++;
-                      cgc_server_core_print_if_needed();
-                  }
-
                 return;
             }
-
-              if (cgc_core_timing) {
-                  g_cgc_server_core_telemetry.output_extract_us += ggml_time_us() - t_output_extract_0;
-                  g_cgc_server_core_telemetry.output_extract_n++;
-                  cgc_server_core_print_if_needed();
-              }
 
             slot.print_timings_tg();
         });
@@ -4281,8 +3969,6 @@ private:
             // verify and try to accept the draft
             {
                 common_sampler_ptr smpl_save(common_sampler_clone(slot.smpl.get()));
-                  const bool cgc_core_timing = cgc_server_core_timing_enabled();
-                  const int64_t t_spec_verify_0 = cgc_core_timing ? ggml_time_us() : 0;
 
                 GGML_ASSERT(slot.spec_i_batch.size() == n_draft + 1);
                 GGML_ASSERT(slot.spec_logits_cache.size() == slot.spec_i_batch.size());
@@ -4344,12 +4030,6 @@ private:
                 common_speculative_accept(spec.get(), slot.id, accepted.size() - 1);
 
                 slot.spec_draft = std::move(accepted);
-
-                  if (cgc_core_timing) {
-                      g_cgc_server_core_telemetry.spec_verify_accept_us += ggml_time_us() - t_spec_verify_0;
-                      g_cgc_server_core_telemetry.spec_verify_accept_n++;
-                      cgc_server_core_print_if_needed();
-                  }
             }
 
             const int64_t t_now = ggml_time_us();
@@ -4384,9 +4064,6 @@ private:
 
             slot.mem.seq_rm(slot.id, slot.prompt.tokens.pos_next(), -1);
 
-              const bool cgc_core_timing = cgc_server_core_timing_enabled();
-              const int64_t t_spec_output_extract_0 = cgc_core_timing ? ggml_time_us() : 0;
-
             for (size_t i = 0; i < ids.size(); ++i) {
                 completion_token_output result;
 
@@ -4404,21 +4081,9 @@ private:
                     metrics.on_prediction(slot);
                     slot.release();
 
-                      if (cgc_core_timing) {
-                          g_cgc_server_core_telemetry.spec_output_extract_us += ggml_time_us() - t_spec_output_extract_0;
-                          g_cgc_server_core_telemetry.spec_output_extract_n++;
-                          cgc_server_core_print_if_needed();
-                      }
-
                     return;
                 }
             }
-
-              if (cgc_core_timing) {
-                  g_cgc_server_core_telemetry.spec_output_extract_us += ggml_time_us() - t_spec_output_extract_0;
-                  g_cgc_server_core_telemetry.spec_output_extract_n++;
-                  cgc_server_core_print_if_needed();
-              }
 
             slot.print_timings_tg();
 

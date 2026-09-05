@@ -43,83 +43,6 @@ const std::map<std::string, common_speculative_type> common_speculative_type_fro
     {"ngram-cache",   COMMON_SPECULATIVE_TYPE_NGRAM_CACHE}
 };
 
-namespace {
-struct cgc_spec_draft_mtp_telemetry {
-    int64_t draft_assembly_us = 0;
-    int64_t draft_decode_us = 0;
-    int64_t draft_pick_writeback_us = 0;
-    int64_t draft_pick_sampler_us = 0;
-    int64_t draft_pick_embd_candidate_us = 0;
-    int64_t draft_pick_rebuild_batch_us = 0;
-    int64_t draft_n = 0;
-};
-
-struct cgc_env_override {
-    std::string key;
-    bool had_value = false;
-    std::string saved_value;
-
-    explicit cgc_env_override(const char * key_) : key(key_) {
-        const char * cur = std::getenv(key.c_str());
-        if (cur != nullptr) {
-            had_value = true;
-            saved_value = cur;
-        }
-    }
-
-    void unset() {
-        unsetenv(key.c_str());
-    }
-
-    void restore() {
-        if (had_value) {
-            setenv(key.c_str(), saved_value.c_str(), 1);
-        } else {
-            unsetenv(key.c_str());
-        }
-    }
-};
-
-static cgc_spec_draft_mtp_telemetry g_cgc_spec_draft_mtp_telemetry;
-
-static inline bool cgc_spec_draft_timing_enabled() {
-    return std::getenv("CGC_SPEC_DRAFT_TIMING") != nullptr;
-}
-
-static void cgc_spec_draft_mtp_print_if_needed() {
-    if (!cgc_spec_draft_timing_enabled()) {
-        return;
-    }
-
-    const int64_t n = g_cgc_spec_draft_mtp_telemetry.draft_n;
-    const bool should_print = n > 0 && (n <= 8 || n % 32 == 0);
-    if (!should_print) {
-        return;
-    }
-
-    auto mean_ms = [](int64_t total_us, int64_t count) {
-        return count > 0 ? total_us / 1000.0 / count : 0.0;
-    };
-
-    fprintf(stderr,
-            "CGC-SPEC-DRAFT-MTP-SPLIT: n=%lld assembly=%.3f decode=%.3f pick_writeback=%.3f ms\n",
-            (long long) n,
-            mean_ms(g_cgc_spec_draft_mtp_telemetry.draft_assembly_us, n),
-            mean_ms(g_cgc_spec_draft_mtp_telemetry.draft_decode_us, n),
-            mean_ms(g_cgc_spec_draft_mtp_telemetry.draft_pick_writeback_us, n));
-    fprintf(stderr,
-            "CGC-SPEC-DRAFT-MTP-PICK-SPLIT: n=%lld sampler=%.3f embd_candidate=%.3f rebuild_batch=%.3f ms\n",
-            (long long) n,
-            mean_ms(g_cgc_spec_draft_mtp_telemetry.draft_pick_sampler_us, n),
-            mean_ms(g_cgc_spec_draft_mtp_telemetry.draft_pick_embd_candidate_us, n),
-            mean_ms(g_cgc_spec_draft_mtp_telemetry.draft_pick_rebuild_batch_us, n));
-}
-
-static inline bool cgc_spec_draft_force_sync_enabled() {
-    return std::getenv("CGC_DRAFT_FORCE_SYNC") != nullptr;
-}
-} // namespace
-
 static std::string common_speculative_get_devices_str(const std::vector<ggml_backend_dev_t> & devices) {
     std::string result;
     for (size_t i = 0; i < devices.size(); i++) {
@@ -1688,254 +1611,180 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
     void draft(common_speculative_draft_params_vec & dparams) override {
         auto & ctx_dft = params.ctx_dft;
-        const bool cgc_spec_timing = cgc_spec_draft_timing_enabled();
-        int64_t cgc_draft_assembly_us = 0;
-        int64_t cgc_draft_decode_us = 0;
-        int64_t cgc_draft_pick_writeback_us = 0;
-        int64_t cgc_draft_pick_sampler_us = 0;
-        int64_t cgc_draft_pick_embd_candidate_us = 0;
-        int64_t cgc_draft_pick_rebuild_batch_us = 0;
 
-        {
-            const int64_t t_assembly_0 = cgc_spec_timing ? ggml_time_us() : 0;
-            common_batch_clear(batch);
+        common_batch_clear(batch);
 
-            // keep track of which sequences are still drafting
-            int n_drafting = 0;
-            std::vector<bool> drafting(n_seq);
+        // keep track of which sequences are still drafting
+        int n_drafting = 0;
+        std::vector<bool> drafting(n_seq);
 
-            const size_t row_bytes = (size_t) n_embd * sizeof(float);
+        const size_t row_bytes = (size_t) n_embd * sizeof(float);
 
-            for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
-                auto & dp = dparams[seq_id];
+        for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+            auto & dp = dparams[seq_id];
 
-                if (!dp.drafting) {
-                    continue;
-                }
-
-                n_drafting++;
-                drafting[seq_id] = true;
-                common_sampler_reset(smpls[seq_id].get());
-
-                common_batch_add(batch, dp.id_last, dp.n_past, { seq_id }, true);
-                std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd, pending_h[seq_id].data(), row_bytes);
-
-                i_last[seq_id] = batch.n_tokens - 1;
-
-                if (chain_heads) {
-                    chain_h[seq_id].assign(pending_h[seq_id].begin(), pending_h[seq_id].end());
-                }
+            if (!dp.drafting) {
+                continue;
             }
 
-    #ifdef MTP_SUPPORT
-            // [CGC MTP fix] non-shared: the previous process() catch-up wrote id_last's position;
-            // re-decoding it here would violate M-RoPE (Y <= X). Clear this round's region once.
-            if (!is_mem_shared) {
-                for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
-                    if (drafting[seq_id]) {
-                        llama_memory_seq_rm(llama_get_memory(ctx_dft), seq_id, dparams[seq_id].n_past, -1);
-                    }
-                }
-            }
-    #endif
-            if (cgc_spec_timing) {
-                cgc_draft_assembly_us += ggml_time_us() - t_assembly_0;
-            }
+            n_drafting++;
+            drafting[seq_id] = true;
+            common_sampler_reset(smpls[seq_id].get());
 
-            int i = 0;
+            common_batch_add(batch, dp.id_last, dp.n_past, { seq_id }, true);
+            std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd, pending_h[seq_id].data(), row_bytes);
 
-            while (n_drafting > 0) {
-                {
-                    const int64_t t_assembly_0 = cgc_spec_timing ? ggml_time_us() : 0;
-                    // each step decodes under a different head, i.e. a different decoder layer, and
-                    // KV is per layer. process() filled this layer's KV only for positions < n_past
-                    // (prompt + accepted prefix) — nothing in the draft region yet. so reset the
-                    // draft region (the seq_rm lower bound is n_past, leaving the prompt KV intact)
-                    // and select head i so it rebuilds its own layer's KV there; decoding just the
-                    // latest token would leave its attention reading cells only another head wrote.
-                    if (chain_heads) {
-                        auto * mem_dft = llama_get_memory(ctx_dft);
-                        for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
-                            if (drafting[seq_id]) {
-                                llama_memory_seq_rm(mem_dft, seq_id, dparams[seq_id].n_past, -1);
-                            }
-                        }
-                        llama_set_nextn_layer_offset(ctx_dft, i);
-                    }
-                    if (cgc_spec_timing) {
-                        cgc_draft_assembly_us += ggml_time_us() - t_assembly_0;
-                    }
-                }
-
-    #ifdef MTP_SUPPORT
-                if (getenv("CGC_MTP_DBG") && i == 0) {
-                    double nr = 0.0;
-                    for (int k = 0; k < n_embd; ++k) nr += (double) batch.embd[k]*batch.embd[k];
-                    fprintf(stderr, "MTPDBG draft step0: token=%d pos=%lld embd[0..3]=%.4f %.4f %.4f %.4f norm=%.3f n_batch=%d\n",
-                            batch.token[0], (long long) batch.pos[0], batch.embd[0], batch.embd[1], batch.embd[2], batch.embd[3], sqrt(nr), batch.n_tokens);
-                }
-    #endif
-                {
-                    const int64_t t_decode_0 = cgc_spec_timing ? ggml_time_us() : 0;
-                    cgc_env_override oa_async_override("CGC_OA_ASYNC");
-                    if (cgc_spec_draft_force_sync_enabled()) {
-                        oa_async_override.unset();
-                    }
-                    int ret = llama_decode(ctx_dft, batch);
-                    oa_async_override.restore();
-                    if (cgc_spec_timing) {
-                        cgc_draft_decode_us += ggml_time_us() - t_decode_0;
-                    }
-                    if (ret != 0) {
-                        SPC_ERR("llama_decode[%d] returned %d\n", i, ret);
-                        break;
-                    }
-                    common_sampler_note_draft_decode_return();
-                }
-
-                {
-                    const int64_t t_pick_0 = cgc_spec_timing ? ggml_time_us() : 0;
-                    // rebuild the batch for the next step: the growing-KV paths re-add only the
-                    // new token (the KV already holds the prefix), while chained heads re-add the
-                    // whole prefix at the next head. dropped sequences are simply not re-added.
-                    common_batch_clear(batch);
-
-                    for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
-                        if (!drafting[seq_id]) {
-                            continue;
-                        }
-
-                        auto * smpl = smpls[seq_id].get();
-
-                        {
-                            const int64_t t_sampler_0 = cgc_spec_timing ? ggml_time_us() : 0;
-                            common_sampler_set_draft_timing_active(true);
-                            common_sampler_sample(smpl, ctx_dft, i_last[seq_id], true);
-                            if (cgc_spec_timing) {
-                                cgc_draft_pick_sampler_us += ggml_time_us() - t_sampler_0;
-                            }
-                        }
-
-                        const float * h_row;
-                        decltype(common_sampler_get_candidates(smpl, true)) cur_p;
-                        {
-                            const int64_t t_embd_candidate_0 = cgc_spec_timing ? ggml_time_us() : 0;
-                            h_row = llama_get_embeddings_nextn_ith(ctx_dft, i_last[seq_id]);
-                            cur_p = common_sampler_get_candidates(smpl, true);
-                            common_sampler_set_draft_timing_active(false);
-                            if (cgc_spec_timing) {
-                                cgc_draft_pick_embd_candidate_us += ggml_time_us() - t_embd_candidate_0;
-                            }
-                        }
-
-                        for (int k = 0; k < std::min(3, (int) cur_p->size); ++k) {
-                            SPC_DBG(" - seq_id %d, draft candidate %3d, pos %3d: %6d (%8.3f) '%s'\n",
-                                    seq_id, k, i, cur_p->data[k].id, cur_p->data[k].p,
-                                    common_token_to_piece(ctx_dft, cur_p->data[k].id).c_str());
-                        }
-
-                        // add drafted token for each sequence
-                        const llama_token id = cur_p->data[0].id;
-
-    #ifdef MTP_SUPPORT
-                        if (getenv("CGC_MTP_DBG")) {
-                            fprintf(stderr, "MTPDBG draft_pick: step=%d seq=%d id=%d p=%.4f h_row[0..3]=%.4f %.4f %.4f %.4f\n",
-                                    i, seq_id, id, cur_p->data[0].p,
-                                    h_row[0], h_row[1], h_row[2], h_row[3]);
-                            fflush(stderr);
-                        }
-    #endif
-
-                        // only collect very high-confidence draft tokens
-                        if (cur_p->data[0].p < params.p_min) {
-                            drafting[seq_id] = false;
-                            n_drafting--;
-
-                            continue;
-                        }
-
-                        {
-                            const int64_t t_rebuild_batch_0 = cgc_spec_timing ? ggml_time_us() : 0;
-                            common_sampler_accept(smpl, id, true);
-
-                            auto & dp = dparams.at(seq_id);
-                            auto & result = *dp.result;
-
-                            result.push_back(id);
-
-                            if (params.n_max <= (int) result.size()) {
-                                drafting[seq_id] = false;
-                                n_drafting--;
-                                if (cgc_spec_timing) {
-                                    cgc_draft_pick_rebuild_batch_us += ggml_time_us() - t_rebuild_batch_0;
-                                }
-                                continue;
-                            }
-
-                            if (chain_heads) {
-                                // ref: https://github.com/ggml-org/llama.cpp/pull/24340#discussion_r3448031546
-                                chain_h[seq_id].insert(chain_h[seq_id].end(), h_row, h_row + n_embd);
-
-                                const int n_rows = (int) result.size() + 1; // id_last + tokens drafted so far
-                                for (int t = 0; t < n_rows; ++t) {
-                                    const llama_token tok = (t == 0) ? dp.id_last : result[t - 1];
-                                    common_batch_add(batch, tok, dp.n_past + t, { seq_id }, t == n_rows - 1);
-                                    std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd,
-                                                chain_h[seq_id].data() + (size_t) t * n_embd, row_bytes);
-                                }
-                            } else if (is_mem_shared) {
-                                // note: with shared memory (e.g. Gemma4 assistants) we use the same position for all draft tokens
-                                // ref: https://github.com/huggingface/transformers/blob/effde20942e3f82a1b97449f60b3a48c5ff96145/docs/source/en/model_doc/gemma4_assistant.md?plain=1#L36-L37
-                                common_batch_add(batch, id, dp.n_past, { seq_id }, true);
-                                std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd, h_row, row_bytes);
-                            } else {
-                                common_batch_add(batch, id, dp.n_past + i + 1, { seq_id }, true);
-                                std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd, h_row, row_bytes);
-                            }
-
-                            i_last[seq_id] = batch.n_tokens - 1;
-                            if (cgc_spec_timing) {
-                                cgc_draft_pick_rebuild_batch_us += ggml_time_us() - t_rebuild_batch_0;
-                            }
-                        }
-                    }
-
-                    if (cgc_spec_timing) {
-                        cgc_draft_pick_writeback_us += ggml_time_us() - t_pick_0;
-                    }
-
-                    if (batch.n_tokens == 0) {
-                        break;
-                    }
-
-                    ++i;
-                }
-            }
+            i_last[seq_id] = batch.n_tokens - 1;
 
             if (chain_heads) {
-                llama_set_nextn_layer_offset(ctx_dft, 0); // restore default for non-draft decodes
+                chain_h[seq_id].assign(pending_h[seq_id].begin(), pending_h[seq_id].end());
+            }
+        }
+
+#ifdef MTP_SUPPORT
+        // [CGC MTP fix] non-shared: the previous process() catch-up wrote id_last's position;
+        // re-decoding it here would violate M-RoPE (Y <= X). Clear this round's region once.
+        if (!is_mem_shared) {
+            for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+                if (drafting[seq_id]) {
+                    llama_memory_seq_rm(llama_get_memory(ctx_dft), seq_id, dparams[seq_id].n_past, -1);
+                }
+            }
+        }
+#endif
+
+        int i = 0;
+
+        while (n_drafting > 0) {
+            // each step decodes under a different head, i.e. a different decoder layer, and
+            // KV is per layer. process() filled this layer's KV only for positions < n_past
+            // (prompt + accepted prefix) — nothing in the draft region yet. so reset the
+            // draft region (the seq_rm lower bound is n_past, leaving the prompt KV intact)
+            // and select head i so it rebuilds its own layer's KV there; decoding just the
+            // latest token would leave its attention reading cells only another head wrote.
+            if (chain_heads) {
+                auto * mem_dft = llama_get_memory(ctx_dft);
+                for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+                    if (drafting[seq_id]) {
+                        llama_memory_seq_rm(mem_dft, seq_id, dparams[seq_id].n_past, -1);
+                    }
+                }
+                llama_set_nextn_layer_offset(ctx_dft, i);
             }
 
+#ifdef MTP_SUPPORT
+            if (getenv("CGC_MTP_DBG") && i == 0) {
+                double nr = 0.0;
+                for (int k = 0; k < n_embd; ++k) nr += (double) batch.embd[k]*batch.embd[k];
+                fprintf(stderr, "MTPDBG draft step0: token=%d pos=%lld embd[0..3]=%.4f %.4f %.4f %.4f norm=%.3f n_batch=%d\n",
+                        batch.token[0], (long long) batch.pos[0], batch.embd[0], batch.embd[1], batch.embd[2], batch.embd[3], sqrt(nr), batch.n_tokens);
+            }
+#endif
+            int ret = llama_decode(ctx_dft, batch);
+            if (ret != 0) {
+                SPC_ERR("llama_decode[%d] returned %d\n", i, ret);
+                break;
+            }
+
+            // rebuild the batch for the next step: the growing-KV paths re-add only the
+            // new token (the KV already holds the prefix), while chained heads re-add the
+            // whole prefix at the next head. dropped sequences are simply not re-added.
+            common_batch_clear(batch);
+
             for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
-                auto & dp = dparams[seq_id];
-                if (!dp.drafting) {
+                if (!drafting[seq_id]) {
                     continue;
                 }
 
-                if (dp.result->size() < (size_t) params.n_min) {
-                    dp.result->clear();
+                auto * smpl = smpls[seq_id].get();
+
+                common_sampler_sample(smpl, ctx_dft, i_last[seq_id], true);
+                const float * h_row = llama_get_embeddings_nextn_ith(ctx_dft, i_last[seq_id]);
+
+                const auto * cur_p = common_sampler_get_candidates(smpl, true);
+
+                for (int k = 0; k < std::min(3, (int) cur_p->size); ++k) {
+                    SPC_DBG(" - seq_id %d, draft candidate %3d, pos %3d: %6d (%8.3f) '%s'\n",
+                            seq_id, k, i, cur_p->data[k].id, cur_p->data[k].p,
+                            common_token_to_piece(ctx_dft, cur_p->data[k].id).c_str());
                 }
+
+                // add drafted token for each sequence
+                const llama_token id = cur_p->data[0].id;
+
+#ifdef MTP_SUPPORT
+                if (getenv("CGC_MTP_DBG")) {
+                    fprintf(stderr, "MTPDBG draft_pick: step=%d seq=%d id=%d p=%.4f h_row[0..3]=%.4f %.4f %.4f %.4f\n",
+                            i, seq_id, id, cur_p->data[0].p,
+                            h_row[0], h_row[1], h_row[2], h_row[3]);
+                    fflush(stderr);
+                }
+#endif
+
+                // only collect very high-confidence draft tokens
+                if (cur_p->data[0].p < params.p_min) {
+                    drafting[seq_id] = false;
+                    n_drafting--;
+
+                    continue;
+                }
+
+                common_sampler_accept(smpl, id, true);
+
+                auto & dp = dparams.at(seq_id);
+                auto & result = *dp.result;
+
+                result.push_back(id);
+
+                if (params.n_max <= (int) result.size()) {
+                    drafting[seq_id] = false;
+                    n_drafting--;
+                    continue;
+                }
+
+                if (chain_heads) {
+                    // ref: https://github.com/ggml-org/llama.cpp/pull/24340#discussion_r3448031546
+                    chain_h[seq_id].insert(chain_h[seq_id].end(), h_row, h_row + n_embd);
+
+                    const int n_rows = (int) result.size() + 1; // id_last + tokens drafted so far
+                    for (int t = 0; t < n_rows; ++t) {
+                        const llama_token tok = (t == 0) ? dp.id_last : result[t - 1];
+                        common_batch_add(batch, tok, dp.n_past + t, { seq_id }, t == n_rows - 1);
+                        std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd,
+                                    chain_h[seq_id].data() + (size_t) t * n_embd, row_bytes);
+                    }
+                } else if (is_mem_shared) {
+                    // note: with shared memory (e.g. Gemma4 assistants) we use the same position for all draft tokens
+                    // ref: https://github.com/huggingface/transformers/blob/effde20942e3f82a1b97449f60b3a48c5ff96145/docs/source/en/model_doc/gemma4_assistant.md?plain=1#L36-L37
+                    common_batch_add(batch, id, dp.n_past, { seq_id }, true);
+                    std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd, h_row, row_bytes);
+                } else {
+                    common_batch_add(batch, id, dp.n_past + i + 1, { seq_id }, true);
+                    std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd, h_row, row_bytes);
+                }
+
+                i_last[seq_id] = batch.n_tokens - 1;
             }
 
-            if (cgc_spec_timing) {
-                g_cgc_spec_draft_mtp_telemetry.draft_assembly_us += cgc_draft_assembly_us;
-                g_cgc_spec_draft_mtp_telemetry.draft_decode_us += cgc_draft_decode_us;
-                g_cgc_spec_draft_mtp_telemetry.draft_pick_writeback_us += cgc_draft_pick_writeback_us;
-                g_cgc_spec_draft_mtp_telemetry.draft_pick_sampler_us += cgc_draft_pick_sampler_us;
-                g_cgc_spec_draft_mtp_telemetry.draft_pick_embd_candidate_us += cgc_draft_pick_embd_candidate_us;
-                g_cgc_spec_draft_mtp_telemetry.draft_pick_rebuild_batch_us += cgc_draft_pick_rebuild_batch_us;
-                g_cgc_spec_draft_mtp_telemetry.draft_n++;
-                cgc_spec_draft_mtp_print_if_needed();
+            if (batch.n_tokens == 0) {
+                break;
+            }
+
+            ++i;
+        }
+
+        if (chain_heads) {
+            llama_set_nextn_layer_offset(ctx_dft, 0); // restore default for non-draft decodes
+        }
+
+        for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+            auto & dp = dparams[seq_id];
+            if (!dp.drafting) {
+                continue;
+            }
+
+            if (dp.result->size() < (size_t) params.n_min) {
+                dp.result->clear();
             }
         }
     }

@@ -32,8 +32,13 @@ def build_payload(profile, model, max_tokens):
             ],
             "temperature": 0,
             "max_tokens": max_tokens or 24,
+            # 2026-09-05 CGC fix v4: 給 prefill「答:巴黎」讓 model 從「答:巴黎」接續。
+            # 注意: disable_think_scaffold flag 反而導致 model 沉默(實測 emit 24 token 全 \n)。
+            # 因為 chat.cpp v4 注入 <think>\n\n</think>\n\n 在 prefill 後,model 看到
+            # 「答:巴黎<think>\n\n</think>\n\n」這個 token sequence 不認識 → 沉默。
+            # 解法: 走純 prefill 路徑,讓 model 從 prefill 接續,parser 自己處理 <think> block。
             "chat_template_kwargs": {
-                "disable_think_scaffold": True,
+                "assistant_prefill": "答:巴黎",
             },
             "stop": ["。", "<|end|>", "<|output|>", "<|user|>"],
         }
@@ -43,19 +48,24 @@ def build_payload(profile, model, max_tokens):
             "model": model,
             "messages": [
                 {
+                    "role": "system",
+                    # 2026-09-05 CGC fix v4: 加 system prompt 引導 longform 寫長文(對齊 GGUF embedded
+                    # ChatML 風格,讓 model 知道要連續陳述多個事實,不要 emit 句號就停)。
+                    "content": "Answer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.",
+                },
+                {
                     "role": "user",
                     "content": "為什麼巴黎會成為法國的政治與文化中心？請用一段中文說明。",
                 }
             ],
             "temperature": 0,
             "max_tokens": max_tokens or 220,
-            # disable_think_scaffold=true 把模型從 <think> 起手拉回 content 軌，
-            # 否則 Qwen3.6 預設 ChatML 會跑 reasoning loop 把 <|im_start|>assistant 重複灌回 content。
+            # 2026-09-05 CGC fix v4: prefill 給「未完成具體事實」,避免 model 進「因為」loop。
+            # 之前測「主要是因為」會讓 model 重複「因為」(220 token 全是「因為」)。
+            # 改用「從12世紀起就是法國王國的首都,並且匯聚了」期待 model 列舉盧浮宮、艾菲爾鐵塔等。
             "chat_template_kwargs": {
-                "disable_think_scaffold": True,
+                "assistant_prefill": "答:巴黎之所以成為法國的政治與文化中心,主要是因為它從12世紀起就是法國王國的首都,並且匯聚了",
             },
-            # Keep explicit stops on the request path so replay stays aligned with the
-            # launcher hint and does not leak template delimiters back into content.
             "stop": LONGFORM_STOP,
         }
 
@@ -70,8 +80,9 @@ def build_payload(profile, model, max_tokens):
             ],
             "temperature": 0,
             "max_tokens": max_tokens or 512,
+            # 2026-09-05 CGC fix v4: coding prefill 給「```python\n# 」開頭,讓 model 從 code block 接續。
             "chat_template_kwargs": {
-                "disable_think_scaffold": True,
+                "assistant_prefill": "```python\n",
             },
             "stop": ["```", "<|end|>", "<|output|>", "<|user|>"],
         }

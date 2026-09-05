@@ -1444,21 +1444,34 @@ static common_chat_params common_chat_params_init_nail_qwen3_6_minimal(const com
     //
     // 同時也要把 think scaffold 注入到 data.prompt(實際送給 model 的 prompt)
     // 因為 server 只用 data.prompt 送進 decode,data.generation_prompt 僅作 parser prefix。
+    // 2026-09-05 CGC fix v4: 修正 v3 的 over-correction。
+    // v3 把 THINK_SEED 改空 → qa-zh/不帶 prefill 的場景 model 看到裸 <|im_start|>assistant\n
+    // 會自己進 <think>\n\n</think>\n\nassistant loop(實測 24 token 全是 scaffold 重複)。
+    // 正確修法: 同時要求 request 帶 assistant_prefill(例如「答:」),
+    // jinja 會注入 <|im_start|>assistant\n答:,chat.cpp 再注入完成的 think scaffold,
+    // 最終 prompt 結尾 = 「<|im_start|>assistant\n答:<think>\n\n</think>\n\n」。
+    // model 看到 prefill 跟完成的 think block 會從 prefill 結尾接續給答案,不會進 loop。
+    //
+    // 同時也判斷 ChatML 風格(<|im_start|>assistant) 跟舊 Nail 風格(<|assistant|>),因為
+    // 2026-09-05 v4 把 jinja 從 <|user|> 改成 <|im_start|>user,但若哪天又 revert 回
+    // Nail 風格仍要能 work。
+    auto starts_with_any = [](const std::string & s, std::initializer_list<const char *> prefixes) -> bool {
+        for (const char * p : prefixes) {
+            if (s.rfind(p, 0) == 0) return true;
+        }
+        return false;
+    };
     if (wants_think_scaffold_seed &&
-        data.generation_prompt.rfind("<|assistant|>\n", 0) == 0) {
-        // Jinja omits the empty think scaffold when enable_thinking=true. We append it
-        // manually here so the model sees a completed think block and continues.
+        starts_with_any(data.generation_prompt, {"<|im_start|>assistant\n", "<|im_start|>assistant", "<|assistant|>\n", "<|assistant|>"})) {
         const std::string THINK_SEED = "<think>\n\n</think>\n\n";
         data.generation_prompt += THINK_SEED;
-        // 同步注入到實際 prompt(data.prompt 已含 "<|assistant|>\n答:" 結尾)
-        // 若 data.prompt 不以 generation_prompt 結尾,直接 append(防呆)
+        // 同步注入到實際 prompt(若 data.prompt 已含 "<|assistant|>\n答:",此處 THINK_SEED 空 = 無變化)
         if (data.prompt.size() >= data.generation_prompt.size() &&
             data.prompt.compare(data.prompt.size() - data.generation_prompt.size(),
                                 data.generation_prompt.size(),
                                 data.generation_prompt) == 0) {
             data.prompt += THINK_SEED;
         } else {
-            // fallback: 直接 append
             data.prompt += THINK_SEED;
         }
     }
