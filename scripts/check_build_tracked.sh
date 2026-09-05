@@ -33,6 +33,15 @@
 #   (b) binary mtime 不得老於 staged 原始碼（= 有重建過）。
 #   ALLOW_STALE_BIN=1 可跳過 (b)。
 #
+# 檢查 11（2026-09-05 新增）：replay benchmark regression
+#   三個應用 profile (qa-zh / longform-zh / coding) 跑 quality / prefill_tps /
+#   decode_tps / peak_rss_mb 12 個指標，跟 HEAD~1 比較。
+#   Verdict: 至少 1 個指標改善 (improvement) 且不超過 1 個指標退化 (regression) → PASS
+#   否則 → FAIL（precommit hook 拒絕 commit）。
+#   只對「代碼」commit 觸發（src/ / scripts/ / *.cpp / *.h / *.py 等），純文件
+#   commit (docs/ / *.md / *.html) 不跑。ALLOW_REPLAY_BENCH_BASELINE=1 可跳過
+#   比較（首次 commit 無 HEAD~1 baseline 時用）。RUN_REPLAY_BENCH=0 可關閉。
+#
 # 用法：
 #   scripts/check_build_tracked.sh                 # 檢查目前 cwd 所在的 repo
 #   scripts/check_build_tracked.sh --repo PATH     # 檢查指定 repo
@@ -439,12 +448,126 @@ else
     fi
 fi
 
+# ============ 檢查 11：replay benchmark regression（代碼 commit 才觸發）============
+# 三個應用 profile (qa-zh / longform-zh / coding) 跑 12 個指標（3 profile × 4 aspect:
+# quality / prefill_tps / decode_tps / peak_rss_mb），跟 HEAD~1 的 .replay_bench_baseline.json
+# 比較。Verdict: 至少 1 個指標改善 + 不超過 1 個指標退化 → PASS，否則 FAIL 拒絕 commit。
+echo "--- 檢查 replay benchmark 不退化（代碼 commit 才觸發） ---"
+if [ "${RUN_REPLAY_BENCH:-1}" != 1 ]; then
+    echo "SKIP  RUN_REPLAY_BENCH=0 → 跳過 replay benchmark regression 檢查"
+elif [ ! -x "$REPO_ROOT/scripts/check/replay_server_profile.py" ] || [ ! -x "$REPO_ROOT/scripts/check/replay_bench_compare.py" ]; then
+    fail "11 缺 replay benchmark 腳本（scripts/check/replay_server_profile.py + replay_bench_compare.py）"
+else
+    # 1) 判斷本次 commit 是否為「代碼」(非純文件)
+    STAGED_FOR_BENCH="$(git -C "$REPO_ROOT" diff --cached --name-only --diff-filter=ACMR 2>/dev/null || true)"
+    is_code_path() {
+        # 是「代碼」路徑: src/ scripts/ *.cpp *.h *.c *.mm *.metal *.py *.sh
+        # Makefile / CMakeLists.txt / *.proto / deploy-harmonyos/* 也算（會影響行為）
+        case "$1" in
+            src/*|scripts/*|deploy-harmonyos/*) return 0 ;;
+            *.cpp|*.h|*.c|*.cc|*.mm|*.metal|*.py|*.sh|*.proto) return 0 ;;
+            Makefile|CMakeLists.txt|*.mk) return 0 ;;
+        esac
+        return 1
+    }
+    is_doc_path() {
+        # 是「文件」路徑: docs/ *.md *.html *.txt（root 級）
+        case "$1" in
+            docs/*|*.md|*.html) return 0 ;;
+        esac
+        return 1
+    }
+    has_code=0
+    has_doc=0
+    if [ -n "$STAGED_FOR_BENCH" ]; then
+        while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            if is_code_path "$f"; then
+                has_code=1
+            elif is_doc_path "$f"; then
+                has_doc=1
+            else
+                # 未知類別（如 models/、Backup/）保守視為文件，不觸發
+                has_doc=1
+            fi
+        done <<< "$STAGED_FOR_BENCH"
+    fi
+
+    if [ "$has_code" != 1 ]; then
+        echo "SKIP  本次 commit 為純文件變更（無 src/ scripts/ *.cpp *.h *.py 等代碼）→ 不觸發 replay benchmark"
+    else
+        info "11 本次 commit 含代碼改動（has_code=1, has_doc=${has_doc}）→ 觸發 replay benchmark"
+        # 2) 偵測 server PID（CGC_SERVER_PID env > pgrep llama-server --port 8080）
+        REPLAY_BENCH="$REPO_ROOT/scripts/check/replay_server_profile.py"
+        REPLAY_COMPARE="$REPO_ROOT/scripts/check/replay_bench_compare.py"
+        REPLAY_REF="$REPO_ROOT/scripts/check/replay_bench_reference.json"
+        CURRENT_OUT="/tmp/.replay_bench_current.json"
+        BASELINE_OUT="/tmp/.replay_bench_baseline.json"
+        REPORT_OUT="/tmp/.replay_bench_report.json"
+
+        SERVER_PID="${CGC_SERVER_PID:-}"
+        if [ -z "$SERVER_PID" ]; then
+            SERVER_PID="$(pgrep -f 'llama-server.*--port[[:space:]]*8080' 2>/dev/null | head -1 || true)"
+        fi
+        if [ -z "$SERVER_PID" ]; then
+            fail "11 找不到 llama-server PID（設 CGC_SERVER_PID=... 或啟動 server，RUN_REPLAY_BENCH=0 可跳過）"
+        else
+            info "11 使用 server PID=$SERVER_PID"
+            # 3) 跑 replay benchmark
+            if python3 "$REPLAY_BENCH" \
+                --all-profiles \
+                --server-pid "$SERVER_PID" \
+                --reference "$REPLAY_REF" \
+                --bench-output "$CURRENT_OUT" \
+                --commit "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)" \
+                > /tmp/.replay_bench_run.log 2>&1; then
+                pass "11 replay benchmark 跑完（$CURRENT_OUT）"
+            else
+                fail "11 replay benchmark 跑失敗（見 /tmp/.replay_bench_run.log）"
+            fi
+
+            # 4) 拿 baseline: 優先 working dir 的 .replay_bench_baseline.json，
+            #    否則取 HEAD~1 的 .replay_bench_baseline.json，
+            #    再否則 ALLOW_REPLAY_BENCH_BASELINE=1 跳過比較。
+            BASELINE_SRC=""
+            if [ -f "$REPO_ROOT/.replay_bench_baseline.json" ]; then
+                cp "$REPO_ROOT/.replay_bench_baseline.json" "$BASELINE_OUT"
+                BASELINE_SRC="working-dir"
+            elif git -C "$REPO_ROOT" show "HEAD~1:.replay_bench_baseline.json" > "$BASELINE_OUT" 2>/dev/null; then
+                BASELINE_SRC="HEAD~1"
+            fi
+
+            if [ -z "$BASELINE_SRC" ]; then
+                if [ "${ALLOW_REPLAY_BENCH_BASELINE:-0}" = 1 ]; then
+                    echo "SKIP  找不到 baseline（working dir / HEAD~1 都沒有）但 ALLOW_REPLAY_BENCH_BASELINE=1 → 跳過比較"
+                else
+                    fail "11 找不到 baseline：$REPO_ROOT/.replay_bench_baseline.json 不存在且 HEAD~1 沒有。ALLOW_REPLAY_BENCH_BASELINE=1 可跳過（或先 commit 一份 .replay_bench_baseline.json 作為基準）"
+                fi
+            else
+                info "11 baseline 來源: $BASELINE_SRC"
+                if python3 "$REPLAY_COMPARE" \
+                    --current "$CURRENT_OUT" \
+                    --baseline "$BASELINE_OUT" \
+                    --reference "$REPLAY_REF" \
+                    --report "$REPORT_OUT" \
+                    > /tmp/.replay_bench_compare.log 2>&1; then
+                    pass "11 replay benchmark 比較 PASS（$BASELINE_SRC）"
+                    info "11 詳細 report: $REPORT_OUT（commit 這份新 baseline 可選）"
+                else
+                    fail "11 replay benchmark 退化（見 $REPORT_OUT 與 /tmp/.replay_bench_compare.log）"
+                    info "11 此次 replay 輸出: $CURRENT_OUT（不變好即不允許 commit）"
+                fi
+            fi
+        fi
+    fi
+fi
+
 # ============ 總結 ============
 if [ "$fail_count" -gt 0 ]; then
     echo ""
-    echo "FAIL: $fail_count 項未通過。先修好再 commit（build 產物追蹤 / rpath / main⊆dev / 死鎖防護 / 原始碼↔binary 同步 / 生產驗收 / deploy 驗收）。"
+    echo "FAIL: $fail_count 項未通過。先修好再 commit（build 產物追蹤 / rpath / main⊆dev / 死鎖防護 / 原始碼↔binary 同步 / 生產驗收 / deploy 驗收 / replay benchmark 不退化）。"
     exit 1
 fi
 echo ""
-echo "OK: build/bin 追蹤與 rpath 正常、main⊆dev 成立、CGC 死鎖防護在位、原始碼↔binary 同步、生產驗收與 deploy 驗收通過/未啟用。"
+echo "OK: build/bin 追蹤與 rpath 正常、main⊆dev 成立、CGC 死鎖防護在位、原始碼↔binary 同步、生產驗收與 deploy 驗收通過/未啟用、replay benchmark regression 通過/未啟用。"
 exit 0

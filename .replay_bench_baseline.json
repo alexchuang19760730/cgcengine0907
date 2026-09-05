@@ -1,0 +1,368 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-09-05T11:33:33+0800",
+  "commit": "80f77ebc3bdb9e415749e954f6a7311400a44b95",
+  "server_pid": 80018,
+  "base_url": "http://127.0.0.1:8080/v1",
+  "profiles": {
+    "qa-zh": {
+      "profile": "qa-zh",
+      "finish_reason": "stop",
+      "quality": {
+        "score": 1.0,
+        "checks": [
+          {
+            "check": "length",
+            "actual": 14,
+            "min": 4,
+            "max": 80,
+            "result": "pass"
+          },
+          {
+            "check": "required_any",
+            "keywords": [
+              "巴黎",
+              "法國"
+            ],
+            "result": "pass"
+          },
+          {
+            "check": "forbidden",
+            "keywords": [
+              "<|",
+              "0000",
+              "<think>",
+              "Answer directly",
+              "system prompt"
+            ],
+            "result": "pass"
+          },
+          {
+            "check": "finish_reason",
+            "actual": "stop",
+            "ok": [
+              "stop",
+              "length"
+            ],
+            "result": "pass"
+          },
+          {
+            "check": "loop_run",
+            "max_run": 2,
+            "limit": 8,
+            "result": "pass"
+          }
+        ]
+      },
+      "speed": {
+        "prefill_tps": 20.46,
+        "decode_tps": 15.17,
+        "decode_tps_degenerate": false,
+        "completion_tokens": 7,
+        "draft_accept_pct": 33.33
+      },
+      "memory": {
+        "peak_mb": 5875.6,
+        "avg_mb": 5855.7,
+        "before_mb": 5836.1,
+        "after_mb": 5875.6,
+        "delta_mb": 39.4,
+        "samples": [
+          [
+            "before",
+            5836.1
+          ],
+          [
+            "during",
+            5836.1
+          ],
+          [
+            "during",
+            5875.1
+          ],
+          [
+            "after",
+            5875.6
+          ]
+        ]
+      },
+      "timings": {
+        "prompt_ms": 195.488,
+        "predicted_ms": 461.401,
+        "predicted_n": 7,
+        "draft_n": 9,
+        "draft_n_accepted": 3
+      },
+      "content": "assistant\n答:巴黎"
+    },
+    "longform-zh": {
+      "profile": "longform-zh",
+      "finish_reason": "length",
+      "quality": {
+        "score": 0.333,
+        "checks": [
+          {
+            "check": "length",
+            "actual": 1042,
+            "min": 80,
+            "max": 800,
+            "result": "fail"
+          },
+          {
+            "check": "required_any",
+            "keywords": [
+              "巴黎",
+              "法國",
+              "文化",
+              "政治",
+              "盧浮宮",
+              "艾菲爾",
+              "塞納",
+              "首都",
+              "歷史",
+              "12世紀",
+              "王國"
+            ],
+            "result": "fail"
+          },
+          {
+            "check": "forbidden",
+            "keywords": [
+              "Answer directly, after thinking",
+              "system prompt",
+              "<think>",
+              "<|im_start|>user",
+              "<|im_start|>system"
+            ],
+            "result": "fail"
+          },
+          {
+            "check": "finish_reason",
+            "actual": "length",
+            "ok": [
+              "stop",
+              "length"
+            ],
+            "result": "pass"
+          },
+          {
+            "check": "loop_run",
+            "max_run": 2,
+            "limit": 12,
+            "result": "pass"
+          }
+        ]
+      },
+      "speed": {
+        "prefill_tps": 29.9,
+        "decode_tps": 27.07,
+        "decode_tps_degenerate": false,
+        "completion_tokens": 220,
+        "draft_accept_pct": 98.19
+      },
+      "memory": {
+        "peak_mb": 5972.6,
+        "avg_mb": 5961.7,
+        "before_mb": 5875.6,
+        "after_mb": 5972.6,
+        "delta_mb": 97.0,
+        "samples": [
+          [
+            "before",
+            5875.6
+          ],
+          [
+            "during",
+            5875.6
+          ],
+          [
+            "during",
+            5966.3
+          ],
+          [
+            "during",
+            5966.3
+          ],
+          [
+            "during",
+            5972.4
+          ],
+          [
+            "during",
+            5972.5
+          ],
+          [
+            "during",
+            5972.5
+          ],
+          [
+            "during",
+            5972.5
+          ],
+          [
+            "during",
+            5972.6
+          ],
+          [
+            "during",
+            5972.6
+          ],
+          [
+            "during",
+            5972.6
+          ],
+          [
+            "during",
+            5972.6
+          ],
+          [
+            "during",
+            5972.6
+          ],
+          [
+            "during",
+            5972.6
+          ],
+          [
+            "during",
+            5972.6
+          ],
+          [
+            "during",
+            5972.6
+          ],
+          [
+            "during",
+            5972.6
+          ],
+          [
+            "during",
+            5972.6
+          ],
+          [
+            "after",
+            5972.6
+          ]
+        ]
+      },
+      "timings": {
+        "prompt_ms": 133.786,
+        "predicted_ms": 8127.118,
+        "predicted_n": 220,
+        "draft_n": 166,
+        "draft_n_accepted": 163
+      },
+      "content": "Answer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.\nAnswer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness"
+    },
+    "coding": {
+      "profile": "coding",
+      "finish_reason": "stop",
+      "quality": {
+        "score": 0.4,
+        "checks": [
+          {
+            "check": "length",
+            "actual": 0,
+            "min": 50,
+            "max": 2000,
+            "result": "fail"
+          },
+          {
+            "check": "required_any",
+            "keywords": [
+              "def ",
+              "fibonacci",
+              "return"
+            ],
+            "result": "fail"
+          },
+          {
+            "check": "forbidden",
+            "keywords": [
+              "0000",
+              "<think>",
+              "答:",
+              "因為因為因為"
+            ],
+            "result": "pass"
+          },
+          {
+            "check": "finish_reason",
+            "actual": "stop",
+            "ok": [
+              "stop",
+              "length"
+            ],
+            "result": "pass"
+          }
+        ]
+      },
+      "speed": {
+        "prefill_tps": 32.11,
+        "decode_tps": null,
+        "decode_tps_degenerate": true,
+        "completion_tokens": 1,
+        "draft_accept_pct": null
+      },
+      "memory": {
+        "peak_mb": 5972.7,
+        "avg_mb": 5972.6,
+        "before_mb": 5972.6,
+        "after_mb": 5972.7,
+        "delta_mb": 0.1,
+        "samples": [
+          [
+            "before",
+            5972.6
+          ],
+          [
+            "during",
+            5972.6
+          ],
+          [
+            "after",
+            5972.7
+          ]
+        ]
+      },
+      "timings": {
+        "prompt_ms": 124.576,
+        "predicted_ms": 0.001,
+        "predicted_n": 1,
+        "draft_n": null,
+        "draft_n_accepted": null
+      },
+      "content": ""
+    }
+  },
+  "aggregate": {
+    "decode_tps": {
+      "avg": 21.12,
+      "median": 21.12,
+      "min": 15.17,
+      "max": 27.07,
+      "n": 2
+    },
+    "prefill_tps": {
+      "avg": 27.49,
+      "median": 29.9,
+      "min": 20.46,
+      "max": 32.11,
+      "n": 3
+    },
+    "quality_score": {
+      "avg": 0.58,
+      "median": 0.4,
+      "min": 0.333,
+      "max": 1.0,
+      "n": 3
+    },
+    "peak_rss_mb": {
+      "avg": 5940.3,
+      "median": 5972.6,
+      "min": 5875.6,
+      "max": 5972.7,
+      "n": 3
+    }
+  }
+}

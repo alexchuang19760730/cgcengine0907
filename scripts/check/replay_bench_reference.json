@@ -1,0 +1,45 @@
+{
+  "_doc": "replay_server_profile.py 的 reference rules (啟發式質量檢查)。每個 profile 一個 rules 區塊, 用 6 個 check: length / required_any / required_all / forbidden / ok_finish_reasons / loop_max_run。score = 加權 pass 比例 (0.0-1.0)。precommit hook 用 score < 0.5 視為 quality regression。",
+
+  "qa-zh": {
+    "length_min": 4,
+    "length_max": 80,
+    "required_any": ["巴黎", "法國"],
+    "forbidden": ["<|", "0000", "<think>", "Answer directly", "system prompt"],
+    "ok_finish_reasons": ["stop", "length"],
+    "loop_max_run": 8
+  },
+
+  "longform-zh": {
+    "length_min": 80,
+    "length_max": 800,
+    "required_any": ["巴黎", "法國", "文化", "政治", "盧浮宮", "艾菲爾", "塞納", "首都", "歷史", "12世紀", "王國"],
+    "forbidden": ["Answer directly, after thinking", "system prompt", "<think>", "<|im_start|>user", "<|im_start|>system"],
+    "ok_finish_reasons": ["stop", "length"],
+    "loop_max_run": 12
+  },
+
+  "coding": {
+    "length_min": 50,
+    "length_max": 2000,
+    "required_any": ["def ", "fibonacci", "return"],
+    "forbidden": ["0000", "<think>", "答:", "因為因為因為"],
+    "ok_finish_reasons": ["stop", "length"],
+    "loop_max_run": 12
+  },
+
+  "_aggregate": {
+    "min_quality_score": 0.5,
+    "_doc": "3 profile 各自的 quality.score 都不能低於此值, 否則 precommit hook 視為 quality regression"
+  },
+
+  "_compare_thresholds": {
+    "decode_tps_regression_pct": 10.0,
+    "prefill_tps_regression_pct": 10.0,
+    "peak_rss_mb_regression_pct": 15.0,
+    "quality_score_regression_abs": 0.1,
+    "_doc": "precommit hook 比較上次 commit 跟這次 commit 的指標, 超過這些門檻 (regression) 視為 fail。需要至少 1 個指標改善 (improve) 才允許 commit (防止為了 trivial 改善而搞壞其他面向)。",
+    "improvement_required_min_count": 1,
+    "regression_tolerance_max_count": 1
+  }
+}
