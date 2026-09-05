@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "timestamp": "2026-09-06 baseline refresh (longform fix)",
+ "timestamp": "2026-09-06 fresh baseline after longform/coding fix (final)",
  "commit": "WORKTREE",
  "server_pid": 44911,
  "base_url": "http://127.0.0.1:8080",
@@ -9,20 +9,20 @@
    "profile": "qa-zh",
    "finish_reason": "stop",
    "quality": {
-    "score": 0.6,
+    "score": 1.0,
     "scores": [
      1.0,
-     0.6,
-     0.6
+     1.0,
+     1.0
     ],
-    "variance": 0.036,
+    "variance": 0.0,
     "checks": [
      {
       "check": "length",
-      "actual": 0,
+      "actual": 7,
       "min": 4,
       "max": 80,
-      "result": "fail"
+      "result": "pass"
      },
      {
       "check": "required_any",
@@ -30,7 +30,7 @@
        "巴黎",
        "法國"
       ],
-      "result": "fail"
+      "result": "pass"
      },
      {
       "check": "forbidden",
@@ -53,6 +53,12 @@
       "result": "pass"
      },
      {
+      "check": "loop_run",
+      "max_run": 1,
+      "limit": 8,
+      "result": "pass"
+     },
+     {
       "check": "loop_phrase",
       "result": "pass",
       "min_unit": 6,
@@ -65,54 +71,64 @@
     ]
    },
    "speed": {
-    "prefill_tps": 24.12,
-    "decode_tps": 7.79,
-    "decode_tps_degenerate": true,
-    "completion_tokens": 1,
-    "draft_accept_pct": 11.11,
+    "prefill_tps": 21.99,
+    "decode_tps": 8.32,
+    "decode_tps_degenerate": false,
+    "completion_tokens": 5,
+    "draft_accept_pct": 22.22,
     "decode_tps_runs": [
-     7.79
+     7.36,
+     8.76,
+     8.32
     ],
     "prefill_tps_runs": [
-     9.98,
-     24.12,
-     28.58
+     11.51,
+     21.99,
+     25.3
     ]
    },
    "memory": {
-    "peak_mb": 5311.3,
-    "avg_mb": 5308.6,
-    "before_mb": 5307.3,
-    "after_mb": 5311.3,
-    "delta_mb": 4.0,
+    "peak_mb": 5410.8,
+    "avg_mb": 5324.7,
+    "before_mb": 5303.0,
+    "after_mb": 5336.5,
+    "delta_mb": 33.5,
     "samples": [
      [
       "before",
-      5307.3
+      5303.0
      ],
      [
       "during",
-      5307.3
+      5303.0
+     ],
+     [
+      "during",
+      5346.9
+     ],
+     [
+      "during",
+      5334.2
      ],
      [
       "after",
-      5311.3
+      5336.5
      ]
     ],
     "peak_runs": [
-     5307.3,
-     5311.3,
-     5311.3
+     5346.9,
+     5410.8,
+     5395.5
     ]
    },
    "timings": {
-    "prompt_ms": 165.858,
-    "predicted_ms": 0.001,
-    "predicted_n": 1,
-    "draft_n": null,
-    "draft_n_accepted": null
+    "prompt_ms": 347.417,
+    "predicted_ms": 679.416,
+    "predicted_n": 5,
+    "draft_n": 9,
+    "draft_n_accepted": 2
    },
-   "content": "",
+   "content": "是法國的首城市",
    "runs": 3
   },
   "longform-zh": {
@@ -123,13 +139,13 @@
     "scores": [
      0.882,
      0.882,
-     0.647
+     0.882
     ],
-    "variance": 0.012,
+    "variance": 0.0,
     "checks": [
      {
       "check": "length",
-      "actual": 15,
+      "actual": 25,
       "min": 80,
       "max": 800,
       "result": "fail"
@@ -173,7 +189,7 @@
      },
      {
       "check": "loop_run",
-      "max_run": 1,
+      "max_run": 2,
       "limit": 12,
       "result": "pass"
      },
@@ -190,76 +206,88 @@
     ]
    },
    "speed": {
-    "prefill_tps": 14.2,
-    "decode_tps": 5.65,
+    "prefill_tps": 9.73,
+    "decode_tps": 5.26,
     "decode_tps_degenerate": false,
-    "completion_tokens": 13,
-    "draft_accept_pct": 33.33,
+    "completion_tokens": 20,
+    "draft_accept_pct": 30.0,
     "decode_tps_runs": [
-     5.35,
-     5.65,
-     7.26
+     5.26,
+     5.02,
+     5.32
     ],
     "prefill_tps_runs": [
-     18.39,
-     14.2,
-     5.41
+     12.76,
+     6.97,
+     9.73
     ]
    },
    "memory": {
-    "peak_mb": 5572.5,
-    "avg_mb": 5499.9,
-    "before_mb": 5462.6,
-    "after_mb": 5525.8,
-    "delta_mb": 63.2,
+    "peak_mb": 5658.8,
+    "avg_mb": 5555.4,
+    "before_mb": 5582.7,
+    "after_mb": 5497.7,
+    "delta_mb": -85.0,
     "samples": [
      [
       "before",
-      5462.6
+      5582.7
      ],
      [
       "during",
-      5462.6
+      5582.7
      ],
      [
       "during",
-      5484.8
+      5630.1
      ],
      [
       "during",
-      5499.4
+      5600.5
      ],
      [
       "during",
-      5514.0
+      5590.0
      ],
      [
       "during",
-      5524.8
+      5551.1
      ],
      [
       "during",
-      5524.8
+      5535.7
+     ],
+     [
+      "during",
+      5525.4
+     ],
+     [
+      "during",
+      5515.2
+     ],
+     [
+      "during",
+      5497.8
      ],
      [
       "after",
-      5525.8
+      5497.7
      ]
     ],
     "peak_runs": [
-     5525.8,
-     5525.8,
-     5572.5
+     5630.1,
+     5590.7,
+     5658.8
     ]
    },
    "timings": {
-    "prompt_ms": 217.456,
-    "predicted_ms": 2430.555,
-    "predicted_n": 13,
-    "draft_n": 18,
-    "draft_n_accepted": 7
+    "prompt_ms": 313.375,
+    "predicted_ms": 3804.267,
+    "predicted_n": 20,
+    "draft_n": 30,
+    "draft_n_accepted": 9
    },
-   "content": "其歷史地位、政治與文化影響力。",
+   "content": "因為其為首都，且擁有眾多歷史與文化的重要地標。\n\n",
    "runs": 3
   },
   "coding": {
@@ -269,14 +297,14 @@
     "score": 1.0,
     "scores": [
      1.0,
-     0.3,
-     1.0
+     1.0,
+     0.3
     ],
     "variance": 0.109,
     "checks": [
      {
       "check": "length",
-      "actual": 99,
+      "actual": 116,
       "min": 50,
       "max": 2000,
       "result": "pass"
@@ -311,7 +339,7 @@
      },
      {
       "check": "loop_run",
-      "max_run": 5,
+      "max_run": 3,
       "limit": 12,
       "result": "pass"
      },
@@ -328,162 +356,182 @@
     ]
    },
    "speed": {
-    "prefill_tps": 5.64,
-    "decode_tps": 6.18,
+    "prefill_tps": 5.27,
+    "decode_tps": 6.19,
     "decode_tps_degenerate": false,
-    "completion_tokens": 52,
-    "draft_accept_pct": 60.0,
+    "completion_tokens": 66,
+    "draft_accept_pct": 85.35,
     "decode_tps_runs": [
-     5.91,
-     19.1,
-     6.18
+     5.63,
+     6.19,
+     13.72
     ],
     "prefill_tps_runs": [
-     5.33,
-     6.37,
-     5.64
+     5.27,
+     6.83,
+     4.51
     ]
    },
    "memory": {
-    "peak_mb": 5358.5,
-    "avg_mb": 5197.9,
-    "before_mb": 5160.6,
-    "after_mb": 5104.5,
-    "delta_mb": -56.1,
+    "peak_mb": 5350.3,
+    "avg_mb": 5267.7,
+    "before_mb": 5023.8,
+    "after_mb": 5244.6,
+    "delta_mb": 220.8,
     "samples": [
      [
       "before",
-      5160.6
+      5023.8
      ],
      [
       "during",
-      5160.6
+      5023.8
      ],
      [
       "during",
-      5278.3
+      5226.4
      ],
      [
       "during",
-      5253.5
+      5242.2
      ],
      [
       "during",
-      5183.1
+      5232.3
      ],
      [
       "during",
-      5203.6
+      5253.2
      ],
      [
       "during",
-      5191.4
+      5276.0
      ],
      [
       "during",
-      5202.3
+      5274.6
      ],
      [
       "during",
-      5192.8
+      5278.1
      ],
      [
       "during",
-      5206.1
+      5283.0
      ],
      [
       "during",
-      5200.6
+      5260.4
      ],
      [
       "during",
-      5241.9
+      5269.7
      ],
      [
       "during",
-      5230.5
+      5284.2
      ],
      [
       "during",
-      5246.7
+      5289.1
      ],
      [
       "during",
-      5251.9
+      5295.4
      ],
      [
       "during",
-      5254.1
+      5300.7
      ],
      [
       "during",
-      5192.0
+      5293.3
      ],
      [
       "during",
-      5191.9
+      5302.5
      ],
      [
       "during",
-      5152.4
+      5301.7
      ],
      [
       "during",
-      5142.3
+      5323.8
      ],
      [
       "during",
-      5111.5
+      5328.3
+     ],
+     [
+      "during",
+      5332.1
+     ],
+     [
+      "during",
+      5338.4
+     ],
+     [
+      "during",
+      5338.7
+     ],
+     [
+      "during",
+      5350.3
+     ],
+     [
+      "during",
+      5261.2
      ],
      [
       "after",
-      5104.5
+      5244.6
      ]
     ],
     "peak_runs": [
-     5278.3,
-     5357.2,
-     5358.5
+     5350.3,
+     5346.5,
+     5349.9
     ]
    },
    "timings": {
-    "prompt_ms": 750.227,
-    "predicted_ms": 8800.371,
-    "predicted_n": 52,
-    "draft_n": 57,
-    "draft_n_accepted": 34
+    "prompt_ms": 759.306,
+    "predicted_ms": 11723.617,
+    "predicted_n": 66,
+    "draft_n": 75,
+    "draft_n_accepted": 41
    },
-   "content": " 計算費氏數列第 n 項\n\"\"\"\nif n <= 0:\n     return 0\nif n == 1:\n     return 1\nreturn fibonacci(n + 1) + 1 + 2\n",
+   "content": " 計算費氏數列第 n 項\n\"\"\"\nif n <= 0:\nreturn \"輸入必須是正數\"\nelif n == 1:\nreturn 1\nelif n == 2:\nreturn 1\nelse:\nreturn n - 1 + n - 1\n",
    "runs": 3
   }
  },
  "aggregate": {
   "decode_tps": {
-   "avg": 6.54,
-   "median": 6.18,
-   "min": 5.65,
-   "max": 7.79,
+   "avg": 6.59,
+   "median": 6.19,
+   "min": 5.26,
+   "max": 8.32,
    "n": 3
   },
   "prefill_tps": {
-   "avg": 14.65,
-   "median": 14.2,
-   "min": 5.64,
-   "max": 24.12,
+   "avg": 12.33,
+   "median": 9.73,
+   "min": 5.27,
+   "max": 21.99,
    "n": 3
   },
   "quality_score": {
-   "avg": 0.83,
-   "median": 0.88,
-   "min": 0.6,
+   "avg": 0.96,
+   "median": 1.0,
+   "min": 0.882,
    "max": 1.0,
    "n": 3
   },
   "peak_rss_mb": {
-   "avg": 5414.1,
-   "median": 5358.5,
-   "min": 5311.3,
-   "max": 5572.5,
+   "avg": 5473.3,
+   "median": 5410.8,
+   "min": 5350.3,
+   "max": 5658.8,
    "n": 3
   }
  }
