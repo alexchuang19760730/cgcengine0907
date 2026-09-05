@@ -547,11 +547,16 @@ else
         else
             info "11 使用 server PID=$SERVER_PID"
             # 3) 跑 replay benchmark
+            #    --warmup --runs 3 --seed 0: 暖 expert pool + median-of-3 + 固定 seed,
+            #    消除採樣/ pool 狀態噪聲造成的品質抖動 (0.667↔1.0 誤擋問題)
             if python3 "$REPLAY_BENCH" \
                 --all-profiles \
                 --server-pid "$SERVER_PID" \
                 --reference "$REPLAY_REF" \
                 --bench-output "$CURRENT_OUT" \
+                --warmup \
+                --runs "${REPLAY_RUNS:-3}" \
+                --seed 0 \
                 --commit "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)" \
                 > /tmp/.replay_bench_run.log 2>&1; then
                 pass "11 replay benchmark 跑完 ($CURRENT_OUT)"

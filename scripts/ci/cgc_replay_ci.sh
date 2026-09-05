@@ -92,6 +92,9 @@ if ! python3 "$CHECK_DIR/replay_server_profile.py" \
         --all-profiles \
         --base-url "$BASE_URL" \
         --server-pid "${SERVER_PID:-0}" \
+        --warmup \
+        --runs "${CGC_CI_RUNS:-3}" \
+        --seed 0 \
         --bench-output "$CURRENT" 2>&1 | tail -20; then
     err "replay_server_profile.py failed"
     rm -f "$BASELINE_TMP"

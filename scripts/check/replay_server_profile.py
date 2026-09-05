@@ -48,7 +48,11 @@ def http_json(url, payload, timeout):
 # Payload
 # ---------------------------------------------------------------------------
 
-def build_payload(profile, model, max_tokens):
+def build_payload(profile, model, max_tokens, seed=0):
+    """固定 seed (預設 0) + temperature 0 (greedy), 讓採樣確定性。
+    seed 對 greedy 無作用, 但若 server 端有非 greedy 路徑 (如 MTP draft),
+    固定 seed 可消掉殘餘採樣噪聲。
+    """
     if profile == "qa-zh":
         return {
             "model": model,
@@ -56,6 +60,7 @@ def build_payload(profile, model, max_tokens):
                 {"role": "user", "content": "巴黎是哪個國家的首都？請只用一句中文回答。"},
             ],
             "temperature": 0,
+            "seed": seed,
             "max_tokens": max_tokens or 24,
             "chat_template_kwargs": {
                 "assistant_prefill": "答:巴黎",
@@ -74,6 +79,7 @@ def build_payload(profile, model, max_tokens):
                 {"role": "user", "content": "為什麼巴黎會成為法國的政治與文化中心？請用一段中文說明。"},
             ],
             "temperature": 0,
+            "seed": seed,
             "max_tokens": max_tokens or 220,
             "chat_template_kwargs": {
                 "assistant_prefill": "答:巴黎之所以成為法國的政治與文化中心,主要是因為它從12世紀起就是法國王國的首都,並且匯聚了",
@@ -88,6 +94,7 @@ def build_payload(profile, model, max_tokens):
                 {"role": "user", "content": "寫一個 Python function，計算費氏數列第 n 項。"},
             ],
             "temperature": 0,
+            "seed": seed,
             "max_tokens": max_tokens or 512,
             "chat_template_kwargs": {
                 "assistant_prefill": "```python\n",
@@ -335,6 +342,95 @@ def run_profile(args, profile, reference_rules):
 
 
 # ---------------------------------------------------------------------------
+# Robust 量測: warmup + N runs + median 聚合
+# ---------------------------------------------------------------------------
+
+def _median(vals):
+    """中位數; 空清單回 None。"""
+    if not vals:
+        return None
+    s = sorted(vals)
+    n = len(s)
+    if n % 2 == 1:
+        return s[n // 2]
+    return (s[n // 2 - 1] + s[n // 2]) / 2.0
+
+
+def _variance(vals):
+    """樣本變異數; 少於 2 筆回 0。"""
+    if len(vals) < 2:
+        return 0.0
+    m = sum(vals) / len(vals)
+    return sum((v - m) ** 2 for v in vals) / len(vals)
+
+
+def run_profile_robust(args, profile, reference_rules):
+    """warmup 後跑 N 次 (--runs), 用 median 聚合品質/速度, peak 取 RSS 最大值。
+
+    回傳的 JSON schema 與 run_profile 相容 (quality.score / speed.decode_tps /
+    speed.prefill_tps / memory.peak_mb 仍是單一數值), 額外加:
+      - quality.scores / quality.variance / quality.runs
+      - speed.decode_tps_runs / speed.prefill_tps_runs
+      - memory.peak_runs
+      - content = 品質最接近 median 的那次輸出 (供 debug)
+    """
+    # 1) warmup: 丟棄結果, 讓 expert pool 進到該 profile 的典型冷熱狀態
+    if args.warmup:
+        print(f"[replay] warmup {profile} (discard) ...", file=sys.stderr)
+        try:
+            run_profile(args, profile, reference_rules)
+        except Exception as e:
+            print(f"[replay] WARN warmup {profile} failed: {e}", file=sys.stderr)
+
+    # 2) N 次量測
+    runs = []
+    for i in range(args.runs):
+        print(f"[replay] run {i + 1}/{args.runs} {profile} ...", file=sys.stderr)
+        r = run_profile(args, profile, reference_rules)
+        if r is not None:
+            runs.append(r)
+    if not runs:
+        raise RuntimeError(f"no successful runs for {profile}")
+
+    # 3) median 聚合
+    q_scores = [r["quality"]["score"] for r in runs if r["quality"]["score"] is not None]
+    d_tps = [r["speed"]["decode_tps"] for r in runs if r["speed"]["decode_tps"] is not None]
+    pf_tps = [r["speed"]["prefill_tps"] for r in runs if r["speed"]["prefill_tps"] is not None]
+    ap_pct = [r["speed"]["draft_accept_pct"] for r in runs if r["speed"]["draft_accept_pct"] is not None]
+    rss_peak = [r["memory"]["peak_mb"] for r in runs if r["memory"]["peak_mb"] is not None]
+
+    med_q = _median(q_scores)
+    # 代表樣本 = 品質分數最接近 median 的那一次 (保留其 content/checks 供人工 debug)
+    rep = min(runs, key=lambda r: abs(r["quality"]["score"] - med_q) if med_q is not None else 0)
+
+    out = json.loads(json.dumps(rep))
+    out["profile"] = profile
+    out["runs"] = len(runs)
+    out["quality"] = {
+        "score": round(med_q, 3) if med_q is not None else None,
+        "scores": [round(s, 3) for s in q_scores],
+        "variance": round(_variance(q_scores), 3),
+        "checks": rep["quality"]["checks"],
+    }
+    med_d = _median(d_tps)
+    med_pf = _median(pf_tps)
+    out["speed"] = {
+        **rep["speed"],
+        "decode_tps": round(med_d, 2) if med_d is not None else None,
+        "prefill_tps": round(med_pf, 2) if med_pf is not None else None,
+        "draft_accept_pct": round(_median(ap_pct), 2) if ap_pct else None,
+        "decode_tps_runs": [round(v, 2) for v in d_tps],
+        "prefill_tps_runs": [round(v, 2) for v in pf_tps],
+    }
+    out["memory"] = {
+        **rep["memory"],
+        "peak_mb": round(max(rss_peak), 1) if rss_peak else None,
+        "peak_runs": [round(v, 1) for v in rss_peak],
+    }
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Aggregated 摘要 (3 profile 平均 / 中位數)
 # ---------------------------------------------------------------------------
 
@@ -394,6 +490,12 @@ def parse_args():
     parser.add_argument("--schema-version", type=int, default=1)
     parser.add_argument("--commit", default=os.environ.get("CGC_COMMIT", "unknown"),
                         help="Git commit hash (recorded in bench output, default: CGC_COMMIT env or 'unknown').")
+    parser.add_argument("--runs", type=int, default=3,
+                        help="每個 profile 跑 N 次取 median (default 3; 1 = 舊的單次行為).")
+    parser.add_argument("--warmup", action="store_true",
+                        help="量測前先送一次 warmup request 暖 expert pool (default off).")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="固定採樣 seed (default 0), 消除殘餘採樣噪聲.")
     return parser.parse_args()
 
 
@@ -415,10 +517,8 @@ def main():
     profiles = ["qa-zh", "longform-zh", "coding"] if args.all_profiles else [args.profile]
     results = {}
     for p in profiles:
-        print(f"[replay] running {p} ...", file=sys.stderr)
-        r = run_profile(args, p, reference_rules)
-        if r is not None:
-            results[p] = r
+        r = run_profile_robust(args, p, reference_rules)
+        results[p] = r
 
     if args.all_profiles:
         output = {
