@@ -397,3 +397,11 @@ dsh/
 dsh/node_modules/
 dsh/apps/*/dist/
 dsh/packages/*/dist/
+
+# ---- 2026-09-05: replay benchmark runtime output (transient, 不入库) ----
+#   注意: .replay_bench_baseline.json (commit 906e6b90b) 不在這規則, 仍要追蹤
+#   .replay_bench_current.json / .replay_bench_report.json 是每次跑 replay 動態產物,
+#   commit 進去會污染 baseline 比較 (hook 11 會誤用 current 當 baseline)。
+/.replay_bench_current.json
+/.replay_bench_report.json
+
