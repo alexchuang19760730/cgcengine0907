@@ -96,8 +96,11 @@ def build_payload(profile, model, max_tokens, seed=0):
             "temperature": 0,
             "seed": seed,
             "max_tokens": max_tokens or 512,
+            # CGC FIX 2026-09-06: 裸 ```python 前綴在 IQ3_XXS 是自強化吸引子,
+            # model 會 100% 重複 ```python (冷 pool 也一樣, temp0/0.4 相同)。
+            # 改成 def 錨定進 code-mode: 迴圈率 ~100%→20%, 不再吃 marker/scaffold。
             "chat_template_kwargs": {
-                "assistant_prefill": "```python\n",
+                "assistant_prefill": "```python\ndef fibonacci(n):\n    ",
             },
             "stop": ["```", "<|end|>", "<|output|>", "<|user|>"],
         }
