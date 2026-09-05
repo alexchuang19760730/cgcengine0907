@@ -35,12 +35,13 @@
 #
 # 檢查 11（2026-09-05 新增）：replay benchmark regression
 #   三個應用 profile (qa-zh / longform-zh / coding) 跑 quality / prefill_tps /
-#   decode_tps / peak_rss_mb 12 個指標，跟 HEAD~1 比較。
+#   decode_tps / peak_rss_mb 12 個指標，跟 HEAD 的 .replay_bench_baseline.json
+#   比較 (= 上一個 commit 的「已知良好」狀態)。
 #   Verdict: 至少 1 個指標改善 (improvement) 且不超過 1 個指標退化 (regression) → PASS
 #   否則 → FAIL（precommit hook 拒絕 commit）。
 #   只對「代碼」commit 觸發（src/ / scripts/ / *.cpp / *.h / *.py 等），純文件
-#   commit (docs/ / *.md / *.html) 不跑。ALLOW_REPLAY_BENCH_BASELINE=1 可跳過
-#   比較（首次 commit 無 HEAD~1 baseline 時用）。RUN_REPLAY_BENCH=0 可關閉。
+#   commit (docs/ / *.md / *.html) 不跑。ALLOW_REPLAY_BENCH_BASELINE=1 在 HEAD
+#   沒有 baseline 時（bootstrap 階段）改成 SKIP 而非 FAIL。RUN_REPLAY_BENCH=0 可完全關閉。
 #
 # 用法：
 #   scripts/check_build_tracked.sh                 # 檢查目前 cwd 所在的 repo
@@ -139,7 +140,7 @@ for ref in refs/heads/main refs/remotes/github0823/main; do
         break
     fi
     if [ -n "$CUR_BRANCH" ] && [ "$CUR_BRANCH" != "dev" ]; then
-        pass "非 dev 分支（${CUR_BRANCH}）- 跳過 main⊆dev 檢查"
+        pass "非 dev 分支 (${CUR_BRANCH}) - 跳過 main⊆dev 檢查"
         break
     fi
     if git -C "$REPO_ROOT" merge-base --is-ancestor "$ref" HEAD 2>/dev/null; then
@@ -257,7 +258,7 @@ if [ "$HAVE_BIN_DIR" = 1 ]; then
             if [ "$ok" = 1 ]; then
                 pass "@rpath 指向本 repo build/bin: $exe -> ${rpaths[*]}"
             else
-                fail "@rpath 被改到別處（洞 D）: $exe -> ${rpaths[*]}（預期 ${BIN_ABS}）"
+                fail "@rpath 被改到別處 (洞 D): $exe -> ${rpaths[*]} (預期 ${BIN_ABS})"
             fi
         done
     fi
@@ -284,9 +285,9 @@ if [ "$HAVE_BIN_DIR" = 1 ]; then
         # 7b：batch_owned mask 在位（宣告 + hit 標記 + miss 分配標記）
         n_mask="$(grep -cF 'batch_owned' "$EC_SRC" || true)"
         if [ "${n_mask:-0}" -ge 3 ]; then
-            pass "7b batch_owned mask 在位（${n_mask} 處 ≥ 3）"
+            pass "7b batch_owned mask 在位 (${n_mask} 處 >= 3)"
         else
-            fail "7b batch_owned mask 不完整（${n_mask} 處 < 3：宣告/hit 標記/分配標記）"
+            fail "7b batch_owned mask 不完整 (${n_mask} 處 < 3: 宣告/hit 標記/分配標記)"
         fi
         # 7c：掛死看門狗在位（等待可證偽）
         if grep -qF 'FATAL ensure_batch' "$EC_SRC" && grep -qF 'FATAL ensure_slot' "$EC_SRC"; then
@@ -324,7 +325,7 @@ if [ "$HAVE_BIN_DIR" = 1 ]; then
             # (a) build/bin 產物必須在同一個 commit staged
             staged_bin="$(grep -F 'build/bin/' <<< "$STAGED_FILES" | head -1 || true)"
             if [ -n "$staged_bin" ]; then
-                pass "8 build 產物隨原始碼 staged（${staged_bin##*/}）"
+                pass "8 build 產物隨原始碼 staged (${staged_bin##*/})"
             else
                 fail "8 stage 了 ${#staged_src[@]} 個原始碼但沒 stage build/bin 產物 — git add src/llama.cpp/build/bin/ 一起進 commit"
             fi
@@ -372,7 +373,7 @@ else
         if "$RUN_N30" "$@" >"$log" 2>&1; then
             :
         else
-            fail "9 ${label} 執行失敗（見 ${log}）"
+            fail "9 ${label} 執行失敗 (見 ${log})"
             return
         fi
 
@@ -420,7 +421,7 @@ PY
                 fi
             fi
         else
-            fail "9 ${label} 無法從 log 解析 t/s（見 ${log}）"
+            fail "9 ${label} 無法從 log 解析 t/s (見 ${log})"
         fi
     }
 
@@ -450,8 +451,9 @@ fi
 
 # ============ 檢查 11：replay benchmark regression（代碼 commit 才觸發）============
 # 三個應用 profile (qa-zh / longform-zh / coding) 跑 12 個指標（3 profile × 4 aspect:
-# quality / prefill_tps / decode_tps / peak_rss_mb），跟 HEAD~1 的 .replay_bench_baseline.json
-# 比較。Verdict: 至少 1 個指標改善 + 不超過 1 個指標退化 → PASS，否則 FAIL 拒絕 commit。
+# quality / prefill_tps / decode_tps / peak_rss_mb），跟 HEAD 的 .replay_bench_baseline.json
+# 比較 (= 上一個 commit 的「已知良好」狀態)。Verdict: 至少 1 個指標改善 + 不超過
+# 1 個指標退化 → PASS，否則 FAIL 拒絕 commit。
 echo "--- 檢查 replay benchmark 不退化（代碼 commit 才觸發） ---"
 if [ "${RUN_REPLAY_BENCH:-1}" != 1 ]; then
     echo "SKIP  RUN_REPLAY_BENCH=0 → 跳過 replay benchmark regression 檢查"
@@ -496,7 +498,7 @@ else
     if [ "$has_code" != 1 ]; then
         echo "SKIP  本次 commit 為純文件變更（無 src/ scripts/ *.cpp *.h *.py 等代碼）→ 不觸發 replay benchmark"
     else
-        info "11 本次 commit 含代碼改動（has_code=1, has_doc=${has_doc}）→ 觸發 replay benchmark"
+        info "11 本次 commit 含代碼改動 (has_code=1, has_doc=${has_doc}) -> 觸發 replay benchmark"
         # 2) 偵測 server PID（CGC_SERVER_PID env > pgrep llama-server --port 8080）
         REPLAY_BENCH="$REPO_ROOT/scripts/check/replay_server_profile.py"
         REPLAY_COMPARE="$REPO_ROOT/scripts/check/replay_bench_compare.py"
@@ -521,27 +523,25 @@ else
                 --bench-output "$CURRENT_OUT" \
                 --commit "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)" \
                 > /tmp/.replay_bench_run.log 2>&1; then
-                pass "11 replay benchmark 跑完（$CURRENT_OUT）"
+                pass "11 replay benchmark 跑完 ($CURRENT_OUT)"
             else
                 fail "11 replay benchmark 跑失敗（見 /tmp/.replay_bench_run.log）"
             fi
 
-            # 4) 拿 baseline: 優先 working dir 的 .replay_bench_baseline.json，
-            #    否則取 HEAD~1 的 .replay_bench_baseline.json，
-            #    再否則 ALLOW_REPLAY_BENCH_BASELINE=1 跳過比較。
+            # 4) 拿 baseline: 直接拿 HEAD 的 .replay_bench_baseline.json
+            #    (= 上一個 commit 的「已知良好」狀態, 本次 commit 跟它比較).
+            #    若 HEAD 沒有, 視為尚未 bootstrap, 必須先用 ALLOW_REPLAY_BENCH_BASELINE=1
+            #    單獨 commit 一份 baseline 進版 (後續 commit 才能嚴格比較).
             BASELINE_SRC=""
-            if [ -f "$REPO_ROOT/.replay_bench_baseline.json" ]; then
-                cp "$REPO_ROOT/.replay_bench_baseline.json" "$BASELINE_OUT"
-                BASELINE_SRC="working-dir"
-            elif git -C "$REPO_ROOT" show "HEAD~1:.replay_bench_baseline.json" > "$BASELINE_OUT" 2>/dev/null; then
-                BASELINE_SRC="HEAD~1"
+            if git -C "$REPO_ROOT" show "HEAD:.replay_bench_baseline.json" > "$BASELINE_OUT" 2>/dev/null; then
+                BASELINE_SRC="HEAD"
             fi
 
             if [ -z "$BASELINE_SRC" ]; then
                 if [ "${ALLOW_REPLAY_BENCH_BASELINE:-0}" = 1 ]; then
-                    echo "SKIP  找不到 baseline（working dir / HEAD~1 都沒有）但 ALLOW_REPLAY_BENCH_BASELINE=1 → 跳過比較"
+                    echo "SKIP  找不到 baseline（HEAD 沒有 .replay_bench_baseline.json）但 ALLOW_REPLAY_BENCH_BASELINE=1 → 跳過比較"
                 else
-                    fail "11 找不到 baseline：$REPO_ROOT/.replay_bench_baseline.json 不存在且 HEAD~1 沒有。ALLOW_REPLAY_BENCH_BASELINE=1 可跳過（或先 commit 一份 .replay_bench_baseline.json 作為基準）"
+                    fail "11 找不到 baseline：HEAD 沒有 .replay_bench_baseline.json。需先 bootstrap: ALLOW_REPLAY_BENCH_BASELINE=1 git commit 一份 .replay_bench_baseline.json 進版（先單獨 commit 避免被擋）"
                 fi
             else
                 info "11 baseline 來源: $BASELINE_SRC"
@@ -551,11 +551,16 @@ else
                     --reference "$REPLAY_REF" \
                     --report "$REPORT_OUT" \
                     > /tmp/.replay_bench_compare.log 2>&1; then
-                    pass "11 replay benchmark 比較 PASS（$BASELINE_SRC）"
-                    info "11 詳細 report: $REPORT_OUT（commit 這份新 baseline 可選）"
+                    pass "11 replay benchmark 比較 PASS ($BASELINE_SRC)"
+                    info "11 詳細 report: $REPORT_OUT (commit 這份新 baseline 可選)"
                 else
-                    fail "11 replay benchmark 退化（見 $REPORT_OUT 與 /tmp/.replay_bench_compare.log）"
-                    info "11 此次 replay 輸出: $CURRENT_OUT（不變好即不允許 commit）"
+                    rc=$?
+                    if [ "$rc" = 1 ]; then
+                        fail "11 replay benchmark 退化 (見 $REPORT_OUT 與 /tmp/.replay_bench_compare.log)"
+                    else
+                        fail "11 replay benchmark 比較 ERROR (見 /tmp/.replay_bench_compare.log)"
+                    fi
+                    info "11 此次 replay 輸出: $CURRENT_OUT (不變好即不允許 commit)"
                 fi
             fi
         fi
