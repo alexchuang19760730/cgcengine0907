@@ -2781,11 +2781,16 @@ ggml_status llama_context::graph_compute(
             // safety floor: masking needs >= n_expert_used warm experts so top-k still has real
             // candidates. Fewer warm -> all-zero mask (softmax unmasked; the cold guard below
             // still protects via ensure_batch).
+            // [CGC RN bisect 2026-09-06] CGC_RN_NOOP=1 writes all-zero masks (mechanism runs:
+            // leaf + ADD + host write each step, but no expert excluded) — isolates a broken
+            // mask/buffer path from "renorm-by-exclusion is harmful" (measured: RN quality is
+            // deterministic 0.3 at 4/8/10GiB pool alike, even at ~99% residency).
             static const bool rn_dbg = getenv("CGC_RN_DBG") != nullptr;
-            if (rn_warm < rn_k) {
+            static const bool rn_noop = getenv("CGC_RN_NOOP") != nullptr;
+            if (rn_warm < rn_k || rn_noop) {
                 memset(rn_out, 0, rn_ne * sizeof(float));
                 if (rn_dbg && rn_il <= 2) {
-                    fprintf(stderr, "CGC-RN-FLOOR: il=%d warm=%d < k=%d -> no mask\n", rn_il, (int) rn_warm, (int) rn_k);
+                    fprintf(stderr, "CGC-RN-FLOOR: il=%d warm=%d < k=%d -> no mask%s\n", rn_il, (int) rn_warm, (int) rn_k, rn_noop ? " (NOOP)" : "");
                 }
             } else {
                 for (uint32_t e = 0; e < rn_ne; ++e) {

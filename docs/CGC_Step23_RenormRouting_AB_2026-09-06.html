@@ -120,6 +120,27 @@ pre { background: #f8f8f8; padding: 12px; border-radius: 6px; overflow-x: auto; 
 <li><b>16GB + MTP 下不建議再追</b>：async 窗口不存在、同步 re-target 被 capacity ceiling 卡住 —— §6 判定（需 K≈128–192 / 32GB）維持不變。</li>
 <li>若日後要解 0000 防護換 async：需在 verify/draft 之間設計「GPU idle 才 flush」的 barrier，或 double-buffer pool region（2× slot 記憶體），兩者都是新工程。</li>
 </ol>
+<h2>9. RN 品質歸因 bisect（2026-09-06，8GB pool 上實測）</h2>
+<p>動機：8GB pool（~142 slot/層，mass 覆蓋 ~95%）+ RN+WCOLD 實測 decode <b>25.9 t/s / 98.7% accept</b>，但品質仍是 deterministic 0.3（與 4GB/10GB 的 RN 結果相同）。品質失敗對 pool size 不敏感（4→10GB 都不好）→ 歸因必須是「mask 機制」或「exclusion 本身」，不是 capacity。</p>
+<h3>9.1 RN mask 實況（CGC_RN_DBG，8GB）</h3>
+<pre>il=0 warm=0/256 -&gt; floor: 全 0 mask（layer0 不 pool，正確）
+il=1 warm=142/256 masked=114     （-inf 到 114 個冷 expert）
+il=2 warm=142/256 masked=114</pre>
+<p>mask leaf + ADD + 每 step host 寫入都正確運作；layer 0 由 floor 保護（全 0 → softmax 不動）。</p>
+<h3>9.2 關鍵實驗：CGC_RN_NOOP=1（mask 機制照跑、但全寫 0 = 不排除任何 expert）</h3>
+<table>
+<tr><th>config（8GB pool）</th><th>qa-zh</th><th>coding</th></tr>
+<tr><td>default（無 RN）</td><td class="ok">1.0</td><td class="ok">1.0（5-run）</td></tr>
+<tr><td>RN（exclusion 生效）</td><td class="bad">0.765（prompt echo）</td><td class="bad">0.3（deterministic，counting loop）</td></tr>
+<tr><td>RN+NOOP（全 0 mask）</td><td class="ok">1.0</td><td class="bad">0.3（5-run；repetition loop）</td></tr>
+</table>
+<h3>9.3 結論</h3>
+<ol>
+<li><b>qa-zh 崩潰（1.0 → 0.765 echo）100% 由 exclusion 造成</b>：NOOP 拿掉 exclusion 就回到 1.0，mask 機制本身沒有把錯誤值送進 graph。</li>
+<li><b>exclusion 比 mass 損失暗示的更傷</b>：142/256（8GB）甚至 178/256（10GB）「可被選」仍不足 —— top-k 是對整條 softmax 取 8 個，當真 top-8 含有冷 expert（佔總 mass ~5% 卻可能出現在相當比例的 token 的 top-8 尾段），renorm 把那個位置換成低機率 warm expert → 該 token 分佈被扭曲。MTP 下 draft+verify 看到同一個扭曲 → garbage 被 98% accept。</li>
+<li><b>「mass 覆蓋 ≥95% ⇒ renorm 品質可行」的前提是錯的</b>：品質需要的是「每 token 的 active set 幾乎都在 resident」，不是 mass 覆蓋。coding 在 NOOP 下仍退化（5-run 0.3 vs default 1.0）暗示 RN graph 路徑（額外 output leaf + ADD 改變 Metal split/layout）還有次要擾動 —— 需再查但已非主因。</li>
+<li><b>定案</b>：exclusion-based renorm 在此模型不可行；25+ 的真正前提仍是「把下一 step 的 active set 提前 resident」（look-ahead fill），而那被 MTP 的 async-window 限制擋住（§8.3）。8GB default（§8/9e046443e 已 commit）是 16GB 上品質安全的實際速度解（11–22 t/s）。</li>
+</ol>
 
 </body>
 </html>
