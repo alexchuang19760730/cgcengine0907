@@ -141,6 +141,17 @@ il=2 warm=142/256 masked=114</pre>
 <li><b>「mass 覆蓋 ≥95% ⇒ renorm 品質可行」的前提是錯的</b>：品質需要的是「每 token 的 active set 幾乎都在 resident」，不是 mass 覆蓋。coding 在 NOOP 下仍退化（5-run 0.3 vs default 1.0）暗示 RN graph 路徑（額外 output leaf + ADD 改變 Metal split/layout）還有次要擾動 —— 需再查但已非主因。</li>
 <li><b>定案</b>：exclusion-based renorm 在此模型不可行；25+ 的真正前提仍是「把下一 step 的 active set 提前 resident」（look-ahead fill），而那被 MTP 的 async-window 限制擋住（§8.3）。8GB default（§8/9e046443e 已 commit）是 16GB 上品質安全的實際速度解（11–22 t/s）。</li>
 </ol>
+<h2>10. 4GB vs 8GB pool A/B（2026-09-06，同 session 同方法論）</h2>
+<p>模型復原後跑的受控對照：同一 binary、同一 run_server.sh MTP config（denseIQ4X, ngl=99, draft-mtp n_max=3, 0000 防護全開），唯一變數 = expert pool budget 4GB vs 8GB。每 profile warmup + runs（qa/longform ×3、coding ×5）、seed 0、reference rules。</p>
+<table>
+<tr><th>Profile</th><th>4GB decode t/s</th><th>8GB decode t/s</th><th>Δ</th><th>品質（兩者相同）</th></tr>
+<tr><td>qa-zh</td><td>9.76</td><td><b>11.10</b></td><td>+14%</td><td class="ok">1.0（var 0）</td></tr>
+<tr><td>longform-zh</td><td>8.92</td><td><b>11.32</b></td><td>+27%</td><td class="ok">0.882（var 0）</td></tr>
+<tr><td>coding</td><td>8.18</td><td><b>17.41</b></td><td><b>+113%</b></td><td class="ok">1.0（var ≤0.118，1/5 flaky）</td></tr>
+</table>
+<p>prefill 同步上升（qa 24.5→31.9、longform 21.9→28.2、coding 8.8→25.9 t/s）。coding 是 guard-trip 最敏感的 profile（大 pool = 冷 step 少 = 較少同步 ensure_batch），所以加速最明顯。品質在兩個 pool 大小都 = baseline 完全相同 → 8GB default（commit 9e046443e）是純收益。</p>
+<h2>11. EMA-victim 落地（gated-off groundwork，供 async fill 窗口啟用後使用）</h2>
+<p>pick_slot 的 victim 選擇在 CGC_SPAC=1 時改為「最低 EMA utility 優先、LRU 平手」（llama-expert-cache.cpp）。Default OFF = bit-identical 純 LRU（utility seed 0.5 全等 → tie-break 回到 last_use）。EMA utility（spac_util）已由 df3ee17a6 提供，feed 需 CGC_SPAC=1；此政策是 §8/方案1（safe async fill window）的前置：當 fill 通道打通、pool 能漂移後，victim 選低 utility 讓 resident set 更貼近 EMA hot set。單獨使用在固定容量下受限於 §5 的 hindsight ceiling（~+1.6pt），不預期單獨解決 25+。</p>
 
 </body>
 </html>

@@ -319,8 +319,16 @@ static int32_t pick_slot(llama_expert_cache * cache, uint32_t layer, const uint8
     // LRU static pin yields. Neither pass touches this-batch-owned slots (batch_mask) or
     // in-flight fills — pick_slot still returns -1 only while a fill is in flight, which the
     // caller's bg_cv.wait handles correctly.
+    // [CGC SpAc EMA-victim 2026-09-06] when CGC_SPAC=1, choose the victim by the slot
+    // owner's EMA utility (spac_util) instead of pure LRU. Lower utility = more likely
+    // evicted; tie-break by last_use so behavior is deterministic and degrades to LRU
+    // when utilities are equal (e.g. before the first feed). Default OFF = bit-identical
+    // pure-LRU. The utility vector is seeded 0.5 for all experts, so pre-feed tie-break
+    // by last_use preserves the old eviction order exactly.
+    const bool spac_victim = cgc_spac_on() && layer < cache->spac_util.size();
     for (int pass = 0; pass < 3; ++pass) {
         uint64_t best_tick = UINT64_MAX;
+        double   best_util = 2.0;  // > max possible (1.0), so any real utility wins
         int32_t  best_slot = -1;
         for (uint32_t i = 0; i < ns; ++i) {
             if (load[i] || queued[i]) {
@@ -335,9 +343,18 @@ static int32_t pick_slot(llama_expert_cache * cache, uint32_t layer, const uint8
             if (pass == 0 && cache->slot_pinned[layer][i]) {
                 continue;
             }
-            if (last[i] < best_tick) {
-                best_tick = last[i];
-                best_slot = (int32_t) i;
+            if (spac_victim && owner[i] >= 0 && owner[i] < (int32_t) cache->n_expert) {
+                const double util = cache->spac_util[layer][owner[i]];
+                if (util < best_util || (util == best_util && last[i] < best_tick)) {
+                    best_util = util;
+                    best_tick = last[i];
+                    best_slot = (int32_t) i;
+                }
+            } else {
+                if (last[i] < best_tick) {
+                    best_tick = last[i];
+                    best_slot = (int32_t) i;
+                }
             }
         }
         if (best_slot >= 0) {
