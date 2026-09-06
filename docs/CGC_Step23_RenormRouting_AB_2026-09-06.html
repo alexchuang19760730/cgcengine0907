@@ -95,6 +95,31 @@ pre { background: #f8f8f8; padding: 12px; border-radius: 6px; overflow-x: auto; 
 <li>層 0 warm=0 為設計使然（skip-load full-weight），不需修。</li>
 </ol>
 <p>本 commit 的 <code>CGC_MASSCOV</code> 儀表可供日後在 32GB 機上直接量測驗證。</p>
+<h2>8. SpAc EMA 估計器移植（2026-09-06，gated-off 已 commit）</h2>
+<p>方向：把 turbo-fieldfare 的 MoE-SpAc（EMA utility + 週期性 top-K pool re-target，見 <code>MoESpAcEstimator.swift</code>）移植到 llama.cpp expert cache，讓 pool membership 追蹤 decode 真實 routing，期望在 4GB（71 slot/層）下把 resident mass 從 ~75% 拉高。</p>
+<h3>8.1 實作（全數 default-OFF，CGC_SPAC=1 才啟用）</h3>
+<ul>
+<li><b>EMA utility state</b>：<code>spac_util[layer][expert]</code>，seed 0.5；<code>spac_update</code> = 全量 EMA decay（×α，α=CGC_SPAC_ALPHA 預設 0.85）+ routed bump（1−α）。</li>
+<li><b>Feed</b>：<code>expert_cache_on_topk</code> 每 routed step 餵 layer 的 expert ids —— MTP draft ctx 也餵，所以 draft 的 next-token routing 比 trunk 早一步進 estimator（免費 look-ahead）。</li>
+<li><b>Re-target</b>：<code>spac_prefetch</code> 在 B-section（process_ubatch compute 後）每 CGC_SPAC_REFRESH 次把每層 utility top-K（CGC_SPAC_K 預設 8）非 resident 成員丟給 <code>prefetch_slot</code>（bg thread fill、滿時 LRU-evict），pool 漂向 EMA hot set。</li>
+</ul>
+<h3>8.2 品質驗證（gated-off 預設 = baseline，無退化）</h3>
+<table>
+<tr><th>Profile</th><th>baseline</th><th>含 SpAc code 重測（預設 OFF）</th></tr>
+<tr><td>qa-zh</td><td class="ok">1.0</td><td class="ok">1.0（var 0.0）</td></tr>
+<tr><td>longform-zh</td><td class="ok">0.882</td><td class="ok">0.882（var 0.0）</td></tr>
+<tr><td>coding</td><td class="ok">1.0</td><td class="ok">1.0（var 0.003）</td></tr>
+</table>
+<h3>8.3 A/B 激活嘗試 → 結構性阻塞（重要發現）</h3>
+<p>正式 MTP server config（run_server.sh）在 MTP 模式設 <code>CGC_NO_PREFETCH=1</code>（0000 防護：bg thread 在 GPU mid-verify 時填/逐 slot 會覆寫仍在讀的 slot）。因此 B-section 整個 prefetch 區塊（含 SpAc 注入點）在 25+ MTP 路徑被 gate 掉 —— 這是設計使然，不是 bug。</p>
+<p>診斷 A/B：手動以同 config 但拔掉 <code>CGC_NO_PREFETCH</code> + <code>CGC_SPAC=1</code> 啟動 —— SpAc 確實活了（feeds 上升、每 refresh ~321 fills、n_prefetch 964），但 server 在 decode 中段崩潰（log: <i>cleaning up before exit</i>）——<b>再次實證「MTP+OA_ASYNC + 背景 pool fill」不相容</b>，正是 <code>CGC_NO_PREFETCH=1</code> 防護的那類毀壞。</p>
+<div class="warn"><b>結構性結論：25+ MTP 路徑（OA_ASYNC=1 + verify/draft fast path）沒有可用的 async fill 窗口。</b>Swift SpAc 的價值建立在「GPU command buffer 之間用 bg thread 預填 pool」上；llama.cpp 的 MTP 伺服語義為了 0000 安全把這個窗口關了。EMA 只能走同步 mutation 點（pick_slot / ensure_batch），而那類路徑的收益上限就是 §5 的 capacity ceiling（~76%），達不到 renorm 所需的 ~95%。</div>
+<h3>8.4 結論與建議</h3>
+<ol>
+<li><b>本 commit 交付</b>：完整 gated-off 的 EMA SpAc 基礎（估計器 + feed + prefetch source + config），品質中性（§8.2 三 profile 全數 = baseline），供 32GB 機或未來安全 async 窗口直接啟用。</li>
+<li><b>16GB + MTP 下不建議再追</b>：async 窗口不存在、同步 re-target 被 capacity ceiling 卡住 —— §6 判定（需 K≈128–192 / 32GB）維持不變。</li>
+<li>若日後要解 0000 防護換 async：需在 verify/draft 之間設計「GPU idle 才 flush」的 barrier，或 double-buffer pool region（2× slot 記憶體），兩者都是新工程。</li>
+</ol>
 
 </body>
 </html>

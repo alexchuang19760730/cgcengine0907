@@ -209,6 +209,18 @@ struct llama_expert_cache {
     size_t n_prewarm_misses   = 0;
     size_t n_prefetch = 0;          // pool prefetches queued to the bg thread
     size_t n_prefetch_dropped = 0;  // skipped (queue full / no free slot / already resident)
+    // [CGC SpAc 2026-09-06] per-(layer, expert) EMA utility estimator (CGC_SPAC=1), ported from
+    // the turbo-fieldfare MoE-SpAc scheduler (MoESpAcEstimator.swift): utility[L][e] =
+    // alpha*utility[L][e] + (1-alpha)*routed(e) with alpha=CGC_SPAC_ALPHA (default 0.85). Every
+    // routed step feeds the layer's expert ids from expert_cache_on_topk (spac_update: full-EMA
+    // decay of all entries then bump routed). Every CGC_SPAC_REFRESH between-step B-sections,
+    // spac_prefetch re-targets each layer's pool toward the utility top-K (spac_k non-resident
+    // members via prefetch_slot, which LRU-evicts when the layer is full) — a drifting hot
+    // profile that follows decode routing instead of the loader's static experts-0..n prewarm.
+    // Default 0.5 = unseeded (profile-like warm start, mirrors SpAc's 0.5 seed so an expert
+    // that has never routed this session still outranks a 0-utility newcomer on refresh #1).
+    std::vector<std::vector<double>> spac_util;   // [layer][expert] EMA utility, seeded 0.5
+    uint64_t spac_feeds = 0;                      // routed-feed counter (refresh cadence)
     // [CGC routing-aware placement 2026-08-29] static-pin telemetry: how many fills landed on
     // pin_profile members (got slot_pinned_static) and how many static pins were evicted by
     // pick_slot's overflow pass 2 (a fill needed the slot and nothing else was available —
@@ -251,6 +263,46 @@ static inline uint32_t cgc_layer_cap(uint32_t layer, uint32_t def) {
     return cur;
 }
 
+// [CGC SpAc 2026-09-06] config helpers (read once per process). CGC_SPAC=1 enables the EMA
+// utility prefetch source (replaces the default step/hist source in the B-section; default OFF
+// = stock behavior, bit-identical). CGC_SPAC_ALPHA default 0.85 (SpAc's measured inertia),
+// CGC_SPAC_K default 8 = top-K per layer re-targeted each refresh, CGC_SPAC_REFRESH default 1
+// = run the refresh every Nth B-section (1 = every step, the Swift's per-step prefetch cadence).
+static inline bool cgc_spac_on() {
+    static const bool v = getenv("CGC_SPAC") != nullptr && getenv("CGC_SPAC")[0] != '\0';
+    return v;
+}
+static inline double cgc_spac_alpha() {
+    const char * s = getenv("CGC_SPAC_ALPHA");
+    double v = 0.85;
+    if (s != nullptr && s[0] != '\0') {
+        v = atof(s);
+        if (v < 0.0) v = 0.0;
+        if (v > 0.999) v = 0.999;
+    }
+    return v;
+}
+static inline uint32_t cgc_spac_k() {
+    const char * s = getenv("CGC_SPAC_K");
+    uint32_t v = 8;
+    if (s != nullptr && s[0] != '\0') {
+        v = (uint32_t) atoi(s);
+        if (v < 1) v = 1;
+        if (v > 128) v = 128;
+    }
+    return v;
+}
+static inline uint32_t cgc_spac_refresh() {
+    const char * s = getenv("CGC_SPAC_REFRESH");
+    uint32_t v = 1;
+    if (s != nullptr && s[0] != '\0') {
+        v = (uint32_t) atoi(s);
+        if (v < 1) v = 1;
+        if (v > 256) v = 256;
+    }
+    return v;
+}
+
 // [CGC Hybrid 2026-09-05] Soft Pool tier capacities: CGC_SOFT_POOL_L0 / CGC_SOFT_POOL_L1
 // partition the per-layer slot pool into L0 (fixed hot, no LRU eviction) and L1 (warm, LRU
 // evict). Default 32/32 matches the doc's recommended 64-slot per-layer configuration
@@ -287,6 +339,16 @@ void llama_expert_cache_ensure_batch(llama_expert_cache * cache, uint32_t layer,
 // each layer's top-K most-routed experts at the first decode step. Returns 0 when skipped.
 void llama_expert_cache_record_routes(llama_expert_cache * cache, uint32_t layer,
                                       const uint32_t * experts, size_t n);
+// [CGC SpAc 2026-09-06] EMA utility update: decay all of layer's utilities by alpha, then bump
+// the routed experts by (1-alpha). Called from expert_cache_on_topk with the step's route list
+// (CGC_SPAC=1). Cheap (n_expert mults per layer); lock is brief.
+void llama_expert_cache_spac_update(llama_expert_cache * cache, uint32_t layer,
+                                    const uint32_t * experts, size_t n);
+// [CGC SpAc 2026-09-06] between-step pool re-target: per layer, prefetch the top-K non-resident
+// experts by EMA utility (prefetch_slot = bg fill; LRU-evicts a slot when the layer is full, so
+// the pool drifts toward the utility hot set). Call from the B-section prefetch site every
+// CGC_SPAC_REFRESH feeds when CGC_SPAC=1. Non-blocking; returns the number of prefetches queued.
+size_t llama_expert_cache_spac_prefetch(llama_expert_cache * cache);
 // [CGC mass-coverage 2026-09-06] accumulate selection softmax mass per expert (massc_mass)
 // plus the mass covered by the CURRENT residency (slot_table>=0) — see header comment. Called
 // from expert_cache_on_topk when CGC_MASSCOV=1. experts/w_sel: the step's selected expert ids

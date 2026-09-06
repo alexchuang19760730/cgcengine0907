@@ -1528,6 +1528,12 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
     static const char * pf_src_env = getenv("CGC_PREFETCH_SRC");
     static const bool pf_prev = pf_src_env != nullptr && strcmp(pf_src_env, "prev") == 0;
     static const bool pf_hist = pf_src_env != nullptr && strcmp(pf_src_env, "hist") == 0;
+    // [CGC SpAc 2026-09-06] when CGC_SPAC=1 the EMA-utility source REPLACES the step/hist/prev
+    // sources below (mutually exclusive — spac_prefetch re-targets each layer toward its
+    // utility top-K every CGC_SPAC_REFRESH B-sections; the default sources stay dormant so the
+    // A/B isolates the estimator's effect). CGC_SPAC_REFRESH=1 (default) = every B-section.
+    static const bool spac_on     = cgc_spac_on();
+    static const uint32_t spac_refresh = cgc_spac_refresh();
     static const size_t pf_win = []() {
         const char * w = getenv("CGC_PREFETCH_WINDOW");
         size_t v = 4;
@@ -1541,7 +1547,20 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
     if (model.expert_cache_active && (uint32_t) ubatch.n_tokens <= cgc_pool_max_tokens() && getenv("CGC_NO_PREFETCH") == nullptr) {
         llama_expert_cache * ec = model.expert_cache;
         if (ec != nullptr && llama_expert_cache_pool_active(ec)) {
-            if (pf_hist) {
+            if (spac_on) {
+                static uint64_t spac_tick = 0;
+                if ((spac_tick++ % spac_refresh) == 0) {
+                    const size_t spac_q = llama_expert_cache_spac_prefetch(ec);
+                    if (getenv("CGC_SPAC_DBG") != nullptr) {
+                        static int spac_dbg_n = 0;
+                        if (spac_dbg_n++ < 40) {
+                            fprintf(stderr, "CGC-SPAC: feeds=%llu queued=%zu n_prefetch=%zu dropped=%zu\n",
+                                    (unsigned long long) ec->spac_feeds, spac_q,
+                                    ec->n_prefetch, ec->n_prefetch_dropped);
+                        }
+                    }
+                }
+            } else if (pf_hist) {
                 // roll the current step's union into the per-layer history window (do this
                 // before the rotate below clears cache_step_union), then prefetch the window.
                 if (cache_tail_union.size() < (size_t) model.hparams.n_layer_all) {
@@ -3485,6 +3504,15 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     uidx.reserve(uni.size());
     for (size_t k = 0; k < uni.size(); ++k) {
         uidx[uni[k]] = (uint32_t) k;
+    }
+
+    // [CGC SpAc 2026-09-06] EMA utility feed (CGC_SPAC=1 only; zero cost default): every routed
+    // step updates this layer's utility vector (full-EMA decay + routed bump). Fires on every
+    // path that reaches here — large prefill, MTP draft (ctx MTP) and trunk verify alike — so
+    // the draft's next-token routing reaches the estimator one step before trunk needs it (free
+    // look-ahead, no extra compute). Unpooled layers update a row spac_prefetch never reads.
+    if (cgc_spac_on()) {
+        llama_expert_cache_spac_update(cache, (uint32_t) il, routes.data(), routes.size());
     }
 
     // large prefill (multi-token beyond the pool path): record route frequencies for the hot

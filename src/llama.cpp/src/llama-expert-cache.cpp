@@ -958,6 +958,83 @@ void llama_expert_cache_masscov_record(llama_expert_cache * cache, uint32_t laye
     }
 }
 
+// [CGC SpAc 2026-09-06] EMA utility update (MoESpAcEstimator port). Full-EMA decay: every
+// entry of the layer decays by alpha, then the routed experts bump by (1-alpha) — an expert
+// decays toward 0 when it stops being routed, while a recurring one stays near 1. Called from
+// expert_cache_on_topk for every routed step (CGC_SPAC=1). The layer is checked against
+// spac_util.size() so unpooled layers (e.g. L4 skip layer 0 — no spac_util row) are no-ops.
+void llama_expert_cache_spac_update(llama_expert_cache * cache, uint32_t layer,
+                                    const uint32_t * experts, size_t n) {
+    if (cache == nullptr || layer >= cache->spac_util.size() || n == 0 || experts == nullptr) {
+        return;
+    }
+    const double alpha = cgc_spac_alpha();
+    const double bump  = 1.0 - alpha;
+    std::lock_guard<std::mutex> lk(cache->m);
+    auto & u = cache->spac_util[layer];
+    const uint32_t ne = cache->n_expert;
+    if (u.size() < ne) {
+        return;
+    }
+    for (uint32_t e = 0; e < ne; ++e) {
+        u[e] *= alpha;
+    }
+    for (size_t i = 0; i < n; ++i) {
+        if (experts[i] < ne) {
+            u[experts[i]] += bump;
+        }
+    }
+    cache->spac_feeds++;
+}
+
+// [CGC SpAc 2026-09-06] between-step pool re-target toward the EMA utility top-K. Per layer,
+// collect the NON-resident experts that exist in the GGUF index, partial-sort by utility desc,
+// and prefetch the top spac_k. prefetch_slot fills via the bg thread and LRU-evicts a slot when
+// the layer is full, so over refreshes the pool drifts from the loader's static experts-0..n
+// prewarm to the experts decode actually routes. Read-mostly under the lock (slot_table snapshot
+// must match what prefetch_slot re-checks under the same lock — it re-validates before queueing,
+// so a stale snapshot here only costs a dropped prefetch).
+// Cadence: the caller (process_ubatch B-section) invokes this every CGC_SPAC_REFRESH routed
+// feeds; spac_feeds is the global feed counter (not per layer) so all layers refresh together.
+size_t llama_expert_cache_spac_prefetch(llama_expert_cache * cache) {
+    if (cache == nullptr || !cache->pool_active || cache->spac_util.empty()) {
+        return 0;
+    }
+    const uint32_t K   = cgc_spac_k();
+    const uint32_t ne  = cache->n_expert;
+    size_t queued = 0;
+    for (size_t layer = 0; layer < cache->spac_util.size(); ++layer) {
+        if (llama_expert_cache_slots_per_layer_l(cache, (uint32_t) layer) == 0) {
+            continue; // unpooled layer (skip-layer0 / no slots): nothing to re-target
+        }
+        const auto & u = cache->spac_util[layer];
+        if (u.size() < ne) {
+            continue;
+        }
+        const int32_t * table = cache->slot_table.data() + layer * ne;
+        std::vector<uint32_t> cand;
+        cand.reserve(ne);
+        for (uint32_t e = 0; e < ne; ++e) {
+            if (table[e] < 0 &&
+                cache->key_segs.find(make_key((uint32_t) layer, e)) != cache->key_segs.end()) {
+                cand.push_back(e);
+            }
+        }
+        if (cand.empty()) {
+            continue;
+        }
+        const size_t ntake = std::min<size_t>(K, cand.size());
+        std::partial_sort(cand.begin(), cand.begin() + ntake, cand.end(),
+                          [&u](uint32_t a, uint32_t b) { return u[a] > u[b]; });
+        for (size_t i = 0; i < ntake; ++i) {
+            if (llama_expert_cache_prefetch_slot(cache, (uint32_t) layer, cand[i]) == 0) {
+                queued++;
+            }
+        }
+    }
+    return queued;
+}
+
 // Prefill hot prewarm: at the first decode step, fill each layer's pool with its top-K most-
 // routed prefill experts (instead of the loader's experts-0..n prewarm). The preads are the
 // same cold-start cost as the loader prewarm, but land in the slots decode actually uses.
@@ -1854,6 +1931,11 @@ llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t b
         cache->massc_mass.assign(max_layer, std::vector<double>(cache->n_expert, 0.0));
         cache->massc_total.assign(max_layer, 0.0);
         cache->massc_cur_cov.assign(max_layer, 0.0);
+        // [CGC SpAc 2026-09-06] EMA utility, seeded 0.5 (profile-like warm start — an expert
+        // that never routed yet still outranks a decayed-to-0 newcomer on refresh #1, mirroring
+        // MoESpAcEstimator's seed so the first pool re-target does not degenerate to expert-id
+        // ordering). Sized eagerly (cheap: ~41 x 256 doubles) so spac_update needs no resize.
+        cache->spac_util.assign(max_layer, std::vector<double>(cache->n_expert, 0.5));
         cache->pool.assign(max_layer, std::vector<std::vector<uint8_t>>(4));
         cache->pool_ext.assign(max_layer, std::vector<const uint8_t *>(4, nullptr));
         cache->pool_ext_stride.assign(max_layer, std::vector<size_t>(4, 0));
