@@ -3329,14 +3329,17 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         return;
     }
 
-    // [CGC DBUF2 full double-buffer 2026-09-06] at the first MoE layer of each verify decode
-    // step (il==1, layer 0 is non-MoE), atomically swap active<->scratch slot tables. This is
-    // the GPU-idle step boundary: the previous step's FFN has completed and consumed its remap
-    // leaves, and the next step's FFN hasn't started. Async bg fills that landed in scratch since
-    // the last swap become active; the old active is reset to -1 and becomes the new scratch.
-    // Draft ctx (il >= n_layer) never triggers this — draft is a prediction and doesn't need the
-    // swapped table. CGC_DBUF2=0 = no-op.
-    if (il == 1 && cgc_dbuf2_on()) {
+    // [CGC DBUF2 full double-buffer 2026-09-06] at the first MoE layer of each VERIFY decode
+    // step (il==1 AND n_tokens==1), atomically swap active<->scratch slot tables. This is the
+    // GPU-idle step boundary: the previous step's FFN has completed and consumed its remap leaves,
+    // and the next step's FFN hasn't started. Async bg fills that landed in scratch since the last
+    // swap become active; the old active retains its full mappings and becomes the new scratch
+    // (incrementally updated by the next round of fills).
+    // CRITICAL: only swap when n_tokens==1 (decode). During prefill (n_tokens>1) the graph
+    // dispatches all layers at once and there is no per-step idle window; swapping there caused
+    // severe cache->m contention with bg workers and collapsed prefill t/s (measured 5.5 vs
+    // 15-26). Draft ctx (il >= n_layer) never triggers il==1. CGC_DBUF2=0 = no-op.
+    if (il == 1 && n_tokens == 1 && cgc_dbuf2_on()) {
         llama_expert_cache_dbuf2_swap(cache);
     }
 
