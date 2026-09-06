@@ -409,6 +409,10 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
             {
                 n_fuse = ggml_metal_op_mul_mat_id(ctx, idx);
             } break;
+        case GGML_OP_MUL_MAT_ID_DOWN_COMBINE:
+            {
+                n_fuse = ggml_metal_op_mul_mat_id_down_combine(ctx, idx);
+            } break;
         case GGML_OP_GET_ROWS:
             {
                 n_fuse = ggml_metal_op_get_rows(ctx, idx);
@@ -3424,6 +3428,103 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
             ggml_metal_encoder_dispatch_threadgroups(enc, (ne01 + nr0*nsg - 1)/(nr0*nsg), (_ne1 + nr1 - 1)/nr1, ne123, 32, nsg, 1);
         }
     }
+
+    return 1;
+}
+
+// CGC P0: batch down-combine dispatch (Lily-style).
+// Loops over all selected experts, does IQ3_XXS down GEMV + weighted sum in one kernel.
+// Reduces 8 kernel launches + 7 adds to 1 kernel.
+// Only supports: decode (n_tokens==1), IQ3_XXS down weights, F32 swiglu output.
+// Falls back to original path if conditions not met (returns 0 → caller uses default).
+int ggml_metal_op_mul_mat_id_down_combine(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    // env-gated: CGC_DOWN_COMBINE=1 to enable (default off)
+    static const bool enabled = []{
+        const char * e = getenv("CGC_DOWN_COMBINE");
+        return e != nullptr && e[0] == '1';
+    }();
+    if (!enabled) {
+        return 0;  // fallback: graph builder will use original path
+    }
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    // src0 = down weights [K, N, n_expert] (Q3_K)
+    // src1 = swiglu output [K, n_expert_used, n_tokens] (F32)
+    // src2 = expert ids [n_expert_used, n_tokens] (I32)
+    // src3 = routing weights [n_expert_used, n_tokens] (F32)
+    GGML_ASSERT(op->src[0]->type == GGML_TYPE_Q3_K);
+    GGML_ASSERT(op->src[1]->type == GGML_TYPE_F32);
+    GGML_ASSERT(op->src[2]->type == GGML_TYPE_I32);
+    GGML_ASSERT(op->src[3]->type == GGML_TYPE_F32);
+
+    GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
+    GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
+    GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
+    GGML_TENSOR_LOCALS(uint64_t, nb1, op->src[1], nb);
+    GGML_TENSOR_LOCALS( int32_t, ne2, op->src[2], ne);
+    GGML_TENSOR_LOCALS(uint64_t, nb2, op->src[2], nb);
+    GGML_TENSOR_LOCALS( int32_t, ne3, op->src[3], ne);
+    GGML_TENSOR_LOCALS(uint64_t, nb3, op->src[3], nb);
+    GGML_TENSOR_LOCALS( int32_t, ne,  op,         ne);
+    GGML_TENSOR_LOCALS(uint64_t, nb,  op,         nb);
+
+    // only support decode (single token)
+    if (ne12 != 1) {
+        return 0;  // fallback
+    }
+
+    ggml_metal_buffer_id bid_src0 = ggml_metal_get_buffer_id(op->src[0]);
+    ggml_metal_buffer_id bid_src1 = ggml_metal_get_buffer_id(op->src[1]);
+    ggml_metal_buffer_id bid_src2 = ggml_metal_get_buffer_id(op->src[2]);
+    ggml_metal_buffer_id bid_src3 = ggml_metal_get_buffer_id(op->src[3]);
+    ggml_metal_buffer_id bid_dst  = ggml_metal_get_buffer_id(op);
+
+    auto pipeline = ggml_metal_library_get_pipeline_mul_mv_id_down_combine(lib, op);
+    const int nsg = pipeline.nsg;
+    const int nr0 = pipeline.nr0;
+    const size_t smem = pipeline.smem;
+
+    ggml_metal_kargs_mul_mv_id_down_combine args = {
+        /*.nei0 =*/ (int32_t)ne20,     // n_expert_used
+        /*.nei1 =*/ (int32_t)ne21,     // n_tokens
+        /*.nbi1 =*/ nb21,               // ids stride
+        /*.nbw1 =*/ nb31,               // weights stride
+        /*.ne00 =*/ (int32_t)op->src[0]->ne[0],  // K (n_ff)
+        /*.ne01 =*/ (int32_t)op->src[0]->ne[1],  // N (n_embd)
+        /*.ne02 =*/ (int32_t)op->src[0]->ne[2],  // n_expert (total)
+        /*.nb00 =*/ op->src[0]->nb[0],
+        /*.nb01 =*/ op->src[0]->nb[1],
+        /*.nb02 =*/ op->src[0]->nb[2],
+        /*.ne10 =*/ (int32_t)ne10,     // K
+        /*.ne11 =*/ (int32_t)ne11,     // n_expert_used
+        /*.ne12 =*/ (int32_t)ne12,     // n_tokens
+        /*.nb10 =*/ nb10,
+        /*.nb11 =*/ nb11,
+        /*.nb12 =*/ nb12,
+        /*.ne0  =*/ (int32_t)op->ne[0],  // n_embd (output rows)
+        /*.ne1  =*/ (int32_t)op->ne[1],  // n_tokens (output cols)
+        /*.nb0  =*/ op->nb[0],
+        /*.nb1  =*/ op->nb[1],
+        /*.nr0  =*/ (int32_t)nr0,
+    };
+
+    ggml_metal_encoder_set_pipeline(enc, pipeline);
+    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+    ggml_metal_encoder_set_buffer  (enc, bid_src0, 1);
+    ggml_metal_encoder_set_buffer  (enc, bid_src1, 2);
+    ggml_metal_encoder_set_buffer  (enc, bid_src2, 3);
+    ggml_metal_encoder_set_buffer  (enc, bid_src3, 4);
+    ggml_metal_encoder_set_buffer  (enc, bid_dst,  5);
+
+    ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
+
+    // grid: x = row groups, y = tokens (decode: 1)
+    const int n_row_groups = (ne01 + nr0 * nsg - 1) / (nr0 * nsg);
+    ggml_metal_encoder_dispatch_threadgroups(enc, n_row_groups, ne12, 1, 32, nsg, 1);
 
     return 1;
 }

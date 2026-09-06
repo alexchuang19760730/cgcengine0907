@@ -11555,6 +11555,166 @@ template [[host_name("kernel_mul_mv_id_iq2_s_f32_nr0_8")]]   kernel kernel_mul_m
 template [[host_name("kernel_mul_mv_id_iq4_nl_f32")]]  kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq4_nl_f32_impl <N_R0_IQ4_NL>>>;
 template [[host_name("kernel_mul_mv_id_iq4_xs_f32")]]  kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq4_xs_f32_impl <N_R0_IQ4_XS>>>;
 
+// ==================== CGC P0: batch down-combine kernel (Lily-style) ====================
+// Loops over all selected experts, does Q3_K down GEMV for each, accumulates
+// weighted by routing scores. Reduces 8 kernel launches + 7 adds to 1 kernel.
+void kernel_mul_mv_id_down_combine_q3_K_impl(
+        constant ggml_metal_kargs_mul_mv_id_down_combine & args,
+        device const char * src0,       // down weights [K, N, n_expert] (Q3_K)
+        device const char * src1,       // swiglu output [K, n_expert_used, n_tokens] (F32)
+        device const int32_t * ids,     // expert ids [n_expert_used, n_tokens]
+        device const float * weights,    // routing weights [n_expert_used, n_tokens]
+        device       float * dst,        // output [N, n_tokens]
+        threadgroup  char * shmem,
+        uint3  tgpig,
+        ushort tiisg,
+        ushort sgitg) {
+    const short NSG = FC_mul_mv_nsg;
+    const short nr0 = args.nr0;
+    const int nb = args.ne00 / QK_K;  // K / QK_K
+    const int r0 = tgpig.x;            // output row group
+    const int token = tgpig.y;         // token index (decode: 0)
+
+    const int first_row = (r0 * NSG + sgitg) * nr0;
+
+    // Q3_K dequant constants
+    const short tid = tiisg / 4;
+    const short ix  = tiisg % 4;
+    const short ip  = tid / 4;          // 0 or 1
+    const short il  = 2 * ((tid % 4) / 2);  // 0 or 2
+    const short ir  = tid % 2;
+    const short l0  = 8 * ir;
+
+    const ushort4 mm[4] = {{0x0001, 0x0100, 0x0002, 0x0200},
+                           {0x0004, 0x0400, 0x0008, 0x0800},
+                           {0x0010, 0x1000, 0x0020, 0x2000},
+                           {0x0040, 0x4000, 0x0080, 0x8000}};
+    const int4 qm[2] = {{0x0003, 0x0300, 0x000c, 0x0c00}, {0x0030, 0x3000, 0x00c0, 0xc000}};
+    const ushort4 hm = mm[2*ip + il/2];
+    const short shift = 2 * il;
+    const float v1 = il == 0 ? 4.f : 64.f;
+    const float v2 = 4.f * v1;
+    const uint16_t s_shift1 = 4 * ip;
+    const uint16_t s_shift2 = s_shift1 + il;
+    const short q_offset = 32 * ip + l0;
+    const short y_offset = 128 * ip + 32 * il + l0;
+
+    float sumf1[8] = {0.f};
+    float sumf2[8] = {0.f};
+
+    // loop over all selected experts
+    for (int e = 0; e < args.nei0; ++e) {
+        const int32_t expert_id = ids[e + token * args.nei0];
+        const float   weight    = weights[e + token * args.nei0];
+
+        if (weight == 0.0f) continue;
+
+        // point to this expert's down weights, offset by first_row
+        const uint64_t offset0 = (uint64_t)expert_id * args.nb02 + (uint64_t)first_row * args.nb01;
+        device const block_q3_K * x = (device const block_q3_K *)(src0 + offset0);
+
+        // point to this expert's swiglu output (column e, token)
+        const uint64_t offset1 = (uint64_t)e * args.nb11 + (uint64_t)token * args.nb12;
+        device const float * yy = (device const float *)(src1 + offset1);
+        device const float * y1 = yy + ix * QK_K + y_offset;
+
+        float yl[32];
+
+        for (int i = ix; i < nb; i += 4) {
+            for (short l = 0; l < 8; ++l) {
+                yl[l+ 0] = y1[l+ 0];
+                yl[l+ 8] = y1[l+16];
+                yl[l+16] = y1[l+32];
+                yl[l+24] = y1[l+48];
+            }
+
+            device const uint16_t * q = (device const uint16_t *)(x[i].qs + q_offset);
+            device const uint16_t * h = (device const uint16_t *)(x[i].hmask + l0);
+            device const uint16_t * a = (device const uint16_t *)(x[i].scales);
+            device const half * dh = &x[i].d;
+
+            for (short row = 0; row < nr0; ++row) {
+                if (first_row + row >= args.ne01) break;
+
+                const float d_all = (float)dh[0];
+
+                uint32_t scales32, aux32;
+                thread uint16_t * scales16 = (thread uint16_t *)&scales32;
+                thread const int8_t * scales = (thread const int8_t *)&scales32;
+
+                scales16[0] = a[4];
+                scales16[1] = a[5];
+                aux32 = ((scales32 >> s_shift2) << 4) & 0x30303030;
+                scales16[0] = a[il+0];
+                scales16[1] = a[il+1];
+                scales32 = ((scales32 >> s_shift1) & 0x0f0f0f0f) | aux32;
+
+                float s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0;
+                for (short l = 0; l < 8; l += 2) {
+                    const int32_t qs = q[l/2];
+                    s1 += yl[l+0] * (qs & qm[il/2][0]);
+                    s2 += yl[l+1] * (qs & qm[il/2][1]);
+                    s3 += ((h[l/2] & hm[0]) ? 0.f : yl[l+0]) + ((h[l/2] & hm[1]) ? 0.f : yl[l+1]);
+                    s4 += yl[l+16] * (qs & qm[il/2][2]);
+                    s5 += yl[l+17] * (qs & qm[il/2][3]);
+                    s6 += ((h[l/2] & hm[2]) ? 0.f : yl[l+16]) + ((h[l/2] & hm[3]) ? 0.f : yl[l+17]);
+                }
+                float d1 = d_all * (s1 + 1.f/256.f * s2 - s3*v1);
+                float d2 = d_all * (s4 + 1.f/256.f * s5 - s6*v2);
+                sumf1[row] += weight * d1 * (scales[0] - 32);
+                sumf2[row] += weight * d2 * (scales[2] - 32);
+
+                s1 = s2 = s3 = s4 = s5 = s6 = 0;
+                for (short l = 0; l < 8; l += 2) {
+                    const int32_t qs = q[l/2+8];
+                    s1 += yl[l+8] * (qs & qm[il/2][0]);
+                    s2 += yl[l+9] * (qs & qm[il/2][1]);
+                    s3 += ((h[l/2+8] & hm[0]) ? 0.f : yl[l+8]) + ((h[l/2+8] & hm[1]) ? 0.f : yl[l+9]);
+                    s4 += yl[l+24] * (qs & qm[il/2][2]);
+                    s5 += yl[l+25] * (qs & qm[il/2][3]);
+                    s6 += ((h[l/2+8] & hm[2]) ? 0.f : yl[l+24]) + ((h[l/2+8] & hm[3]) ? 0.f : yl[l+25]);
+                }
+                d1 = d_all * (s1 + 1.f/256.f * s2 - s3*v1);
+                d2 = d_all * (s4 + 1.f/256.f * s5 - s6*v2);
+                sumf1[row] += weight * d1 * (scales[1] - 32);
+                sumf2[row] += weight * d2 * (scales[3] - 32);
+
+                q  += args.nb01 / 2;
+                h  += args.nb01 / 2;
+                a  += args.nb01 / 2;
+                dh += args.nb01 / 2;
+            }
+
+            y1 += 4 * QK_K;
+        }
+    }
+
+    // write output
+    device float * dst_f32 = (device float *)dst + (uint64_t)token * args.nb1 / sizeof(float);
+    for (int row = 0; row < nr0 && first_row + row < args.ne01; ++row) {
+        const float sumf = (sumf1[row] + 0.25f * sumf2[row]) / (1 << shift);
+        float sum_all = simd_sum(sumf);
+        if (tiisg == 0) {
+            dst_f32[first_row + row] = sum_all;
+        }
+    }
+}
+
+[[host_name("kernel_mul_mv_id_down_combine_q3_K_f32")]]
+kernel void kernel_mul_mv_id_down_combine_q3_K_f32(
+        constant ggml_metal_kargs_mul_mv_id_down_combine & args,
+        device const char * src0,
+        device const char * src1,
+        device const int32_t * ids,
+        device const float * weights,
+        device       float * dst,
+        threadgroup  char * shmem [[threadgroup(0)]],
+        uint3  tgpig [[threadgroup_position_in_grid]],
+        ushort tiisg [[thread_index_in_simdgroup]],
+        ushort sgitg [[simdgroup_index_in_threadgroup]]) {
+    kernel_mul_mv_id_down_combine_q3_K_impl(args, src0, src1, ids, weights, dst, shmem, tgpig, tiisg, sgitg);
+}
+
 kernel void kernel_pool_2d_max_f32(
         constant    ggml_metal_kargs_pool_2d & args,
         device  const float * src0,

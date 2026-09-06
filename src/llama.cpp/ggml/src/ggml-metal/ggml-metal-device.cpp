@@ -1257,7 +1257,44 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
     return res;
 }
 
-// CGC P1-3a: pipeline lookup for the fused gate+up+GLU phase-1 kernel.
+// CGC P0: pipeline lookup for the batch down-combine kernel (Lily-style).
+// Only supports IQ3_XXS down weights + F32 swiglu output (decode path).
+ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id_down_combine(ggml_metal_library_t lib, const ggml_tensor * op) {
+    char base[256];
+    char name[256];
+
+    // Q3_K uses fixed constants, not ggml_metal_nsg_env (which returns -1 for Q3_K)
+    int nsg = N_SG_Q3_K;
+    int nr0 = N_R0_Q3_K;
+    int nr1 = 1;
+
+    // Q3_K does not need lookup table in threadgroup memory
+    size_t smem = 0;
+
+    snprintf(base, 256, "kernel_mul_mv_id_down_combine_q3_K_f32");
+    snprintf(name, 256, "%s_nsg=%d", base, nsg);
+
+    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+    if (!res.pipeline) {
+        ggml_metal_cv_t cv = ggml_metal_cv_init();
+
+        ggml_metal_cv_set_int16(cv, nsg, FC_MUL_MV + 0);
+        ggml_metal_cv_set_int16(cv, 1,   FC_MUL_MV + 2);
+        ggml_metal_cv_set_int16(cv, 1,   FC_MUL_MV + 3);
+        ggml_metal_cv_set_int16(cv, 1,   FC_MUL_MV + 4);
+
+        res = ggml_metal_library_compile_pipeline(lib, base, name, cv);
+
+        ggml_metal_cv_free(cv);
+    }
+
+    res.nr0  = nr0;
+    res.nr1  = nr1;
+    res.nsg  = nsg;
+    res.smem = smem;
+
+    return res;
+}
 //   w = gate weights tensor, tsrc1 = y (activation) type. IQ3_XXS / IQ2_S.
 ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id_glu(ggml_metal_library_t lib, const ggml_tensor * w, ggml_type tsrc1) {
     char base[256];

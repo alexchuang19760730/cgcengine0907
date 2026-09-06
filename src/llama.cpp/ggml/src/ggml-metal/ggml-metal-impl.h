@@ -556,6 +556,34 @@ typedef struct {
     int32_t  nr0;
 } ggml_metal_kargs_mul_mv_id;
 
+// CGC P0: args for the batch down-combine MUL_MAT_ID kernel (Lily-style).
+// Loops over all selected experts, does down GEMV for each, and accumulates
+// weighted by routing scores. Input: as[down_weights], b[swiglu_output],
+// ids[expert_ids], weights[routing_weights]. Output: [n_embd, n_tokens].
+typedef struct {
+    int32_t  nei0;     // n_expert_used
+    int32_t  nei1;     // n_tokens
+    uint64_t nbi1;     // ids stride (n_expert_used * sizeof(i32))
+    uint64_t nbw1;     // weights stride (n_expert_used * sizeof(f32))
+    int32_t  ne00;     // K (n_ff)
+    int32_t  ne01;     // N (n_embd)
+    int32_t  ne02;     // n_expert (total)
+    uint64_t nb00;     // weight row stride
+    uint64_t nb01;     // weight col stride
+    uint64_t nb02;     // weight expert stride
+    int32_t  ne10;     // K (n_ff)
+    int32_t  ne11;     // n_expert_used
+    int32_t  ne12;     // n_tokens
+    uint64_t nb10;     // b row stride
+    uint64_t nb11;     // b expert stride
+    uint64_t nb12;     // b token stride
+    int32_t  ne0;      // n_embd (output rows)
+    int32_t  ne1;      // n_tokens (output cols)
+    uint64_t nb0;      // output row stride
+    uint64_t nb1;      // output col stride
+    int32_t  nr0;      // rows per thread
+} ggml_metal_kargs_mul_mv_id_down_combine;
+
 // CGC P1-3a: args for the fused gate+up+GLU(+down) MUL_MAT_ID kernel.
 // Members match the usage in kernel_mul_mv_id_glu_{iq3_xxs,iq2_s}_impl in
 // ggml-metal.metal. The kernels are not dispatched from ggml-metal-ops.cpp

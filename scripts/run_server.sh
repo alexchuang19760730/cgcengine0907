@@ -558,6 +558,10 @@ SERVER_ENV=(
     CGC_N_CB="$SERVER_N_CB"
     CGC_OA_ASYNC="$SERVER_OA_ASYNC"  # §8.77/8.78: +12.6% speed (0000 bug fixed in C++)
 )
+# CGC P0: down-combine (Lily-style batch down projection). Pass through if externally set.
+if [ -n "${CGC_DOWN_COMBINE:-}" ]; then
+    SERVER_ENV+=(CGC_DOWN_COMBINE="$CGC_DOWN_COMBINE")
+fi
 if [ "$SERVER_GLU_FUSED_DOWN" = "1" ]; then
     SERVER_ENV+=(CGC_GLU_FUSED_DOWN=1)
 fi

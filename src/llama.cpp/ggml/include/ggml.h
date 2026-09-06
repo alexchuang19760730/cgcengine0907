@@ -512,6 +512,7 @@ extern "C" {
 
         GGML_OP_MUL_MAT,
         GGML_OP_MUL_MAT_ID,
+        GGML_OP_MUL_MAT_ID_DOWN_COMBINE, // CGC P0: batch down projection + weighted sum (Lily-style)
         GGML_OP_OUT_PROD,
 
         GGML_OP_SCALE,
@@ -1447,6 +1448,19 @@ extern "C" {
             struct ggml_tensor  * as,
             struct ggml_tensor  * b,
             struct ggml_tensor  * ids);
+
+    // CGC P0: indirect matrix multiplication with down-combine (Lily-style)
+    // as: [n_embd, n_ff, n_expert] (down weights)
+    // b:  [n_ff, n_expert_used, n_tokens] (SwiGLU output)
+    // ids: [n_expert_used, n_tokens] (i32 expert ids)
+    // weights: [n_expert_used, n_tokens] (f32 routing weights)
+    // result: [n_embd, n_tokens] = sum_e weights[e,t] * (as[:,:,ids[e,t]] @ b[:,e,t])
+    GGML_API struct ggml_tensor * ggml_mul_mat_id_down_combine(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * as,
+            struct ggml_tensor  * b,
+            struct ggml_tensor  * ids,
+            struct ggml_tensor  * weights);
 
     // A: m columns, n rows,
     // B: p columns, n rows,

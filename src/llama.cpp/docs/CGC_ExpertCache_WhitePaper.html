@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CGC Expert Cache 白皮书 - Qwen3.6-35B-A3B MoE 推理优化</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #1a1a1a; background: #fafafa; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+  header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); color: white; padding: 60px 40px; border-radius: 12px; margin-bottom: 40px; }
+  header h1 { font-size: 2.2em; margin-bottom: 10px; }
+  header .subtitle { font-size: 1.1em; opacity: 0.9; margin-bottom: 20px; }
+  header .meta { font-size: 0.9em; opacity: 0.7; }
+  h2 { font-size: 1.6em; color: #0f3460; margin: 40px 0 20px; padding-bottom: 10px; border-bottom: 2px solid #e94560; }
+  h3 { font-size: 1.25em; color: #16213e; margin: 25px 0 12px; }
+  h4 { font-size: 1.05em; color: #0f3460; margin: 18px 0 8px; }
+  p { margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 0.9em; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-radius: 8px; overflow: hidden; }
+  th { background: #16213e; color: white; padding: 12px 10px; text-align: left; font-weight: 600; }
+  td { padding: 10px; border-bottom: 1px solid #eee; }
+  tr:hover { background: #f5f7fa; }
+  code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-family: 'SF Mono', Monaco, monospace; font-size: 0.85em; color: #e94560; }
+  pre { background: #1a1a2e; color: #e0e0e0; padding: 20px; border-radius: 8px; overflow-x: auto; margin: 15px 0; font-size: 0.85em; line-height: 1.5; }
+  pre code { background: none; color: inherit; padding: 0; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600; margin-right: 5px; }
+  .badge-production { background: #d4edda; color: #155724; }
+  .badge-experimental { background: #fff3cd; color: #856404; }
+  .badge-deprecated { background: #f8d7da; color: #721c24; }
+  .badge-default-off { background: #e2e3e5; color: #383d41; }
+  .card { background: white; border-radius: 8px; padding: 20px; margin: 15px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .highlight { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+  .success { background: #d4edda; border-left: 4px solid #28a745; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+  .warning { background: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+  .toc { background: white; padding: 25px; border-radius: 8px; margin-bottom: 30px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+  .toc h3 { margin-top: 0; }
+  .toc ul { list-style: none; padding-left: 0; }
+  .toc li { padding: 5px 0; border-bottom: 1px solid #eee; }
+  .toc a { color: #0f3460; text-decoration: none; }
+  .toc a:hover { color: #e94560; }
+  .metric-box { text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 8px; }
+  .metric-box .value { font-size: 2.5em; font-weight: 700; }
+  .metric-box .label { font-size: 0.9em; opacity: 0.9; }
+  footer { margin-top: 60px; padding: 30px; text-align: center; color: #666; font-size: 0.85em; border-top: 1px solid #eee; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>CGC Expert Cache 白皮书</h1>
+  <div class="subtitle">Qwen3.6-35B-A3B MoE 模型在 16GB M4 Max 上的推理优化架构</div>
+  <div class="meta">版本：v1.0 | 日期：2026-09-07 | 目标：25+ tok/s 且保持 baseline 质量</div>
+</header>
+
+<div class="toc">
+  <h3>目录</h3>
+  <ul>
+    <li><a href="#overview">1. 架构概述</a></li>
+    <li><a href="#files">2. 核心文件清单</a></li>
+    <li><a href="#options">3. 环境变量 Option 全览</a></li>
+    <li><a href="#testing">4. 质量与速度测试方法</a></li>
+    <li><a href="#milestones">5. 性能里程碑</a></li>
+    <li><a href="#p0">6. P0 Down-Combine 最新进展</a></li>
+    <li><a href="#future">7. 未来方向</a></li>
+  </ul>
+</div>
+
+<h2 id="overview">1. 架构概述</h2>
+
+<p>CGC (CGC Engine) Expert Cache 是一套针对 MoE (Mixture of Experts) 模型的专家权重缓存与推理优化系统，核心目标是在资源受限的边缘设备（如 16GB M4 Max MacBook）上运行大参数 MoE 模型时，通过智能缓存、预取和计算融合，实现高吞吐推理。</p>
+
+<h3>1.1 核心设计理念</h3>
+
+<div class="grid-2">
+  <div class="card">
+    <h4>Working Set 原理</h4>
+    <p>A3B 模型每 token 仅激活 top-8/256 专家（约 3B 参数），但跨 token 的累计 working set 远大于此。Expert Cache 池的大小根据 routing mass 分布动态调整，而非加载全部 35B 参数。</p>
+  </div>
+  <div class="card">
+    <h4>分层缓存架构</h4>
+    <p>L4 slot pool 作为 GPU 端的专家权重缓存，配合 LRU 淘汰、EMA 效用估计、异步预取和 step-ahead refill，最大化 resident expert 比例，减少文件 I/O。</p>
+  </div>
+</div>
+
+<h3>1.2 关键技术组件</h3>
+
+<table>
+  <tr><th>组件</th><th>功能</th><th>状态</th></tr>
+  <tr><td><code>L4 Expert Cache Pool</code></td><td>GPU 端专家权重缓存，按 slot 管理</td><td><span class="badge badge-production">生产</span></td></tr>
+  <tr><td><code>DBUF (Double Buffer)</code></td><td>hook-time step-ahead refill，GPU-idle 窗口安全预取</td><td><span class="badge badge-production">生产</span></td></tr>
+  <tr><td><code>SPAC (Spatial Activated Estimator)</code></td><td>EMA 效用估计器，预测 next active expert</td><td><span class="badge badge-production">生产</span></td></tr>
+  <tr><td><code>EMA-biased Eviction</code></td><td>基于 EMA 效用的淘汰策略，替代纯 LRU</td><td><span class="badge badge-production">生产</span></td></tr>
+  <tr><td><code>P0 Down-Combine</code></td><td>8 expert down GEMV + 7 add 合并为 1 kernel</td><td><span class="badge badge-experimental">实验</span></td></tr>
+  <tr><td><code>DBUF2 Full Double Buffer</code></td><td>active/scratch 指针原子切换的完整双缓冲</td><td><span class="badge badge-deprecated">已弃用</span></td></tr>
+  <tr><td><code>Fast-Path Wait</code></td><td>等待 in-flight fill 而非 ZERO-mapping</td><td><span class="badge badge-deprecated">已弃用</span></td></tr>
+  <tr><td><code>MMV_FUSE (GLU 融合)</code></td><td>gate+up+GLU 融合 kernel</td><td><span class="badge badge-deprecated">已弃用</span></td></tr>
+  <tr><td><code>Renorm Routing</code></td><td>排除非 resident expert 的 renormalization</td><td><span class="badge badge-deprecated">已弃用</span></td></tr>
+</table>
+
+<h2 id="files">2. 核心文件清单</h2>
+
+<h3>2.1 Expert Cache 核心实现</h3>
+
+<table>
+  <tr><th>文件</th><th>行数</th><th>功能</th></tr>
+  <tr><td><code>src/llama-expert-cache.h</code></td><td>~33KB</td><td>Expert Cache 数据结构、slot 管理、SPAC EMA 估计器、option 读取</td></tr>
+  <tr><td><code>src/llama-expert-cache.cpp</code></td><td>~115KB</td><td>Expert Cache 完整实现：slot 分配/淘汰、prefetch 队列、MASSCOV 测量、dylib 接口</td></tr>
+</table>
+
+<h3>2.2 计算图与推理集成</h3>
+
+<table>
+  <tr><th>文件</th><th>功能</th></tr>
+  <tr><td><code>src/llama-graph.cpp</code></td><td>MoE FFN 计算图构建：down-combine 条件分支、renorm routing</td></tr>
+  <tr><td><code>src/llama-context.cpp</code></td><td>推理上下文：prewarm、prefetch 调度、DBUF refill hook、cold expert 处理、MASSCOV 报告</td></tr>
+</table>
+
+<h3>2.3 GGML 后端（Metal + CPU）</h3>
+
+<table>
+  <tr><th>文件</th><th>功能</th></tr>
+  <tr><td><code>ggml/include/ggml.h</code></td><td>新 op 定义：<code>GGML_OP_MUL_MAT_ID_DOWN_COMBINE</code></td></tr>
+  <tr><td><code>ggml/src/ggml.c</code></td><td>新 op 的图节点创建：<code>ggml_mul_mat_id_down_combine</code></td></tr>
+  <tr><td><code>ggml/src/ggml-cpu/ggml-cpu.c</code></td><td>CPU fallback：per-expert vec_dot 加权累加；n_tasks 与工作内存支持</td></tr>
+  <tr><td><code>ggml/src/ggml-metal/ggml-metal.metal</code></td><td>Metal kernel：<code>kernel_mul_mv_id_down_combine_q3_K_f32</code>（Q3_K 反量化 + expert 循环 + 加权累加）</td></tr>
+  <tr><td><code>ggml/src/ggml-metal/ggml-metal-ops.cpp</code></td><td>Metal op 分发：<code>ggml_metal_op_mul_mat_id_down_combine</code>；MMV_FUSE、GLU fused down</td></tr>
+  <tr><td><code>ggml/src/ggml-metal/ggml-metal-device.cpp</code></td><td>Pipeline 获取：<code>ggml_metal_library_get_pipeline_mul_mv_id_down_combine</code>（nsg/nr0/smem 配置）</td></tr>
+  <tr><td><code>ggml/src/ggml-metal/ggml-metal-device.m</code></td><td>Metal 设备支持：<code>ggml_metal_device_supports_op</code> 添加 down-combine</td></tr>
+  <tr><td><code>ggml/src/ggml-metal/ggml-metal-common.cpp</code></td><td>通用 Metal：<code>h_safe</code> reorder 安全检查添加 down-combine</td></tr>
+  <tr><td><code>ggml/src/ggml-metal/ggml-metal.cpp</code></td><td>Metal 后端：<code>get_op_batch_size</code> 添加 down-combine</td></tr>
+</table>
+
+<h3>2.4 脚本与配置</h3>
+
+<table>
+  <tr><th>文件</th><th>功能</th></tr>
+  <tr><td><code>scripts/run_server.sh</code></td><td>生产 server 启动脚本：<code>SERVER_ENV</code> 数组传递所有 CGC_* 环境变量（注意：使用 <code>env</code> 启动，不继承外部环境）</td></tr>
+  <tr><td><code>scripts/check/replay_server_profile.py</code></td><td>基准测试脚本：3 profile 质量评估 + 速度测量</td></tr>
+</table>
+
+<h2 id="options">3. 环境变量 Option 全览</h2>
+
+<div class="highlight">
+  <strong>重要：</strong><code>run_server.sh</code> 使用 <code>env "${SERVER_ENV[@]}" "$BIN"</code> 启动 server，<strong>不继承</strong>外部 shell 环境变量。每个 CGC_* 变量必须显式添加到 <code>SERVER_ENV</code> 数组才能传递给 server 进程。
+</div>
+
+<h3>3.1 核心缓存配置</h3>
+
+<table>
+  <tr><th>Option</th><th>默认值</th><th>说明</th><th>状态</th></tr>
+  <tr><td><code>CGC_SERVER_EXPERT_CACHE_BYTES</code></td><td>0（禁用）</td><td>Expert Cache 池大小（字节）。生产配置：8GB = 8589934592。决定每层可缓存的 expert slot 数量。</td><td><span class="badge badge-production">生产</span></td></tr>
+</table>
+
+<h3>3.2 DBUF (Double Buffer) - Step-Ahead Refill</h3>
+
+<table>
+  <tr><th>Option</th><th>默认值</th><th>说明</th><th>状态</th></tr>
+  <tr><td><code>CGC_DBUF</code></td><td>未设置（OFF）</td><td>启用 hook-time step-ahead refill。在 per-layer GPU-idle hook 窗口，将当前 step 的 ZERO-mapped cold union 成员加入 prefetch 队列，让 next step 找到它们 resident。<strong>生产配置：启用</strong></td><td><span class="badge badge-production">生产</span></td></tr>
+  <tr><td><code>CGC_DBUF_CAP</code></td><td>24</td><td>prefetch 队列容量上限。防止 early-decode cold burst（12/layer × 41 layers ≈ 500 fills）超出 ~40ms step 窗口。</td><td><span class="badge badge-production">生产</span></td></tr>
+</table>
+
+<h3>3.3 SPAC (Spatial Activated Estimator) - EMA 效用估计</h3>
+
+<table>
+  <tr><th>Option</th><th>默认值</th><th>说明</th><th>状态</th></tr>
+  <tr><td><code>CGC_SPAC</code></td><td>未设置（OFF）</td><td>启用 EMA 效用估计器。per-(layer, expert) EMA utility，<code>utility[L][e] = α·u + (1−α)·routed</code>。用于 prefetch 目标选择和 EMA-biased 淘汰。<strong>生产配置：启用</strong></td><td><span class="badge badge-production">生产</span></td></tr>
+  <tr><td><code>CGC_SPAC_ALPHA</code></td><td>0.75（已调优）</td><td>EMA 衰减系数 α。范围 0~1。α 越大，越重视近期 routing；α 越小，越平滑。细扫描结果：0.75 为最佳（中位数 25.87 t/s，最佳 26.19）。</td><td><span class="badge badge-production">生产</span></td></tr>
+  <tr><td><code>CGC_SPAC_K</code></td><td>8</td><td>每次 refresh 预取的 top-K expert 数量。</td><td><span class="badge badge-default-off">默认 OFF</span></td></tr>
+  <tr><td><code>CGC_SPAC_REFRESH</code></td><td>未设置</td><td>EMA top-K → prefetch 的刷新间隔（token 数）。</td><td><span class="badge badge-default-off">默认 OFF</span></td></tr>
+  <tr><td><code>CGC_SPAC_DBG</code></td><td>未设置</td><td>SPAC 调试输出。</td><td><span class="badge badge-default-off">调试</span></td></tr>
+</table>
+
+<h3>3.4 P0 Down-Combine (实验性)</h3>
+
+<table>
+  <tr><th>Option</th><th>默认值</th><th>说明</th><th>状态</th></tr>
+  <tr><td><code>CGC_DOWN_COMBINE</code></td><td>未设置（OFF）</td><td>启用 batch down-combine kernel。将 8 个 per-expert down GEMV + 7 次 add 合并为 1 个 kernel，减少 kernel launch 开销。仅支持 decode（n_tokens==1）、Q3_K down weights、无 scale/bias。</td><td><span class="badge badge-experimental">实验</span></td></tr>
+</table>
+
+<div class="success">
+  <strong>P0 测试结果（2026-09-07）：</strong>启用 CGC_DOWN_COMBINE=1 后，decode_tps 中位数 23.29，最佳 25.09（vs baseline 25.87），draft_accept 94.25%，质量 3/3 = 1.0。距离 25+ 目标只差 7%。
+</div>
+
+<h3>3.5 Prefetch 与 Prewarm</h3>
+
+<table>
+  <tr><th>Option</th><th>默认值</th><th>说明</th><th>状态</th></tr>
+  <tr><td><code>CGC_NO_PREFETCH</code></td><td>未设置（prefetch ON）</td><td>禁用背景预取。<strong>注意：</strong>MTP 生产配置必须设置此变量（0000 防护），因为 MTP+OA_ASYNC + 背景 pool fill 会导致 mid-decode 崩溃。</td><td><span class="badge badge-production">生产</span></td></tr>
+  <tr><td><code>CGC_NO_PREWARM</code></td><td>未设置（prewarm ON）</td><td>禁用启动时的 prewarm（按 prefill route frequency 填充 top-K per layer）。</td><td><span class="badge badge-default-off">默认 OFF</span></td></tr>
+  <tr><td><code>CGC_PREFETCH_SRC</code></td><td>未设置</td><td>预取源选择：step-union / EMA / draft look-ahead。</td><td><span class="badge badge-default-off">默认 OFF</span></td></tr>
+  <tr><td><code>CGC_PREFETCH_WINDOW</code></td><td>未设置</td><td>预取滑动窗口大小。</td><td><span class="badge badge-default-off">默认 OFF</span></td></tr>
+</table>
+
+<h3>3.6 已弃用 Option（不要使用）</h3>
+
+<table>
+  <tr><th>Option</th><th>弃用原因</th></tr>
+  <tr><td><code>CGC_DBUF2</code></td><td>完整双缓冲 active/scratch 指针原子切换。6GB/8GB 反而慢 40-48%。</td></tr>
+  <tr><td><code>CGC_FAST_WAIT</code></td><td>等待 in-flight fill 而非 ZERO-mapping。decode 慢 29-48%。</td></tr>
+  <tr><td><code>CGC_MMV_FUSE</code></td><td>GLU 融合（gate+up+GLU）。平均 15.94 t/s（vs 基线 22.07），draft accept 暴跌。</td></tr>
+  <tr><td><code>CGC_RN_ROUTING</code></td><td>Renorm routing（排除非 resident expert）。质量 0.3 counting loop，NOOP bisect 确认 exclusion 是杀手。</td></tr>
+  <tr><td><code>CGC_WCOLD_EN</code></td><td>Warm cold expert 处理。与 renorm 配合使用，已随 renorm 弃用。</td></tr>
+</table>
+
+<h3>3.7 调试与测量 Option</h3>
+
+<table>
+  <tr><th>Option</th><th>说明</th></tr>
+  <tr><td><code>CGC_MASSCOV</code></td><td>启用 mass coverage 测量。统计 resident expert 占总 routing mass 的比例。</td></tr>
+  <tr><td><code>CGC_MASSCOV_DUMP</code></td><td>MASSCOV per-layer dump 文件路径。</td></tr>
+  <tr><td><code>CGC_PHASE_TIMING</code></td><td>启用 phase 级别的计时测量。</td></tr>
+  <tr><td><code>CGC_VERIFY_OP_TIMING</code></td><td>verify 路径 op 级计时。</td></tr>
+  <tr><td><code>CGC_DECODE_TRACE</code></td><td>decode 详细 trace 输出。</td></tr>
+  <tr><td><code>CGC_TAIL_DBG</code></td><td>tail expert 调试输出。</td></tr>
+  <tr><td><code>CGC_RN_DBG</code></td><td>renorm 调试输出。</td></tr>
+  <tr><td><code>CGC_N_CB</code></td><td>Metal command buffer 数量（默认 8，>2 不推荐）。</td></tr>
+</table>
+
+<h2 id="testing">4. 质量与速度测试方法</h2>
+
+<h3>4.1 测试基准：3 Profile 质量评估</h3>
+
+<p>质量评估使用三个标准化 profile，每个 profile 有明确的质量基线（baseline score）：</p>
+
+<table>
+  <tr><th>Profile</th><th>Baseline 质量</th><th>内容类型</th><th>说明</th></tr>
+  <tr><td><code>qa-zh</code></td><td>1.0</td><td>中文问答</td><td>事实性、准确性、完整性</td></tr>
+  <tr><td><code>longform-zh</code></td><td>0.882</td><td>中文长文生成</td><td>连贯性、结构、深度</td></tr>
+  <tr><td><code>coding</code></td><td>1.0</td><td>代码生成</td><td>语法正确性、逻辑正确性、可运行性</td></tr>
+</table>
+
+<div class="highlight">
+  <strong>质量判定标准：</strong>任何优化必须保持 3 个 profile 的质量不低于 baseline。coding profile 对数值扰动极其敏感（IQ3_XXS 量化下），即使 0.3 的退化也视为失败。
+</div>
+
+<h3>4.2 速度测试方法</h3>
+
+<h4>4.2.1 标准基准测试命令</h4>
+
+<pre><code>cd /Users/alexchuang/Documents/flashkv-devserver
+python3 scripts/check/replay_server_profile.py \
+  --profile coding \
+  --base-url http://127.0.0.1:8080/v1 \
+  --model test \
+  --max-tokens 512 \
+  --seed 42 \
+  --runs 3 \
+  --warmup \
+  --bench-output /tmp/result.json</code></pre>
+
+<h4>4.2.2 关键测试参数</h4>
+
+<table>
+  <tr><th>参数</th><th>标准值</th><th>说明</th></tr>
+  <tr><td><code>--max-tokens</code></td><td>512</td><td>最大生成 token 数。确保足够长的 generation 以测量 steady-state decode 速度。</td></tr>
+  <tr><td><code>--seed</code></td><td>42</td><td>固定随机种子，确保可复现性。</td></tr>
+  <tr><td><code>--runs</code></td><td>3</td><td>重复运行次数，取中位数/平均值，排除偶然波动。</td></tr>
+  <tr><td><code>--warmup</code></td><td>启用</td><td>预热运行，排除首次加载的冷启动开销。</td></tr>
+</table>
+
+<h4>4.2.3 速度指标定义</h4>
+
+<table>
+  <tr><th>指标</th><th>定义</th><th>目标</th></tr>
+  <tr><td><code>decode_tps</code></td><td>decode 阶段 tokens/second（去掉 prefill）</td><td>≥ 25.0</td></tr>
+  <tr><td><code>prefill_tps</code></td><td>prefill 阶段 tokens/second</td><td>参考指标</td></tr>
+  <tr><td><code>draft_accept_pct</code></td><td>MTP speculative decoding 的 draft token 接受率</td><td>≥ 90%</td></tr>
+  <tr><td><code>completion_tokens</code></td><td>实际生成的 token 数</td><td>= max-tokens（无提前停止）</td></tr>
+  <tr><td><code>decode_tps_degenerate</code></td><td>是否为退化输出（循环/重复）</td><td>必须为 False</td></tr>
+</table>
+
+<h3>4.3 严格 A/B 测试协议</h3>
+
+<p>为排除机器状态干扰，验证优化效果时使用严格的 A/B 交替测试协议：</p>
+
+<ol>
+  <li><strong>相同 prompt、相同 max_tokens</strong>（如 coding 固定 512 tokens）</li>
+  <li><strong>交替执行</strong>（A = 无优化, B = 有优化, A, B...）排除机器状态干扰</li>
+  <li><strong>固定 Seed=42</strong></li>
+  <li><strong>对比 steady decode tps</strong>（去掉前 50 tokens 的 warmup）</li>
+  <li><strong>每次测试前 kill 残留 llama-server</strong>，确保干净启动</li>
+  <li><strong>关闭其他应用</strong>，释放内存，减少机器波动</li>
+</ol>
+
+<h3>4.4 生产配置验证</h3>
+
+<p>每次代码变更后，必须验证默认配置（所有实验性 option 关闭）的质量不退化：</p>
+
+<pre><code># 默认配置（无 CGC_DOWN_COMBINE / CGC_DBUF2 / CGC_FAST_WAIT 等）
+CGC_SERVER_EXPERT_CACHE_BYTES=8589934592 \
+CGC_DBUF=1 \
+CGC_SPAC=1 \
+CGC_SPAC_ALPHA=0.75 \
+CGC_NO_PREFETCH=1 \
+./scripts/run_server.sh
+
+# 验证 3 profile 质量
+python3 scripts/check/replay_server_profile.py --profile qa-zh ...
+python3 scripts/check/replay_server_profile.py --profile longform-zh ...
+python3 scripts/check/replay_server_profile.py --profile coding ...</code></pre>
+
+<div class="success">
+  <strong>当前生产配置质量验证（2026-09-06）：</strong>
+  <br>qa-zh: 1.0（var 0.0）| longform-zh: 0.882（var 0.0）| coding: 1.0（var 0.003）
+  <br>全部达到或超过 baseline，无退化。
+</div>
+
+<h2 id="milestones">5. 性能里程碑</h2>
+
+<h3>5.1 速度演进轨迹</h3>
+
+<table>
+  <tr><th>日期</th><th>版本/Commit</th><th>配置</th><th>decode_tps（中位数）</th><th>质量</th><th>关键变更</th></tr>
+  <tr><td>2026-08-28</td><td>基线</td><td>8GB pool, 无 DBUF/SPAC</td><td>~17.4</td><td>1.0/0.882/1.0</td><td>初始 Expert Cache 基线</td></tr>
+  <tr><td>2026-09-05</td><td>10bdf0128</td><td>+ DBUF spike</td><td>21.7</td><td>1.0</td><td>hook-time step-ahead refill，crash-free</td></tr>
+  <tr><td>2026-09-06</td><td>13b78a08f</td><td>+ SPAC α=0.75 调优</td><td><strong>25.87</strong></td><td>1.0/0.882/1.0</td><td>EMA α 细扫描，0.75 最佳，3/3 跑满 512 tokens</td></tr>
+  <tr><td>2026-09-07</td><td>P0 实验</td><td>+ CGC_DOWN_COMBINE=1</td><td>23.29（最佳 25.09）</td><td>1.0</td><td>Down-combine kernel，nsg=-1 bug 修复后</td></tr>
+</table>
+
+<h3>5.2 关键性能指标（当前生产配置）</h3>
+
+<div class="grid-2">
+  <div class="metric-box">
+    <div class="value">25.87</div>
+    <div class="label">decode_tps 中位数</div>
+  </div>
+  <div class="metric-box">
+    <div class="value">26.19</div>
+    <div class="label">decode_tps 最佳</div>
+  </div>
+  <div class="metric-box">
+    <div class="value">~96%</div>
+    <div class="label">draft_accept_pct</div>
+  </div>
+  <div class="metric-box">
+    <div class="value">3/3</div>
+    <div class="label">profile 质量达标</div>
+  </div>
+</div>
+
+<h2 id="p0">6. P0 Down-Combine 最新进展</h2>
+
+<h3>6.1 设计目标</h3>
+
+<p>参考 Perplexity Lily 推理引擎的 <code>moe_gather_gemv_q4_down_combine</code>，将 MoE FFN 的 down projection 从"8 个 per-expert GEMV + 7 次 add"改为"1 个 batch combine kernel"，减少 kernel launch 开销。</p>
+
+<h3>6.2 开发过程中的关键发现</h3>
+
+<div class="warning">
+  <h4>发现 1：模型实际量化格式不是 IQ3_XXS</h4>
+  <p>模型文件名虽叫 <code>...IQ3_XXS-denseIQ4X.gguf</code>，但实际 expert 权重是：</p>
+  <ul>
+    <li>down_proj.exps: <strong>Q3_K</strong> (type=11)</li>
+    <li>gate/up_proj.exps: <strong>Q2_K</strong> (type=10)</li>
+  </ul>
+  <p>导致最初的 IQ3_XXS 版本 kernel 条件检查永远失败，down-combine 从未真正启用。</p>
+</div>
+
+<div class="warning">
+  <h4>发现 2：run_server.sh 不继承外部环境变量</h4>
+  <p><code>run_server.sh</code> 使用 <code>env "${SERVER_ENV[@]}" "$BIN"</code> 启动，<code>env</code> 会<strong>替换</strong>当前环境而不是追加。必须显式把每个 CGC_* 变量添加到 <code>SERVER_ENV</code> 数组。</p>
+</div>
+
+<div class="warning">
+  <h4>发现 3：Metal backend 不支持 down-combine op（最严重）</h4>
+  <p><code>ggml_metal_device_supports_op</code> 函数只支持 <code>MUL_MAT</code> 和 <code>MUL_MAT_ID</code>，没有 <code>MUL_MAT_ID_DOWN_COMBINE</code>。导致 Metal backend 静默回退到 CPU，性能只有 6 t/s。</p>
+  <p>修复了三个地方：<code>supports_op</code>、<code>get_op_batch_size</code>、<code>h_safe</code>。</p>
+</div>
+
+<div class="warning">
+  <h4>发现 4：nsg = -1 bug（性能杀手）</h4>
+  <p><code>ggml_metal_nsg_env(GGML_TYPE_Q3_K)</code> 返回 <strong>-1</strong>，因为 switch 语句中只有 <code>IQ2_S</code> 和 <code>IQ3_XXS</code>，没有 <code>Q3_K</code>。导致 grid 维度计算错误，性能只有正常的 40%（10.35 t/s）。</p>
+  <p>修复：使用 <code>N_SG_Q3_K=2</code> 常量。修复后性能飙升到 23.29 t/s。</p>
+</div>
+
+<h3>6.3 当前状态</h3>
+
+<table>
+  <tr><th>指标</th><th>Down-Combine 启用</th><th>Baseline（关闭）</th><th>差距</th></tr>
+  <tr><td>decode_tps（中位数）</td><td>23.29</td><td>25.87</td><td>-10%</td></tr>
+  <tr><td>decode_tps（最佳）</td><td>25.09</td><td>26.19</td><td>-4%</td></tr>
+  <tr><td>draft_accept_pct</td><td>94.25%</td><td>~96%</td><td>-2pt</td></tr>
+  <tr><td>质量（coding）</td><td>1.0 (3/3)</td><td>1.0</td><td>持平</td></tr>
+</table>
+
+<h3>6.4 下一步优化方向</h3>
+
+<ol>
+  <li><strong>并行度提升</strong>：当前总 threadgroup 数 513（z=1），原始 kernel 4104（z=8，每 expert 独立 threadgroup）。可考虑将 expert 循环移到 grid 维度 + reduction。</li>
+  <li><strong>nsg 参数调优</strong>：当前 nsg=2（官方默认），可尝试 nsg=1 增加 threadgroup 数量。</li>
+  <li><strong>内存访问优化</strong>：检查 expert 间的权重读取是否有合并优化空间。</li>
+  <li><strong>稳定性提升</strong>：3 次运行中有 1 次异常慢（7.89 t/s），需排查机器状态波动。</li>
+</ol>
+
+<h2 id="future">7. 未来方向</h2>
+
+<h3>7.1 短期（1-2 周）</h3>
+
+<ul>
+  <li>P0 Down-Combine 并行度优化，目标稳定 25+ t/s</li>
+  <li>P1：MoE routing 移到 GPU，减少 CPU-GPU 同步（参考 Lily），预期 +5-15%</li>
+  <li>P3：批量同步优化，减少 kernel launch 之间的 barrier 开销</li>
+</ul>
+
+<h3>7.2 中期（1-2 月）</h3>
+
+<ul>
+  <li>鸿蒙系统移植：所有 CGC_* option 设计为可配置，便于跨平台迁移</li>
+  <li>32GB 硬件验证：更大 pool（128-192 slots/layer）下的质量-速度平衡点</li>
+  <li>Gated DeltaNet 层 Apple GPU 专项优化（如果模型包含），预期 +10-20%</li>
+</ul>
+
+<h3>7.3 长期</h3>
+
+<ul>
+  <li>多模型 MoT (Model-on-Transfer) 端云协同：云端 DeepSeek V4 Flash 负责 Prefill+Speculative Draft，端侧 Qwen3.6-35B-A3B 仅执行 Verify</li>
+  <li>KV Translation 跨模型张量对齐技术</li>
+  <li>CGC Engine 商业化：仓储 AGV 与具身智能场景的边缘推理部署</li>
+</ul>
+
+<footer>
+  <p>CGC Expert Cache 白皮书 v1.0 | 2026-09-07</p>
+  <p>基于 Qwen3.6-35B-A3B MoE 模型在 16GB M4 Max 上的实证优化</p>
+  <p>仓库：https://github.com/alexchuang19760730/cgcengine0907.git</p>
+</footer>
+
+</div>
+</body>
+</html>

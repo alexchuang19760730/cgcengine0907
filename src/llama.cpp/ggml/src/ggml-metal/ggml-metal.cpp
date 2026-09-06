@@ -768,6 +768,7 @@ static int64_t get_op_batch_size(const ggml_tensor * op) {
         case GGML_OP_MUL_MAT:
             return op->ne[1];
         case GGML_OP_MUL_MAT_ID:
+        case GGML_OP_MUL_MAT_ID_DOWN_COMBINE:
             return op->ne[2];
         default:
             return ggml_nrows(op);

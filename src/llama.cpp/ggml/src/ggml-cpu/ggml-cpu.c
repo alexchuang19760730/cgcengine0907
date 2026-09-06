@@ -1523,6 +1523,64 @@ static void ggml_compute_forward_mul_mat_id_one_chunk(
     }
 }
 
+// CGC P0: CPU implementation of batch down-combine (Lily-style)
+// Loops over all selected experts, does down GEMV for each, accumulates weighted by routing scores.
+static void ggml_compute_forward_mul_mat_id_down_combine(
+        const struct ggml_compute_params * params,
+              struct ggml_tensor * dst) {
+
+    const struct ggml_tensor * src0 = dst->src[0];  // down weights [K, N, n_expert]
+    const struct ggml_tensor * src1 = dst->src[1];  // swiglu output [K, n_expert_used, n_tokens]
+    const struct ggml_tensor * ids  = dst->src[2];  // expert ids [n_expert_used, n_tokens]
+    const struct ggml_tensor * weights = dst->src[3]; // routing weights [n_expert_used, n_tokens]
+
+    GGML_TENSOR_BINARY_OP_LOCALS
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const enum ggml_type type = src0->type;
+    ggml_vec_dot_t const vec_dot = type_traits_cpu[type].vec_dot;
+
+    const int64_t n_embd = dst->ne[0];
+    const int64_t n_tokens = dst->ne[1];
+    const int64_t n_expert_used = ids->ne[0];
+    const int64_t K = src0->ne[0];
+
+    // Zero output first
+    memset(dst->data, 0, ggml_nbytes(dst));
+
+    // Process each token (decode: n_tokens=1)
+    for (int64_t token = 0; token < n_tokens; ++token) {
+        // Process each output row (parallelized by thread)
+        for (int64_t row = ith; row < n_embd; row += nth) {
+            float acc = 0.0f;
+
+            // Loop over all selected experts
+            for (int64_t e = 0; e < n_expert_used; ++e) {
+                const int32_t expert_id = ((const int32_t *)ids->data)[e + token * n_expert_used];
+                const float   weight    = ((const float *)weights->data)[e + token * n_expert_used];
+
+                if (weight == 0.0f) continue;
+
+                // Point to this expert's down weights row
+                const char * src0_row = (const char *)src0->data +
+                    (size_t)expert_id * src0->nb[2] + (size_t)row * src0->nb[1];
+
+                // Point to this expert's swiglu output
+                const char * src1_col = (const char *)src1->data +
+                    (size_t)e * src1->nb[1] + (size_t)token * src1->nb[2];
+
+                float dot = 0.0f;
+                vec_dot(K, &dot, 0, src0_row, 0, src1_col, 0, 1);
+                acc += weight * dot;
+            }
+
+            ((float *)dst->data)[row + token * n_embd] = acc;
+        }
+    }
+}
+
 static void * incr_ptr_aligned(void ** p, size_t size, size_t align) {
 
     void * ptr = *p;
@@ -1840,6 +1898,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
         case GGML_OP_MUL_MAT_ID:
             {
                 ggml_compute_forward_mul_mat_id(params, tensor);
+            } break;
+        case GGML_OP_MUL_MAT_ID_DOWN_COMBINE:
+            {
+                ggml_compute_forward_mul_mat_id_down_combine(params, tensor);
             } break;
         case GGML_OP_OUT_PROD:
             {
@@ -2329,6 +2391,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_CONCAT:
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
+        case GGML_OP_MUL_MAT_ID_DOWN_COMBINE:
         case GGML_OP_OUT_PROD:
             {
                 n_tasks = n_threads;
@@ -2871,6 +2934,11 @@ struct ggml_cplan ggml_graph_plan(
                         cur += n_as*ids->ne[0]*ids->ne[1]*sizeof(struct mmid_row_mapping) + sizeof(int64_t);
                         // atomic_current_chunk
                         cur += CACHE_LINE_SIZE*n_as + CACHE_LINE_SIZE;
+                    } break;
+                case GGML_OP_MUL_MAT_ID_DOWN_COMBINE:
+                    {
+                        // No additional work memory needed for simple CPU implementation
+                        cur = 0;
                     } break;
                 case GGML_OP_OUT_PROD:
                     {

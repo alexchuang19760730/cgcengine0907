@@ -2266,6 +2266,29 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
             GGML_ABORT("fatal error");
     }
 
+    // CGC P0: batch down-combine (Lily-style). One kernel replaces 8 down GEMVs + 7 adds.
+    // Only supports: decode (n_tokens==1), Q3_K down weights, no scale/bias on down,
+    // weight_after_ffn (standard MoE). Falls back to original path if any condition fails.
+    static const bool cgc_down_combine = []{
+        const char * e = getenv("CGC_DOWN_COMBINE");
+        return e != nullptr && e[0] == '1';
+    }();
+    if (cgc_down_combine &&
+        n_tokens == 1 &&
+        down_exps != nullptr && down_exps->type == GGML_TYPE_Q3_K &&
+        down_exps_s == nullptr && down_exps_b == nullptr &&
+        !weight_before_ffn &&
+        mm_id_ids != nullptr) {
+        // weights is [1, n_expert_used, n_tokens] → reshape to [n_expert_used, n_tokens]
+        ggml_tensor * weights_2d = ggml_reshape_2d(ctx0, weights, n_expert_used, n_tokens);
+        cb(weights_2d, "ffn_moe_weights_2d", il);
+
+        ggml_tensor * moe_out = ggml_mul_mat_id_down_combine(ctx0, down_exps, cur, mm_id_ids, weights_2d);
+        cb(moe_out, "ffn_moe_out_down_combine", il);
+        ggml_build_forward_expand(gf, moe_out);
+        return moe_out;
+    }
+
     experts = build_lora_mm_id(down_exps, cur, mm_id_ids, down_exps_s); // [n_embd, n_expert_used, n_tokens]
     cb(experts, "ffn_moe_down", il);
 
