@@ -3410,6 +3410,48 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         return; // diagnostic: keep graph structure, do not write remap / repoint weights
     }
 
+    // [CGC mass-coverage measurement 2026-09-06] CGC_MASSCOV=1 only. Read this layer's UNMASKED
+    // router logits (same upstream walk as Step-2a produce), softmax them per token, and record
+    // the actual softmax MASS of each selected expert (not just its count). The destructor
+    // report then computes how much routing mass the CURRENT pool membership serves resident vs
+    // what a top-K-by-mass prewarm would serve — the decisive metric for renorm feasibility.
+    static const bool cgc_masscov = getenv("CGC_MASSCOV") != nullptr;
+    if (cgc_masscov) {
+        ggml_tensor * lg = cgc_topk_find_logits(t, il);
+        if (lg != nullptr && lg->type == GGML_TYPE_F32) {
+            const uint32_t mc_ne = (uint32_t) lg->ne[0];
+            const uint32_t mc_nt = (uint32_t) lg->ne[1];
+            if (mc_ne > 0 && mc_nt > 0 && mc_ne <= cache->n_expert) {
+                std::vector<float> mc_buf((size_t) mc_ne * mc_nt);
+                ggml_backend_tensor_get(lg, mc_buf.data(), 0,
+                                        (size_t) mc_ne * mc_nt * sizeof(float));
+                std::vector<float> mc_w((size_t) n_tokens * n_expert_used, 0.0f);
+                for (int64_t j = 0; j < n_tokens && (uint32_t) j < mc_nt; ++j) {
+                    float mx = -1e30f;
+                    for (uint32_t e = 0; e < mc_ne; ++e) {
+                        const float v = mc_buf[e + (size_t) j * mc_ne];
+                        if (v > mx) {
+                            mx = v;
+                        }
+                    }
+                    double denom = 0.0;
+                    for (uint32_t e = 0; e < mc_ne; ++e) {
+                        denom += (double) expf(mc_buf[e + (size_t) j * mc_ne] - mx);
+                    }
+                    for (int64_t i = 0; i < n_expert_used; ++i) {
+                        const uint32_t e = (uint32_t) ids[i + j * n_expert_used];
+                        if (e < mc_ne && denom > 0.0) {
+                            mc_w[i + j * n_expert_used] =
+                                expf(mc_buf[e + (size_t) j * mc_ne] - mx) / (float) denom;
+                        }
+                    }
+                }
+                llama_expert_cache_masscov_record(cache, (uint32_t) il,
+                        (const uint32_t *) ids, mc_w.data(), (size_t) n_tokens * n_expert_used);
+            }
+        }
+    }
+
     // NOTE: FFN tensor restore/repoint is done in process_ubatch (restore all before every
     // build_graph) and in graph_get_cb (repoint at the L4 pool regions when the remap leaf is
     // built). The hook here only ensures the slot data and writes the remap ids, because with

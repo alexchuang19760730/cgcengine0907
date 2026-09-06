@@ -127,6 +127,14 @@ struct llama_expert_cache {
     // accumulated during prefill; the first decode step fills the pool with the top-K hot set
     // (instead of the loader's experts-0..n prewarm, which ignores actual routing).
     std::vector<std::vector<uint64_t>> freq;      // [layer][expert] prefill route counts
+    // [CGC mass-coverage measurement 2026-09-06] accumulate the actual softmax MASS carried by
+    // every expert selection (not just counts) so a post-run report can answer "would the
+    // resident top-K cover enough routing MASS?" — the metric that matters for renorm quality
+    // (selection-count coverage overstates harm: tail experts carry little mass). Filled from
+    // expert_cache_on_topk (env CGC_MASSCOV=1). Sized max_layer x n_expert.
+    std::vector<std::vector<double>> massc_mass;  // [layer][expert] summed selection mass
+    std::vector<double> massc_total;              // [layer] total mass of all selections
+    std::vector<double> massc_cur_cov;            // [layer] mass of selections resident NOW (slot>=0)
     bool hot_prewarm_done = false;                // prewarm_hot runs once, before the 1st decode
     std::vector<std::vector<int32_t>> slot_owner;        // [layer][slot] = expert (-1 free)
     std::vector<std::vector<uint64_t>> slot_last_use;    // [layer][slot]
@@ -279,6 +287,12 @@ void llama_expert_cache_ensure_batch(llama_expert_cache * cache, uint32_t layer,
 // each layer's top-K most-routed experts at the first decode step. Returns 0 when skipped.
 void llama_expert_cache_record_routes(llama_expert_cache * cache, uint32_t layer,
                                       const uint32_t * experts, size_t n);
+// [CGC mass-coverage 2026-09-06] accumulate selection softmax mass per expert (massc_mass)
+// plus the mass covered by the CURRENT residency (slot_table>=0) — see header comment. Called
+// from expert_cache_on_topk when CGC_MASSCOV=1. experts/w_sel: the step's selected expert ids
+// and their softmax weights; n = n_tokens * n_expert_used (same layout as the ids tensor).
+void llama_expert_cache_masscov_record(llama_expert_cache * cache, uint32_t layer,
+                                       const uint32_t * experts, const float * w_sel, size_t n);
 size_t llama_expert_cache_prewarm_hot(llama_expert_cache * cache);
 // Tail-union prewarm (LLAMA_EXPERT_CACHE_TAILPIN=1, 2026-08-15): pin the RESIDENT experts of
 // the last K prefill tokens' union so decode's LRU eviction cannot hand their slots out during

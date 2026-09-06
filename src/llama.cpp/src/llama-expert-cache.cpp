@@ -935,6 +935,29 @@ void llama_expert_cache_record_routes(llama_expert_cache * cache, uint32_t layer
     }
 }
 
+void llama_expert_cache_masscov_record(llama_expert_cache * cache, uint32_t layer,
+                                       const uint32_t * experts, const float * w_sel, size_t n) {
+    if (cache == nullptr || layer >= cache->massc_mass.size() || n == 0 ||
+        layer >= cache->massc_total.size() || layer >= cache->massc_cur_cov.size()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(cache->m);
+    const int32_t * st = cache->slot_table.data() + (size_t) layer * cache->n_expert;
+    auto & mm = cache->massc_mass[layer];
+    for (size_t i = 0; i < n; ++i) {
+        const uint32_t e = experts[i];
+        if (e >= cache->n_expert) {
+            continue;
+        }
+        const double w = (double) w_sel[i];
+        mm[e] += w;
+        cache->massc_total[layer] += w;
+        if (st[e] >= 0) {
+            cache->massc_cur_cov[layer] += w;
+        }
+    }
+}
+
 // Prefill hot prewarm: at the first decode step, fill each layer's pool with its top-K most-
 // routed prefill experts (instead of the loader's experts-0..n prewarm). The preads are the
 // same cold-start cost as the loader prewarm, but land in the slots decode actually uses.
@@ -1243,6 +1266,86 @@ llama_expert_cache::~llama_expert_cache() {
                             cov_n ? 100.0 * cov_max : 0.0);
                 } else {
                     fprintf(stderr, "llama_expert_cache: ROUTE-DUMP: open failed: %s\n", dump_path);
+                }
+            }
+        }
+        // [CGC mass-coverage 2026-09-06] report when massc accumulation ran (env CGC_MASSCOV=1).
+        // Prints (per layer + aggregates): (1) CURRENT-membership mass coverage (the live
+        // slot_table) — how much routing mass the pool as-is serves resident; (2) counterfactual
+        // top-K-by-mass coverage at several capacities — the ceiling if prewarm picked the K most
+        // massive experts. n_slots = real per-layer capacity used by the current run.
+        {
+            const bool mc_on = getenv("CGC_MASSCOV") != nullptr;
+            if (mc_on && !massc_mass.empty()) {
+                const uint32_t k_run = llama_expert_cache_slots_per_layer(this);
+                fprintf(stderr, "llama_expert_cache: MASSCOV summary (per-layer routing MASS, not counts):\n");
+                static const uint32_t ks[] = { k_run, 96u, 128u, 192u, 256u };
+                const uint32_t n_ex = n_expert;
+                double cur_sum = 0.0, cur_min = 1.0, cur_max = 0.0;
+                uint32_t cur_n = 0;
+                double cov[5] = {0,0,0,0,0}, cmin[5] = {1,1,1,1,1}, cmax[5] = {0,0,0,0,0};
+                uint32_t cov_n[5] = {0,0,0,0,0};
+                for (uint32_t l = 0; l < massc_mass.size() && l < massc_total.size(); ++l) {
+                    if (massc_total[l] <= 0.0) {
+                        continue;
+                    }
+                    const double cur = massc_cur_cov[l] / massc_total[l];
+                    cur_sum += cur; cur_min = std::min(cur_min, cur); cur_max = std::max(cur_max, cur); cur_n++;
+                    std::vector<uint32_t> order(n_ex);
+                    for (uint32_t e = 0; e < n_ex; ++e) {
+                        order[e] = e;
+                    }
+                    std::stable_sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+                        return massc_mass[l][a] != massc_mass[l][b] ? massc_mass[l][a] > massc_mass[l][b] : a < b;
+                    });
+                    for (int ki = 0; ki < 5; ++ki) {
+                        const uint32_t k = std::min(ks[ki], n_ex);
+                        double top = 0.0;
+                        for (uint32_t i = 0; i < k; ++i) {
+                            top += massc_mass[l][order[i]];
+                        }
+                        const double c = top / massc_total[l];
+                        cov[ki] += c; cmin[ki] = std::min(cmin[ki], c); cmax[ki] = std::max(cmax[ki], c); cov_n[ki]++;
+                    }
+                }
+                if (cur_n > 0) {
+                    fprintf(stderr, "  CURRENT membership (run slots=%u): mass coverage mean=%.1f%% min=%.1f%% max=%.1f%%  -> the pool TODAY serves this much of the model's routing mass resident\n",
+                            k_run, 100.0 * cur_sum / cur_n, 100.0 * cur_min, 100.0 * cur_max);
+                    for (int ki = 0; ki < 5; ++ki) {
+                        fprintf(stderr, "  COUNTERFACTUAL top-K by mass: K=%3u  mass coverage mean=%.1f%% min=%.1f%% max=%.1f%%\n",
+                                ks[ki], 100.0 * cov[ki] / cov_n[ki], 100.0 * cmin[ki], 100.0 * cmax[ki]);
+                    }
+                    fprintf(stderr, "  (uniform-routing mass baseline = K/n_expert; per-layer detail in MASSCOV file)\n");
+                }
+                const char * mp = getenv("CGC_MASSCOV_DUMP");
+                if (mp && mp[0]) {
+                    FILE * mf = fopen(mp, "w");
+                    if (mf != nullptr) {
+                        for (uint32_t l = 0; l < massc_mass.size(); ++l) {
+                            fprintf(mf, "layer %u total=%.4f cur=%.4f", l, massc_total[l],
+                                    massc_total[l] > 0 ? massc_cur_cov[l] / massc_total[l] : 0.0);
+                            if (massc_total[l] > 0.0) {
+                                std::vector<uint32_t> order(n_ex);
+                                for (uint32_t e = 0; e < n_ex; ++e) {
+                                    order[e] = e;
+                                }
+                                std::stable_sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+                                    return massc_mass[l][a] != massc_mass[l][b] ? massc_mass[l][a] > massc_mass[l][b] : a < b;
+                                });
+                                for (int ki = 0; ki < 5; ++ki) {
+                                    const uint32_t k = std::min(ks[ki], n_ex);
+                                    double top = 0.0;
+                                    for (uint32_t i = 0; i < k; ++i) {
+                                        top += massc_mass[l][order[i]];
+                                    }
+                                    fprintf(mf, " k%d=%.4f", ks[ki], massc_total[l] > 0 ? top / massc_total[l] : 0.0);
+                                }
+                            }
+                            fprintf(mf, "\n");
+                        }
+                        fclose(mf);
+                        fprintf(stderr, "llama_expert_cache: MASSCOV file: %s\n", mp);
+                    }
                 }
             }
         }
@@ -1748,6 +1851,9 @@ llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t b
             fprintf(stderr, "PFDBG init: n_layer=%u n_slots=%u busy=%u\n", max_layer, cache->n_slots, busy0);
         }
         cache->freq.assign(max_layer, std::vector<uint64_t>(cache->n_expert, 0));
+        cache->massc_mass.assign(max_layer, std::vector<double>(cache->n_expert, 0.0));
+        cache->massc_total.assign(max_layer, 0.0);
+        cache->massc_cur_cov.assign(max_layer, 0.0);
         cache->pool.assign(max_layer, std::vector<std::vector<uint8_t>>(4));
         cache->pool_ext.assign(max_layer, std::vector<const uint8_t *>(4, nullptr));
         cache->pool_ext_stride.assign(max_layer, std::vector<size_t>(4, 0));
