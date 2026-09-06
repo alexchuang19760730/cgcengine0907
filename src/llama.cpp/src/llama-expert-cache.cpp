@@ -1002,6 +1002,65 @@ size_t llama_expert_cache_dbuf_refill(llama_expert_cache * cache, uint32_t layer
     return queued;
 }
 
+// [CGC Fast-Path Wait 2026-09-06] wait for in-flight fills of cold experts so the fast path uses
+// real weights instead of ZERO-mapping. Default OFF (cgc_fast_wait_on()=false) = no-op.
+// Safety: does not hold cache->m on entry; takes/releases it internally. bg_cv is notified on
+// every fill completion (bg_loop), so wait_until wakes promptly. Shared deadline bounds total
+// added latency to cgc_fast_wait_us() regardless of how many experts are waited.
+size_t llama_expert_cache_wait_loading(llama_expert_cache * cache, uint32_t layer,
+                                       const uint32_t * experts, size_t n) {
+    if (!cgc_fast_wait_on() || cache == nullptr || !cache->pool_active ||
+        experts == nullptr || n == 0 || cache->n_expert == 0 ||
+        layer >= cache->slot_owner.size()) {
+        return 0;
+    }
+    const int32_t * st = cache->slot_table.data() + (size_t) layer * cache->n_expert;
+    const uint32_t nsl = (uint32_t) cache->slot_owner[layer].size();
+    // Phase 1: find cold experts with in-flight fills (loading or queued). O(n*nsl); n<=8,
+    // nsl~100 -> ~800 checks, trivial. At most cgc_fast_wait_max() experts (bounds latency).
+    struct wait_ent { uint32_t expert; };
+    std::vector<wait_ent> waiting;
+    waiting.reserve(n);
+    {
+        std::lock_guard<std::mutex> lk(cache->m);
+        for (size_t i = 0; i < n && waiting.size() < cgc_fast_wait_max(); ++i) {
+            const uint32_t e = experts[i];
+            if (e >= cache->n_expert) continue;
+            if (st[e] >= 0) continue; // already resident
+            for (uint32_t s = 0; s < nsl; ++s) {
+                if (cache->slot_owner[layer][s] == (int32_t) e &&
+                    (cache->slot_loading[layer][s] || cache->slot_queued[layer][s])) {
+                    waiting.push_back({e});
+                    break;
+                }
+            }
+        }
+    }
+    if (waiting.empty()) return 0;
+    // Phase 2: wait for each fill to land. Shared deadline = now + cgc_fast_wait_us(), so the
+    // total added step latency is bounded regardless of expert count. bg_cv.notify_all() fires
+    // on every fill completion (bg_loop), so wait_until wakes promptly (no polling).
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::microseconds(cgc_fast_wait_us());
+    size_t became_resident = 0;
+    for (const auto & w : waiting) {
+        std::unique_lock<std::mutex> lk(cache->m);
+        const bool ok = cache->bg_cv.wait_until(lk, deadline, [&]{ return st[w.expert] >= 0; });
+        if (ok && st[w.expert] >= 0) {
+            became_resident++;
+            // touch the just-resident slot so the next pick_slot doesn't evict it immediately
+            cache->slot_last_use[layer][st[w.expert]] = ++cache->tick;
+        }
+    }
+    static int dbg_n = 0;
+    if (getenv("CGC_FAST_WAIT_DBG") != nullptr && dbg_n < 40) {
+        dbg_n++;
+        fprintf(stderr, "CGC-WAIT: l=%u waited=%zu became_resident=%zu\n",
+                layer, waiting.size(), became_resident);
+    }
+    return became_resident;
+}
+
 const uint8_t * llama_expert_cache_pool_data(const llama_expert_cache * cache, uint32_t layer, int kind) {
     if (cache == nullptr || kind < 0 || kind >= 4) {
         return nullptr;

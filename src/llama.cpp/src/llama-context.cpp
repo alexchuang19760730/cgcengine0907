@@ -3663,6 +3663,14 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
             // fast-path telemetry splits verify (ctx_tgt) vs draft (ctx MTP) cold rates.
             llama_expert_cache_touch(cache, (uint32_t) il, uni.data(), uni.size(),
                                      cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP);
+            // [CGC Fast-Path Wait 2026-09-06] verify ctx only (ground-truth route; draft is a
+            // prediction — waiting there would slow MTP draft without proportional quality gain).
+            // For cold experts whose DBUF step-ahead fill is already in flight, wait up to
+            // CGC_FAST_WAIT_US (shared deadline, bounded) so the remap below uses the real slot
+            // instead of the ZERO-slot. Default OFF (cgc_fast_wait_on()=false) = no-op.
+            if (verify_fast) {
+                llama_expert_cache_wait_loading(cache, (uint32_t) il, uni.data(), uni.size());
+            }
             // [CGC STEP_DBG] per-step miss timeline (il==1 fires once per step): cumulative
             // fast-path cold (ZERO-mapped) + ensure_batch (prefill chunk 1 / catch-up) requests
             // and hits. Measured verdict (2026-08-28, steady MTP denseIQ4X seed1): cold stays

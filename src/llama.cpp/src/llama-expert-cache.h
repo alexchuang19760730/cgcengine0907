@@ -276,6 +276,37 @@ static inline bool cgc_dbuf_on() {
     return v;
 }
 
+// [CGC Fast-Path Wait 2026-09-06] when a cold expert has an in-flight fill (loading/queued by
+// DBUF step-ahead refill or prefetch), the fast path briefly waits instead of ZERO-mapping it.
+// pread fills take ~1-3ms; the decode step window is ~30-60ms, so a <=2ms wait catches most
+// in-flight fills without materially slowing decode. Default OFF = byte-identical (immediate
+// ZERO-slot). CGC_FAST_WAIT_US default 1000 (1ms); CGC_FAST_WAIT_MAX default 4 = at most N
+// experts waited per step (bounds total step latency <= MAX * wait_us).
+static inline bool cgc_fast_wait_on() {
+    static const bool v = getenv("CGC_FAST_WAIT") != nullptr && getenv("CGC_FAST_WAIT")[0] != '\0';
+    return v;
+}
+static inline uint64_t cgc_fast_wait_us() {
+    static const uint64_t v = []() {
+        const char * s = getenv("CGC_FAST_WAIT_US");
+        int x = (s != nullptr && s[0] != '\0') ? atoi(s) : 1000;
+        if (x < 50) x = 50;
+        if (x > 5000) x = 5000;
+        return (uint64_t) x;
+    }();
+    return v;
+}
+static inline uint32_t cgc_fast_wait_max() {
+    static const uint32_t v = []() {
+        const char * s = getenv("CGC_FAST_WAIT_MAX");
+        int x = (s != nullptr && s[0] != '\0') ? atoi(s) : 4;
+        if (x < 1) x = 1;
+        if (x > 16) x = 16;
+        return (uint32_t) x;
+    }();
+    return v;
+}
+
 // [CGC SpAc 2026-09-06] config helpers (read once per process). CGC_SPAC=1 enables the EMA
 // utility prefetch source (replaces the default step/hist source in the B-section; default OFF
 // = stock behavior, bit-identical). CGC_SPAC_ALPHA default 0.85 (SpAc's measured inertia),
@@ -367,6 +398,16 @@ size_t llama_expert_cache_spac_prefetch(llama_expert_cache * cache);
 // returns the number of fills queued. See cgc_dbuf_on() header comment for the safety model.
 size_t llama_expert_cache_dbuf_refill(llama_expert_cache * cache, uint32_t layer,
                                       const uint32_t * experts, size_t n);
+// [CGC Fast-Path Wait 2026-09-06] For cold experts that have an in-flight fill (loading or
+// queued by DBUF refill / prefetch), wait up to cgc_fast_wait_us() for the fill to land so the
+// fast path uses the real expert weight instead of ZERO-mapping it. At most cgc_fast_wait_max()
+// experts are waited per step (bounds total added latency). Experts that become resident during
+// the wait have their slot_table updated by the bg thread; callers re-read slot_table after this
+// returns. Must NOT be called holding cache->m (takes and releases it internally). Default OFF
+// (cgc_fast_wait_on()=false) = no-op, byte-identical fast path. Returns the number of experts
+// that became resident during the wait.
+size_t llama_expert_cache_wait_loading(llama_expert_cache * cache, uint32_t layer,
+                                       const uint32_t * experts, size_t n);
 // [CGC mass-coverage 2026-09-06] accumulate selection softmax mass per expert (massc_mass)
 // plus the mass covered by the CURRENT residency (slot_table>=0) — see header comment. Called
 // from expert_cache_on_topk when CGC_MASSCOV=1. experts/w_sel: the step's selected expert ids
