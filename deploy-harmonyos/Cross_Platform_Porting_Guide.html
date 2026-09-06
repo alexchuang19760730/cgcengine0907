@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CGC Engine 跨平台移植指导书 - Windows/Mac/Linux</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif; line-height: 1.8; color: #1a1a1a; background: #fafafa; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+  header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); color: white; padding: 60px 40px; border-radius: 12px; margin-bottom: 40px; }
+  header h1 { font-size: 2.2em; margin-bottom: 10px; }
+  header .subtitle { font-size: 1.1em; opacity: 0.9; margin-bottom: 20px; }
+  header .meta { font-size: 0.9em; opacity: 0.7; }
+  h2 { font-size: 1.6em; color: #0f3460; margin: 40px 0 20px; padding-bottom: 10px; border-bottom: 2px solid #e94560; }
+  h3 { font-size: 1.25em; color: #16213e; margin: 25px 0 12px; }
+  h4 { font-size: 1.05em; color: #0f3460; margin: 18px 0 8px; }
+  p { margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; margin: 15px 0; font-size: 0.9em; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-radius: 8px; overflow: hidden; }
+  th { background: #16213e; color: white; padding: 12px 10px; text-align: left; font-weight: 600; }
+  td { padding: 10px; border-bottom: 1px solid #eee; }
+  tr:hover { background: #f5f5f5; }
+  code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 0.9em; }
+  pre { background: #1a1a2e; color: #e0e0e0; padding: 20px; border-radius: 8px; overflow-x: auto; margin: 15px 0; font-size: 0.85em; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px 20px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+  .success { background: #d4edda; border-left: 4px solid #28a745; padding: 15px 20px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+  .info { background: #d1ecf1; border-left: 4px solid #17a2b8; padding: 15px 20px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+  .danger { background: #f8d7da; border-left: 4px solid #dc3545; padding: 15px 20px; margin: 15px 0; border-radius: 0 8px 8px 0; }
+  .toc { background: white; padding: 25px 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 30px; }
+  .toc h3 { margin-top: 0; color: #0f3460; }
+  .toc ol { margin-left: 20px; }
+  .toc li { margin: 8px 0; }
+  .toc a { color: #0f3460; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .platform-card { background: white; border-radius: 10px; padding: 25px; margin: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.08); border-top: 4px solid #e94560; }
+  .platform-mac { border-top-color: #000000; }
+  .platform-windows { border-top-color: #0078d4; }
+  .platform-linux { border-top-color: #fcc624; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.8em; font-weight: 600; margin-right: 5px; }
+  .badge-mac { background: #000; color: white; }
+  .badge-windows { background: #0078d4; color: white; }
+  .badge-linux { background: #fcc624; color: #000; }
+  .badge-harmony { background: #cf0a2c; color: white; }
+  .step-num { display: inline-block; width: 30px; height: 30px; background: #e94560; color: white; border-radius: 50%; text-align: center; line-height: 30px; font-weight: bold; margin-right: 10px; }
+  footer { text-align: center; padding: 30px; color: #666; font-size: 0.9em; margin-top: 50px; border-top: 1px solid #eee; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>CGC Engine 跨平台移植指导书</h1>
+  <div class="subtitle">Windows / macOS / Linux / HarmonyOS 四平台移植指南</div>
+  <div class="meta">版本: v1.0 | 日期: 2026-09-07 | 基于: Qwen3.6-35B-A3B MoE Expert Cache</div>
+</header>
+
+<div class="toc">
+  <h3>目录</h3>
+  <ol>
+    <li><a href="#overview">概述与架构设计</a></li>
+    <li><a href="#directory">目录结构与部署包</a></li>
+    <li><a href="#merge">三方合并策略（跨平台代码整合）</a></li>
+    <li><a href="#mac">macOS 平台移植指南（已验证）</a></li>
+    <li><a href="#windows">Windows 平台移植指南</a></li>
+    <li><a href="#linux">Linux 平台移植指南</a></li>
+    <li><a href="#harmony">HarmonyOS 平台移植指南</a></li>
+    <li><a href="#testing">测试与验证方法</a></li>
+    <li><a href="#faq">常见问题与解决方案</a></li>
+  </ol>
+</div>
+
+<h2 id="overview">1. 概述与架构设计</h2>
+
+<h3>1.1 项目背景</h3>
+<p>CGC Engine 是基于 llama.cpp 的 MoE (Mixture of Experts) 专家缓存推理优化引擎，核心目标是在资源受限的边缘设备上实现大参数 MoE 模型的高吞吐推理。</p>
+
+<p><strong>核心设计理念</strong>：A3B 模型每 token 仅激活 top-8/256 专家（约 3B 参数），但跨 token 的累计 working set 远大于此。Expert Cache 池根据 routing mass 分布动态调整，而非加载全部 35B 参数。</p>
+
+<h3>1.2 跨平台架构</h3>
+<table>
+  <tr><th>层级</th><th>职责</th><th>跨平台抽象</th></tr>
+  <tr><td>应用层</td><td>llama-server / API 服务</td><td>HTTP 标准协议，全平台通用</td></tr>
+  <tr><td>推理层</td><td>llama.cpp 核心推理</td><td>C++ 标准，全平台通用</td></tr>
+  <tr><td>专家缓存层</td><td>CGC Expert Cache (DBUF/SPAC)</td><td>C++ 标准，全平台通用</td></tr>
+  <tr><td>计算后端层</td><td>GPU 加速</td><td>Metal (Mac) / CUDA (Win/Linux) / Vulkan (通用) / ROCm (AMD)</td></tr>
+  <tr><td>系统层</td><td>内存管理/线程/文件IO</td><td>pthread (Mac/Linux) / Win32 (Windows) / POSIX</td></tr>
+</table>
+
+<div class="info">
+<strong>关键洞察</strong>：CGC Expert Cache 的核心逻辑（DBUF、SPAC、EMA 估计器、Down-Combine）是纯 C++ 实现，<strong>不依赖任何平台特定 API</strong>。移植的主要工作集中在 GPU 计算后端和系统层适配。
+</div>
+
+<h3>1.3 平台支持矩阵</h3>
+<table>
+  <tr><th>平台</th><th>GPU 后端</th><th>Expert Cache</th><th>MTP 投机解码</th><th>Down-Combine</th><th>状态</th></tr>
+  <tr><td><span class="badge badge-mac">macOS</span></td><td>Metal</td><td>✅ 完整</td><td>✅ 完整</td><td>✅ 已实现</td><td>生产验证</td></tr>
+  <tr><td><span class="badge badge-windows">Windows</span></td><td>CUDA/Vulkan</td><td>✅ 可移植</td><td>✅ 可移植</td><td>🔄 待验证</td><td>开发中</td></tr>
+  <tr><td><span class="badge badge-linux">Linux</span></td><td>CUDA/ROCm/Vulkan</td><td>✅ 可移植</td><td>✅ 可移植</td><td>🔄 待验证</td><td>开发中</td></tr>
+  <tr><td><span class="badge badge-harmony">HarmonyOS</span></td><td>Vulkan/CPU</td><td>✅ 可移植</td><td>🔄 待验证</td><td>❌ 未实现</td><td>原型阶段</td></tr>
+</table>
+
+<h2 id="directory">2. 目录结构与部署包</h2>
+
+<h3>2.1 deploy-harmonyos 部署包结构</h3>
+<p><code>deploy-harmonyos/</code> 目录是跨平台部署的统一入口，包含各平台的预编译二进制、构建脚本和运行脚本。</p>
+
+<pre><code>deploy-harmonyos/
+├── README.md                    # 部署包总览
+├── DEPLOY_GUIDE.md              # 详细部署指南
+├── Cross_Platform_Porting_Guide.html  # 本文档（跨平台移植指导书）
+├── benchmark-macos.sh           # Mac 基准测试脚本
+├── deploy-to-harmonyos.sh       # 一键部署到 HarmonyOS
+├── run-universal.sh              # 通用运行脚本
+├── src.tar.gz                    # 源代码压缩包
+│
+├── macos/                        # macOS 平台部署包
+│   ├── llama-server              # 预编译 server 二进制
+│   ├── llama-bench               # 基准测试工具
+│   ├── llama-simple              # 简单推理工具
+│   ├── lib*.dylib                # 动态库（Metal/CUDA 后端）
+│   ├── build-macos.sh            # Mac 构建脚本
+│   ├── run-macos.sh              # Mac 运行脚本
+│   └── check-macos-bundle.sh     # Mac 包完整性检查
+│
+├── windows/                      # Windows 平台部署包
+│   ├── build-windows.bat         # Windows 构建脚本
+│   └── README.md                 # Windows 部署说明
+│
+├── linux/                        # Linux 平台部署包
+│   ├── build-linux.sh            # Linux 构建脚本
+│   └── README.md                 # Linux 部署说明
+│
+├── harmonyos/                    # HarmonyOS 平台部署包
+│   ├── build.sh                  # HarmonyOS 构建脚本
+│   ├── run.sh                    # HarmonyOS 运行脚本
+│   ├── benchmark.sh              # HarmonyOS 基准测试
+│   └── README.md                 # HarmonyOS 部署说明
+│
+└── phone/                        # 手机端部署（HarmonyOS 手机）
+</code></pre>
+
+<h3>2.2 核心源代码位置</h3>
+<table>
+  <tr><th>模块</th><th>文件路径</th><th>说明</th></tr>
+  <tr><td>Expert Cache 核心</td><td><code>src/llama.cpp/src/llama-expert-cache.cpp</code></td><td>专家缓存池、LRU 淘汰、prefetch 队列</td></tr>
+  <tr><td>Expert Cache 头文件</td><td><code>src/llama.cpp/src/llama-expert-cache.h</code></td><td>数据结构、Option 定义</td></tr>
+  <tr><td>Context 集成</td><td><code>src/llama.cpp/src/llama-context.cpp</code></td><td>DBUF/SPAC 注入点、fast path</td></tr>
+  <tr><td>计算图</td><td><code>src/llama.cpp/src/llama-graph.cpp</code></td><td>MoE FFN 构建、Down-Combine 分支</td></tr>
+  <tr><td>后端适配</td><td><code>src/llama.cpp/ggml/src/ggml-backend.cpp</code></td><td>GPU 后端注册、专家权重加载</td></tr>
+  <tr><td>Metal 后端</td><td><code>src/llama.cpp/ggml/src/ggml-metal/</code></td><td>Mac GPU 加速（含 Down-Combine kernel）</td></tr>
+  <tr><td>CUDA 后端</td><td><code>src/llama.cpp/ggml/src/ggml-cuda/</code></td><td>Windows/Linux NVIDIA GPU 加速</td></tr>
+  <tr><td>Vulkan 后端</td><td><code>src/llama.cpp/ggml/src/ggml-vulkan/</code></td><td>通用 GPU 加速（AMD/Intel/鸿蒙）</td></tr>
+</table>
+
+<h2 id="merge">3. 三方合并策略（跨平台代码整合）</h2>
+
+<h3>3.1 为什么需要三方合并</h3>
+<p>CGC Engine 的开发分布在多个代码仓库和分支中：</p>
+<ul>
+  <li><strong>Mac 开发分支</strong>（devserver）：包含完整的 Expert Cache、DBUF、SPAC、Down-Combine 实现，基于 Metal 后端</li>
+  <li><strong>跨平台 fork 分支</strong>（cgcengine0907）：包含 Vulkan/Windows 适配修改，基于上游 llama.cpp</li>
+  <li><strong>上游基线</strong>（ggml-org/llama.cpp）：官方 llama.cpp 主分支</li>
+</ul>
+
+<p>三方合并的目标是将 Mac 分支的 Expert Cache 优化与跨平台 fork 的 Vulkan/Windows 适配整合到同一个代码库中。</p>
+
+<h3>3.2 三方合并模型</h3>
+<pre><code>          base (07fdd66 - 共同祖先)
+         /    \
+        /      \
+   ours        theirs
+   (fork)      (Mac HEAD)
+   Vulkan/     Expert Cache/
+   Windows     DBUF/SPAC/
+   适配        Down-Combine
+        \      /
+         \    /
+        merged (三方合并结果)
+</code></pre>
+
+<h3>3.3 核心文件合并清单</h3>
+<p>只针对核心 <strong>5+2 个文件</strong>做逐文件三方合并，避免混入大量临时文件和无关变更。</p>
+
+<table>
+  <tr><th>优先级</th><th>文件</th><th>Mac 侧变更</th><th>fork 侧变更</th><th>合并复杂度</th></tr>
+  <tr><td>⭐⭐⭐</td><td><code>llama-expert-cache.cpp</code></td><td>651 行（完整实现）</td><td>无（新文件）</td><td>低（直接带入）</td></tr>
+  <tr><td>⭐⭐⭐</td><td><code>llama-expert-cache.h</code></td><td>201 行（数据结构）</td><td>58 行（Option 定义）</td><td>中（Option 合并）</td></tr>
+  <tr><td>⭐⭐⭐</td><td><code>llama-context.cpp</code></td><td>818 行（DBUF/SPAC 注入）</td><td>228 行（Vulkan 适配）</td><td>高（冲突区域多）</td></tr>
+  <tr><td>⭐⭐</td><td><code>llama-graph.cpp</code></td><td>47 行（Down-Combine 分支）</td><td>13 行（MoE 构建）</td><td>中</td></tr>
+  <tr><td>⭐⭐</td><td><code>ggml-backend.cpp</code></td><td>109 行（专家权重加载）</td><td>68 行（后端注册）</td><td>中</td></tr>
+  <tr><td>⭐</td><td><code>llama-context.h</code></td><td>少量（接口声明）</td><td>21 行（Vulkan 接口）</td><td>低</td></tr>
+  <tr><td>⭐</td><td><code>llama.cpp</code></td><td>少量（Option 解析）</td><td>87 行（CLI 参数）</td><td>低</td></tr>
+</table>
+
+<h3>3.4 合并执行步骤</h3>
+
+<div class="step-num">1</div><strong>准备三个版本的文件</strong>
+<pre><code># base（共同祖先）
+git show 07fdd66:src/llama.cpp/src/llama-context.cpp > /tmp/base_context.cpp
+
+# ours（fork 分支，含 Vulkan/Windows 适配）
+git show fork HEAD:src/llama.cpp/src/llama-context.cpp > /tmp/ours_context.cpp
+
+# theirs（Mac HEAD，含 Expert Cache）
+git show mac HEAD:src/llama.cpp/src/llama-context.cpp > /tmp/theirs_context.cpp
+</code></pre>
+
+<div class="step-num">2</div><strong>执行三方合并</strong>
+<pre><code># 使用 git merge-file 自动合并
+git merge-file /tmp/ours_context.cpp /tmp/base_context.cpp /tmp/theirs_context.cpp
+
+# 检查冲突标记
+grep -n "<<<<<<<\|=======\|>>>>>>>" /tmp/ours_context.cpp
+</code></pre>
+
+<div class="step-num">3</div><strong>手动解决冲突</strong>
+<p>冲突主要集中在 <code>llama-context.cpp</code> 的以下区域：</p>
+<ul>
+  <li><strong>专家缓存初始化</strong>：Mac 侧添加了 <code>expert_cache_init()</code> 调用，fork 侧可能有不同的初始化顺序</li>
+  <li><strong>decode 循环</strong>：Mac 侧添加了 DBUF/SPAC 的 hook 注入点，fork 侧可能有 Vulkan 同步调用</li>
+  <li><strong>内存管理</strong>：Mac 侧使用 Metal 统一内存，fork 侧使用 Vulkan 设备内存</li>
+</ul>
+
+<div class="step-num">4</div><strong>验证合并结果</strong>
+<pre><code># 编译验证
+cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target llama-server -j8
+
+# 功能验证（3 Profile 质量测试）
+python3 scripts/check/replay_server_profile.py --profile coding --runs 3
+python3 scripts/check/replay_server_profile.py --profile qa-zh --runs 3
+python3 scripts/check/replay_server_profile.py --profile longform-zh --runs 3
+</code></pre>
+
+<div class="warning">
+<strong>重要提醒</strong>：合并过程中<strong>不要清理构建产物</strong>（build/ 目录、*.dylib/*.dll/*.so）。之前的经验表明，清理产物后可能无法重建，导致重大损失。保留构建产物可以随时回滚和验证。
+</div>
+
+<h2 id="mac">4. macOS 平台移植指南（已验证）</h2>
+
+<div class="platform-card platform-mac">
+<h3><span class="badge badge-mac">macOS</span> 平台概述</h3>
+<p>macOS 是 CGC Engine 的主要开发和验证平台，使用 Apple Metal GPU 后端。已在 M4 Max 16GB/546GB 上完成生产验证。</p>
+
+<h4>硬件要求</h4>
+<table>
+  <tr><th>组件</th><th>最低配置</th><th>推荐配置</th></tr>
+  <tr><td>芯片</td><td>Apple M1</td><td>Apple M4 Max / M4 Pro</td></tr>
+  <tr><td>内存</td><td>16GB 统一内存</td><td>32GB+ 统一内存</td></tr>
+  <tr><td>磁盘</td><td>20GB 可用空间</td><td>50GB+ SSD</td></tr>
+  <tr><td>系统</td><td>macOS 13 (Ventura)</td><td>macOS 14+ (Sonoma/Sequoia)</td></tr>
+</table>
+
+<h4>构建步骤</h4>
+<pre><code># 1. 安装依赖（使用 Homebrew）
+brew install cmake git
+
+# 2. 克隆代码
+git clone https://github.com/alexchuang19760730/cgcengine0907.git
+cd cgcengine0907/src/llama.cpp
+
+# 3. 配置 CMake（Metal 后端默认启用）
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+
+# 4. 构建
+cmake --build build --target llama-server -j8
+
+# 5. 验证构建
+./build/bin/llama-server --version
+</code></pre>
+
+<h4>生产配置启动</h4>
+<pre><code># 8GB Expert Cache Pool + DBUF + SPAC (α=0.75) + MTP
+CGC_SERVER_EXPERT_CACHE_BYTES=8589934592 \
+CGC_DBUF=1 \
+CGC_SPAC=1 \
+CGC_SPAC_ALPHA=0.75 \
+CGC_NO_PREFETCH=1 \
+./build/bin/llama-server \
+  -m ~/models/Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
+  -c 4096 --host 0.0.0.0 --port 8080
+</code></pre>
+
+<h4>已验证性能（M4 Max 16GB）</h4>
+<table>
+  <tr><th>配置</th><th>decode_tps（中位数）</th><th>最佳</th><th>draft_accept</th><th>质量</th></tr>
+  <tr><td>基线（无 Expert Cache）</td><td>~8</td><td>~10</td><td>N/A</td><td>1.0</td></tr>
+  <tr><td>8GB + DBUF + SPAC α=0.75</td><td><strong>25.87</strong></td><td><strong>26.19</strong></td><td>~96%</td><td>1.0/0.882/1.0</td></tr>
+  <tr><td>+ Down-Combine (P0)</td><td>23.29</td><td>25.09</td><td>94.25%</td><td>1.0</td></tr>
+</table>
+
+<h4>Mac 特有优化点</h4>
+<ul>
+  <li><strong>Metal 统一内存</strong>：专家权重直接在 GPU 可访问内存中，无需 CPU-GPU 拷贝</li>
+  <li><strong>Down-Combine Metal Kernel</strong>：已实现 Q3_K 版本的 batch down projection kernel</li>
+  <li><strong>per-layer GPU-idle hook</strong>：利用 Metal command buffer 之间的 idle 窗口做 async fill</li>
+</ul>
+</div>
+
+<h2 id="windows">5. Windows 平台移植指南</h2>
+
+<div class="platform-card platform-windows">
+<h3><span class="badge badge-windows">Windows</span> 平台概述</h3>
+<p>Windows 平台支持 NVIDIA CUDA 和通用 Vulkan 两种 GPU 后端。Expert Cache 核心逻辑可直接移植，主要工作集中在 GPU 后端适配和系统层调用。</p>
+
+<h4>硬件要求</h4>
+<table>
+  <tr><th>组件</th><th>最低配置</th><th>推荐配置</th></tr>
+  <tr><td>CPU</td><td>x86_64 (AVX2)</td><td>Intel i7 / AMD Ryzen 7+</td></tr>
+  <tr><td>GPU (NVIDIA)</td><td>RTX 3060 12GB</td><td>RTX 4090 24GB</td></tr>
+  <tr><td>GPU (AMD/Intel)</td><td>支持 Vulkan 1.3</td><td>RX 7900 XTX / Arc A770</td></tr>
+  <tr><td>内存</td><td>16GB</td><td>32GB+</td></tr>
+  <tr><td>磁盘</td><td>20GB SSD</td><td>50GB+ NVMe</td></tr>
+  <tr><td>系统</td><td>Windows 10 21H2</td><td>Windows 11 22H2+</td></tr>
+</table>
+
+<h4>构建步骤（CUDA 后端）</h4>
+<pre><code>REM 1. 安装前置依赖
+REM - Visual Studio 2022 (含 C++ 工作负载)
+REM - CMake 3.20+
+REM - Git
+REM - CUDA Toolkit 12.x (https://developer.nvidia.com/cuda-downloads)
+
+REM 2. 克隆代码
+git clone https://github.com/alexchuang19760730/cgcengine0907.git
+cd cgcengine0907\src\llama.cpp
+
+REM 3. 配置 CMake（CUDA 后端）
+cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+
+REM 4. 构建
+cmake --build build --config Release --target llama-server -j8
+
+REM 5. 验证
+build\bin\Release\llama-server.exe --version
+</code></pre>
+
+<h4>构建步骤（Vulkan 后端）</h4>
+<pre><code>REM 1. 安装 Vulkan SDK (https://vulkan.lunarg.com/)
+
+REM 2. 配置 CMake（Vulkan 后端）
+cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+
+REM 3. 构建
+cmake --build build --config Release --target llama-server -j8
+</code></pre>
+
+<h4>Expert Cache 配置（Windows）</h4>
+<pre><code>REM 设置环境变量
+set CGC_SERVER_EXPERT_CACHE_BYTES=8589934592
+set CGC_DBUF=1
+set CGC_SPAC=1
+set CGC_SPAC_ALPHA=0.75
+set CGC_NO_PREFETCH=1
+
+REM 启动 server
+llama-server.exe -m model.gguf -c 4096 --host 0.0.0.0 --port 8080
+</code></pre>
+
+<h4>Windows 移植注意事项</h4>
+<div class="warning">
+<strong>CUDA 后端专家缓存位置</strong>：CUDA 后端的专家缓存池位于 GPU 显存中，而非系统内存。8GB pool 需要 GPU 有至少 10GB 显存（模型权重 + pool + KV cache）。如果显存不足，使用 Vulkan 后端或减小 pool 大小。
+</div>
+<ul>
+  <li><strong>文件路径</strong>：Windows 使用反斜杠 <code>\</code>，在代码中使用 <code>/</code> 或 <code>\\</code></li>
+  <li><strong>线程模型</strong>：Windows 使用 Win32 线程，llama.cpp 已抽象为 <code>ggml_thread</code></li>
+  <li><strong>动态库</strong>：Windows 使用 <code>.dll</code>，确保所有依赖 DLL 在 PATH 中或与 exe 同目录</li>
+  <li><strong>内存映射</strong>：Windows 的 <code>MapViewOfFile</code> 与 macOS 的 <code>mmap</code> 行为略有差异，专家权重加载可能需要调整</li>
+  <li><strong>Down-Combine</strong>：CUDA 版本的 Down-Combine kernel 尚未实现，需要从 Metal 版本移植（约 300 行 CUDA C++）</li>
+</ul>
+
+<h4>预期性能</h4>
+<table>
+  <tr><th>GPU</th><th>模型</th><th>量化</th><th>预期 t/s</th><th>后端</th></tr>
+  <tr><td>RTX 4090 24GB</td><td>Qwen3.6-35B-A3B</td><td>IQ3_XXS</td><td>40-60</td><td>CUDA</td></tr>
+  <tr><td>RTX 3090 24GB</td><td>Qwen3.6-35B-A3B</td><td>IQ3_XXS</td><td>25-35</td><td>CUDA</td></tr>
+  <tr><td>RTX 3060 12GB</td><td>Qwen3.6-35B-A3B</td><td>IQ3_XXS</td><td>15-20</td><td>CUDA</td></tr>
+  <tr><td>RX 7900 XTX</td><td>Qwen3.6-35B-A3B</td><td>IQ3_XXS</td><td>30-45</td><td>Vulkan</td></tr>
+  <tr><td>CPU-only</td><td>Qwen3.6-35B-A3B</td><td>IQ3_XXS</td><td>3-8</td><td>CPU</td></tr>
+</table>
+</div>
+
+<h2 id="linux">6. Linux 平台移植指南</h2>
+
+<div class="platform-card platform-linux">
+<h3><span class="badge badge-linux">Linux</span> 平台概述</h3>
+<p>Linux 平台支持最广泛的 GPU 后端：NVIDIA CUDA、AMD ROCm、通用 Vulkan。是服务器部署和 Docker 容器化的首选平台。</p>
+
+<h4>硬件要求</h4>
+<table>
+  <tr><th>组件</th><th>最低配置</th><th>推荐配置</th></tr>
+  <tr><td>CPU</td><td>x86_64 (AVX2) / ARM64</td><td>Xeon / EPYC / Threadripper</td></tr>
+  <tr><td>GPU (NVIDIA)</td><td>T4 16GB</td><td>A100 80GB / H100</td></tr>
+  <tr><td>GPU (AMD)</td><td>MI25 16GB</td><td>MI300X 192GB</td></tr>
+  <tr><td>内存</td><td>16GB</td><td>64GB+</td></tr>
+  <tr><td>磁盘</td><td>20GB SSD</td><td>100GB+ NVMe</td></tr>
+  <tr><td>系统</td><td>Ubuntu 20.04 / Debian 11</td><td>Ubuntu 22.04 / RHEL 9</td></tr>
+</table>
+
+<h4>构建步骤（CUDA 后端）</h4>
+<pre><code># 1. 安装依赖
+sudo apt-get update
+sudo apt-get install -y build-essential cmake git pkg-config
+
+# 2. 安装 CUDA Toolkit 12.x
+# 参考: https://developer.nvidia.com/cuda-downloads
+
+# 3. 克隆代码
+git clone https://github.com/alexchuang19760730/cgcengine0907.git
+cd cgcengine0907/src/llama.cpp
+
+# 4. 配置 CMake（CUDA 后端）
+cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+
+# 5. 构建
+cmake --build build --target llama-server -j$(nproc)
+
+# 6. 验证
+./build/bin/llama-server --version
+</code></pre>
+
+<h4>构建步骤（ROCm 后端，AMD GPU）</h4>
+<pre><code># 1. 安装 ROCm
+# 参考: https://rocm.docs.amd.com/
+
+# 2. 配置 CMake（ROCm 后端）
+cmake -B build -DGGML_HIP=ON -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_HIP_ARCHITECTURES=gfx942  # MI300X, 根据 GPU 型号调整
+
+# 3. 构建
+cmake --build build --target llama-server -j$(nproc)
+</code></pre>
+
+<h4>构建步骤（Vulkan 后端，通用 GPU）</h4>
+<pre><code># 1. 安装 Vulkan SDK
+sudo apt-get install -y libvulkan-dev vulkan-tools
+
+# 2. 配置 CMake
+cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+
+# 3. 构建
+cmake --build build --target llama-server -j$(nproc)
+</code></pre>
+
+<h4>生产部署（Systemd Service）</h4>
+<pre><code># /etc/systemd/system/cgc-engine.service
+[Unit]
+Description=CGC Engine Llama Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/cgc-engine
+Environment="CGC_SERVER_EXPERT_CACHE_BYTES=8589934592"
+Environment="CGC_DBUF=1"
+Environment="CGC_SPAC=1"
+Environment="CGC_SPAC_ALPHA=0.75"
+Environment="CGC_NO_PREFETCH=1"
+ExecStart=/opt/cgc-engine/llama-server \
+  -m /opt/models/Qwen3.6-35B-A3B.gguf \
+  -c 4096 --host 0.0.0.0 --port 8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+</code></pre>
+
+<pre><code># 启用并启动服务
+sudo systemctl enable cgc-engine
+sudo systemctl start cgc-engine
+sudo systemctl status cgc-engine
+</code></pre>
+
+<h4>Docker 部署</h4>
+<pre><code># Dockerfile
+FROM nvidia/cuda:12.2.0-devel-ubuntu22.04
+RUN apt-get update && apt-get install -y cmake git build-essential pkg-config
+COPY . /workspace
+WORKDIR /workspace/src/llama.cpp
+RUN cmake -B build -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build build --target llama-server -j8
+EXPOSE 8080
+CMD ["./build/bin/llama-server", "-m", "/models/model.gguf", \
+     "-c", "4096", "--host", "0.0.0.0"]
+</code></pre>
+
+<pre><code># 构建并运行 Docker 容器
+docker build -t cgc-engine .
+docker run -d --gpus all -p 8080:8080 \
+  -v /path/to/models:/models \
+  -e CGC_SERVER_EXPERT_CACHE_BYTES=8589934592 \
+  -e CGC_DBUF=1 -e CGC_SPAC=1 -e CGC_SPAC_ALPHA=0.75 \
+  cgc-engine
+</code></pre>
+
+<h4>Linux 移植注意事项</h4>
+<ul>
+  <li><strong>多 GPU 支持</strong>：Linux 支持多 GPU 张量并行，使用 <code>--tensor-split</code> 参数分配</li>
+  <li><strong>NUMA 架构</strong>：多 socket 服务器需要注意 NUMA 绑定，使用 <code>numactl</code></li>
+  <li><strong>大页内存</strong>：启用大页（HugePages）可以提升内存带宽性能</li>
+  <li><strong>Down-Combine</strong>：CUDA 版本需要移植，ROCm 版本可基于 CUDA 版本转换（HIPIFY）</li>
+  <li><strong>专家缓存</strong>：CUDA 后端 pool 在 GPU 显存；CPU 后端 pool 在系统内存</li>
+</ul>
+
+<h4>预期性能（服务器级 GPU）</h4>
+<table>
+  <tr><th>GPU</th><th>显存</th><th>预期 t/s</th><th>后端</th><th>适用场景</th></tr>
+  <tr><td>H100 SXM</td><td>80GB</td><td>80-120</td><td>CUDA</td><td>高并发生产</td></tr>
+  <tr><td>A100 SXM</td><td>80GB</td><td>60-80</td><td>CUDA</td><td>生产推理</td></tr>
+  <tr><td>MI300X</td><td>192GB</td><td>50-70</td><td>ROCm</td><td>大模型/长上下文</td></tr>
+  <tr><td>L40S</td><td>48GB</td><td>40-55</td><td>CUDA</td><td>性价比生产</td></tr>
+  <tr><td>RTX 4090</td><td>24GB</td><td>40-60</td><td>CUDA</td><td>开发/小规模</td></tr>
+</table>
+</div>
+
+<h2 id="harmony">7. HarmonyOS 平台移植指南</h2>
+
+<div class="platform-card" style="border-top-color: #cf0a2c;">
+<h3><span class="badge badge-harmony">HarmonyOS</span> 平台概述</h3>
+<p>HarmonyOS 是面向鸿蒙生态的移植目标，包括 PC（Kirin 9030 + Maleoon 935）和手机端。目前处于原型阶段，使用 Vulkan GPU 后端或 CPU 推理。</p>
+
+<h4>硬件要求（HarmonyOS PC）</h4>
+<table>
+  <tr><th>组件</th><th>配置</th></tr>
+  <tr><td>CPU</td><td>Kirin 9030 8核 (2.75 GHz)</td></tr>
+  <tr><td>GPU</td><td>Maleoon 935 (Vulkan 1.3)</td></tr>
+  <tr><td>内存</td><td>16GB+ (带宽 ~44 GB/s)</td></tr>
+  <tr><td>后端</td><td>CPU-only (Vulkan 驱动开发中)</td></tr>
+  <tr><td>预期性能</td><td>3-5 t/s (Qwen3.6 IQ3_XXS)</td></tr>
+</table>
+
+<h4>构建与部署</h4>
+<pre><code># 1. 在 Linux 交叉编译环境中构建
+cd deploy-harmonyos/harmonyos
+./build.sh
+
+# 2. 部署到 HarmonyOS 设备
+cd ..
+./deploy-to-harmonyos.sh user@device-ip
+
+# 3. 在设备上运行
+./harmonyos/run.sh -m model.gguf
+</code></pre>
+
+<h4>HarmonyOS 移植挑战</h4>
+<ul>
+  <li><strong>Vulkan 驱动</strong>：Maleoon GPU 的 Vulkan 驱动尚在完善，部分扩展可能不支持</li>
+  <li><strong>内存带宽</strong>：~44 GB/s 远低于 Mac M4 的 546 GB/s，是性能瓶颈</li>
+  <li><strong>专家缓存</strong>：CPU 后端 pool 在系统内存，需要优化预取策略</li>
+  <li><strong>Down-Combine</strong>：Vulkan 版本 kernel 尚未实现</li>
+</ul>
+</div>
+
+<h2 id="testing">8. 测试与验证方法</h2>
+
+<h3>8.1 三 Profile 质量评估</h3>
+<p>任何平台移植完成后，必须通过以下三个 Profile 的质量测试，确保不低于基线质量。</p>
+
+<table>
+  <tr><th>Profile</th><th>基线质量</th><th>内容类型</th><th>评估维度</th></tr>
+  <tr><td><code>qa-zh</code></td><td>1.0</td><td>中文问答</td><td>事实性、准确性、完整性</td></tr>
+  <tr><td><code>longform-zh</code></td><td>0.882</td><td>中文长文生成</td><td>连贯性、结构、深度</td></tr>
+  <tr><td><code>coding</code></td><td>1.0</td><td>代码生成</td><td>语法正确、逻辑正确、可运行</td></tr>
+</table>
+
+<h3>8.2 标准基准测试命令</h3>
+<pre><code># Coding Profile（代码生成，质量最敏感）
+python3 scripts/check/replay_server_profile.py \
+  --profile coding \
+  --base-url http://127.0.0.1:8080/v1 \
+  --model test \
+  --max-tokens 512 \
+  --seed 42 \
+  --runs 3 \
+  --warmup
+
+# 中文问答 Profile
+python3 scripts/check/replay_server_profile.py --profile qa-zh ...
+
+# 中文长文 Profile
+python3 scripts/check/replay_server_profile.py --profile longform-zh ...
+</code></pre>
+
+<h3>8.3 严格 A/B 测试协议</h3>
+<p>验证优化效果时，使用严格的 A/B 交替测试排除机器状态干扰：</p>
+<ol>
+  <li>相同 prompt、相同 max_tokens（如 coding 固定 512 tokens）</li>
+  <li>交替执行（A = 无优化, B = 有优化, A, B...）</li>
+  <li>固定 Seed=42</li>
+  <li>对比 steady decode tps（去掉前 50 tokens 的 warmup）</li>
+  <li>每次测试前 kill 残留 server，确保干净启动</li>
+  <li>关闭其他应用，释放内存，减少机器波动</li>
+</ol>
+
+<h3>8.4 速度指标定义</h3>
+<table>
+  <tr><th>指标</th><th>定义</th><th>目标</th></tr>
+  <tr><td><code>decode_tps</code></td><td>decode 阶段 tokens/second（去掉 prefill）</td><td>≥ 25.0 (Mac 16GB)</td></tr>
+  <tr><td><code>draft_accept_pct</code></td><td>MTP speculative decoding 的 draft token 接受率</td><td>≥ 90%</td></tr>
+  <tr><td><code>completion_tokens</code></td><td>实际生成的 token 数</td><td>= max-tokens（无提前停止）</td></tr>
+  <tr><td><code>decode_tps_degenerate</code></td><td>是否为退化输出（循环/重复）</td><td>必须为 False</td></tr>
+</table>
+
+<h2 id="faq">9. 常见问题与解决方案</h2>
+
+<h3>9.1 构建问题</h3>
+
+<h4>Q: CMake 找不到 CUDA / Vulkan</h4>
+<p><strong>A</strong>：确保已安装对应 SDK，并设置环境变量：</p>
+<pre><code># CUDA
+export CUDA_HOME=/usr/local/cuda
+export PATH=$CUDA_HOME/bin:$PATH
+
+# Vulkan
+export VULKAN_SDK=/path/to/vulkan-sdk
+</code></pre>
+
+<h4>Q: 编译时报专家缓存相关错误</h4>
+<p><strong>A</strong>：检查是否正确合并了核心文件。确保以下文件存在且包含 CGC Expert Cache 代码：</p>
+<ul>
+  <li><code>src/llama-expert-cache.cpp</code> / <code>.h</code></li>
+  <li><code>src/llama-context.cpp</code>（包含 DBUF/SPAC 注入点）</li>
+  <li><code>src/llama-graph.cpp</code>（包含 Down-Combine 分支）</li>
+</ul>
+
+<h3>9.2 运行时问题</h3>
+
+<h4>Q: 启动时 OOM (Out of Memory)</h4>
+<p><strong>A</strong>：减小 Expert Cache Pool 大小或使用更低比特量化：</p>
+<pre><code># 减小 pool 到 4GB
+export CGC_SERVER_EXPERT_CACHE_BYTES=4294967296
+
+# 或使用 OOM 安全模式
+export CGC_SERVER_OOM_SAFE=1
+</code></pre>
+
+<h4>Q: MTP 模式下 server 崩溃</h4>
+<p><strong>A</strong>：确保设置了 <code>CGC_NO_PREFETCH=1</code>。MTP+OA_ASYNC + 背景 pool fill 会导致 mid-decode 崩溃，这是已知的架构限制。</p>
+
+<h4>Q: 质量退化（输出循环/重复）</h4>
+<p><strong>A</strong>：检查以下几点：</p>
+<ol>
+  <li>是否启用了 renorm（<code>CGC_RN_ROUTING=1</code>）？renorm 会导致质量退化，应保持关闭</li>
+  <li>Expert Cache Pool 是否太小？pool 太小导致 cold miss 率高，影响质量</li>
+  <li>是否在干净的机器状态下测试？内存压力会导致质量波动</li>
+</ol>
+
+<h3>9.3 性能问题</h3>
+
+<h4>Q: decode tps 远低于预期</h4>
+<p><strong>A</strong>：按以下顺序排查：</p>
+<ol>
+  <li><strong>GPU 利用率</strong>：使用 <code>nvidia-smi</code> (CUDA) 或 Metal System Trace (Mac) 检查 GPU 利用率</li>
+  <li><strong>专家缓存命中率</strong>：检查 server 日志中的 cold miss 率，目标 &lt; 10%</li>
+  <li><strong>内存带宽</strong>：专家权重从磁盘加载时受 IO 限制，确保模型在 SSD/NVMe 上</li>
+  <li><strong>量化格式</strong>：IQ3_XXS 反量化开销较大，Q3_K 可能更快</li>
+</ol>
+
+<h4>Q: draft_accept 率低（&lt; 90%）</h4>
+<p><strong>A</strong>：draft_accept 低通常意味着 draft model 与 trunk model 的输出差异大。检查：</p>
+<ul>
+  <li>MTP draft model 是否正确加载？</li>
+  <li>是否启用了影响输出的优化（如 renorm、fast-path-wait）？</li>
+  <li>温度/top-p 等采样参数是否一致？</li>
+</ul>
+
+<h3>9.4 跨平台特定问题</h3>
+
+<h4>Q: Windows 下专家权重加载慢</h4>
+<p><strong>A</strong>：Windows 的内存映射（MapViewOfFile）可能比 macOS 的 mmap 慢。可以尝试：</p>
+<ul>
+  <li>使用 <code>--mmap</code> 参数显式启用内存映射</li>
+  <li>将模型文件放在 NTFS 压缩关闭的分区</li>
+  <li>禁用 Windows Defender 实时扫描（仅对模型目录）</li>
+</ul>
+
+<h4>Q: Linux 多 GPU 下专家缓存分布不均</h4>
+<p><strong>A</strong>：使用 <code>--tensor-split</code> 参数手动分配各 GPU 的权重比例，确保专家缓存池均匀分布。</p>
+
+<h4>Q: HarmonyOS 下 Vulkan 后端初始化失败</h4>
+<p><strong>A</strong>：Maleoon GPU 的 Vulkan 驱动可能不支持某些扩展。尝试：</p>
+<ul>
+  <li>使用 CPU-only 后端（<code>-ngl 0</code>）</li>
+  <li>更新到最新的 HarmonyOS GPU 驱动</li>
+  <li>检查 Vulkan 支持的扩展列表：<code>vulkaninfo | grep extension</code></li>
+</ul>
+
+<footer>
+  <p>CGC Engine 跨平台移植指导书 v1.0 | 2026-09-07</p>
+  <p>基于 Qwen3.6-35B-A3B MoE Expert Cache | 支持 Windows/macOS/Linux/HarmonyOS</p>
+  <p>仓库: <a href="https://github.com/alexchuang19760730/cgcengine0907">github.com/alexchuang19760730/cgcengine0907</a></p>
+</footer>
+
+</div>
+</body>
+</html>
