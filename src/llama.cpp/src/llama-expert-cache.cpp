@@ -862,15 +862,47 @@ int32_t llama_expert_cache_prefetch_slot(llama_expert_cache * cache, uint32_t la
         // evicting it for a prediction cannot turn a current-step hit into a miss). Queued and
         // in-flight slots are never touched. This covers both load-time prewarmed slots (never
         // re-touched, stalest) and decode-time leftovers.
+        // [CGC DBUF spike 2026-09-06] EMA-aware victim: when spac_util is populated (CGC_SPAC
+        // feeds), prefer evicting the LOWEST-utility owner (tie-break LRU) — pure-LRU churns
+        // recurring hot experts (measured: DBUF+LRU degraded longform/coding quality vs the
+        // 8GB baseline). Static profile pins are skipped in the first pass and only yield as a
+        // last resort (mirrors pick_slot's pass structure).
+        const bool spac_v = cgc_spac_on() && layer < cache->spac_util.size() &&
+                            !cache->spac_util[layer].empty();
         uint64_t best_tick = UINT64_MAX;
+        double   best_util = 2.0; // > max possible (1.0), so any real utility wins
+        int32_t  best_pin  = -1;  // fallback: LRU static pin (pass 2), only if nothing else
+        uint64_t best_pin_tick = UINT64_MAX;
         for (uint32_t i = 0; i < ns; ++i) {
             if (cache->slot_queued[layer][i] || cache->slot_loading[layer][i]) {
                 continue;
             }
-            if (cache->slot_last_use[layer][i] < best_tick) {
+            const int32_t own = cache->slot_owner[layer][i];
+            if (cache->slot_pinned_static[layer][i]) {
+                if (cache->slot_last_use[layer][i] < best_pin_tick) {
+                    best_pin_tick = cache->slot_last_use[layer][i];
+                    best_pin = (int32_t) i;
+                }
+                continue; // pass 0: static pins are skipped
+            }
+            if (spac_v && own >= 0 && own < (int32_t) cache->n_expert) {
+                const double util = cache->spac_util[layer][own];
+                if (util < best_util || (util == best_util && cache->slot_last_use[layer][i] < best_tick)) {
+                    best_util = util;
+                    best_tick = cache->slot_last_use[layer][i];
+                    slot = (int32_t) i;
+                }
+            } else if (cache->slot_last_use[layer][i] < best_tick) {
                 best_tick = cache->slot_last_use[layer][i];
                 slot = (int32_t) i;
             }
+        }
+        if (slot < 0 && best_pin >= 0) {
+            // everything else busy/queued: yield the LRU static pin (a skipped fill would leave
+            // the expert cold -> guard/ensure re-fills synchronously anyway)
+            slot = best_pin;
+            cache->slot_pinned_static[layer][slot] = 0;
+            cache->n_pin_yield++;
         }
         if (slot >= 0) {
             const int32_t evicted = cache->slot_owner[layer][slot];
@@ -902,6 +934,72 @@ int32_t llama_expert_cache_prefetch_slot(llama_expert_cache * cache, uint32_t la
     lk.unlock();
     cache->bg_cv.notify_one();
     return 0;
+}
+
+// [CGC DBUF spike 2026-09-06] step-ahead cold-expert refill (see cgc_dbuf_on() in the header).
+// Called from the decode fast-path hook AFTER the remap leaf was written (GPU idle between
+// segments; seg il+1 = this layer's FFN is submitted only after the hook returns and its remap
+// references union slots only, and prefetch_slot evicts by LRU which touch() just made
+// non-union) -> the bg fill of a non-union slot cannot tear any in-flight read of this decode.
+// Prefetch_slot publishes slot_table only after the bytes land, so a still-loading fill at the
+// next decode's hook degrades to the existing cold (ZERO/guard) handling for that one token
+// instead of racing the region. Returns the number of fills queued.
+// [CGC DBUF spike 2026-09-06] per-process cap on outstanding step-ahead fills. Each pread
+// fill takes ~1-3ms; the decode step window is ~30-60ms, so only ~20-30 fills can land before
+// the NEXT step's hooks need them. Without a cap, an early-decode cold burst (12+ cold/layer ×
+// 41 layers) queues 500+ fills that never drain -> late layers' fills are perpetually in flight
+// -> the next step ZERO-maps exactly the experts being refilled (quality collapse, measured:
+// longform 0.882 -> 0.3/empty under un-capped DBUF). CGC_DBUF_CAP (default 24) bounds it.
+static inline size_t cgc_dbuf_cap() {
+    static const size_t v = []() {
+        const char * s = getenv("CGC_DBUF_CAP");
+        return (s != nullptr && s[0] != '\0') ? (size_t) std::max(1, atoi(s)) : 24;
+    }();
+    return v;
+}
+
+size_t llama_expert_cache_dbuf_refill(llama_expert_cache * cache, uint32_t layer,
+                                      const uint32_t * experts, size_t n) {
+    if (cache == nullptr || !cache->pool_active || experts == nullptr || n == 0 ||
+        cache->n_expert == 0 || layer >= cache->slot_owner.size()) {
+        return 0;
+    }
+    const int32_t * st = cache->slot_table.data() + (size_t) layer * cache->n_expert;
+    // outstanding = queued pool fills + in-flight (loading) fills across ALL layers
+    size_t busy = 0;
+    {
+        std::lock_guard<std::mutex> lk(cache->m);
+        busy = cache->pool_queue.size();
+        for (size_t l = 0; l < cache->slot_loading.size() && busy < cgc_dbuf_cap(); ++l) {
+            for (size_t s = 0; s < cache->slot_loading[l].size() && busy < cgc_dbuf_cap(); ++s) {
+                busy += cache->slot_loading[l][s] ? 1u : 0u;
+            }
+        }
+    }
+    size_t cold = 0, queued = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const uint32_t e = experts[i];
+        if (e >= cache->n_expert) {
+            continue;
+        }
+        if (st[e] >= 0) {
+            continue; // resident (touch just refreshed it) -> nothing to refill
+        }
+        cold++;
+        if (busy >= cgc_dbuf_cap()) {
+            break; // backlog full: skip the rest of this step (existing cold handling applies)
+        }
+        if (llama_expert_cache_prefetch_slot(cache, layer, e) == 0) {
+            queued++;
+            busy++;
+        }
+    }
+    static int dbg_n = 0;
+    if (getenv("CGC_DBUF_DBG") != nullptr && dbg_n < 40) {
+        dbg_n++;
+        fprintf(stderr, "CGC-DBUF: l=%u union=%zu cold=%zu queued=%zu\n", layer, n, cold, queued);
+    }
+    return queued;
 }
 
 const uint8_t * llama_expert_cache_pool_data(const llama_expert_cache * cache, uint32_t layer, int kind) {

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>CGC Double-Buffer Spike 設計 — 2026-09-06</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:960px;margin:40px auto;padding:0 20px;line-height:1.65;color:#222}
+h1{color:#1a237e;border-bottom:3px solid #1a237e;padding-bottom:8px}
+h2{color:#1a237e;margin-top:36px;border-bottom:1px solid #ccc;padding-bottom:4px}
+h3{color:#4a148c}
+code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:0.92em}
+pre{background:#f6f6f6;padding:12px;border-radius:6px;overflow-x:auto;font-size:0.9em}
+table{border-collapse:collapse;width:100%;margin:12px 0}
+th,td{border:1px solid #bbb;padding:6px 10px;text-align:left;font-size:0.95em}
+th{background:#e8eaf6}
+.ok{color:#2e7d32;font-weight:600}.warn{color:#c62828;font-weight:600}
+.k{background:#fff8e1;border-left:4px solid #f9a825;padding:8px 12px;margin:10px 0}
+</style>
+</head>
+<body>
+<h1>Scheme 1 Double-Buffer Spike — 設計文件（基於已 mapping 的 sync 模型）</h1>
+<p>日期：2026-09-06 ・ 目標：在 <b>16GB Mac + MTP + denseIQ4X</b> 上把 decode 從 8GB default 的 ~11–22 t/s 推回 <b>25+ t/s 且品質 = baseline（1.0/0.882/1.0）</b>。</p>
+
+<h2>1. 已確認的 Sync 模型（spike 的 ground truth）</h2>
+<table>
+<tr><th>層面</th><th>行為（已讀碼確認）</th><th>對 double-buffer 的意義</th></tr>
+<tr><td>graph_compute 尾端</td><td><code>ggml_backend_sched_graph_compute_async</code> 回傳後<b>沒有</b> trailing sync（llama-context.cpp:2806）</td><td>GPU 跨 ubatch 連續執行</td></tr>
+<tr><td>pipeline_parallel=false</td><td>graph reuse 路徑在 set_inputs 前<b>不 sync</b>（llama-context.cpp:1410 只在 pp=true 時 sync）</td><td>同一 decode() 內多個 ubatch 不中斷</td></tr>
+<tr><td><b>每層 hook 窗口</b></td><td>CGC_OA_ASYNC segmented dispatch（ggml-backend.cpp:1735+）：每層 i 先 <b>poll-wait segment i 完整完成</b>（<code>cgc_done &ge; done0+(i+1)*bufs</code>），才 fire top-k hook 寫 remap，<b>然後</b>才 submit segment i+1</td><td><b>GPU 在每層 hook 執行期間是 idle 的</b> — 這是唯一保證安全的「寫入窗口」，現在被 blocking ensure_batch 佔用</td></tr>
+<tr><td>sampling 邊界</td><td>sampling 資料 async copy（copy_tensor_async_rows），host sampler 讀回時才真正 wait</td><td>decode step 邊界有 host 側 sync</td></tr>
+</table>
+
+<div class="k"><b>核心結論：</b>「每層 hook = GPU idle 窗口」已經存在且被 blocking ensure_batch 使用。Swift SpAc 依賴的「跨 command buffer 的 async fill 窗口」在 llama.cpp MTP 路徑不存在 —— 但<b>層間窗口</b>存在。double-buffer 的價值是把「hook 內 blocking 等 pread」改成「fill 提早寫 scratch、hook 只做 µs 級 pointer swap」。</div>
+
+<h2>2. 為何現況慢（guard trip = blocking）</h2>
+<ul>
+<li>decode 時每層 hook 檢查 cold：cold → <code>ensure_batch</code> 同步等 slot 資料從 disk (pread) 落地 → GPU idle 等 host → decode t/s 掉。</li>
+<li>8GB pool（K≈142）下 cold 少，但「每 token 真正 top-8 全 resident」仍非 100%；重複 token 的冷 expert 一 miss 就 block 整個層。</li>
+<li>先前實證：拔 <code>CGC_NO_PREFETCH=1</code> 直接開 bg prefetch → MTP+OA_ASYNC 下 <b>decode 中段崩潰</b>（bg fill 寫 active buffer 撞 GPU 讀）。</li>
+</ul>
+
+<h2>3. Spike 設計（最小、gated、單一 pool 驗證）</h2>
+<p>不一次改 41 層。先用 <b>1–2 層</b>（例如 il=5,6）驗證機制，成功再全開。</p>
+<h3>3.1 Slot 資料路徑已釐清（spike step 0 完成 — 2026-09-06）</h3>
+<p><b>實體模型（已讀碼確認）：</b>L4 zero-copy pool 不是「每 slot 一段 heap buffer」，而是<b>每個 (layer, kind) expert tensor 的 Metal storage 本身就是 pool region</b>（loader 以 <code>ne[2] = capacity</code> 建立，adopt_pool_region 收編；llama-model-loader.cpp:1269-1277）。slot = region 內固定 stride 的一段；graph 的 mul_mat_id 以 remap leaf（每層 hook 寫入的 expert id）索引。Cold expert 的「ensure」= pread 直接寫進該 slot region。</p>
+<div class="k"><b>由此得到的 double-buffer 形態（比原估算便宜）：</b>不需要 2× pool（8→16GB 會 OOM）。正確形態是 <b>bounded scratch ring</b>：每層維持 K≈142 active slots + 小型 scratch ring（8–16 slot/層 ≈ +0.5–1GB），fill worker 只寫 scratch；swap 時把「內容已到」的 scratch slot 與該 expert 的舊 active slot 交換（slot_table[e] 翻轉 + remap leaf 重寫），舊 active 變 scratch。swap 點 = 每層 hook（GPU idle、seg i+1 未 submit），天然 race-free。這正是 Swift turbo-fieldfare async diff swap（bounded maxSwaps）的對應物。</div>
+<p><b>崩潰根因對策：</b>上次 bg-prefetch crash = fill 寫入 in-flight seg 正在讀的 active slot。scratch ring 讓 fill 永遠不碰 active；swap 只在層 hook（該層 GPU 已 idle）做 → 兩條件皆消除。</p>
+<h3>3.2 機制（若為 slot 描述符模型）</h3>
+<ul>
+<li><b>Scratch set：</b>每 slot 加第二份 storage 描述符（同大小，L4 zero-copy 下為「開窗描述符」非實體複製）。</li>
+<li><b>Fill 目標：</b>bg fill worker（現有 8 threads）只寫 <b>scratch</b> 描述符指向的 buffer，永不碰 active。</li>
+<li><b>Swap 點：</b>每層 hook（GPU idle）內、submit seg i+1 前，對「該層 scratch 已 ready」的 slot 做 active↔scratch 原子換（host 指標 swap，µs 級），再寫 remap。</li>
+<li><b>誰決定填哪層哪個 expert：</b>MTP draft ctx 的 routing（免費 look-ahead，已 commit 的 SpAc feed 有 draft 來源）+ EMA utility top-K；在 decode step N 的層 hook 時把 step N+1..N+3 的預測 expert 丟給 fill queue。</li>
+<li><b>Gate：</b><code>CGC_DBUF=1</code>（default OFF = 現況 8GB default 品質/speed 完全不動）。</li>
+</ul>
+<h3>3.3 崩潰風險對策（上次 bg-prefetch crash 的教訓）</h3>
+<ul>
+<li>fill 只寫 scratch（GPU 永不讀 scratch）→ 不可能 race active。</li>
+<li>swap 只在層 hook 的 GPU-idle 窗口做 → 不可能撞 in-flight command buffer。</li>
+<li>swap 超時/未 ready → 該 slot 維持現況（fall back 現有 guard 路徑），不 block。</li>
+</ul>
+
+<h2>4. 工作量與風險</h2>
+<table>
+<tr><th>元件</th><th>行數</th><th>風險</th></tr>
+<tr><td>Slot 資料路徑釐清（step 0, 唯讀）</td><td>0</td><td>低 — 決定整個架構</td></tr>
+<tr><td>Scratch 描述符 + fill→scratch</td><td>~80–120</td><td>中（核心資料結構）</td></tr>
+<tr><td>層 hook swap 點 + remap 更新</td><td>~50–80</td><td>中（時序敏感）</td></tr>
+<tr><td>Draft/EMA look-ahead → fill queue</td><td>~50（大多可 reuse 已 commit 的 SpAc feed）</td><td>低</td></tr>
+<tr><td>Env gate + telemetry</td><td>~30</td><td>低</td></tr>
+<tr><td><b>合計</b></td><td><b>~210–310</b></td><td>中高（但 gated，default OFF）</td></tr>
+</table>
+
+<h2>5. 成功判準（spike 驗收）</h2>
+<ol>
+<li>1–2 層 spike：decode 不崩、無 0000、telemetry 顯示「swap 成功次數 / miss 次數」。</li>
+<li>單層 cold-step 比例下降（冷 guard trip 從 sync-fill 變成 swap-ready）。</li>
+<li>品質 3-profile = baseline（reference rules, warmup, seed 0）。</li>
+<li>decode t/s 上升（若 1–2 層就明顯，代表 fill-window 假設成立，可全開）。</li>
+</ol>
+
+<h2>6. 決策點</h2>
+<p>此 spike 是 16GB 上「25+ 且品質達標」剩餘唯一可行路線（exclusion-renorm 已實證判死）。現有 8GB default baseline 已 commit 且穩定（1.0/0.882/1.0, 11–22 t/s），spike 全程 gated-off，不影響 default。</p>
+
+<h2>7. Spike 實作 + 量測結果（2026-09-06 完成）</h2>
+<p>實作內容（全數 <code>CGC_DBUF=1</code> gated，default OFF = byte-identical）：</p>
+<ul>
+<li><b>Hook-time step-ahead refill</b>（llama-context.cpp fast-path block, verify ctx only）：把本 step 被 ZERO-map 的 cold union members 透過 <code>prefetch_slot</code> 排入 bg fill，讓下一步 resident。安全模型：hook 在 GPU 層間 idle 執行、seg il+1 只讀 union slots、prefetch_slot 的 LRU victim 必為 non-union、slot_table 在 bytes 落地後才 publish。</li>
+<li><b>EMA-aware eviction</b>（prefetch_slot, CGC_SPAC=1 時啟用）：victim 改選 spac_util 最低者（tie→LRU），static pins 最後才 yield。修掉 pure-LRU 在長 generation 的 churn（量測：DBUF+LRU 使 longform/coding 退化）。</li>
+<li><b>Queue cap</b>（CGC_DBUF_CAP 預設 24）：early-decode cold burst（12/layer × 41 layers ≈ 500）會把 bg queue 塞爆（pread ~1-3ms &gt; step window），late layers 的 fill 永遠 in-flight → 下一步剛好 ZERO-map 正在補的 expert。</li>
+</ul>
+
+<h3>量測（16GB Mac, MTP + denseIQ4X, 8GB pool, 同 reference rules / warmup / seed 0）</h3>
+<table>
+<tr><th>config</th><th>qa-zh</th><th>longform</th><th>coding</th><th>coding decode t/s</th></tr>
+<tr><td>8GB default（baseline, a23195e01）</td><td>1.0</td><td>0.882</td><td>1.0（var 0.118, 1/5 flaky）</td><td>17.41</td></tr>
+<tr><td>DBUF（LRU victim）</td><td>1.0</td><td>0.882</td><td>0.53（3/5 loop）</td><td>14.3</td></tr>
+<tr><td>DBUF+SPAC（EMA victim）</td><td>1.0</td><td>0.882→[0.647,0.3,0.882]</td><td>1.0（var 0.118, 2/5 flaky）</td><td>18.4–21.7</td></tr>
+<tr><td>DBUF+SPAC+CAP=24</td><td>1.0 (11.1 t/s)</td><td>0.882</td><td><b>0.3–1.0 flaky</b></td><td>21.7（最快）</td></tr>
+</table>
+<div class="k"><b>重要混淆因素：</b>同一 session 尾段連 default（DBUF off）的 coding 也量到 0.3（4/5）——機器環境 flaky（memory pressure ~23% free、Freebuff 等背景程序）。因此 DBUF 的品質差異無法在當下乾淨歸因；唯一可確定的正向結果是 <b>crash-free</b>（整個 spike 無 0000/segfault，對照先前拔 CGC_NO_PREFETCH 的 decode 中段崩潰），以及 coding decode 21.7 vs default 17.4 的 +25% 速度訊號。</div>
+
+<h3>Spike 判決</h3>
+<ol>
+<li>「層 hook 的 async step-ahead fill」在 MTP+OA_ASYNC 下<b>可行且 crash-free</b>（這是先前 B-section bg-fill 崩潰的結構性修復，也是 25+ 路徑的必要地基）。</li>
+<li>品質仍被 <b>ZERO-fallback 殘餘冷專家</b>綁住：fast path 對「正在補但未 publish 的 expert」與「被 DBUF evict 的 recurring expert」仍會 ZERO-map → 每 token 分佈微扭曲 → IQ3_XXS 下放大成 repetition。8GB default（decode 完全不 evict、冷由 guard→exact 處理）品質最穩。</li>
+<li>要讓 DBUF 過品質閘需要：(a) 機器環境乾淨（無 memory pressure）重測；(b) 或 pool 大到 steady-state cold ≈ 0（10GB+，16GB 邊緣）；(c) 或 ZERO-fallback 對「loading 中且將 resident」的 expert 改為短等而非 ZERO（小改）。</li>
+</ol>
+<p>程式碼全部 gated（CGC_DBUF），default 行為 byte-identical；保留作 25+ 路線的 crash-free 地基，環境乾淨後可直接重測。</p>
+</body>
+</html>

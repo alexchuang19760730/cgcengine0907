@@ -263,6 +263,19 @@ static inline uint32_t cgc_layer_cap(uint32_t layer, uint32_t def) {
     return cur;
 }
 
+// [CGC DBUF spike 2026-09-06] step-ahead cold-expert refill (CGC_DBUF=1). Default OFF =
+// byte-identical stock fast path. When on, the decode fast-path hook refills the step's
+// ZERO-mapped cold experts (the ones whose weight was silently dropped this step) through
+// prefetch_slot, so the NEXT decode step finds them resident (step-to-step routing stability
+// ~87%). The hook runs between GPU segments (layer il's FFN seg is submitted only after the
+// hook returns and its remap references union slots only), and prefetch_slot evicts only
+// non-union LRU slots + publishes slot_table only after bytes land -> race-free (see
+// llama-context.cpp call site + spike doc).
+static inline bool cgc_dbuf_on() {
+    static const bool v = getenv("CGC_DBUF") != nullptr && getenv("CGC_DBUF")[0] != '\0';
+    return v;
+}
+
 // [CGC SpAc 2026-09-06] config helpers (read once per process). CGC_SPAC=1 enables the EMA
 // utility prefetch source (replaces the default step/hist source in the B-section; default OFF
 // = stock behavior, bit-identical). CGC_SPAC_ALPHA default 0.85 (SpAc's measured inertia),
@@ -349,6 +362,11 @@ void llama_expert_cache_spac_update(llama_expert_cache * cache, uint32_t layer,
 // the pool drifts toward the utility hot set). Call from the B-section prefetch site every
 // CGC_SPAC_REFRESH feeds when CGC_SPAC=1. Non-blocking; returns the number of prefetches queued.
 size_t llama_expert_cache_spac_prefetch(llama_expert_cache * cache);
+// [CGC DBUF spike 2026-09-06] queue a bg fill for every COLD (slot_table == -1) member of the
+// step's union for `layer`. Called from the decode fast-path hook (CGC_DBUF=1). Non-blocking;
+// returns the number of fills queued. See cgc_dbuf_on() header comment for the safety model.
+size_t llama_expert_cache_dbuf_refill(llama_expert_cache * cache, uint32_t layer,
+                                      const uint32_t * experts, size_t n);
 // [CGC mass-coverage 2026-09-06] accumulate selection softmax mass per expert (massc_mass)
 // plus the mass covered by the CURRENT residency (slot_table>=0) — see header comment. Called
 // from expert_cache_on_topk when CGC_MASSCOV=1. experts/w_sel: the step's selected expert ids

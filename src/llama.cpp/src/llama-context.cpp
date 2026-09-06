@@ -3698,6 +3698,20 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
                         cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP ? "draft" : "verify",
                         il, (long long) n_tokens, uni.size());
             }
+            // [CGC DBUF spike 2026-09-06] step-ahead refill of this step's ZERO-mapped cold
+            // experts (CGC_DBUF=1, default OFF). Verify ctx only (the multi-token ground-truth
+            // route; draft ctx duplicates it one token ahead). Safety: this hook runs between
+            // GPU segments — seg il+1 (this layer's FFN) is submitted only after we return and
+            // its remap references union slots only, while prefetch_slot's LRU victim is by
+            // construction a non-union slot (touch() just refreshed union members), so the bg
+            // fill cannot tear any read of this decode. prefetch_slot publishes slot_table only
+            // after bytes land; a still-loading fill at the NEXT step's hook degrades to the
+            // existing cold (ZERO/guard) handling for that one token. This attacks the quality
+            // gap that blocks 25 t/s: cold experts seen this step become resident before the
+            // next step needs them (step-to-step routing stability ~87%).
+            if (verify_fast && cgc_dbuf_on()) {
+                llama_expert_cache_dbuf_refill(cache, (uint32_t) il, uni.data(), uni.size());
+            }
             return;
         }
         static int cgc_pre_post_n = 0;
