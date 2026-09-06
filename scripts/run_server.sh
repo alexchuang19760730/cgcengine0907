@@ -4,7 +4,7 @@
 # 與 run_n30cache.sh 同源的防護 + 生產 env，包成單一 CLI。
 # 2026-08-30 教訓制度化（見 release.html §4.5/§4.7）：
 #   - 啟動前清殘留行程（kernel panic 根因 = 行程疊加；N30CACHE_NO_CLEAN=1 跳過）
-#   - 啟動前記憶體水位檢查（free < 25% 拒跑——4GiB wired pool + 13GB 模型）
+#   - 啟動前記憶體水位檢查（free < 25% 拒跑——8GiB expert pool（default）+ ~13GB 模型/others）
 #   - log 寫持久路徑 Backup/cgc_logs/（/tmp 會被重開機清掉，§4.5 附帶損失）
 #   - curl 測 localhost 必帶 --noproxy '*'（本地代理 7897 會攔 127.0.0.1 → 502 空回應）
 # 2026-08-31 架構修正：
@@ -251,7 +251,15 @@ NGL_DEFAULT=99
 DRAFT_NGL_DEFAULT=""
 BATCH_DEFAULT=""
 UBATCH_DEFAULT=""
-BUDGET_DEFAULT="${N30CACHE_BUDGET:-4294967296}"   # 4GiB expert pool（與生產線一致）
+# [CGC 2026-09-06 pool budget 4GiB -> 8GiB] A/B on this 16GB Mac (MTP+denseIQ4X, ngl=99):
+#   - 8GiB pool loads + runs stably (RSS ~7.7GB, health OK, ~18% free), same as the earlier
+#     10GiB probe (RSS 9.64GB, 2h22m uptime) — the 16GB envelope hosts far more than 4GiB.
+#   - 8GiB default (no renorm): quality = baseline exactly (qa-zh 1.0 / longform 0.882 /
+#     coding 1.0 over 5 runs), decode ~11-22 t/s vs 4GiB's 7-14 (fewer fast-path guard trips).
+#   - 8GiB + CGC_RN_ROUTING=1 + CGC_WCOLD_EN=1: decode 25.9 t/s / 98.7% accept but quality 0.3
+#     (renorm mask mechanism bug, invariant to pool size — see docs …RenormRouting_AB §8).
+# Still overridable: N30CACHE_BUDGET / CGC_SERVER_EXPERT_CACHE_BYTES / CGC_SERVER_OOM_SAFE=1.
+BUDGET_DEFAULT="${N30CACHE_BUDGET:-8589934592}"   # 8GiB expert pool（16GB 機 A/B 驗證過）
 SPEC_DRAFT_N_MAX="${CGC_SERVER_MTP_N_MAX:-3}"  # MTP draft tokens
 SERVER_LAYER_CAPS="${CGC_SERVER_LAYER_CAPS:-}"  # Layer caps for expert cache
 
@@ -380,7 +388,7 @@ if [ "${N30CACHE_NO_CLEAN:-0}" != 1 ]; then
     sleep 1
 fi
 
-# [防護 2] 記憶體水位（模型 13.2GB --no-mmap + 4GiB wired pool；低水位先記 warning，
+# [防護 2] 記憶體水位（模型 13.2GB --no-mmap + 8GiB expert pool default；低水位先記 warning，
 # 再交由下方 memory guard 統一決定是 fail fast 還是 prod fallback）
 FREE_PCT=$(memory_pressure -Q 2>/dev/null | awk -F': ' '/free percentage/{print int($2)}')
 if [ -n "${FREE_PCT:-}" ] && [ "$FREE_PCT" -lt 25 ]; then
