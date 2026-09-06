@@ -8853,9 +8853,16 @@ void kernel_mul_mv_iq2_xxs_f32_impl(
     device const float * y4 = y + 32 * ix;
 
     for (int ib32 = ix; ib32 < nb32; ib32 += 32) {
-        for (short i = 0; i < 32; ++i) {
-            yl[i] = y4[i];
-        }
+        // [CGC P2-B 2026-09-07] Vector load: 32 floats = 8 float4, reduces memory transactions
+        const device float4 * y4_v = (const device float4 *) y4;
+        ((thread float4 *)yl)[0] = y4_v[0];
+        ((thread float4 *)yl)[1] = y4_v[1];
+        ((thread float4 *)yl)[2] = y4_v[2];
+        ((thread float4 *)yl)[3] = y4_v[3];
+        ((thread float4 *)yl)[4] = y4_v[4];
+        ((thread float4 *)yl)[5] = y4_v[5];
+        ((thread float4 *)yl)[6] = y4_v[6];
+        ((thread float4 *)yl)[7] = y4_v[7];
 
         const int ibl = ib32 / (QK_K / 32);
         const int ib  = ib32 % (QK_K / 32);
@@ -11067,10 +11074,12 @@ void kernel_mul_mv_id_glu_iq3_xxs_impl(
                 const float d = db * (0.5f + (aux32 >> 28));
 
                 float2 sum = {0};
+                #pragma unroll
                 for (short l = 0; l < 4; ++l) {
                     const threadgroup uint8_t * grid1 = (const threadgroup uint8_t *)(svalues + q3[2*l+0]);
                     const threadgroup uint8_t * grid2 = (const threadgroup uint8_t *)(svalues + q3[2*l+1]);
                     const uint8_t signs = ssigns[(aux32 >> 7*l) & 127];
+                    #pragma unroll
                     for (short j = 0; j < 4; ++j) {
                         sum[0] += yl[8*l + j + 0] * grid1[j] * (signs & kmask_iq2xs[j+0] ? -1.f : 1.f);
                         sum[1] += yl[8*l + j + 4] * grid2[j] * (signs & kmask_iq2xs[j+4] ? -1.f : 1.f);
@@ -11089,10 +11098,12 @@ void kernel_mul_mv_id_glu_iq3_xxs_impl(
                 const float d = db * (0.5f + (aux32 >> 28));
 
                 float2 sum = {0};
+                #pragma unroll
                 for (short l = 0; l < 4; ++l) {
                     const threadgroup uint8_t * grid1 = (const threadgroup uint8_t *)(svalues + q3u[2*l+0]);
                     const threadgroup uint8_t * grid2 = (const threadgroup uint8_t *)(svalues + q3u[2*l+1]);
                     const uint8_t signs = ssigns[(aux32 >> 7*l) & 127];
+                    #pragma unroll
                     for (short j = 0; j < 4; ++j) {
                         sum[0] += yl[8*l + j + 0] * grid1[j] * (signs & kmask_iq2xs[j+0] ? -1.f : 1.f);
                         sum[1] += yl[8*l + j + 4] * grid2[j] * (signs & kmask_iq2xs[j+4] ? -1.f : 1.f);
