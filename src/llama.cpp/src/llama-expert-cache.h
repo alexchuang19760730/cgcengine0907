@@ -148,6 +148,11 @@ struct llama_expert_cache {
     // prefetch re-residents these so the next ensure is a HIT instead of a synchronous pread.
     std::vector<std::vector<uint32_t>> evicted_recent;   // [layer] ring of recently-evicted experts (newest at back)
     std::vector<uint32_t> evicted_ring_size;             // [layer] per-layer ring capacity
+    // [CGC Step-2 weighted cold guard 2026-09-06] per-layer weighted cold ratio from the
+    // logits eval callback (sum of cold-expert softmax weights / sum of all weights), consumed
+    // by expert_cache_on_topk for the CGC_FAST_COLD_MAX decision. Overwritten each step.
+    // 1e9 = unset (logits callback hasn't fired for this layer yet this step).
+    std::vector<double> cgc_weighted_cold_ratio;         // [layer], 1e9 = unset
     // [CGC §8.101 A/B] per-layer slot capacity (LLAMA_EXPERT_CACHE_LAYER_CAPS="start-end:cap,...";
     // default = n_slots for all layers). Sized max_layer; layer 0 (skip) unused.
     std::vector<uint32_t> n_slots_l;

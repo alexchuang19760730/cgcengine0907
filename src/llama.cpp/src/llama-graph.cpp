@@ -1950,7 +1950,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         if (gating_op == LLAMA_EXPERT_GATING_FUNC_TYPE_SQRT_SOFTPLUS) {
             ggml_mul_mat_set_prec(logits, GGML_PREC_F32);
         }
-        cb(logits, "ffn_moe_logits", il);
+        cb(logits, "ffn_moe_logits_raw", il);  // [CGC Step-2/3] logits eval callback key — keep distinct from _biased variant
     } else {
         logits = probs_in;
     }

@@ -2794,6 +2794,58 @@ bool llama_context::expert_cache_eval_cb(ggml_tensor * t, bool ask, void * user_
         LLAMA_LOG_INFO("CGC-CB: name=%s ask=%d active=%d\n", t->name, ask ? 1 : 0,
                 ctx->model.expert_cache_active ? 1 : 0);
     }
+    // [CGC Step-2/3 weighted cold guard 2026-09-06] read the MoE gate logits tensor
+    // (ffn_moe_logits, F32 [n_expert, n_tokens]) at eval time, compute per-layer weighted
+    // cold ratio = sum(softmax weight of cold experts) / sum(all weights), and store it on
+    // the cache for the top-k hook's CGC_FAST_COLD_MAX decision. Cold = slot_table[e]<0.
+    // MUST run BEFORE the top-k hook (which reads cgc_weighted_cold_ratio).
+    if (!ask && ctx->model.expert_cache_active && ctx->model.expert_cache != nullptr) {
+        const char * dash = strrchr(t->name, '-');
+        if (dash != nullptr) {
+            const int il = atoi(dash + 1);
+            if (il >= 0 && il < (int) ctx->model.hparams.n_layer_all &&
+                strncmp(t->name, "ffn_moe_logits", 14) == 0 &&
+                t->type == GGML_TYPE_F32) {
+                const uint32_t n_expert = (uint32_t) t->ne[0];
+                const uint32_t n_tokens = (uint32_t) t->ne[1];
+                if (n_expert > 0 && n_tokens > 0) {
+                    llama_expert_cache * cache = ctx->model.expert_cache;
+                    const int32_t * st = cache->slot_table.data() + (size_t) il * cache->n_expert;
+                    // sync the logits GPU tensor to a CPU buffer
+                    std::vector<float> logits_buf((size_t) n_expert * n_tokens);
+                    ggml_backend_tensor_get(t, logits_buf.data(), 0,
+                                                (size_t) n_expert * n_tokens * sizeof(float));
+                    // weighted cold ratio: sum of softmax weights of cold experts / sum of all
+                    double total_w = 0.0, cold_w = 0.0;
+                    for (uint32_t j = 0; j < n_tokens; ++j) {
+                        // softmax over experts for token j (row-major: logit[e,j] = buf[e + j*n_expert])
+                        float max_l = -1e30f;
+                        for (uint32_t e = 0; e < n_expert; ++e) {
+                            const float v = logits_buf[e + j * n_expert];
+                            if (v > max_l) max_l = v;
+                        }
+                        float sum_exp = 0.0f;
+                        for (uint32_t e = 0; e < n_expert; ++e) {
+                            const float v = logits_buf[e + j * n_expert];
+                            const float ex = (float) expf(v - max_l);
+                            sum_exp += ex;
+                            if (e < cache->n_expert && st[e] < 0) {
+                                cold_w += ex;
+                            }
+                        }
+                        total_w += sum_exp;
+                    }
+                    cache->cgc_weighted_cold_ratio[il] =
+                        total_w > 0.0 ? (double) cold_w / total_w : 0.0;
+                    if (il <= 1) {
+                        fprintf(stderr, "CGC-LOGITS il=%d weighted_cold=%.3f%% ntok=%u n_expert=%u\n",
+                                il, cache->cgc_weighted_cold_ratio[il] * 100.0,
+                                (uint32_t) n_tokens, (uint32_t) n_expert);
+                    }
+                }
+            }
+        }
+    }
     // only react on the actual (non-ask) dispatch of a top-k node
     if (!ask && ctx->model.expert_cache_active &&
         strncmp(t->name, "ffn_moe_topk", 12) == 0) {

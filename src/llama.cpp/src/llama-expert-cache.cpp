@@ -1711,6 +1711,7 @@ llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t b
                 cache->n_slots_l[l] = cgc_layer_cap(l, cache->n_slots);
             }
         }
+        cache->cgc_weighted_cold_ratio.assign(max_layer, 1e9); // [CGC Step-2] sentinel = unset (logits callback hasn't fired this step). Consumed by expert_cache_on_topk CGC_FAST_COLD_MAX: >0 = weighted, ==1e9 = use count fallback.
         cache->slot_owner.resize(max_layer);
         cache->slot_last_use.resize(max_layer);
         cache->slot_queued.resize(max_layer);

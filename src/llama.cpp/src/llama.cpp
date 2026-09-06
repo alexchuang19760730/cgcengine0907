@@ -390,6 +390,13 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
                 // it only runs with the explicit ALLOW_NGL override).
                 const char * no_gather = getenv("LLAMA_EXPERT_CACHE_NOGATHER");
                 model->expert_cache_active = (model->n_gpu_layers() <= 0 || getenv("LLAMA_EXPERT_CACHE_ALLOW_NGL")) && !(no_gather && no_gather[0]);
+                // Verify expert_cache_active is correctly set for ngl=99 path
+                const char * allow_ngl = getenv("LLAMA_EXPERT_CACHE_ALLOW_NGL");
+                LLAMA_LOG_INFO("%s: expert_cache_active=%d n_gpu_layers=%d ALLOW_NGL=%s no_gather=%d [CGC_DEBUG]",
+                               __func__, (int) model->expert_cache_active,
+                               (int) model->n_gpu_layers(),
+                               allow_ngl ? allow_ngl : "(null)",
+                               (int) (no_gather && no_gather[0]));
                 // CGC expert-cache L4: adopt each expert tensor's Metal storage as the per-layer pool
                 // region (zero copy — the Metal FFN reads the pool directly). Then mark the first
                 // n_slots experts of every layer resident: their bytes were already pre-read into the
