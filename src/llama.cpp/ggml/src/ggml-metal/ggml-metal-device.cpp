@@ -1268,6 +1268,17 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id_down_c
     int nr0 = N_R0_Q3_K;
     int nr1 = 1;
 
+    // Allow nsg override via CGC_DC_NSG env var (for tuning)
+    {
+        const char * e = getenv("CGC_DC_NSG");
+        if (e != nullptr) {
+            int v = atoi(e);
+            if (v >= 1 && v <= 32) {
+                nsg = v;
+            }
+        }
+    }
+
     // Q3_K does not need lookup table in threadgroup memory
     size_t smem = 0;
 
