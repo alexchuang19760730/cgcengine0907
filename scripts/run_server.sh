@@ -562,6 +562,10 @@ SERVER_ENV=(
 if [ -n "${CGC_DOWN_COMBINE:-}" ]; then
     SERVER_ENV+=(CGC_DOWN_COMBINE="$CGC_DOWN_COMBINE")
 fi
+# CGC hook profiling (diagnostic only, default off)
+if [ -n "${CGC_HOOK_PROFILE:-}" ]; then
+    SERVER_ENV+=(CGC_HOOK_PROFILE="$CGC_HOOK_PROFILE")
+fi
 # CGC P0: down-combine nsg override (for tuning). Pass through if externally set.
 if [ -n "${CGC_DC_NSG:-}" ]; then
     SERVER_ENV+=(CGC_DC_NSG="$CGC_DC_NSG")

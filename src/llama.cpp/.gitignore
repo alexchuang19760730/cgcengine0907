@@ -164,3 +164,6 @@ a.out.*
 
 AGENTS.local.md
 .pi/SYSTEM.md
+
+# Build artifacts (too large for git, rebuild from source)
+build/

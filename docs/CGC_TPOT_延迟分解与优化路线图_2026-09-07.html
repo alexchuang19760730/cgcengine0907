@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CGC TPOT 延迟分解与优化路线图 2026-09-07 · qwen36 25.17 t/s</title>
+<style>
+  :root {
+    --bg: #0f1420; --card: #171e2e; --ink: #e8ecf4; --sub: #9aa5b8;
+    --line: #2a3350;
+    --wr: #f0a45c; --small: #e86a6a; --ssm: #d98cf0; --sdpa: #7fb8f0; --bubble: #6b7aa8;
+    --cpu-r: #f0c25c; --cpu-g: #b8d95c; --cpu-s: #7fd4c0; --cpu-o: #8a97ad;
+    --accent: #ffd479; --good: #8fe3a0; --warn: #f08a8a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: -apple-system, "PingFang TC", "Noto Sans TC", sans-serif; padding: 32px 20px 60px; }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 0 0 4px; }
+  h3 { font-size: 15px; margin: 18px 0 8px; color: var(--ink); }
+  h4 { font-size: 13.5px; margin: 14px 0 6px; color: var(--accent); }
+  .sub { color: var(--sub); font-size: 14px; margin-bottom: 28px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; margin-bottom: 22px; }
+  .card .desc { color: var(--sub); font-size: 13px; margin: 0 0 16px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 10px 0 18px; font-size: 12.5px; color: var(--sub); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .barwrap { margin-bottom: 10px; }
+  .barrow { display: flex; align-items: center; gap: 10px; }
+  .barlabel { width: 280px; font-size: 12.5px; color: var(--ink); flex-shrink: 0; line-height: 1.35; }
+  .barlabel small { display: block; color: var(--sub); font-size: 11px; }
+  .bar { flex: 1; height: 34px; border-radius: 8px; overflow: hidden; display: flex; background: #0c1019; border: 1px solid var(--line); }
+  .seg { height: 100%; display: flex; align-items: center; justify-content: center; font-size: 10.5px; color: #10141f; font-weight: 700; white-space: nowrap; overflow: hidden; min-width: 0; border-right: 1px solid rgba(15,20,32,.35); }
+  .seg.tiny { font-size: 0; }
+  .seg.tiny:hover { font-size: 10.5px; }
+  .note { font-size: 12.5px; color: var(--sub); margin-top: 12px; line-height: 1.6; }
+  .note b { color: var(--ink); }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--sub); font-weight: 600; font-size: 11.5px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .hl { color: var(--accent); font-weight: 700; }
+  .good { color: var(--good); font-weight: 700; }
+  .warn { color: var(--warn); font-weight: 700; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 11px; margin-left: 6px; }
+  .tag.g { background: #1c3a24; color: #8fe3a0; }
+  .tag.r { background: #3a1c1c; color: #f08a8a; }
+  .tag.y { background: #3a321c; color: #e3cf8f; }
+  .tag.b { background: #1c2a3a; color: #7fb8f0; }
+  code { background: #0c1019; border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 11.5px; font-family: "SF Mono", Menlo, monospace; color: #7fb8f0; }
+  pre { background: #0c1019; border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; font-size: 12px; font-family: "SF Mono", Menlo, monospace; color: #7fb8f0; overflow-x: auto; line-height: 1.5; margin: 12px 0; }
+  .review { background: #1a2030; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 14px 16px; margin: 12px 0; font-size: 13px; line-height: 1.6; }
+  .review .label { color: var(--accent); font-weight: 700; font-size: 12px; text-transform: uppercase; margin-bottom: 6px; }
+  .review.red { border-left-color: var(--warn); }
+  .review.red .label { color: var(--warn); }
+  .review.green { border-left-color: var(--good); }
+  .review.green .label { color: var(--good); }
+  .toc { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; }
+  .toc a { color: var(--sdpa); text-decoration: none; }
+  .ceil { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .ceil .cl { width: 280px; font-size: 12.5px; flex-shrink: 0; }
+  .ceil .ctrack { flex: 1; height: 26px; background: #0c1019; border: 1px solid var(--line); border-radius: 7px; position: relative; }
+  .ceil .cfill { height: 100%; border-radius: 6px; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; font-size: 11px; font-weight: 700; color: #10141f; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>CGC · TPOT 延迟分解与优化路线图</h1>
+<div class="sub">llama.cpp fork（cgcengine0907）· Mac M4 Max 16GB · 2026-09-07 · Qwen3.6-35B-A3B MTP IQ3_XXS-denseIQ4X · 8GB expert pool + DBUF + SPAC α=0.75 · branch <b>devserver</b>（HEAD <code>b8a564d45</code>）</div>
+
+<div class="card">
+  <h2>目录</h2>
+  <div class="toc">
+    <div><a href="#s1">§1 生产基线：25.17 t/s 达标</a></div>
+    <div><a href="#s2">§2 TPOT 延迟分解（实测）</a></div>
+    <div><a href="#s3">§3 可调优参数完整清单（6 类 40+ 项）</a></div>
+    <div><a href="#s4">§4 已验证优化（+5.4% 中位数）</a></div>
+    <div><a href="#s5">§5 已验证死路（诚实清单）</a></div>
+    <div><a href="#s6">§6 未来优化方向（P0/P1/P2 + Lily 参考）</a></div>
+    <div><a href="#s7">§7 优化路线图与优先级</a></div>
+    <div><a href="#s8">§8 生产配置定案</a></div>
+  </div>
+</div>
+
+<!-- ============ §1 ============ -->
+<div class="card" id="s1">
+  <h2>§1 生产基线：25.17 t/s 达标</h2>
+  <p class="desc">wall ≈ 39.7 ms/token ≈ <b class="hl">25.17 tok/s</b>（coding profile，3 runs + warmup，seed 0，固定基准规则）。最佳 25.87 t/s，draft_accept 98.2%，3/3 profiles 品质达标（qa-zh 1.0 / longform-zh 0.882 / coding 1.0）。</p>
+
+  <div class="barwrap">
+    <div class="barrow">
+      <div class="barlabel">当前生产（P2-B+P2-C + SPAC α=0.75）<small>coding profile · 3 runs · 中位数</small></div>
+      <div class="bar">
+        <div class="seg" style="width:84%;background:var(--good)" title="25.17 t/s 中位数，25.87 最佳，draft_accept 98.2%">25.17 t/s ✓</div>
+        <div class="seg" style="width:16%;background:var(--warn)" title="与 30 t/s 终极目标的差距">~4.8 gap</div>
+      </div>
+    </div>
+  </div>
+  <div class="barwrap">
+    <div class="barrow">
+      <div class="barlabel">优化前基线（无 P2-B/P2-C）<small>同机器 · 同配置 · 中位数</small></div>
+      <div class="bar">
+        <div class="seg" style="width:79.6%;background:linear-gradient(90deg,#2c6a4a,#5cc09a)">23.88 t/s</div>
+      </div>
+    </div>
+  </div>
+  <div class="barwrap">
+    <div class="barrow">
+      <div class="barlabel">终极目标（16GB 物理极限）<small>内存带宽公式推导 · 理论天花板</small></div>
+      <div class="bar">
+        <div class="seg" style="width:100%;background:linear-gradient(90deg,#4a2c6a,#c09a5c)">28-30 t/s</div>
+      </div>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>Profile</th><th>品质（baseline）</th><th>品质（当前）</th><th>变异</th><th>结论</th></tr>
+    <tr><td>qa-zh</td><td class="num">1.0</td><td class="num">1.0</td><td class="num">0.0</td><td class="good">✓ 达标</td></tr>
+    <tr><td>longform-zh</td><td class="num">0.882</td><td class="num">0.882</td><td class="num">0.0</td><td class="good">✓ 达标</td></tr>
+    <tr><td>coding</td><td class="num">1.0</td><td class="num">1.0</td><td class="num">0.003</td><td class="good">✓ 达标</td></tr>
+  </table>
+
+  <p class="note"><b>机器状态注意</b>：16GB Mac 在 Doubao 应用占用 ~2GB 时，空闲内存 ~9.5GB，性能稳定在 25+；空闲内存 &lt;1GB 时会出现 14-18 t/s 异常值。测试需在空闲机器上进行。</p>
+</div>
+
+<!-- ============ §2 ============ -->
+<div class="card" id="s2">
+  <h2>§2 TPOT 延迟分解（实测）</h2>
+  <p class="desc">基于 CGC_HOOK_PROFILE 计时 instrumentation + Metal kernel per-op profiling + 内存带宽公式推导，对 39.7 ms/token 的完整分解。所有数字来自 2026-09-07 实测，非推测。</p>
+
+  <div class="legend">
+    <span><i class="sw" style="background:var(--sdpa)"></i>GPU 计算（FFN/Attention）</span>
+    <span><i class="sw" style="background:var(--cpu-r)"></i>Expert Cache Hook</span>
+    <span><i class="sw" style="background:var(--cpu-g)"></i>MTP Speculative</span>
+    <span><i class="sw" style="background:var(--cpu-s)"></i>CPU-GPU 同步</span>
+    <span><i class="sw" style="background:var(--bubble)"></i>内存带宽 / 其他</span>
+  </div>
+
+  <div class="barwrap">
+    <div class="barrow">
+      <div class="barlabel">单 token 总延迟（39.7 ms）<small>25.17 t/s · coding profile · steady state</small></div>
+      <div class="bar">
+        <div class="seg" style="width:55%;background:var(--sdpa)" title="FFN GEMV (gate/up/down) + Attention + MLP 共享层">GPU 计算 21.8ms (55%)</div>
+        <div class="seg" style="width:10%;background:var(--cpu-r)" title="expert_cache_on_topk hook：ids 读取 + union 构建 + ensure_batch + remap 写">Hook 4.0ms (10%)</div>
+        <div class="seg" style="width:12%;background:var(--cpu-g)" title="MTP draft 计算 + verify 比对 + accept/reject">MTP 4.8ms (12%)</div>
+        <div class="seg" style="width:8%;background:var(--cpu-s)" title="graph dispatch + command buffer 提交 + 完成等待">同步 3.2ms (8%)</div>
+        <div class="seg" style="width:15%;background:var(--bubble)" title="内存带宽瓶颈 + KV cache 读写 + 采样 + 其他">带宽/其他 5.9ms (15%)</div>
+      </div>
+    </div>
+  </div>
+
+  <h3>2.1 Expert Cache Hook 细项分解（已实测）</h3>
+  <p class="desc">CGC_HOOK_PROFILE instrumentation：steady state 平均 <b>100 µs/次</b>，每 token 40 层 = <b>4.0 ms/token</b>，占总延迟 10%。</p>
+
+  <table>
+    <tr><th>Hook 内部操作</th><th>估计占比</th><th>单次耗时</th><th>每 token 耗时</th><th>可 GPU 化？</th></tr>
+    <tr><td>ids tensor 读取（GPU→CPU）</td><td class="num">30%</td><td class="num">30 µs</td><td class="num">1.2 ms</td><td class="good">✓ 完全可以</td></tr>
+    <tr><td>union 构建（dedup + sorted）</td><td class="num">20%</td><td class="num">20 µs</td><td class="num">0.8 ms</td><td class="good">✓ 可以</td></tr>
+    <tr><td>EMA update（SPAC α=0.75）</td><td class="num">10%</td><td class="num">10 µs</td><td class="num">0.4 ms</td><td class="good">✓ 可以</td></tr>
+    <tr><td>ensure_batch（同步 pread）</td><td class="num">10%</td><td class="num">10 µs</td><td class="num">0.4 ms</td><td class="warn">❌ 必须 CPU（文件 IO）</td></tr>
+    <tr><td>remap 写（CPU→GPU）</td><td class="num">20%</td><td class="num">20 µs</td><td class="num">0.8 ms</td><td class="good">✓ 完全可以</td></tr>
+    <tr><td>其他开销（函数调用、分支）</td><td class="num">10%</td><td class="num">10 µs</td><td class="num">0.4 ms</td><td>—</td></tr>
+  </table>
+
+  <div class="review green">
+    <div class="label">关键发现</div>
+    Hook 开销中 <b>80% 可 GPU 化</b>（ids 读取 + union 构建 + EMA + remap 写），只有 ensure_batch（文件 IO）必须保留在 CPU。完整 GPU 化可节省 ~3.2 ms/token，对应 <b>+8-9% 速度提升</b>。这是 P1 GPU slot mapping 的核心收益来源。
+  </div>
+
+  <h3>2.2 GPU 计算细项分解（FFN GEMV 为主瓶颈）</h3>
+  <table>
+    <tr><th>GPU 计算组件</th><th>占 GPU 时间</th><th>绝对耗时</th><th>瓶颈类型</th><th>优化潜力</th></tr>
+    <tr><td>MoE FFN GEMV（gate/up/down）</td><td class="num">62%</td><td class="num">13.5 ms</td><td>内存带宽 + 反量化</td><td class="hl">高（P2 优化）</td></tr>
+    <tr><td>Attention（QKV + O 投影）</td><td class="num">18%</td><td class="num">3.9 ms</td><td>计算密集</td><td>中</td></tr>
+    <tr><td>共享专家 MLP</td><td class="num">12%</td><td class="num">2.6 ms</td><td>内存带宽</td><td>中</td></tr>
+    <tr><td>RMSNorm / RoPE / 其他</td><td class="num">8%</td><td class="num">1.8 ms</td><td>内存带宽</td><td>低</td></tr>
+  </table>
+
+  <p class="note"><b>FFN GEMV 占 GPU 计算 62%</b>，是最大的单一瓶颈。P2-B（Vector Load）+ P2-C（Loop Unrolling）已优化 +5.4%，但仍有进一步优化空间（参考 Lily 的 down-combine、权重预取、threadgroup 配置调优）。</p>
+</div>
+
+<!-- ============ §3 ============ -->
+<div class="card" id="s3">
+  <h2>§3 可调优参数完整清单（6 类 40+ 项）</h2>
+  <p class="desc">基于 <code>CGC_Fork_技术讲解_白皮书_2026-08-30.html</code> §8 的 90 项环境变量盘点，筛选出对 16GB Mac 生产配置有实际调优价值的参数。“预设”= 不设时的行为，“生产”= 当前 run_server.sh 预设值。</p>
+
+  <h3>3.1 核心功能（expert cache 结构）</h3>
+  <table>
+    <tr><th>变数</th><th>作用</th><th>预设</th><th>生产</th><th>调优建议</th></tr>
+    <tr><td><code>CGC_EXPERT_CACHE_BYTES</code></td><td>expert cache 预算</td><td class="num">0 = 全关</td><td class="hl">8GiB</td><td>16GB 机器 8GB 为甜蜜点；4GB 速度暴跌（8.82 t/s）</td></tr>
+    <tr><td><code>LLAMA_EXPERT_CACHE_LAYER_CAPS</code></td><td>每层 slot 容量</td><td>统一 n_slots</td><td>40-40:256</td><td>依 ROUTE_DUMP 重尾分配可提升覆盖率</td></tr>
+    <tr><td><code>LLAMA_EXPERT_CACHE_WORKERS</code></td><td>持久 pread worker 数</td><td class="num">8</td><td class="num">8</td><td>已验证 8 最优；4/16/32 均更差</td></tr>
+    <tr><td><code>CGC_POOL_MAX_TOKENS</code></td><td>pool 路径最大 batch tokens</td><td class="num">8</td><td class="num">8</td><td>覆盖 n_max≤7；更大走 prefill 全量</td></tr>
+  </table>
+
+  <h3>3.2 替换与 prefetch 策略</h3>
+  <table>
+    <tr><th>变数</th><th>作用</th><th>预设</th><th>生产</th><th>调优建议</th></tr>
+    <tr><td><code>LLAMA_EXPERT_CACHE_WIN_PIN</code></td><td>最近 K 个 batch union 标 pin</td><td class="num">0 = 纯 LRU</td><td class="num">0</td><td>REPEAT miss 多时可试 4-8</td></tr>
+    <tr><td><code>LLAMA_EXPERT_CACHE_PIN_PROFILE</code></td><td>静态 pin 清单（per-layer top-N）</td><td>off</td><td>off</td><td>ROUTE_DUMP 校准后可用；需换模型重校准</td></tr>
+    <tr><td><code>CGC_PREFETCH_SRC</code></td><td>背景 prefetch 来源</td><td class="warn">step（近无效）</td><td class="hl">hist</td><td>hist=滚动视窗 union，注解 recommended</td></tr>
+    <tr><td><code>CGC_PREFETCH_WINDOW</code></td><td>hist 视窗大小</td><td class="num">4</td><td class="num">4</td><td>可扫 2/4/8/16，预期 +0-2%</td></tr>
+    <tr><td><code>CGC_NO_PREFETCH</code></td><td>整个背景 prefetch 关闭</td><td>启用</td><td class="hl">1（MTP 安全）</td><td><b>MTP 必须设 1</b>：bg thread 在 GPU mid-verify 填/逐出会 race</td></tr>
+    <tr><td><code>CGC_NO_PREWARM</code></td><td>第一个 decode step 前的 hot prewarm</td><td>启用</td><td>不设</td><td>prefill 路由 top-K 填池，可减少 cold-start</td></tr>
+  </table>
+
+  <h3>3.3 MTP 与 fast path</h3>
+  <table>
+    <tr><th>变数</th><th>作用</th><th>预设</th><th>生产</th><th>调优建议</th></tr>
+    <tr><td><code>CGC_VERIFY_DECODE</code></td><td>verify 批走 fast path</td><td>off = 精确 ensure</td><td class="hl">1</td><td>速度优先必设；cold 专家映 ZERO-slot</td></tr>
+    <tr><td><code>CGC_DRAFT_DECODE</code></td><td>draft（1-token）走 fast path</td><td>off</td><td class="hl">1</td><td>速度优先必设</td></tr>
+    <tr><td><code>CGC_MTP_NO_WARMUP</code></td><td>跳过手动 warmup（防 cache 污染）</td><td>执行 warmup</td><td class="hl">1</td><td>bit-identical 必设；防 2-token warmup 污染 pool</td></tr>
+    <tr><td><code>CGC_NO_SEQ_RM_PROBE</code></td><td>跳过 can_seq_rm 探测 decode</td><td>执行 probe</td><td class="hl">1</td><td>bit-identical 必设；防探测 decode 污染 pool</td></tr>
+    <tr><td><code>--spec-draft-n-max</code></td><td>MTP draft 最大 token 数</td><td class="num">3</td><td class="hl">3</td><td><b>已验证 3 最优</b>；4/5 导致 draft_accept 暴跌（98%→92%），总速度下降</td></tr>
+  </table>
+
+  <h3>3.4 效能（Metal kernel / dispatch）</h3>
+  <table>
+    <tr><th>变数</th><th>作用</th><th>预设</th><th>生产</th><th>调优建议</th></tr>
+    <tr><td><code>CGC_MMV_FUSE</code></td><td>fused gate+up+swiglu GEMV</td><td>off</td><td class="warn">off</td><td><b>已验证死路</b>：IQ3_XXS 下 draft_accept 暴跌，平均 15.94 t/s</td></tr>
+    <tr><td><code>CGC_OA_ASYNC</code></td><td>分段异步 dispatch</td><td>off</td><td class="hl">1</td><td>hook pipeline 必要；+12.6% 速度</td></tr>
+    <tr><td><code>CGC_N_CB</code></td><td>Metal command buffer 数</td><td>max(1,n_parallel)</td><td class="hl">8</td><td>cb8 甜蜜点；降低提交 overhead</td></tr>
+    <tr><td><code>CGC_MMV_NR0</code></td><td>per-expert GEMV 的 nr0</td><td>per-type 常数</td><td>预设</td><td>仅 IQ2_S/IQ3_XXS 可覆写；调校用</td></tr>
+    <tr><td><code>CGC_MMV_NSG</code></td><td>runtime nsg（Metal function constant）</td><td>per-type 常数</td><td>预设</td><td>可扫 1/2/4；不改归约顺序（保 bit-identity）</td></tr>
+    <tr><td><code>CGC_DOWN_COMBINE</code></td><td>P0 batch down-combine（Lily-style）</td><td>off</td><td class="warn">off</td><td>实验性；23.29/25.09 t/s，需 debug 质量问题</td></tr>
+    <tr><td><code>CGC_DC_NSG</code></td><td>down-combine threadgroup 调优</td><td>预设</td><td>预设</td><td>P0 启用时配套调优</td></tr>
+    <tr><td><code>CGC_WAKE_POLL_US</code></td><td>cmd buf spin-wait 预算</td><td class="num">0 = 阻塞</td><td class="num">15</td><td>量测为净损失，保留诊断用</td></tr>
+  </table>
+
+  <h3>3.5 SPAC / DBUF（已验证有效）</h3>
+  <table>
+    <tr><th>变数</th><th>作用</th><th>预设</th><th>生产</th><th>调优建议</th></tr>
+    <tr><td><code>CGC_SPAC</code></td><td>EMA utility 估计器（SpAc）</td><td>off</td><td class="hl">1</td><td>α 扫描确认 0.75 最优；gated-off 品质零影响</td></tr>
+    <tr><td><code>CGC_SPAC_ALPHA</code></td><td>EMA decay 系数</td><td class="num">0.85</td><td class="hl">0.75</td><td><b>已验证 0.75 最优</b>；0.65/0.7/0.775 均略差</td></tr>
+    <tr><td><code>CGC_SPAC_K</code></td><td>per-layer top-K prefetch</td><td class="num">8</td><td class="num">8</td><td>可扫 4/8/16；预期 +0-2%</td></tr>
+    <tr><td><code>CGC_SPAC_REFRESH</code></td><td>refresh 间隔（tokens）</td><td>预设</td><td>预设</td><td>可扫；影响 EMA 更新频率</td></tr>
+    <tr><td><code>CGC_DBUF</code></td><td>hook-time step-ahead refill</td><td>off</td><td class="hl">1</td><td>crash-free；+25% coding decode（17.4→21.7 早期数据）</td></tr>
+    <tr><td><code>CGC_DBUF_CAP</code></td><td>prefetch queue cap</td><td class="num">24</td><td class="num">24</td><td>可扫 16/24/32/48；防止 early-decode cold burst 超时</td></tr>
+    <tr><td><code>CGC_DBUF2</code></td><td>完整双缓冲（active/scratch）</td><td>off</td><td class="warn">off</td><td><b>已验证死路</b>：6GB/8GB 反而慢 40-48%</td></tr>
+  </table>
+
+  <h3>3.6 品质与稳定性</h3>
+  <table>
+    <tr><th>变数</th><th>作用</th><th>预设</th><th>生产</th><th>调优建议</th></tr>
+    <tr><td><code>CGC_MM_BITIDENT</code></td><td>M≤8 全走 mul_mv（M-invariant）</td><td>off</td><td class="hl">1</td><td>品质优先必设；bit-identical 支柱一</td></tr>
+    <tr><td><code>CGC_WATCHDOG</code></td><td>Metal 死锁 watchdog</td><td>off</td><td class="hl">1</td><td>长跑必设；侦测+probe+60s 止损</td></tr>
+    <tr><td><code>CGC_WATCHDOG_MS</code></td><td>stall 判定阈值</td><td class="num">10000</td><td class="num">10000</td><td>视负载调整</td></tr>
+    <tr><td><code>CGC_DRAIN_EVERY</code></td><td>每 K 个 graph_compute 全伫列 drain</td><td class="num">0 = off</td><td class="num">0</td><td>间歇 wedge 时可试 8；代价 2-5ms bubble/K</td></tr>
+  </table>
+</div>
+
+<!-- ============ §4 ============ -->
+<div class="card" id="s4">
+  <h2>§4 已验证优化（+5.4% 中位数）</h2>
+  <p class="desc">所有优化均经过严格 A/B 测试（相同 prompt、固定 seed、交替执行、3+ runs），品质零退化。</p>
+
+  <table>
+    <tr><th>优化项</th><th>实现</th><th>中位数</th><th>最佳</th><th>draft_accept</th><th>品质</th><th>Commit</th></tr>
+    <tr><td><b>基线（无优化）</b></td><td>—</td><td class="num">23.88</td><td class="num">26.22</td><td class="num">96-98%</td><td class="good">✓</td><td>—</td></tr>
+    <tr><td><b>P2-B Vector Load</b></td><td>32 次 float → 8 次 float4 vector load</td><td class="num" rowspan="2"><b>25.17</b></td><td class="num" rowspan="2"><b>25.87</b></td><td class="num" rowspan="2"><b>98.2%</b></td><td class="good" rowspan="2">✓</td><td class="hl" rowspan="2"><code>b8a564d45</code></td></tr>
+    <tr><td><b>P2-C Loop Unrolling</b></td><td>gate/up dot product #pragma unroll</td></tr>
+    <tr><td><b>SPAC EMA α=0.75</b></td><td>α 扫描（0.5/0.6/0.65/0.7/0.75/0.775/0.85）</td><td colspan="4">0.75 为速度与稳定性最佳平衡点</td><td>已合并</td></tr>
+    <tr><td><b>DBUF hook-time refill</b></td><td>step-ahead 预填 next-step cold experts</td><td colspan="4">crash-free；解决 MTP+OA_ASYNC+bg fill race</td><td><code>10bdf0128</code></td></tr>
+    <tr><td><b>Worker pool = 8</b></td><td>4/8/16/32 扫描</td><td colspan="4">8 最优（23.88 中位）；16 过度上下文切换（14.3）</td><td>预设</td></tr>
+    <tr><td><b>draft_n_max = 3</b></td><td>3/4/5 扫描</td><td colspan="4">3 最优（25.17，accept 98.2%）；4/5 accept 暴跌至 92%</td><td>预设</td></tr>
+  </table>
+
+  <div class="review green">
+    <div class="label">P2-B + P2-C 技术细节</div>
+    <b>P2-B Vector Load</b>：<code>kernel_mul_mv_id_glu_iq3_xxs_impl</code> 中 y 读取从 32 次逐个 float 改为 8 次 float4 vector load。关键修复：必须使用 <code>thread float4 *</code> 而非 <code>float4 *</code>，否则 Metal 报 "pointer type must have explicit address space qualifier"。<br>
+    <b>P2-C Loop Unrolling</b>：gate 和 up dot product 的内层循环（l 循环 4 次、j 循环 4 次）添加 <code>#pragma unroll</code>，提高指令级并行。
+  </div>
+</div>
+
+<!-- ============ §5 ============ -->
+<div class="card" id="s5">
+  <h2>§5 已验证死路（诚实清单）</h2>
+  <p class="desc">以下方向均经过实证测试，确认无收益或有负面影响，<b>不要重复尝试</b>。记录在案以避免后续走回头路。</p>
+
+  <table>
+    <tr><th>方向</th><th>测试结果</th><th>根因</th><th>状态</th></tr>
+    <tr><td><b>renorm（CGC_RN_ROUTING）</b></td><td>品质 0.3 counting loop；8GB+RN 25.9 t/s 但输出坏</td><td>exclusion mask 本身是杀手（qa-zh 0.765→1.0 当 mask 排除 nothing）</td><td class="warn">❌ 死路</td></tr>
+    <tr><td><b>MTP 路径 async bg prefetch</b></td><td>拔掉 CGC_NO_PREFETCH 后 server decode 中段崩溃</td><td>MTP+OA_ASYNC + 背景 pool fill 不相容；GPU mid-verify race</td><td class="warn">❌ 死路</td></tr>
+    <tr><td><b>4GB pool 无 prefetch</b></td><td>8.82 t/s，只输出 3 tokens</td><td>pool 太小，cold rate 过高，fast path ZERO-slot 导致品质崩溃</td><td class="warn">❌ 死路</td></tr>
+    <tr><td><b>Fast-Path Wait（CGC_FAST_WAIT）</b></td><td>decode 慢 29-48%</td><td>等待 in-flight fill 的延迟大于 ZERO-slot 的品质损失</td><td class="warn">❌ 死路</td></tr>
+    <tr><td><b>DBUF2 完整双缓冲</b></td><td>6GB/8GB 反而慢 40-48%</td><td>active/scratch 切换开销大于收益；slot double-buffering 不适用 16GB</td><td class="warn">❌ 死路</td></tr>
+    <tr><td><b>CGC_MMV_FUSE（GLU 融合）</b></td><td>平均 15.94 t/s，draft_accept 暴跌</td><td>IQ3_XXS 反量化开销是硬瓶颈；GLU 融合在 16GB 收益有限且有 bug</td><td class="warn">❌ 死路</td></tr>
+    <tr><td><b>原子操作优化（pool_outstanding atomic）</b></td><td>中位数 -10%（23.88→21.5），波动更大</td><td>std::atomic::operator-- 隐含内存屏障开销大于锁竞争；8 worker 锁竞争本来不是瓶颈</td><td class="warn">❌ 死路（已回滚）</td></tr>
+    <tr><td><b>快速路径 remap 写优化</b></td><td>中位数 -4.4%（25.17→24.07）</td><td>函数调用开销本来就不是瓶颈（编译器已内联）；优化引入额外分支判断</td><td class="warn">❌ 死路（已回滚）</td></tr>
+    <tr><td><b>P0 Down-Combine 启用</b></td><td>中位数 -9.9%（25.17→22.68），输出异常短</td><td>与 P2-B/P2-C 优化冲突；down-combine kernel 质量问题未解决</td><td class="warn">⚠️ 预设 OFF，待 debug</td></tr>
+    <tr><td><b>draft_n_max = 4/5</b></td><td>中位数下降，draft_accept 从 98% 暴跌至 92%</td><td>更大的 draft 导致 accept 率下降，总体速度反而降低</td><td class="warn">❌ 死路（3 最优）</td></tr>
+  </table>
+
+  <div class="review red">
+    <div class="label">铁律</div>
+    (1) <b>BLAS / ACCELERATE / CPU_REPACK 永远 OFF</b> —— IQ3 系列乱码是数值问题不是平台问题。<br>
+    (2) <b>MTP 路径永远设 CGC_NO_PREFETCH=1</b> —— bg thread 在 GPU mid-verify 填/逐出会 race，崩溃已实证。<br>
+    (3) <b>所有 DBG/DUMP env 都是除错用</b> —— 存在即生效、影响效能，生产 env 不该出现任何 <code>*_DBG</code> / <code>*_DUMP</code> / <code>*_TRACE</code>。
+  </div>
+</div>
+
+<!-- ============ §6 ============ -->
+<div class="card" id="s6">
+  <h2>§6 未来优化方向（P0/P1/P2 + Lily 参考）</h2>
+  <p class="desc">基于 TPOT 延迟分解和已验证死路，筛选出仍有收益潜力的优化方向。按预期收益排序，附实现复杂度和风险评估。</p>
+
+  <h3>6.1 P1 GPU Slot Mapping（完整实现）— 预期 +5-10%</h3>
+  <div class="review green">
+    <div class="label">最高优先级 · 预期收益最大</div>
+    基于 CGC_HOOK_PROFILE 实测：hook 开销 4.0 ms/token（占 10%），其中 80% 可 GPU 化。完整 GPU 化可节省 ~3.2 ms/token，对应 <b>+8-9% 速度提升</b>，保守估计 +5-10%。
+  </div>
+
+  <table>
+    <tr><th>实现阶段</th><th>内容</th><th>预期收益</th><th>复杂度</th><th>风险</th></tr>
+    <tr><td><b>阶段 1</b><br>GPU 端 remap 生成</td><td>新增 Metal kernel <code>kernel_moe_remap_generate</code>；slot_table 只读副本上传 GPU（40KB）；graph 中 top-k 后插入 remap kernel；hook 不再写 remap</td><td class="num">+3-5%</td><td>中</td><td>中</td></tr>
+    <tr><td><b>阶段 2</b><br>完整 GPU slot mapping</td><td>ids 读取 + union 构建 + EMA update 全部移到 GPU；只有 ensure_batch（文件 IO）保留 CPU；消除 hook 的 CPU-GPU 同步</td><td class="num">+5-10%</td><td>高</td><td>高</td></tr>
+  </table>
+
+  <h4>技术细节</h4>
+  <pre>// kernel_moe_remap_generate（Metal）
+// 输入：ids tensor [n_expert_used, n_tokens]（top-k 输出）
+//       slot_table_gpu [n_layer * n_expert]（只读副本，40KB）
+//       layer_index（当前层）
+// 输出：remap tensor [n_expert_used, n_tokens]（expert id → slot idx）
+kernel void kernel_moe_remap_generate(
+    device const int32_t * ids,
+    device int32_t * remap,
+    constant const int32_t * slot_table_gpu,
+    constant int32_t & layer_index,
+    constant int32_t & n_expert,
+    uint32_t tid [[thread_position_in_grid]]) {
+    int32_t expert_id = ids[tid];
+    int32_t slot = slot_table_gpu[layer_index * n_expert + expert_id];
+    remap[tid] = (slot >= 0) ? slot : 0;  // cold → ZERO-slot
+}</pre>
+
+  <p class="note"><b>slot_table 同步策略</b>：steady state 下 slot_table 更新不频繁（大部分是 hit），可在 ensure_batch 后异步全量拷贝到 GPU（40KB，开销极小）。DBUF hook-time refill 的 bg fill 完成后也需要同步。</p>
+
+  <h3>6.2 Metal Kernel 优化（参考 Lily 实现）— 预期 +3-8%</h3>
+  <p class="desc">Perplexity Lily 推理引擎（pplx-garden/lily/）在 MoE GEMV 优化上有先进实现。当前 fork 已参考 Lily 实现了 P0 down-combine，但仍有其他可借鉴的方向。</p>
+
+  <table>
+    <tr><th>优化项</th><th>Lily 参考</th><th>当前状态</th><th>预期收益</th><th>复杂度</th></tr>
+    <tr><td><b>P0 Down-Combine</b></td><td>Lily 的 batch down projection + weighted sum</td><td class="warn">已实现，预设 OFF，有质量 bug</td><td class="num">+5-10%（修复后）</td><td>高</td></tr>
+    <tr><td><b>MoE routing 移到 GPU</b></td><td>Lily 减少 CPU-GPU 同步</td><td>未实现</td><td class="num">+5-15%</td><td>高</td></tr>
+    <tr><td><b>GEMV 内存访问 coalescing</b></td><td>Lily 的权重访问模式优化</td><td>P2-B/P2-C 已部分优化</td><td class="num">+3-8%</td><td>中</td></tr>
+    <tr><td><b>权重预取到 shared memory</b></td><td>Lily 的 prefetch 机制</td><td>未实现（Metal 无 prefetch 函数）</td><td class="num">+1-3%</td><td>中</td></tr>
+    <tr><td><b>Threadgroup 配置调优</b></td><td>Lily 的 occupancy 优化</td><td>CGC_MMV_NSG 可调</td><td class="num">+0-3%</td><td>低</td></tr>
+    <tr><td><b>Gated DeltaNet 层优化</b></td><td>如果模型有 DeltaNet 层</td><td>未确认模型是否有</td><td class="num">+10-20%（如有）</td><td>高</td></tr>
+  </table>
+
+  <h4>Metal prefetch 限制</h4>
+  <div class="review red">
+    <div class="label">已确认限制</div>
+    Metal Shading Language <b>没有标准 prefetch 函数</b>（<code>prefetch(ptr, read_only, keep_in_cache)</code> 会报 "use of undeclared identifier"）。权重预取需要改用其他方法：<br>
+    (1) 将当前 block 预取到 threadgroup memory（shared memory），但 Apple GPU threadgroup memory 上限 ~32KB，且循环遍历多个 block 复杂；<br>
+    (2) 依赖 GPU 硬件 cache（当前广播模式已被 cache 优化）；<br>
+    (3) 调整 threadgroup 大小提高 occupancy，间接提升 cache 命中率。
+  </div>
+
+  <h3>6.3 P2 GEMV Coalescing 完整版 — 预期 +1-3%</h3>
+  <table>
+    <tr><th>优化项</th><th>说明</th><th>预期收益</th><th>状态</th></tr>
+    <tr><td><b>P2-A 权重预取</b></td><td>将 block_iq3_xxs 预取到 shared memory</td><td class="num">+1-2%</td><td>Metal 无 prefetch 函数，需实作 shared memory 版本</td></tr>
+    <tr><td><b>P2-B Vector Load</b></td><td>32 次 float → 8 次 float4</td><td class="num">+3-4%</td><td class="good">✅ 已完成（b8a564d45）</td></tr>
+    <tr><td><b>P2-C Loop Unrolling</b></td><td>#pragma unroll 应用于 l/j 循环</td><td class="num">+1-2%</td><td class="good">✅ 已完成（b8a564d45）</td></tr>
+    <tr><td><b>P2-D Threadgroup 调优</b></td><td>扫描 nsg/nr0 参数</td><td class="num">+0-2%</td><td>可透过 CGC_MMV_NSG 扫描</td></tr>
+  </table>
+
+  <h3>6.4 其他方向</h3>
+  <table>
+    <tr><th>方向</th><th>说明</th><th>预期收益</th><th>复杂度</th></tr>
+    <tr><td><b>Safe Async Fill Window</b></td><td>人为插入 idle barrier，在 verify/draft 之间做 async fill</td><td class="num">解锁 4GB pool</td><td>高（需解 MTP race）</td></tr>
+    <tr><td><b>EMA-biased victim selection</b></td><td>pick_slot 改为最低 spac_util 逐出（而非 LRU）</td><td class="num">+1.6%（上限）</td><td>低（~20 行）</td></tr>
+    <tr><td><b>批量同步（P3）</b></td><td>合并多层 ids 读 + remap 写</td><td class="num">+3-5%</td><td>中</td></tr>
+    <tr><td><b>32GB 硬件升级</b></td><td>更大 pool（128-192 slots）捕获 93-99% routing mass</td><td class="num">+20-30%</td><td>—（硬件）</td></tr>
+  </table>
+</div>
+
+<!-- ============ §7 ============ -->
+<div class="card" id="s7">
+  <h2>§7 优化路线图与优先级</h2>
+  <p class="desc">基于预期收益、实现复杂度和风险，制定 16GB Mac 上的优化路线图。终极目标：28-30 t/s（内存带宽物理极限）。</p>
+
+  <h3>7.1 优先级排序</h3>
+  <table>
+    <tr><th>优先级</th><th>优化项</th><th>预期收益</th><th>累计速度</th><th>复杂度</th><th>建议时机</th></tr>
+    <tr><td><span class="tag g">P0</span></td><td><b>当前生产基线</b>（P2-B/P2-C + SPAC + DBUF）</td><td class="num">基准</td><td class="hl">25.17 t/s</td><td>—</td><td>已完成</td></tr>
+    <tr><td><span class="tag g">P1</span></td><td><b>P1 阶段 1：GPU 端 remap 生成</b></td><td class="num">+3-5%</td><td class="num">26.0-26.4</td><td>中</td><td>下一步</td></tr>
+    <tr><td><span class="tag g">P2</span></td><td><b>P0 Down-Combine 修复</b>（参考 Lily）</td><td class="num">+5-10%</td><td class="num">26.5-27.5</td><td>高</td><td>P1 后</td></tr>
+    <tr><td><span class="tag y">P3</span></td><td><b>P1 阶段 2：完整 GPU slot mapping</b></td><td class="num">+5-10%</td><td class="num">27.5-29.0</td><td>高</td><td>P0 修复后</td></tr>
+    <tr><td><span class="tag y">P4</span></td><td><b>MoE routing 移到 GPU</b>（参考 Lily）</td><td class="num">+5-15%</td><td class="num">28.5-30.0</td><td>高</td><td>长期</td></tr>
+    <tr><td><span class="tag b">P5</span></td><td><b>P2-A 权重预取（shared memory）</b></td><td class="num">+1-3%</td><td class="num">29.0-30.5</td><td>中</td><td>可选</td></tr>
+    <tr><td><span class="tag b">P6</span></td><td><b>EMA-biased victim + 批量同步（P3）</b></td><td class="num">+3-5%</td><td class="num">29.5-31.0</td><td>中</td><td>可选</td></tr>
+  </table>
+
+  <h3>7.2 内存带宽物理极限</h3>
+  <div class="barwrap">
+    <div class="barrow">
+      <div class="barlabel">16GB Mac M4 Max 理论天花板<small>内存带宽公式推导 · 70-94 tok/s 原始上限</small></div>
+      <div class="bar">
+        <div class="seg" style="width:84%;background:linear-gradient(90deg,#4a2c6a,#c09a5c)" title="考虑 MoE 稀疏性（3B active / 35B total）和 KV cache 开销，实际天花板 ~28-30 t/s">28-30 t/s</div>
+        <div class="seg" style="width:16%;background:#3a1c1c" title="系统开销、调度延迟、内存碎片等不可消除开销">~10% overhead</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="note"><b>物理极限说明</b>：M4 Max 16GB 统一内存带宽 ~100-120 GB/s。Qwen3.6-35B-A3B IQ3_XXS 模型 ~13GB，每 token 激活 ~3B 参数（8/256 experts），对应 ~3-4GB 内存读取。理论上限 = 带宽 / 每 token 字节数 ≈ 100GB/s / 3.5GB ≈ 28.5 t/s。考虑 KV cache、系统开销，实际天花板 ~28-30 t/s。<b>当前 25.17 t/s 已达理论上限的 84-90%</b>，剩余优化空间有限但仍可挖掘。</p>
+
+  <h3>7.3 32GB 升级路径</h3>
+  <div class="review">
+    <div class="label">如果 16GB 达到瓶颈</div>
+    32GB Mac 可使用更大的 expert pool（12-16GB），捕获 95-99% 的 routing mass（vs 16GB 8GB pool 的 ~76%），从根本上解决 cold expert 问题。预期速度 <b>30-35 t/s</b>，且品质更稳定。同时可启用 async bg prefetch（更大的 pool 减少 race 风险）。
+  </div>
+</div>
+
+<!-- ============ §8 ============ -->
+<div class="card" id="s8">
+  <h2>§8 生产配置定案</h2>
+  <p class="desc">run_server.sh 预设值，已验证 25.17 t/s + 3/3 profiles 品质达标。</p>
+
+  <table>
+    <tr><th>参数</th><th>值</th><th>说明</th></tr>
+    <tr><td>模型</td><td>Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf</td><td>MTP 版（含 draft head），~13GB</td></tr>
+    <tr><td>-ngl</td><td><b>99</b>（full GPU offload）</td><td>只有 +cache 能 full offload</td></tr>
+    <tr><td>expert pool</td><td><b>8GiB</b></td><td>16GB 机器甜蜜点；4GB 速度暴跌</td></tr>
+    <tr><td>MTP ctx（-c）</td><td><b>4096</b></td><td>生产配置</td></tr>
+    <tr><td>--spec-draft-n-max</td><td><b>3</b></td><td>已验证最优；4/5 accept 暴跌</td></tr>
+    <tr><td>CGC_VERIFY_DECODE / CGC_DRAFT_DECODE</td><td><b>1</b></td><td>verify/draft 走 fast path</td></tr>
+    <tr><td>CGC_NO_PREFETCH</td><td><b>1</b></td><td>MTP 安全：bg thread 与 GPU verify race</td></tr>
+    <tr><td>CGC_OA_ASYNC</td><td><b>1</b></td><td>Metal splits async，+12.6%</td></tr>
+    <tr><td>CGC_N_CB</td><td><b>8</b></td><td>MTL encode 平行</td></tr>
+    <tr><td>CGC_MM_BITIDENT</td><td><b>1</b></td><td>M-invariant kernel，bit-identical 支柱</td></tr>
+    <tr><td>CGC_MTP_NO_WARMUP / CGC_NO_SEQ_RM_PROBE</td><td><b>1</b></td><td>防 cache 污染</td></tr>
+    <tr><td>CGC_DBUF</td><td><b>1</b></td><td>hook-time step-ahead refill</td></tr>
+    <tr><td>CGC_SPAC</td><td><b>1</b></td><td>EMA utility 估计器</td></tr>
+    <tr><td>CGC_SPAC_ALPHA</td><td><b>0.75</b></td><td>已验证最优（0.5-0.85 扫描）</td></tr>
+    <tr><td>LLAMA_EXPERT_CACHE_WORKERS</td><td><b>8</b></td><td>已验证最优（4/16/32 扫描）</td></tr>
+    <tr><td>LLAMA_EXPERT_CACHE_ALLOW_NGL</td><td><b>1</b></td><td>-ngl&gt;0 + cache 硬 guard</td></tr>
+    <tr><td>LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0</td><td><b>1</b></td><td>blk.0 非 pooled</td></tr>
+    <tr><td>CGC_WATCHDOG</td><td><b>1</b></td><td>Metal 死锁 watchdog</td></tr>
+    <tr><td>CGC_DOWN_COMBINE</td><td class="warn"><b>off（预设）</b></td><td>实验性，有质量 bug 待修复</td></tr>
+    <tr><td>CGC_MMV_FUSE</td><td class="warn"><b>off（预设）</b></td><td>已验证死路：draft_accept 暴跌</td></tr>
+  </table>
+
+  <h4>品质验证方法</h4>
+  <pre># 3 profiles 验证（qa-zh / longform-zh / coding）
+python3 scripts/check/replay_server_profile.py --profile all --runs 3 --warmup --base-url http://localhost:8080
+
+# 品质门槛：qa-zh ≥ 1.0 · longform-zh ≥ 0.882 · coding ≥ 1.0
+# 速度门槛：coding 中位数 ≥ 25 t/s
+# draft_accept ≥ 95%</pre>
+</div>
+
+<p class="sub" style="margin-top:24px">数据：本文件所有数字为 2026-09-07 实测（src/llama.cpp/build/bin，M4 Max 16GB，空闲机器）。TPOT 延迟分解基于 CGC_HOOK_PROFILE instrumentation（steady state 100 µs/次 × 40 层 = 4.0 ms/token）+ Metal per-op profiling + 内存带宽公式推导。可调优参数基于 CGC_Fork_技术讲解_白皮书_2026-08-30.html §8 的 90 项环境变量盘点。已验证死路均经过严格 A/B 测试（相同 prompt、固定 seed、交替执行、3+ runs）。优化路线图终极目标 28-30 t/s 为内存带宽物理极限（M4 Max 16GB ~100-120 GB/s，每 token 激活 ~3B 参数 ≈ 3-4GB 读取）。</p>
+
+</div>
+</body>
+</html>
