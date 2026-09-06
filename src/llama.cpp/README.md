@@ -54,12 +54,38 @@ EMA 效用估计器，per-(layer, expert) EMA utility，预测 next active exper
 Multi-Token Prediction 投机解码，draft_accept ~96%，显著提升有效吞吐。
 - **注意**：MTP 生产配置必须设置 `CGC_NO_PREFETCH=1`（0000 防护），因为 MTP+OA_ASYNC + 背景 pool fill 会导致 mid-decode 崩溃。
 
-## 快速开始
+## 快速开始（devserver 分支）
 
-### 生产配置启动
+本仓库是 **flashkv-devserver** 项目的子模块（`src/llama.cpp/`），所有操作应在项目根目录 `flashkv-devserver/` 下进行。
+
+### 目录结构
+
+```
+flashkv-devserver/
+├── src/llama.cpp/          # 本仓库（llama.cpp CGC Engine 分支）
+│   └── build/bin/llama-server  # 构建产物
+├── scripts/
+│   ├── run_server.sh        # 生产 server 启动脚本
+│   └── check/
+│       └── replay_server_profile.py  # 基准测试脚本
+└── models/gguf/
+    └── Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS.gguf  # 默认 MTP 模型
+```
+
+### 构建
 
 ```bash
-cd /path/to/flashkv-devserver
+cd flashkv-devserver/src/llama.cpp
+cmake -B build -DGGML_METAL=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target llama-server -j8
+```
+
+### 生产配置启动（MTP + Expert Cache）
+
+在项目根目录 `flashkv-devserver/` 下运行：
+
+```bash
+# 默认 MTP 生产配置（8GB pool + DBUF + SPAC α=0.75）
 CGC_SERVER_EXPERT_CACHE_BYTES=8589934592 \
 CGC_DBUF=1 \
 CGC_SPAC=1 \
@@ -68,7 +94,30 @@ CGC_NO_PREFETCH=1 \
 ./scripts/run_server.sh
 ```
 
-### 启用 P0 Down-Combine（实验性）
+**注意**：`run_server.sh` 使用 `env "${SERVER_ENV[@]}" "$BIN"` 启动，**不继承**外部 shell 环境变量。每个 `CGC_*` 变量必须显式添加到脚本内的 `SERVER_ENV` 数组才能传递给 server 进程。
+
+### 运行时 Profile 切换
+
+`run_server.sh` 支持多种预配置运行时：
+
+```bash
+# 非 MTP 基线（~8 t/s，用于对比）
+CGC_SERVER_RUNTIME_PROFILE=non-mtp ./scripts/run_server.sh
+
+# 明确切回 MTP 生产配置
+CGC_SERVER_RUNTIME_PROFILE=mtp ./scripts/run_server.sh
+
+# 16GB 机器 OOM 保命模式
+CGC_SERVER_OOM_SAFE=1 ./scripts/run_server.sh
+
+# 换端口
+CGC_SERVER_PORT=9931 ./scripts/run_server.sh
+
+# 外挂模型目录
+CGC_SERVER_MODEL_ROOT=/path/to/models/gguf ./scripts/run_server.sh
+```
+
+### 启用 P0 Down-Combine（实验性，默认 OFF）
 
 ```bash
 CGC_SERVER_EXPERT_CACHE_BYTES=8589934592 \
@@ -80,9 +129,12 @@ CGC_DOWN_COMBINE=1 \
 ./scripts/run_server.sh
 ```
 
-### 运行基准测试
+### 运行基准测试（3 Profile 质量 + 速度评估）
 
 ```bash
+cd flashkv-devserver
+
+# Coding profile（代码生成，质量最敏感）
 python3 scripts/check/replay_server_profile.py \
   --profile coding \
   --base-url http://127.0.0.1:8080/v1 \
@@ -91,6 +143,12 @@ python3 scripts/check/replay_server_profile.py \
   --seed 42 \
   --runs 3 \
   --warmup
+
+# 中文问答 profile
+python3 scripts/check/replay_server_profile.py --profile qa-zh ...
+
+# 中文长文 profile
+python3 scripts/check/replay_server_profile.py --profile longform-zh ...
 ```
 
 ## 质量与速度测试方法
