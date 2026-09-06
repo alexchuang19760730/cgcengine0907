@@ -3428,12 +3428,22 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         // (slot_table == -1), the ZERO-slot contamination exceeds softmax's absorption
         // capacity -> uniform softmax -> deterministic sequential top-k -> 0000 garbage.
         // Disable fast path so cold experts get filled via ensure_batch.
+        // [CGC Step-2 weighted cold guard consume 2026-09-06] Decide with the WEIGHTED cold
+        // ratio when the logits eval callback measured it this step (sum of routing probs of
+        // cold experts / total, written into cgc_weighted_cold_ratio[il] before this hook fires;
+        // 1e9 sentinel = unmeasured). The count fallback below treats every cold expert as
+        // equally harmful, so a layer whose few cold experts carry tiny routing mass trips the
+        // guard and loses the fast path for no quality gain; the weighted metric keeps it on
+        // the fast path. When it DOES fall through, ensure_batch below only fills the COLD
+        // members of the union (warm members are hit-refreshed), i.e. selective fill, not the
+        // whole 256-expert layer.
         if (cgc_fast_eligible && cache != nullptr && il >= 0 &&
             (uint32_t) il < cache->slot_owner.size()) {
             const char * cgc_cold_env = getenv("CGC_FAST_COLD_MAX");
             const double cgc_fast_cold_max = cgc_cold_env ? atof(cgc_cold_env) : 0.30;
             if (cgc_fast_cold_max > 0.0) {
                 const int32_t * cgc_st = cache->slot_table.data() + (size_t) il * cache->n_expert;
+                // count-based cold set (both the fallback ratio and the guard log need it)
                 size_t cgc_cold_count = 0;
                 for (size_t i = 0; i < uni.size(); ++i) {
                     uint32_t e = uni[i];
@@ -3441,12 +3451,26 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
                         cgc_cold_count++;
                     }
                 }
-                const double cgc_cold_ratio = uni.size() > 0 ? (double) cgc_cold_count / uni.size() : 0.0;
-                if (cgc_cold_ratio > cgc_fast_cold_max) {
+                // weighted ratio (produce side: expert_cache_eval_cb on the layer's gate
+                // probs/logits). Unmeasured layers keep the 1e9 sentinel -> count fallback.
+                const bool cgc_wr_ok =
+                    (size_t) il < cache->cgc_weighted_cold_ratio.size() &&
+                    cache->cgc_weighted_cold_ratio[(size_t) il] < 1e9;
+                const double cgc_metric = cgc_wr_ok
+                    ? cache->cgc_weighted_cold_ratio[(size_t) il]
+                    : (uni.size() > 0 ? (double) cgc_cold_count / uni.size() : 0.0);
+                if (cgc_metric > cgc_fast_cold_max) {
                     cgc_fast_eligible = false;
                     if (il <= 1) {
-                        fprintf(stderr, "CGC-COLD-GUARD: il=%d cold=%zu/%zu (%.0f%% > %.0f%%) -> ensure_batch\n",
-                                il, cgc_cold_count, uni.size(), cgc_cold_ratio * 100.0, cgc_fast_cold_max * 100.0);
+                        if (cgc_wr_ok) {
+                            fprintf(stderr, "CGC-COLD-GUARD-W: il=%d cold=%zu/%zu weighted=%.1f%% (count=%.1f%%) > %.0f%% -> ensure_batch (selective fill)\n",
+                                    il, cgc_cold_count, uni.size(), cgc_metric * 100.0,
+                                    (uni.size() > 0 ? (double) cgc_cold_count / uni.size() * 100.0 : 0.0),
+                                    cgc_fast_cold_max * 100.0);
+                        } else {
+                            fprintf(stderr, "CGC-COLD-GUARD: il=%d cold=%zu/%zu (%.0f%% > %.0f%%) -> ensure_batch\n",
+                                    il, cgc_cold_count, uni.size(), cgc_metric * 100.0, cgc_fast_cold_max * 100.0);
+                        }
                     }
                 }
             }
