@@ -1,0 +1,5 @@
+# 确保 HTML 文件以 UTF-8 编码存储，不进行行尾转换
+*.html text eol=lf encoding=utf-8
+*.css text eol=lf encoding=utf-8
+*.js text eol=lf encoding=utf-8
+*.md text eol=lf encoding=utf-8

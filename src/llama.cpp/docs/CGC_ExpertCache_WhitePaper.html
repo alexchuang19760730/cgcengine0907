@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -165,7 +165,7 @@
 
 <table>
   <tr><th>Option</th><th>默认值</th><th>说明</th><th>状态</th></tr>
-  <tr><td><code>CGC_SPAC</code></td><td>未设置（OFF）</td><td>启用 EMA 效用估计器。per-(layer, expert) EMA utility，<code>utility[L][e] = α·u + (1−α)·routed</code>。用于 prefetch 目标选择和 EMA-biased 淘汰。<strong>生产配置：启用</strong></td><td><span class="badge badge-production">生产</span></td></tr>
+  <tr><td><code>CGC_SPAC</code></td><td>未设置（OFF）</td><td>启用 EMA 效用估计器。per-(layer, expert) EMA utility，<code>utility[L][e] = α·u + (1-α)·routed</code>。用于 prefetch 目标选择和 EMA-biased 淘汰。<strong>生产配置：启用</strong></td><td><span class="badge badge-production">生产</span></td></tr>
   <tr><td><code>CGC_SPAC_ALPHA</code></td><td>0.75（已调优）</td><td>EMA 衰减系数 α。范围 0~1。α 越大，越重视近期 routing；α 越小，越平滑。细扫描结果：0.75 为最佳（中位数 25.87 t/s，最佳 26.19）。</td><td><span class="badge badge-production">生产</span></td></tr>
   <tr><td><code>CGC_SPAC_K</code></td><td>8</td><td>每次 refresh 预取的 top-K expert 数量。</td><td><span class="badge badge-default-off">默认 OFF</span></td></tr>
   <tr><td><code>CGC_SPAC_REFRESH</code></td><td>未设置</td><td>EMA top-K → prefetch 的刷新间隔（token 数）。</td><td><span class="badge badge-default-off">默认 OFF</span></td></tr>
