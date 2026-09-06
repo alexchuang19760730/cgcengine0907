@@ -341,6 +341,11 @@ private:
     // can write the remapped ids into its buffer before the FFN mul_mat_id dispatches).
     // mutable: filled from the const graph_get_cb.
     mutable std::map<int, ggml_tensor *> cache_remap_tensors;
+    // layer -> renormalized-routing mask leaf (F32 [n_expert, 1]; CGC_RN_ROUTING=1 only): the
+    // hook rewrites 0.0/-inf per expert from the slot_table before the router softmax reads it
+    // (Step-3: cold experts get -inf -> softmax renormalizes over resident experts).
+    // mutable: filled from the const graph_get_cb.
+    mutable std::map<int, ggml_tensor *> cache_rn_mask_tensors;
     // layer -> probs tensor (softmax over experts); the hook uses it to read per-token probs.
     // mutable: filled from the const graph_get_cb.
     mutable std::map<int, ggml_tensor *> cache_probs_tensors;

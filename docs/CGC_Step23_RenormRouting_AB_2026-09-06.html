@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>CGC Step-2a / Step-3 Renormalized Routing A/B — 2026-09-06</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", sans-serif; max-width: 960px; margin: 40px auto; padding: 0 20px; line-height: 1.7; color: #222; }
+h1 { border-bottom: 3px solid #1a73e8; padding-bottom: 8px; }
+h2 { color: #1a73e8; margin-top: 32px; border-left: 4px solid #1a73e8; padding-left: 10px; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; font-size: 14px; }
+th { background: #eef4ff; }
+.ok { color: #188038; font-weight: bold; }
+.bad { color: #d93025; font-weight: bold; }
+code { background: #f4f4f4; padding: 1px 5px; border-radius: 3px; font-size: 13px; }
+pre { background: #f8f8f8; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 13px; }
+.warn { background: #fff8e1; border: 1px solid #f1c40f; padding: 10px 14px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<h1>CGC Expert-Cache Step-2a / Step-3 Renormalized Routing — A/B 驗證報告</h1>
+<p><b>日期</b>：2026-09-06　<b>分支</b>：devserver　<b>模型</b>：Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X（ngl=99 + expert-cache 4GB + MTP）</p>
+
+<h2>1. 背景</h2>
+<p>Step-2/3 的目標是讓 decode 在「expert cache 的 ZERO-slot fast path」下不損失語意品質，最終把速度拉回 25+ t/s：</p>
+<ul>
+<li><b>Step-2a（produce）</b>：在每層 top-k hook 前，從被 dispatch 的 topk 節點往上溯源找到該層 <code>ffn_moe_logits*</code> tensor，host 端 softmax 後計算「冷 expert 的加權路由質量 / 總質量」，寫入 <code>cgc_weighted_cold_ratio[il]</code>。</li>
+<li><b>Step-2b（consume，先前 commit 5e3d4df9a）</b>：fast-path cold guard 改讀加權冷比率（非 1e9 哨兵時），count-based 只作 fallback。</li>
+<li><b>Step-3（renorm）</b>：router softmax 前把冷 expert（<code>slot_table&lt;0</code>）的 logits mask 成 −inf，softmax 重新歸一化到 resident experts，冷 expert 不可能被 top-k 選中 → ZERO-slot 不再污染。</li>
+</ul>
+
+<h2>2. 本 commit 實作內容（全部 env-gated，預設關閉 = HEAD 行為）</h2>
+<table>
+<tr><th>檔案</th><th>變更</th><th>開關</th></tr>
+<tr><td><code>src/llama.cpp/src/llama-context.cpp</code></td><td>新增 <code>cgc_topk_find_logits()</code>（從 topk 節點沿 src 鏈溯源到 <code>ffn_moe_logits_raw/biased-il</code>）；on_topk 開頭加權冷比率量測；移除 eval_cb 中永遠不觸發的舊 logits block（CGC_OA_ASYNC 下只有每段 topk 節點會被 callback 轉送，logits 節點根本到不了）；graph_compute 開頭逐層寫 mask leaf（0.0/−inf，附 warm&lt;k 安全地板）</td><td><code>CGC_WCOLD_EN</code>（量測）/ <code>CGC_RN_ROUTING</code>（mask）</td></tr>
+<tr><td><code>src/llama.cpp/src/llama-context.h</code></td><td>新增 <code>cache_rn_mask_tensors</code>（layer → mask leaf）</td><td>—</td></tr>
+<tr><td><code>src/llama.cpp/src/llama-graph.cpp</code></td><td><code>build_moe_ffn</code>：softmax 前插入 <code>logits += mask_leaf</code>（僅 SOFTMAX gating、pool 範圍、<code>probs_in==nullptr</code>、<code>CGC_RN_ROUTING=1</code>）</td><td><code>CGC_RN_ROUTING</code></td></tr>
+</table>
+<div class="warn"><b>關鍵發現（Step-2a 為何之前 dormant）</b>：eval callback 在 CGC_OA_ASYNC 的 segmented dispatcher 下，每一段（segment）只把 <code>ffn_moe_topk-*</code> 節點轉送給 callback（見 ggml-backend.cpp hook_seg）；<code>ffn_moe_logits*</code> 節點只會在有 <code>CGC_TD_CB</code> 的 debug dump 模式被轉送。因此原本寫在 eval_cb 內的 produce block 永遠收不到 logits → 加權比率恆為 1e9 哨兵。修法：produce 移到 on_topk 開頭，直接從該層 topk 節點溯源讀 logits（任何 dispatch 模式都會觸發），並以 <code>ggml_backend_tensor_get</code> 讀回（hook 當下整段 segment 已算完、未提交下一段，buffer 有效）。</div>
+
+<h2>3. A/B 驗證（3 profile × runs 3 × seed 0，含 reference rules）</h2>
+<table>
+<tr><th>設定</th><th>qa-zh</th><th>longform-zh</th><th>coding</th><th>decode t/s</th><th>draft accept</th></tr>
+<tr><td><b>HEAD baseline</b>（count guard）</td><td class="ok">1.0</td><td class="ok">0.882</td><td class="ok">1.0</td><td>6.3–8.1</td><td>11–53%</td></tr>
+<tr><td><b>預設（本 commit，gates OFF）</b></td><td class="ok">1.0</td><td class="ok">0.882</td><td class="ok">1.0</td><td>7.7–9.1</td><td>11–53%</td></tr>
+<tr><td><b>CGC_WCOLD_EN=1 單獨開</b>（weighted guard 生效、無 renorm）</td><td class="ok">1.0</td><td class="ok">0.882</td><td class="bad">0.3（迴圈，var 0.0）</td><td>6.9</td><td>—</td></tr>
+<tr><td><b>CGC_WCOLD_EN=1 + CGC_RN_ROUTING=1</b></td><td>—</td><td>—</td><td class="bad">0.3（0/1 振盪）</td><td class="ok"><b>25.5</b></td><td class="ok"><b>95.95%</b></td></tr>
+</table>
+
+<h2>4. 分析（誠實版）</h2>
+<h3>4.1 為什麼「weighted guard 單獨開」會讓 coding 從 1.0 掉到 0.3？</h3>
+<p>weighted 比率比 count 更「寬鬆」：某層 union 有 20/32 冷 expert（count 62% &gt; 30%，count guard 會擋下 fast path），但若這些冷 expert 只扛 20% 路由質量（weighted ≤ 30%），weighted guard 會放行 fast path → 冷 expert 的 ZERO-slot 貢獻變成 <b>靜默丟失 ~20% 路由質量</b>（softmax 未重新歸一化）。IQ3_XXS 對這種質量的丟失很敏感 → 確定性迴圈。這證明：<b>沒有 renormalization 時，count-based 才是正確的保守選擇</b>；weighted guard 的價值只在搭配 Step-3 時才成立。</p>
+
+<h3>4.2 為什麼「weighted + renorm」速度達標（25.5 t/s, 96% accept）但 coding 品質仍壞？</h3>
+<p>速度證明 mask-leaf 機制與 25+ t/s fast path 相容（無同步 ensure_batch，MTP accept 96%）。但品質壞在 <b>pool 成員與真實 routing 不匹配</b>：</p>
+<ul>
+<li>層 0 <b>永遠 warm=0</b>（debug：<code>CGC-RN-FLOOR: il=0 warm=0 &lt; k=8</code>）→ floor 把 mask 全清 0 → 層 0 走 ZERO-slot/guard 路徑。</li>
+<li>層 1+ warm 恆為 70/256：這 70 個 = loader 依序 prewarm 的 expert 0..70，而模型真實偏好高 ID expert（如 193/233/249）。renorm 把真熱 expert 全 mask 掉 → 模型被迫在 70 個「錯的」expert 間路由 → 0/1 振盪。</li>
+</ul>
+<p>換言之 renorm 讓品質「優雅地」退化成「一個只剩固定 70 expert 的模型」——如果那 70 個不是該 prompt 真正需要的 experts，輸出照樣壞。<b>要讓 renorm 有好品質，pool 成員必須跟著真實 routing 走</b>（decode 驅動的 hot-set prewarm / 每層 ensure 的持續生效 / 或讓熱 expert 在 softmax 前就已 resident）。這是下一里程碑（pool membership 修復）。</p>
+
+<h2>5. 結論與下一步</h2>
+<div class="warn"><b>預設（本 commit）= HEAD 品質 baseline（1.0 / 0.882 / 1.0）</b>；Step-2a/3 程式碼已完整落地但預設關閉，A/B 數據如上，不會誤傷品質。</div>
+<ol>
+<li><b>修 pool membership</b>：讓每層真正熱門的 experts（decode 實際 routing）在 decode 前/中先 resident（例如以 prefill 的 route-frequency 填第一波、decode 首步就把 guard ensure 的 union 同步寫回 mask），使 renorm 的路由候選 = 模型真正要的 experts。</li>
+<li>修好後開啟 <code>CGC_RN_ROUTING=1 CGC_WCOLD_EN=1</code> 重測三 profile，目標：coding 回復 1.0 且維持 25+ t/s。</li>
+<li>層 0 warm=0 的根因另查（<code>expert_cache_l4_skip_layer0</code> / pool 配置對層 0 的排除）。</li>
+</ol>
+
+</body>
+</html>

@@ -1960,6 +1960,28 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         cb(logits, "ffn_moe_logits_biased", il);
     }
 
+    // [CGC Step-3 renormalized routing 2026-09-06] CGC_RN_ROUTING=1 only. Before the router
+    // softmax, add a host-writable per-layer mask leaf (0.0 for warm/resident experts,
+    // -inf for cold experts, slot_table[e]<0) so softmax renormalizes over the resident
+    // experts only. Cold experts then can never be top-k selected, so the ZERO-slot fast
+    // path loses no routing mass -> quality degrades gracefully ("fewer active experts")
+    // instead of catastrophically (silent mass drop). The eval hook rewrites every mask leaf
+    // each step from the current slot_table (graph_compute entry); mirrors the remap leaf
+    // mechanism below. Mask only softmax-gated MoE layers in the pool-path token range.
+    const char * rn_env = getenv("CGC_RN_ROUTING");
+    const bool rn_on = rn_env != nullptr && rn_env[0] != '\0' &&
+        probs_in == nullptr && gating_op == LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX &&
+        expert_cache_active && il >= 0 && il < n_layer + n_layer_nextn &&
+        n_tokens >= 1 && (uint64_t) n_tokens <= cgc_pool_max_tokens();
+    if (rn_on) {
+        ggml_tensor * rn_mask = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, n_expert, 1);
+        ggml_set_output(rn_mask); // writable from host; prevent allocator overwrite before softmax reads it
+        cb(rn_mask, "ffn_moe_rn_mask", il);
+        ggml_build_forward_expand(gf, rn_mask);
+        logits = ggml_add(ctx0, logits, rn_mask); // [n_expert, n_tokens] += [n_expert, 1] broadcast
+        cb(logits, "ffn_moe_logits_masked", il);
+    }
+
     ggml_tensor * probs = nullptr;
     switch (gating_op) {
         case LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX:

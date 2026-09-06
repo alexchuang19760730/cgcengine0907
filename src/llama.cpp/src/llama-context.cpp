@@ -23,6 +23,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 //
@@ -2729,6 +2730,55 @@ ggml_status llama_context::graph_compute(
         set_n_threads_fn.second(set_n_threads_fn.first, n_threads);
     }
 
+    // [CGC Step-3 renormalized routing] rewrite every layer's rn-mask leaf (0.0 warm / -inf
+    // cold per the current slot_table) before dispatch. The leaves are built only under
+    // CGC_RN_ROUTING=1 (llama-graph build_moe_ffn); without them this is a no-op. Masks reflect
+    // the slot state at step start (end of previous step); fills made by ensure_batch mid-step
+    // only take effect from the next step, which keeps this simple and race-free (no segment
+    // submitted yet at this point).
+    if (!cache_rn_mask_tensors.empty() && model.expert_cache != nullptr) {
+        llama_expert_cache * rnc = model.expert_cache;
+        const int32_t rn_k = (int32_t) model.hparams.n_expert_used;
+        for (const auto & kv : cache_rn_mask_tensors) {
+            const int rn_il = kv.first;
+            ggml_tensor * rn_m = kv.second;
+            if (rn_m == nullptr || rn_m->data == nullptr ||
+                rn_il < 0 || (uint32_t) rn_il >= rnc->slot_owner.size() ||
+                (size_t) rn_il * rnc->n_expert + rnc->n_expert > rnc->slot_table.size()) {
+                continue;
+            }
+            const uint32_t rn_ne = (uint32_t) rn_m->ne[0];
+            if (rn_ne == 0 || rn_ne > rnc->n_expert) {
+                continue;
+            }
+            const int32_t * rn_st = rnc->slot_table.data() + (size_t) rn_il * rnc->n_expert;
+            float * rn_out = (float *) rn_m->data;
+            int32_t rn_warm = 0;
+            for (uint32_t e = 0; e < rn_ne; ++e) {
+                if (rn_st[e] >= 0) {
+                    rn_warm++;
+                }
+            }
+            // safety floor: masking needs >= n_expert_used warm experts so top-k still has real
+            // candidates. Fewer warm -> all-zero mask (softmax unmasked; the cold guard below
+            // still protects via ensure_batch).
+            static const bool rn_dbg = getenv("CGC_RN_DBG") != nullptr;
+            if (rn_warm < rn_k) {
+                memset(rn_out, 0, rn_ne * sizeof(float));
+                if (rn_dbg && rn_il <= 2) {
+                    fprintf(stderr, "CGC-RN-FLOOR: il=%d warm=%d < k=%d -> no mask\n", rn_il, (int) rn_warm, (int) rn_k);
+                }
+            } else {
+                for (uint32_t e = 0; e < rn_ne; ++e) {
+                    rn_out[e] = (rn_st[e] >= 0) ? 0.0f : -INFINITY;
+                }
+                if (rn_dbg && rn_il <= 2) {
+                    fprintf(stderr, "CGC-RN-MASK: il=%d warm=%d/%u masked=%u\n", rn_il, (int) rn_warm, rn_ne, rn_ne - (uint32_t) rn_warm);
+                }
+            }
+        }
+    }
+
     auto status = ggml_backend_sched_graph_compute_async(sched.get(), gf);
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: ggml_backend_sched_graph_compute_async failed with error %d\n", __func__, status);
@@ -2794,58 +2844,11 @@ bool llama_context::expert_cache_eval_cb(ggml_tensor * t, bool ask, void * user_
         LLAMA_LOG_INFO("CGC-CB: name=%s ask=%d active=%d\n", t->name, ask ? 1 : 0,
                 ctx->model.expert_cache_active ? 1 : 0);
     }
-    // [CGC Step-2/3 weighted cold guard 2026-09-06] read the MoE gate logits tensor
-    // (ffn_moe_logits, F32 [n_expert, n_tokens]) at eval time, compute per-layer weighted
-    // cold ratio = sum(softmax weight of cold experts) / sum(all weights), and store it on
-    // the cache for the top-k hook's CGC_FAST_COLD_MAX decision. Cold = slot_table[e]<0.
-    // MUST run BEFORE the top-k hook (which reads cgc_weighted_cold_ratio).
-    if (!ask && ctx->model.expert_cache_active && ctx->model.expert_cache != nullptr) {
-        const char * dash = strrchr(t->name, '-');
-        if (dash != nullptr) {
-            const int il = atoi(dash + 1);
-            if (il >= 0 && il < (int) ctx->model.hparams.n_layer_all &&
-                strncmp(t->name, "ffn_moe_logits", 14) == 0 &&
-                t->type == GGML_TYPE_F32) {
-                const uint32_t n_expert = (uint32_t) t->ne[0];
-                const uint32_t n_tokens = (uint32_t) t->ne[1];
-                if (n_expert > 0 && n_tokens > 0) {
-                    llama_expert_cache * cache = ctx->model.expert_cache;
-                    const int32_t * st = cache->slot_table.data() + (size_t) il * cache->n_expert;
-                    // sync the logits GPU tensor to a CPU buffer
-                    std::vector<float> logits_buf((size_t) n_expert * n_tokens);
-                    ggml_backend_tensor_get(t, logits_buf.data(), 0,
-                                                (size_t) n_expert * n_tokens * sizeof(float));
-                    // weighted cold ratio: sum of softmax weights of cold experts / sum of all
-                    double total_w = 0.0, cold_w = 0.0;
-                    for (uint32_t j = 0; j < n_tokens; ++j) {
-                        // softmax over experts for token j (row-major: logit[e,j] = buf[e + j*n_expert])
-                        float max_l = -1e30f;
-                        for (uint32_t e = 0; e < n_expert; ++e) {
-                            const float v = logits_buf[e + j * n_expert];
-                            if (v > max_l) max_l = v;
-                        }
-                        float sum_exp = 0.0f;
-                        for (uint32_t e = 0; e < n_expert; ++e) {
-                            const float v = logits_buf[e + j * n_expert];
-                            const float ex = (float) expf(v - max_l);
-                            sum_exp += ex;
-                            if (e < cache->n_expert && st[e] < 0) {
-                                cold_w += ex;
-                            }
-                        }
-                        total_w += sum_exp;
-                    }
-                    cache->cgc_weighted_cold_ratio[il] =
-                        total_w > 0.0 ? (double) cold_w / total_w : 0.0;
-                    if (il <= 1) {
-                        fprintf(stderr, "CGC-LOGITS il=%d weighted_cold=%.3f%% ntok=%u n_expert=%u\n",
-                                il, cache->cgc_weighted_cold_ratio[il] * 100.0,
-                                (uint32_t) n_tokens, (uint32_t) n_expert);
-                    }
-                }
-            }
-        }
-    }
+    // [CGC Step-2/3 weighted cold guard] produce moved into expert_cache_on_topk head: the
+    // async segmented dispatcher (CGC_OA_ASYNC) only forwards each segment's ffn_moe_topk node
+    // here, so the ffn_moe_logits* branch below could never fire. on_topk recovers the layer's
+    // logits by walking the topk node's src chain (cgc_topk_find_logits) in every dispatch
+    // mode, then computes the weighted cold ratio and stores it for the fast-path guard.
     // only react on the actual (non-ask) dispatch of a top-k node
     if (!ask && ctx->model.expert_cache_active &&
         strncmp(t->name, "ffn_moe_topk", 12) == 0) {
@@ -3241,6 +3244,46 @@ void llama_context::cgc_logits_oracle_dump(ggml_cgraph * gf, uint32_t n_tokens, 
     fflush(f_out);
 }
 
+// [CGC Step-2a produce 2026-09-06] find this layer's router-logits node by walking the
+// dispatched top-k tensor's src chain. The async segmented dispatcher (CGC_OA_ASYNC) only
+// forwards each segment's ffn_moe_topk node to the eval callback — the ffn_moe_logits* nodes
+// never reach expert_cache_eval_cb in production, which is why the produce side stayed dormant
+// (weighted ratio always at the 1e9 sentinel -> count fallback). At hook time the whole segment
+// (including the logits matmul) has completed and no later segment has been submitted yet, so
+// the logits buffer still holds its final values and a host read is safe.
+static ggml_tensor * cgc_topk_find_logits(ggml_tensor * t, int il) {
+    if (t == nullptr) {
+        return nullptr;
+    }
+    char want[24];
+    snprintf(want, sizeof(want), "-%d", il);
+    const size_t want_len = strlen(want);
+    std::vector<ggml_tensor *> stack;
+    std::unordered_set<ggml_tensor *> seen;
+    stack.push_back(t);
+    seen.insert(t);
+    while (!stack.empty()) {
+        ggml_tensor * n = stack.back();
+        stack.pop_back();
+        for (int s = 0; s < GGML_MAX_SRC; ++s) {
+            ggml_tensor * src = n->src[s];
+            if (src == nullptr || !seen.insert(src).second) {
+                continue;
+            }
+            if (src->name[0] != '\0' && src->type == GGML_TYPE_F32 &&
+                (strncmp(src->name, "ffn_moe_logits_raw", 18) == 0 ||
+                 strncmp(src->name, "ffn_moe_logits_biased", 21) == 0)) {
+                const size_t nl = strlen(src->name);
+                if (nl > want_len && strcmp(src->name + nl - want_len, want) == 0) {
+                    return src;
+                }
+            }
+            stack.push_back(src);
+        }
+    }
+    return nullptr;
+}
+
 void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     const int64_t n_expert_used = t->ne[0];
     const int64_t n_tokens      = t->ne[1];
@@ -3260,6 +3303,59 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     llama_expert_cache * cache = model.expert_cache;
     if (cache == nullptr) {
         return;
+    }
+
+    // [CGC Step-2a produce 2026-09-06] weighted cold ratio measurement: walk upstream from the
+    // top-k node to this layer's ffn_moe_logits* tensor (all dispatched modes converge here),
+    // softmax it on the host and store sum(cold routing mass)/total for the fast-path cold
+    // guard below. Runs before the guard reads cgc_weighted_cold_ratio. Unmeasured layers keep
+    // the 1e9 sentinel -> count-based fallback in the guard.
+    // [2026-09-06 gate] CGC_WCOLD_EN=1 required: the weighted metric is MORE permissive than
+    // the count-based one (a layer with many cold experts that carry little routing mass stays
+    // on the ZERO-slot fast path), and without renormalization (CGC_RN_ROUTING, Step-3) that
+    // silently-dropped mass degrades quality (measured: coding 1.0 -> 0.3 deterministic loop).
+    // Only enable together with CGC_RN_ROUTING once pool membership tracks real routing.
+    static const bool cgc_wcold_en = getenv("CGC_WCOLD_EN") != nullptr;
+    if (cgc_wcold_en) {
+        ggml_tensor * lg = cgc_topk_find_logits(t, il);
+        if (lg != nullptr && (size_t) il < cache->cgc_weighted_cold_ratio.size()) {
+            const uint32_t lg_n_expert = (uint32_t) lg->ne[0];
+            const uint32_t lg_n_tokens = (uint32_t) lg->ne[1];
+            if (lg_n_expert > 0 && lg_n_tokens > 0) {
+                const int32_t * st = cache->slot_table.data() + (size_t) il * cache->n_expert;
+                std::vector<float> lbuf((size_t) lg_n_expert * lg_n_tokens);
+                ggml_backend_tensor_get(lg, lbuf.data(), 0,
+                                        (size_t) lg_n_expert * lg_n_tokens * sizeof(float));
+                double total_w = 0.0, cold_w = 0.0;
+                for (uint32_t j = 0; j < lg_n_tokens; ++j) {
+                    // softmax over experts for token j (row-major: logit[e,j] at e + j*n_expert)
+                    float max_l = -1e30f;
+                    for (uint32_t e = 0; e < lg_n_expert; ++e) {
+                        const float v = lbuf[e + j * lg_n_expert];
+                        if (v > max_l) {
+                            max_l = v;
+                        }
+                    }
+                    float sum_exp = 0.0f;
+                    for (uint32_t e = 0; e < lg_n_expert; ++e) {
+                        const float v = lbuf[e + j * lg_n_expert];
+                        const float ex = (float) expf(v - max_l);
+                        sum_exp += ex;
+                        if (e < cache->n_expert && st[e] < 0) {
+                            cold_w += ex;
+                        }
+                    }
+                    total_w += sum_exp;
+                }
+                cache->cgc_weighted_cold_ratio[(size_t) il] =
+                    total_w > 0.0 ? (double) cold_w / total_w : 0.0;
+                if (il <= 1) {
+                    fprintf(stderr, "CGC-LOGITS il=%d weighted_cold=%.3f%% ntok=%u n_expert=%u\n",
+                            il, cache->cgc_weighted_cold_ratio[(size_t) il] * 100.0,
+                            lg_n_tokens, lg_n_expert);
+                }
+            }
+        }
     }
 
     // ensure the per-kind gather buffers exist before any L3-B path indexes them
@@ -3634,6 +3730,13 @@ llm_graph_cb llama_context::graph_get_cb() const {
         // tensors (src0 of the mul_mat_id results) so the eval hook can repoint them at the
         // cache pool / gather buffers and write remapped ids. Mirrors build-prod graph_get_cb.
         if (il >= 0 && model.expert_cache_active) {
+            if (strcmp(name, "ffn_moe_rn_mask") == 0) {
+                // [CGC Step-3] renormalized-routing mask leaf (CGC_RN_ROUTING=1 only): captured
+                // so the eval hook can rewrite 0.0/-inf per expert each step before the router
+                // softmax reads it. Mirrors the remap-leaf capture just below.
+                cache_rn_mask_tensors[il] = cur;
+                return;
+            }
             if (strcmp(name, "ffn_moe_topk_remap") == 0) {
                 cache_remap_tensors[il] = cur;
                 // CGC: point this layer's expert weight tensors at the L4 pool regions up front
