@@ -562,6 +562,30 @@ SERVER_ENV=(
 if [ -n "${CGC_DOWN_COMBINE:-}" ]; then
     SERVER_ENV+=(CGC_DOWN_COMBINE="$CGC_DOWN_COMBINE")
 fi
+# CGC P0: down-combine nsg override (for tuning). Pass through if externally set.
+if [ -n "${CGC_DC_NSG:-}" ]; then
+    SERVER_ENV+=(CGC_DC_NSG="$CGC_DC_NSG")
+fi
+# CGC SPAC: EMA top-K prefetch count (for tuning). Pass through if externally set.
+if [ -n "${CGC_SPAC_K:-}" ]; then
+    SERVER_ENV+=(CGC_SPAC_K="$CGC_SPAC_K")
+fi
+# CGC SPAC: EMA refresh interval (for tuning). Pass through if externally set.
+if [ -n "${CGC_SPAC_REFRESH:-}" ]; then
+    SERVER_ENV+=(CGC_SPAC_REFRESH="$CGC_SPAC_REFRESH")
+fi
+# CGC DBUF: queue capacity cap (for tuning). Pass through if externally set.
+if [ -n "${CGC_DBUF_CAP:-}" ]; then
+    SERVER_ENV+=(CGC_DBUF_CAP="$CGC_DBUF_CAP")
+fi
+# CGC MMV: original GEMV kernel threadgroup size (for tuning). Pass through if externally set.
+if [ -n "${CGC_MMV_NSG:-}" ]; then
+    SERVER_ENV+=(CGC_MMV_NSG="$CGC_MMV_NSG")
+fi
+# CGC PREFETCH: rolling window size for hist prefetch source (for tuning). Pass through if externally set.
+if [ -n "${CGC_PREFETCH_WINDOW:-}" ]; then
+    SERVER_ENV+=(CGC_PREFETCH_WINDOW="$CGC_PREFETCH_WINDOW")
+fi
 if [ "$SERVER_GLU_FUSED_DOWN" = "1" ]; then
     SERVER_ENV+=(CGC_GLU_FUSED_DOWN=1)
 fi
