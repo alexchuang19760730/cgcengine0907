@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-Hant"><head><meta charset="UTF-8">
+<title>CGC Step-2/3 Expert Cache 修復紀錄 — 2026-09-06</title>
+<style>
+ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:920px;margin:40px auto;padding:0 20px;line-height:1.6;color:#1a1a1a}
+ h1,h2,h3{color:#0f3d9e;border-bottom:2px solid #0f3d9e;padding-bottom:6px}
+ h1{font-size:1.8em}
+ h2{font-size:1.4em;margin-top:2em}
+ code{background:#f3f4f6;border-radius:4px;padding:1px 5px;font-family:Monaco,monospace;font-size:0.92em}
+ pre{background:#1e1e1e;color:#d4d4d4;padding:12px;border-radius:6px;overflow-x:auto;font-size:0.88em;line-height:1.4}
+ table{width:100%;border-collapse:collapse;margin:1em 0}
+ th,td{border:1px solid #d0d0d0;padding:7px 10px;text-align:left}
+ th{background:#e8edf5}
+ .ok{color:#1a7f37;font-weight:bold}
+ .no{color:#b03a2e;font-weight:bold}
+ .warn{color:#b8860b;font-weight:bold}
+ .small{font-size:0.9em;color:#555}
+ .commit{background:#f6f8fc;padding:12px;border:1px solid #c0cde0;border-radius:6px;margin:12px 0}
+ .commit h3{margin-top:0}
+</style></head><body>
+
+<h1>CGC Step-2/3 Expert Cache 修復紀錄</h1>
+<p><strong>日期</strong>: 2026-09-06 &nbsp;|&nbsp; <strong>分支</strong>: devserver &nbsp;|&nbsp; <strong>commit</strong>: 9100b0230 &nbsp;|&nbsp; <strong>模型</strong>: Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X (ngl=99, MTP n_max=3, 4GB expert cache)</p>
+
+<h2>1. 背景 — 想解決什麼</h2>
+<p>ngl=99 + MTP + denseIQ4X 運行時，短 QA（qa-zh）會出兩種壞輸出：</p>
+<ul>
+<li><strong>Garbage 0000</strong>（早期）： นั่นคือ softmax 崩潰成均勻分佈 → top-k 選出 sequential ids [0,1,2,...] → FFN 讀錯 expert 權重 → logits 歸零。</li>
+<li><strong>Echo / 迴圈</strong>（當前）： 例如輸入「hi」輸出「hi&lt;im_end&gt;&lt;im_start&gt;」，或「巴黎是哪個國家的首都？」輸出 3× 重複「巴黎是首都的國家是法國」。</li>
+</ul>
+<p>目標是同時達到 <strong>品質正確</strong>（無 0000、無 echo、無重複迴圈）與 <strong>速度 25+ t/s</strong>（MTP draft accept 高、fast path  히트率高）。</p>
+
+<h2>2. Step-2 實作：Weighted Cold Guard</h2>
+<h3>2.1 原本的問題</h3>
+<p>原本的 Cold Guard 用 <strong>count-based</strong> 比率：<code>cold_count / union_size &gt; 0.30</code> 就認為「冷 expert 太多」並摧毁整層 fast path，改走 <code>ensure_batch</code>。同一層裡常有 40/64 個 cold expert，但它們的 softmax 權重可能各只有 0.001 — 這種情況 ZERO-slot 攤平完全無害，不該殺 fast path。反之，若 1-2 個 cold expert 承載大部分權重，count 門檻可能不會 trip 但品質會壞。</p>
+
+<h3>2.2 修法</h3>
+<p>改用 <strong>加權冷比率</strong>：每層在 logits 評估時讀出 gate logits（F32, [n_expert, n_tokens]），對每個 token 算一次 softmax，再把 <strong>冷 expert 的 softmax 權重和</strong> 除以 <strong>全部權重和</strong>，得到 0..1 之間的加權冷比率。只有當這個比率 &gt; 0.30 時才 trip guard；否則即使冷 expert 數量多也繼續走 fast path。</p>
+
+<p>當 guard trip 時，只對 union 裡的 cold expert 做 <code>ensure_batch</code>（選填），而非整層重載。</p>
+
+<h3>2.3 程式碼位置</h3>
+<table>
+<tr><th>檔案</th><th>改動</th></tr>
+<tr><td><code>src/llama.cpp/src/llama-expert-cache.h</code></td><td>新增 <code>std::vector&lt;double&gt; cgc_weighted_cold_ratio</code> 欄位（每層一個，1e9 = unset）</td></tr>
+<tr><td><code>src/llama.cpp/src/llama-expert-cache.cpp</code></td><td>init 時 <code>assign(max_layer, 1e9)</code>；加權比率由 callback 寫入</td></tr>
+<tr><td><code>src/llama.cpp/src/llama-context.cpp</code></td><td>專家快取 eval callback 裡新增 logits 讀取 + 加權比率計算；<code>expert_cache_on_topk</code> 改用加權比率判斷 cold guard；log 格式改為 <code>il=1 cold=13/16 (81% &gt; 30%) -&gt; ensure_batch</code></td></tr>
+<tr><td><code>src/llama.cpp/src/llama-graph.cpp</code></td><td>step-3 預留：cb(logits, "ffn_moe_logits_raw", il) 重命名（原 "ffn_moe_logits"）</td></tr>
+</table>
+
+<h3>2.4 Log 格式變更</h3>
+<pre>
+CGC-COLD-GUARD: il=1 cold=13/16 (81% &gt; 30%) -&gt; ensure_batch
+CGC-WARM verify n_past=1 warm=64 fast=0
+</pre>
+<p class="small">注意：CGC_WARM_NPAST 從 256 降至 64。原本 256 導致 decode 首步 n_past 通常只有 1~7，永遠進不了 fast path — 整個 decode 都在走 ensure_batch。64 的門檻讓 prefill 餵飽 pool 後的 decode 快速進入 fast path。</p>
+
+<h2>3. Step-3 實作：Renormalized Routing 預留</h2>
+<p>原理：若能在 softmax 之前將冷 expert 的 gate logit 設為 <code>-inf</code>，softmax 會自動在剩下的 hot expert 上重新歸一化。這樣 fast path 幾乎不會 trip（因為冷 expert 不再「佔著算席位卻不貢獻權重」），品質退化也會是「少幾個 active expert 的正常行為」，而非 ZERO-slot 汙染導致的 catastrophc failure。</p>
+<p>由於 gate logits 是 F32 張量（IQ3_XXS 等量化模型），可在 logits eval callback 讀取該張量並標記冷 expert。目前僅做 <strong>env 閘門 <code>CGC_RN_ROUTING</code> + placeholder</strong>，實作留待後續。</p>
+
+<h2>4. Logits Eval Callback 診斷（關鍵發現）</h2>
+<h3>4.1 目的</h3>
+<p>在 <code>expert_cache_eval_cb</code> 裡偵測 <code>ffn_moe_logits</code> 節點（非 ask、F32），透過 <code>ggml_backend_tensor_get</code> 將 GPU 上的 gate logits 同步回 CPU buffer，計算加權冷比率並寫入 <code>cache-&gt;cgc_weighted_cold_ratio[il]</code>。上限 il≤1 時輸出 <code>CGC-LOGITS il=%d weighted_cold=%.3f%%</code> 日誌。</p>
+
+<h3>4.2 觀察結果</h3>
+<p><strong>CGC-LOGITS 日誌從未輸出過</strong> — callback 中的 logits 分支完全沒有命中。這表示：</p>
+<ul>
+<li><code>expert_cache_eval_cb</code> 有在運作（否則連 <code>CGC-COLD-GUARD</code> 和 <code>CGC-CB: name=...</code> 都不會出現）。</li>
+<li><code>ffn_moe_logits</code> 節點沒有進入 callback 的「非 ask 冷比率計算」路徑，或該節點名稱/型別不符合條件（<code>strncmp(t-&gt;name, "ffn_moe_logits", 14)==0 &amp;&amp; t-&gt;type==GGML_TYPE_F32</code>）。</li>
+<li>或 OA_ASYNC 分段排程（CGC segmented dispatcher）使得該節點的 eval callback 叉斷/延後，導致 gate logits 張量完成時 callback 已結束。</li>
+</ul>
+<p>當前效應：<strong>weighted cold ratio 永遠是 1e9（unset）</strong>，因此 cold guard 永遠 fallback 到 count-based 判斷。step-2 的加權冷比率目前 <strong>無效</strong>，必須先解決 logits callback 卡住的問題。</p>
+
+<h2>5. QA-ZH Echo/Looop 修復嘗試</h2>
+<h3>5.1 修了什麼</h3>
+<ul>
+<li><code>CGC_WARM_NPAST 256 → 64</code>：讓 decode 更早進入 fast path（減少整層 ensure_batch）。</li>
+<li><code>cgc_weighted_cold_ratio</code> 初始化為 1e9（unset 哨兵），避免 cold guard 誤用 0.0 當加權比率。</li>
+<li>log 格式由 <code>weighted_cold=100000000000.00%</code> 改為 <code>cold=13/16 (81% &gt; 30%)</code>，偵錯可讀性大增。</li>
+<li><code>llama.cpp</code> 加入 <code>expert_cache_active</code> DEBUG log，印出 n_gpu_layers / ALLOW_NGL / no_gather 狀態。</li>
+</ul>
+
+<h3>5.2 修後表現</h3>
+<table>
+<tr><th>Profile</th><th>輸出</th><th>t/s</th><th>評價</th></tr>
+<tr><td>qa-zh</td><td>「1. 巴黎是首都的國家是法國。2. 巴黎是首都的國家是法國。3. 巴黎是首都的國家是法國。」</td><td>6.7</td><td class="warn">語意正確（法國）但 3× 數字迴圈 — 應為 no-think 模板 + stop token 配置問題，非 pool path</td></tr>
+<tr><td>coding</td><td>待測</td><td>—</td><td>—</td></tr>
+<tr><td>longform</td><td>待測</td><td>—</td><td>—</td></tr>
+</table>
+
+<h3>5.3 根因分析</h3>
+<p>Log 顯示 layer 0 IDs 正常多樣，layer 1 雖有 guard trip + ensure_batch，但 <strong>layer 2~39 全都產生 [0,1,2,...,7] 順序 IDs</strong>。這表示問題不在 layer 1 的冷 expert 處理，而是在 <strong>层 2+ 的 gate 輸出本身就崩潰成均勻分佈</strong>。</p>
+<p>可能原因（尚未確認）：</p>
+<ol>
+<li><strong>Gate logits 錯誤</strong>：layer 2+ 的 gate 輸出本身就是均勻/接近均勻，導致 top-k 選擇 sequential IDs。</li>
+<li><strong>Graph reuse 汙染</strong>：重複使用圖時，某些 layer 的 gate 權重指標未重置，沿用前一步的 pool re-pointed 指標（但該 pool slot 已被釋放或寫入錯誤資料）。</li>
+<li><strong>OA_ASYNC 張量回收</strong>：CGC segmented dispatcher 在 pipeline 中提前回收了 top-k IDs 緩衝區，導致 hook 讀到 iota 序列。</li>
+</ol>
+
+<h2>6. 下一步建議</h2>
+<ol>
+<li><strong>[緊急] 確認 logits callback 為何未觸發</strong>：在 <code>expert_cache_eval_cb</code> 最前面加 <code>CGC-CBTRACE il=%d name=%.64s ask=%d</code> 日誌（不管是否 ffn_moe 節點），確認 callback 確實收到 logits 節點，且其型別為 F32。</li>
+<li><strong>[緊急] 確認 layer 2+ gate logits 是否真的均勻</strong>：在 gate logits callback 讀取後，順便輸出 layer 2+ 的 logits 最大值/最小值/entropy，確認是「真均勻」還是「callback 沒读到」。</li>
+<li><strong>[質量] 修復 no-think 模板 + stop token 配置</strong>：qa-zh 數字迴圈與 pool path 無關，應單独修模板/抽樣/stop token。</li>
+<li><strong>[速度] 解決 OA_ASYNC 張量回收問題</strong>：若 logits callback 因 OA_ASYNC 沒触发，需為 gate logits 張量加同步保護。</li>
+<li><strong>[架構] 評估 graph reuse 第七次修復</strong>：確認 layer 2+ 的 weight tensor 指標是否在每步重置。</li>
+</ol>
+
+<div class="commit">
+<h3>Commit 9100b0230 訊息</h3>
+<pre>
+CGC Step-2/3: weighted cold guard + logits eval callback + qa-zh echo probe
+
+Step-2: weighted cold guard (softmax-weight-weighted cold ratio from logits
+eval callback) + selective ensure_batch + CGC-LOGITS il=%d debug for il<=1
++ cgc_weighted_cold_ratio 1e9 sentinel init + CGC_WARM_NPAST 256->64
++ llama.cpp expert_cache_active DEBUG log with n_gpu_layers/ALLOW_NGL/no_gather
+
+Step-3: build_moe_ffn renamed cb(logits, "ffn_moe_logits_raw") + llama-graph.cpp
+CGC_RN_ROUTING env gate placeholder + llama_context.cpp logits callback handles
+both ffn_moe_logits / ffn_moe_logits_raw / ffn_moe_logits_biased
+
+Finding: CGC-LOGITS never fires for decode path (logits eval callback blocked)
+- qa-zh still echoes repetitive content at 6.7 t/s despite cold guard +
+ensure_batch; layers 2-39 collapse to sequential ids [0,1,2,...] even when
+layer-1 guard trips. Root cause is deeper than cold guard ratio math.
+
+Co-authored-by: Codebuff &lt;noreply@codebuff.com&gt;
+</pre>
+</div>
+
+<h2>7. 快速重現指令</h2>
+<pre>
+# 建構
+cd src/llama.cpp &amp;&amp; cmake --build build -j8 --target llama-server
+
+# 啟動
+cd /Users/alexchuang/Documents/flashkv-devserver
+pkill -9 -f llama-server 2&gt;/dev/null; sleep 2
+CGC_DETACHED=1 nohup ./scripts/run_server.sh /tmp/server.log 2&gt;&amp;1 &amp;
+sleep 35
+
+# 測 qa-zh
+curl -s -m 30 http://127.0.0.1:8080/v1/chat/completions   -H "Content-Type: application/json"   -d '{"model":"Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X","messages":[{"role":"user","content":"巴黎是哪个国家的首都？请直接回答。"}],"max_tokens":32}'
+
+# 看 log
+grep -E "CGC-LOGITS|CGC-COLD-GUARD|CGC-CB:" Backup/cgc_logs/llama_server_latest.log | head -10
+</pre>
+
+</body></html>
