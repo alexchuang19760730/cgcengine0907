@@ -23,7 +23,13 @@
 
 ## 关于本分支
 
-本分支是 [llama.cpp](https://github.com/ggml-org/llama.cpp) 的 CGC Engine 优化分支，专注于 **MoE (Mixture of Experts) 模型的专家缓存与推理加速**，目标是在资源受限的边缘设备（如 16GB M4 Max MacBook）上运行大参数 MoE 模型时，通过智能缓存、预取和计算融合，实现高吞吐推理。
+**仓库信息**：
+- **GitHub 仓库**：[alexchuang19760730/cgcengine0907](https://github.com/alexchuang19760730/cgcengine0907)
+- **当前分支**：`devserver`
+- **项目归属**：[flashkv-devserver](https://github.com/alexchuang19760730/cgcengine0907) 项目的子模块（位于 `src/llama.cpp/`）
+- **上游基线**：[ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp)
+
+本分支是 llama.cpp 的 CGC Engine 优化分支，专注于 **MoE (Mixture of Experts) 模型的专家缓存与推理加速**，目标是在资源受限的边缘设备（如 16GB M4 Max MacBook）上运行大参数 MoE 模型时，通过智能缓存、预取和计算融合，实现高吞吐推理。
 
 **核心设计理念**：A3B 模型每 token 仅激活 top-8/256 专家（约 3B 参数），但跨 token 的累计 working set 远大于此。Expert Cache 池的大小根据 routing mass 分布动态调整，而非加载全部 35B 参数。
 
