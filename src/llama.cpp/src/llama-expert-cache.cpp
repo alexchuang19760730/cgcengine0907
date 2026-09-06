@@ -1002,6 +1002,30 @@ size_t llama_expert_cache_dbuf_refill(llama_expert_cache * cache, uint32_t layer
     return queued;
 }
 
+// [CGC DBUF2 full double-buffer 2026-09-06] atomically swap active and scratch slot tables at
+// the GPU-idle step boundary. After the swap, the new active (old scratch) contains all async
+// fills that completed since the last swap PLUS the accumulated mappings from before; the new
+// scratch (old active) retains its full mappings and will be incrementally updated by the next
+// round of bg fills. CRITICAL: do NOT reset the new scratch to -1 — that would force every
+// expert to be re-filled every step (measured: 3 t/s instead of 17+). Both buffers are full
+// mirrors; fills overwrite only the experts they touch, so the scratch stays consistent.
+// Must be called when decode is NOT reading slot_table (i.e. after the current step's remap
+// leaves are written and before the next step's FFN is dispatched). Holds cache->m internally.
+// CGC_DBUF2=0 = no-op.
+void llama_expert_cache_dbuf2_swap(llama_expert_cache * cache) {
+    if (cache == nullptr || !cache->pool_active || !cgc_dbuf2_on()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(cache->m);
+    // O(1) swap: exchanges the vectors' internal data pointers (no element copy, no reset).
+    cache->slot_table.swap(cache->slot_table_scratch);
+    static int dbg_n = 0;
+    if (getenv("CGC_DBUF2_DBG") != nullptr && dbg_n < 20) {
+        dbg_n++;
+        fprintf(stderr, "CGC-DBUF2: swapped active<->scratch (size=%zu)\n", cache->slot_table.size());
+    }
+}
+
 // [CGC Fast-Path Wait 2026-09-06] wait for in-flight fills of cold experts so the fast path uses
 // real weights instead of ZERO-mapping. Default OFF (cgc_fast_wait_on()=false) = no-op.
 // Safety: does not hold cache->m on entry; takes/releases it internally. bg_cv is notified on
@@ -1691,7 +1715,15 @@ void llama_expert_cache::bg_loop() {
             // publish to the slot table so the next ensure for this expert is a HIT (the whole
             // point of double-buffer: the fill completed behind the previous layer's FFN window)
             if (expert < n_expert) {
-                slot_table[(size_t) layer * n_expert + expert] = slot;
+                // [CGC DBUF2 2026-09-06] when full double-buffering is ON, async bg fills publish
+                // to the SCRATCH table (never active), so they can never tear a buffer the decode
+                // step is reading. The scratch becomes active at the next dbuf2_swap() (called at
+                // the GPU-idle step boundary). CGC_DBUF2=0 = legacy: publish directly to active.
+                if (cgc_dbuf2_on()) {
+                    slot_table_scratch[(size_t) layer * n_expert + expert] = slot;
+                } else {
+                    slot_table[(size_t) layer * n_expert + expert] = slot;
+                }
             }
             bg_cv.notify_all();
             continue;
@@ -2032,6 +2064,9 @@ llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t b
         }
 
         cache->slot_table.assign((size_t) max_layer * max_expert, -1);
+        // [CGC DBUF2 2026-09-06] scratch slot table (same size, -1 init). Unused when
+        // CGC_DBUF2=0; when ON, bg fills write here while decode reads slot_table (active).
+        cache->slot_table_scratch.assign((size_t) max_layer * max_expert, -1);
         // [CGC Hybrid 2026-09-05] Soft Pool tier partition: read CGC_SOFT_POOL_L0 / L1 once,
         // store on cache for runtime introspection. Clamped to slots_l(layer) per layer
         // (see for-loop below). Default 32/32 per docs/CGC_EXPERT_CACHE_HYBRID_DESIGN §2.2.

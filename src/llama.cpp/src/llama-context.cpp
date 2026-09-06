@@ -3329,6 +3329,17 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         return;
     }
 
+    // [CGC DBUF2 full double-buffer 2026-09-06] at the first MoE layer of each verify decode
+    // step (il==1, layer 0 is non-MoE), atomically swap active<->scratch slot tables. This is
+    // the GPU-idle step boundary: the previous step's FFN has completed and consumed its remap
+    // leaves, and the next step's FFN hasn't started. Async bg fills that landed in scratch since
+    // the last swap become active; the old active is reset to -1 and becomes the new scratch.
+    // Draft ctx (il >= n_layer) never triggers this — draft is a prediction and doesn't need the
+    // swapped table. CGC_DBUF2=0 = no-op.
+    if (il == 1 && cgc_dbuf2_on()) {
+        llama_expert_cache_dbuf2_swap(cache);
+    }
+
     // [CGC Step-2a produce 2026-09-06] weighted cold ratio measurement: walk upstream from the
     // top-k node to this layer's ffn_moe_logits* tensor (all dispatched modes converge here),
     // softmax it on the host and store sum(cold routing mass)/total for the fast-path cold

@@ -116,7 +116,13 @@ struct llama_expert_cache {
     uint32_t n_expert = 0;       // experts per layer (max expert id + 1)
     uint32_t n_slots  = 0;       // slots per layer
     bool pool_active = false;    // LLAMA_EXPERT_CACHE_POOL=1: pool allocated, Option A on
-    std::vector<int32_t> slot_table;  // [n_layer * n_expert]
+    std::vector<int32_t> slot_table;  // [n_layer * n_expert] ACTIVE: decode reads this
+    // [CGC DBUF2 full double-buffer 2026-09-06] scratch slot table: bg fills write here when
+    // CGC_DBUF2=1, while decode reads slot_table (active). At the per-step swap point, the two
+    // vectors are swapped (O(1) internal-pointer swap) and the new scratch is reset to -1, so
+    // fills never tear a buffer the decode is reading. CGC_DBUF2=0: scratch is unused, fills
+    // write slot_table directly (legacy byte-identical behavior).
+    std::vector<int32_t> slot_table_scratch;  // [n_layer * n_expert] SCRATCH: fills write this (DBUF2)
     std::vector<std::vector<std::vector<uint8_t>>> pool; // [layer][kind][slot*stride ..] (malloc path)
     // L4 zero-copy (-ngl>0 + ALLOW_NGL): pool regions adopted from the expert tensors' Metal
     // storage (non-owning). When pool_ext[layer][kind] != nullptr it takes precedence over pool.
@@ -276,6 +282,17 @@ static inline bool cgc_dbuf_on() {
     return v;
 }
 
+// [CGC DBUF2 full double-buffer 2026-09-06] slot_table active/scratch double-buffering. When
+// CGC_DBUF2=1, bg fills write slot_table_scratch while decode reads slot_table (active); at the
+// per-step swap point the two are O(1)-swapped and the new scratch reset to -1. This removes the
+// spike's restriction that prefetch_slot can only evict non-union slots — fills can target ANY
+// slot in scratch because decode never reads scratch. Default OFF = legacy single-buffer behavior
+// (fills write slot_table directly, byte-identical).
+static inline bool cgc_dbuf2_on() {
+    static const bool v = getenv("CGC_DBUF2") != nullptr && getenv("CGC_DBUF2")[0] != '\0';
+    return v;
+}
+
 // [CGC Fast-Path Wait 2026-09-06] when a cold expert has an in-flight fill (loading/queued by
 // DBUF step-ahead refill or prefetch), the fast path briefly waits instead of ZERO-mapping it.
 // pread fills take ~1-3ms; the decode step window is ~30-60ms, so a <=2ms wait catches most
@@ -398,6 +415,12 @@ size_t llama_expert_cache_spac_prefetch(llama_expert_cache * cache);
 // returns the number of fills queued. See cgc_dbuf_on() header comment for the safety model.
 size_t llama_expert_cache_dbuf_refill(llama_expert_cache * cache, uint32_t layer,
                                       const uint32_t * experts, size_t n);
+// [CGC DBUF2 full double-buffer 2026-09-06] atomically swap active and scratch slot tables,
+// then reset the new scratch (old active) to -1. Must be called at a GPU-idle point (after the
+// current step's remap leaves are written, before the next step's FFN is dispatched) so decode
+// never reads a mid-swap table. Holds cache->m internally. CGC_DBUF2=0 = no-op. Call once per
+// decode step (e.g. at the last layer's hook or at the step boundary), not per-layer.
+void llama_expert_cache_dbuf2_swap(llama_expert_cache * cache);
 // [CGC Fast-Path Wait 2026-09-06] For cold experts that have an in-flight fill (loading or
 // queued by DBUF refill / prefetch), wait up to cgc_fast_wait_us() for the fill to land so the
 // fast path uses the real expert weight instead of ZERO-mapping it. At most cgc_fast_wait_max()
