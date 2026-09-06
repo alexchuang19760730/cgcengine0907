@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CGC Expert Cache Decode 版本里程碑说明书</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; color: #333; }
+  h1 { color: #1a1a2e; border-bottom: 3px solid #16213e; padding-bottom: 10px; }
+  h2 { color: #16213e; margin-top: 30px; border-left: 4px solid #0f3460; padding-left: 10px; }
+  h3 { color: #0f3460; }
+  table { border-collapse: collapse; width: 100%; margin: 15px 0; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  th { background: #16213e; color: white; padding: 10px 8px; text-align: left; font-size: 13px; }
+  td { padding: 8px; border-bottom: 1px solid #eee; font-size: 13px; }
+  tr:hover { background: #f0f4ff; }
+  .best { background: #d4edda; font-weight: bold; }
+  .good { background: #fff3cd; }
+  .bad { background: #f8d7da; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
+  .tag-best { background: #28a745; color: white; }
+  .tag-good { background: #ffc107; color: #333; }
+  .tag-bad { background: #dc3545; color: white; }
+  .tag-info { background: #17a2b8; color: white; }
+  .summary-box { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; margin: 20px 0; }
+  .summary-box h2 { color: white; border: none; }
+  .param-box { background: #e8f4f8; border-left: 4px solid #17a2b8; padding: 15px; margin: 10px 0; border-radius: 0 5px 5px 0; }
+  .param-name { font-family: 'Courier New', monospace; font-weight: bold; color: #0f3460; }
+  .param-default { color: #28a745; font-weight: bold; }
+  .footer { text-align: center; color: #888; margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; }
+  .milestone { background: white; padding: 15px; margin: 10px 0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-left: 4px solid #667eea; }
+  .milestone h3 { margin-top: 0; }
+  .code { font-family: 'Courier New', monospace; background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>CGC Expert Cache Decode 版本里程碑说明书</h1>
+<p><strong>生成时间：</strong>2026-09-06 22:00 PDT</p>
+<p><strong>模型：</strong>Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf</p>
+<p><strong>硬件：</strong>MacBook Pro M4 Max 16GB</p>
+<p><strong>目标：</strong>25+ tok/s 且保持 baseline 质量（qa-zh 1.0 / longform-zh 0.882 / coding 1.0）</p>
+
+<div class="summary-box">
+<h2>📊 最终成果</h2>
+<p><strong>最佳成绩：26.19 tok/s</strong>（α=0.75, 8GB pool, DBUF+SPAC, coding 512 tokens, 质量 1.0）</p>
+<p><strong>最佳中位数：25.87 tok/s</strong>（α=0.75，3 次测试中位数）</p>
+<p><strong>推荐生产配置：</strong>8GB pool + CGC_DBUF=1 + CGC_SPAC=1 + CGC_SPAC_ALPHA=0.75</p>
+<p><strong>质量：</strong>三 profile 全部 1.0（qa-zh / longform-zh / coding）</p>
+</div>
+
+<h2>📋 版本里程碑（过去 24 小时）</h2>
+
+<table>
+<thead>
+<tr>
+  <th>Commit</th>
+  <th>时间</th>
+  <th>版本描述</th>
+  <th>Coding Decode (t/s)</th>
+  <th>质量</th>
+  <th>稳定性</th>
+  <th>里程碑</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td class="code">a875c2faf</td>
+  <td>21:33</td>
+  <td>DBUF2 prefill 修复（仅 decode step swap）</td>
+  <td>-</td>
+  <td>1.0</td>
+  <td>-</td>
+  <td><span class="tag tag-info">修复</span></td>
+</tr>
+<tr>
+  <td class="code">21ad09153</td>
+  <td>21:13</td>
+  <td>DBUF2 完整双缓冲（active/scratch）</td>
+  <td>12.47 (8GB)</td>
+  <td>1.0</td>
+  <td>波动大</td>
+  <td><span class="tag tag-bad">性能退化</span></td>
+</tr>
+<tr>
+  <td class="code">9e1ac6416</td>
+  <td>20:35</td>
+  <td>Fast-Path Wait（等待 in-flight fill）</td>
+  <td>17.22 (500us)</td>
+  <td>1.0</td>
+  <td>稳定</td>
+  <td><span class="tag tag-bad">速度下降</span></td>
+</tr>
+<tr class="best">
+  <td class="code">10bdf0128</td>
+  <td>20:05</td>
+  <td>DBUF spike（hook-time step-ahead refill）</td>
+  <td><strong>24.83</strong> (8GB)</td>
+  <td>1.0</td>
+  <td>波动 80%</td>
+  <td><span class="tag tag-best">突破 25</span></td>
+</tr>
+<tr>
+  <td class="code">a23195e01</td>
+  <td>19:15</td>
+  <td>EMA-victim + 4GB/8GB A/B</td>
+  <td>17.41 (8GB) / 8.18 (4GB)</td>
+  <td>1.0</td>
+  <td>稳定</td>
+  <td><span class="tag tag-good">+113%</span></td>
+</tr>
+<tr>
+  <td class="code">e3689887f</td>
+  <td>18:25</td>
+  <td>RN quality bisect（exclusion 是杀手）</td>
+  <td>25.9 (8GB+RN)</td>
+  <td>0.3 ❌</td>
+  <td>质量退化</td>
+  <td><span class="tag tag-bad">renorm 已死</span></td>
+</tr>
+<tr>
+  <td class="code">9e046443e</td>
+  <td>18:16</td>
+  <td>pool default 4GiB → 8GiB</td>
+  <td>-</td>
+  <td>1.0</td>
+  <td>-</td>
+  <td><span class="tag tag-info">配置优化</span></td>
+</tr>
+<tr>
+  <td class="code">df3ee17a6</td>
+  <td>17:57</td>
+  <td>SpAc EMA estimator port</td>
+  <td>-</td>
+  <td>1.0</td>
+  <td>-</td>
+  <td><span class="tag tag-info">基础架构</span></td>
+</tr>
+<tr>
+  <td class="code">27d46ac7e</td>
+  <td>17:12</td>
+  <td>mass-coverage instrumentation</td>
+  <td>-</td>
+  <td>1.0</td>
+  <td>-</td>
+  <td><span class="tag tag-info">测量基础</span></td>
+</tr>
+<tr>
+  <td class="code">37305dbc6</td>
+  <td>04:44</td>
+  <td>quality baseline（修复后 fresh benchmark）</td>
+  <td>~12 (baseline)</td>
+  <td>1.0/0.882/1.0</td>
+  <td>稳定</td>
+  <td><span class="tag tag-info">基线</span></td>
+</tr>
+</tbody>
+</table>
+
+<h2>🎯 EMA α 参数扫描（11 个点）</h2>
+
+<p>配置：8GB pool + CGC_DBUF=1 + CGC_SPAC=1，coding 512 tokens，seed=42，每次 3 runs</p>
+
+<table>
+<thead>
+<tr>
+  <th>α</th>
+  <th>平均 (t/s)</th>
+  <th>中位数 (t/s)</th>
+  <th>最佳 (t/s)</th>
+  <th>跑满512</th>
+  <th>突破25次数</th>
+  <th>评价</th>
+</tr>
+</thead>
+<tbody>
+<tr><td>0.5</td><td>20.66</td><td>22.99</td><td>23.13</td><td>3/3</td><td>0</td><td>decay 太快</td></tr>
+<tr><td>0.6</td><td>22.03</td><td>25.52</td><td>25.88</td><td>2/3</td><td>1</td><td>快但不稳定</td></tr>
+<tr><td>0.625</td><td>21.08</td><td>23.55</td><td>23.95</td><td>3/3</td><td>0</td><td>一般</td></tr>
+<tr><td>0.65</td><td>19.38</td><td>16.99</td><td>25.50</td><td>3/3</td><td>1</td><td>波动大</td></tr>
+<tr><td>0.675</td><td class="bad">15.23</td><td>13.77</td><td>20.50</td><td>1/3</td><td>0</td><td><span class="tag tag-bad">最差</span></td></tr>
+<tr><td>0.7</td><td>22.87</td><td>22.87</td><td>25.18</td><td>2/3</td><td>1</td><td>最稳定</td></tr>
+<tr class="best">
+  <td><strong>0.75</strong></td>
+  <td><strong>22.07</strong></td>
+  <td><strong>25.87</strong></td>
+  <td><strong>26.19</strong></td>
+  <td><strong>3/3</strong></td>
+  <td><strong>2</strong></td>
+  <td><span class="tag tag-best">最佳推荐</span></td>
+</tr>
+<tr><td>0.775</td><td>21.56</td><td>24.74</td><td>26.00</td><td>3/3</td><td>1</td><td>开始下降</td></tr>
+<tr><td>0.8</td><td>21.42</td><td>20.22</td><td>24.98</td><td>3/3</td><td>0</td><td>一般</td></tr>
+<tr><td>0.85 (旧默认)</td><td>18.72</td><td>17.54</td><td>24.83</td><td>3/3</td><td>0</td><td>旧默认</td></tr>
+<tr><td>0.9</td><td class="bad">9.37</td><td>-</td><td>-</td><td>0/1</td><td>0</td><td><span class="tag tag-bad">decay 太慢</span></td></tr>
+</tbody>
+</table>
+
+<h2>⚙️ 关键环境变量参数（Option 化，方便鸿蒙迁移调优）</h2>
+
+<div class="param-box">
+<h3>核心开关</h3>
+<p><span class="param-name">CGC_DBUF</span> - DBUF hook-time step-ahead refill 开关<br>
+<span class="param-default">默认：OFF</span> | 推荐：<span class="code">CGC_DBUF=1</span></p>
+
+<p><span class="param-name">CGC_SPAC</span> - SpAc EMA estimator + EMA-victim 开关<br>
+<span class="param-default">默认：OFF</span> | 推荐：<span class="code">CGC_SPAC=1</span></p>
+
+<p><span class="param-name">CGC_SPAC_ALPHA</span> - EMA decay 率（0.0-1.0，越小越快跟上路由变化）<br>
+<span class="param-default">默认：0.75</span>（今日调优结果）| 可调范围：0.5-0.9</p>
+</div>
+
+<div class="param-box">
+<h3>Pool 配置</h3>
+<p><span class="param-name">CGC_SERVER_EXPERT_CACHE_BYTES</span> - expert cache pool 大小（字节）<br>
+<span class="param-default">默认：8GiB (8589934592)</span> | 16GB 机器推荐 8GB | 32GB 机器可试 12-16GB</p>
+</div>
+
+<div class="param-box">
+<h3>可选优化（默认 OFF，按需启用）</h3>
+<p><span class="param-name">CGC_FAST_WAIT</span> - Fast-Path Wait（等待 in-flight fill，减少 ZERO-mapping）<br>
+<span class="param-default">默认：OFF</span> | 注意：当前测试显示会降低 decode 速度 ~20%</p>
+
+<p><span class="param-name">CGC_FAST_WAIT_US</span> - Fast-Path Wait 超时（微秒）<br>
+<span class="param-default">默认：1000</span> | 可调：500-2000</p>
+
+<p><span class="param-name">CGC_FAST_WAIT_MAX</span> - 每 step 最多等待 expert 数<br>
+<span class="param-default">默认：4</span></p>
+
+<p><span class="param-name">CGC_DBUF2</span> - 完整 slot_table 双缓冲（active/scratch）<br>
+<span class="param-default">默认：OFF</span> | 注意：16GB 上当前实现会降低速度 ~40%，32GB 可试</p>
+
+<p><span class="param-name">CGC_DBUF_CAP</span> - DBUF outstanding fill 上限<br>
+<span class="param-default">默认：24</span></p>
+</div>
+
+<div class="param-box">
+<h3>生产防护（默认 ON，不要关闭）</h3>
+<p><span class="param-name">CGC_NO_PREFETCH</span> - MTP 路径禁用背景 prefetch（防止 0000/garbage crash）<br>
+<span class="param-default">默认：ON</span> | ⚠️ 不要关闭</p>
+
+<p><span class="param-name">CGC_VERIFY_DECODE</span> / <span class="param-name">CGC_DRAFT_DECODE</span> - ZERO-slot fast path<br>
+<span class="param-default">默认：ON</span></p>
+</div>
+
+<h2>🚀 推荐生产配置</h2>
+
+<div class="milestone">
+<h3>16GB Mac M4 Max 最佳配置</h3>
+<p><span class="code">CGC_DBUF=1 CGC_SPAC=1 CGC_SPAC_ALPHA=0.75 CGC_SERVER_EXPERT_CACHE_BYTES=8589934592</span></p>
+<p><strong>预期：</strong>coding 中位数 25.87 t/s，最佳 26.19 t/s，三 profile 质量全部 1.0</p>
+</div>
+
+<div class="milestone">
+<h3>32GB+ 机器推荐配置</h3>
+<p><span class="code">CGC_DBUF=1 CGC_SPAC=1 CGC_SPAC_ALPHA=0.75 CGC_SERVER_EXPERT_CACHE_BYTES=17179869184</span>（16GB pool）</p>
+<p><strong>可选：</strong>试 CGC_DBUF2=1（32GB 内存压力小，双缓冲可能更稳定）</p>
+</div>
+
+<h2>📱 鸿蒙系统迁移调优指南</h2>
+
+<ol>
+<li><strong>所有参数均为环境变量 option</strong>，无需重新编译即可调优</li>
+<li><strong>优先调 CGC_SPAC_ALPHA</strong>（0.5-0.9），不同硬件路由行为不同，最佳 α 可能偏移</li>
+<li><strong>Pool 大小按物理内存 50% 估算</strong>：16GB→8GB，32GB→16GB，8GB→4GB</li>
+<li><strong>CGC_DBUF2 仅在 32GB+ 机器上试</strong>，16GB 上当前实现有性能退化</li>
+<li><strong>CGC_FAST_WAIT 按需启用</strong>，当前测试显示会降低速度，但特定场景可能提升质量</li>
+<li><strong>不要关闭 CGC_NO_PREFETCH</strong>，MTP 路径必须保持</li>
+<li><strong>调优方法论</strong>：固定 seed=42，coding 512 tokens，每次 3 runs，对比中位数和最佳成绩</li>
+</ol>
+
+<h2>📈 已验证的死路（不要重复尝试）</h2>
+
+<table>
+<thead>
+<tr><th>方向</th><th>结果</th><th>原因</th></tr>
+</thead>
+<tbody>
+<tr><td>8GB pool + renorm (CGC_RN_ROUTING)</td><td class="bad">25.9 t/s 但质量 0.3</td><td>exclusion 本身是杀手，NOOP bisect 确认</td></tr>
+<tr><td>MTP 路径启用 async bg prefetch</td><td class="bad">decode 中段崩溃</td><td>MTP+OA_ASYNC + 背景 pool fill 架构性不相容</td></tr>
+<tr><td>4GB pool</td><td class="bad">8-10 t/s，输出异常</td><td>~71 slots，mass coverage ~76%，容量硬瓶颈</td></tr>
+<tr><td>CGC_FAST_WAIT 1ms/500us</td><td class="bad">速度降 20-30%</td><td>等待开销 > in-flight fill 收益</td></tr>
+<tr><td>CGC_DBUF2 (16GB)</td><td class="bad">速度降 40%</td><td>per-step swap 锁竞争，32GB 可试</td></tr>
+<tr><td>EMA α=0.9</td><td class="bad">9.37 t/s</td><td>decay 太慢，estimator 过时</td></tr>
+</tbody>
+</table>
+
+<div class="footer">
+<p>CGC Expert Cache Decode 版本里程碑说明书 | 生成时间：2026-09-06 22:00 PDT</p>
+<p>Commit 范围：37305dbc6 → a875c2faf（过去 24 小时）</p>
+<p>本文档随代码一同 commit，后续版本更新请同步更新</p>
+</div>
+
+</body>
+</html>

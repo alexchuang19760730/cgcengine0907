@@ -335,7 +335,10 @@ static inline bool cgc_spac_on() {
 }
 static inline double cgc_spac_alpha() {
     const char * s = getenv("CGC_SPAC_ALPHA");
-    double v = 0.85;
+    double v = 0.75;  // [2026-09-06 tuned] 11-point sweep (0.5-0.9): alpha=0.75 gives best
+                      // median decode (25.87 t/s) + best peak (26.19 t/s) + 3/3 full-512
+                      // stability + 2/3 runs above 25 t/s on 16GB M4 Max, 8GB pool, DBUF+SPAC.
+                      // Override via CGC_SPAC_ALPHA env for HarmonyOS / other platform tuning.
     if (s != nullptr && s[0] != '\0') {
         v = atof(s);
         if (v < 0.0) v = 0.0;
