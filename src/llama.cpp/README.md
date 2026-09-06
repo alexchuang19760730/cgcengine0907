@@ -1,20 +1,166 @@
-# llama.cpp
+# llama.cpp — CGC Engine Branch (Expert Cache Optimization)
 
 ![llama](https://raw.githubusercontent.com/ggml-org/llama.brand/refs/heads/master/cover/llama-cpp/cover-llama-cpp-dark.svg)
 
 <div align="center">
 
-<b>LLM inference in C/C++</b>
+<b>MoE Expert Cache 推理优化 — 16GB M4 Max 上 25+ tok/s</b>
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Release](https://img.shields.io/github/v/release/ggml-org/llama.cpp)](https://github.com/ggml-org/llama.cpp/releases)
-[![Server](https://github.com/ggml-org/llama.cpp/actions/workflows/server.yml/badge.svg)](https://github.com/ggml-org/llama.cpp/actions/workflows/server.yml)
-[![Docker](https://github.com/ggml-org/llama.cpp/actions/workflows/docker.yml/badge.svg)](https://github.com/ggml-org/llama.cpp/actions/workflows/docker.yml)
-[![Winget](https://github.com/ggml-org/llama.cpp/actions/workflows/winget.yml/badge.svg)](https://github.com/ggml-org/llama.cpp/actions/workflows/winget.yml)
+[![CGC Expert Cache White Paper](https://img.shields.io/badge/📖-Expert_Cache_White_Paper-blue)](docs/CGC_ExpertCache_WhitePaper.html)
+[![Branch: devserver](https://img.shields.io/badge/branch-devserver-orange)](https://github.com/alexchuang19760730/cgcengine0907/tree/devserver)
+[![Model: Qwen3.6-35B-A3B](https://img.shields.io/badge/model-Qwen3.6--35B--A3B-green)](https://github.com/alexchuang19760730/cgcengine0907)
 
-[manifesto](https://github.com/ggml-org/llama.cpp/discussions/205) / [ggml](https://github.com/ggml-org/ggml) / [ops](https://github.com/ggml-org/llama.cpp/blob/master/docs/ops.md) / [maintainer PRs](https://github.com/ggml-org/llama.cpp/issues?q=is%3Apr%20is%3Aopen%20draft%3AFalse%20(author%3Argerganov%20OR%20author%3AKitaitiMakoto%20OR%20author%3Adanbev%20OR%20author%3Aaldehir%20OR%20author%3Amax-krasnyansky%20OR%20author%3ACISC%20OR%20author%3Aggerganov%20OR%20author%3Aam17an%20OR%20author%3Abartowski1182%20OR%20author%3Ahipudding%20OR%20author%3AServeurpersoCom%20OR%20author%3Apwilkin%20OR%20author%3Areeselevine%20OR%20author%3Angxson%20OR%20author%3Ajeffbolznv%20OR%20author%3A0cc4m%20OR%20author%3Aangt%20OR%20author%3AIMbackK%20OR%20author%3Aarthw%20OR%20author%3AJohannesGaessler%20OR%20author%3AORippler%20OR%20author%3Aruixiang63%20OR%20author%3Axctan%20OR%20author%3Aallozaur%20OR%20author%3Ayomaytk%20OR%20author%3Aaendk%20OR%20author%3Agaugarg-nv%20OR%20author%3Ataronaeo%20OR%20author%3Aforforever73%20OR%20author%3Alhez%20OR%20author%3Anetrunnereve%20OR%20author%3Afairydreaming)%20sort%3Aupdated-desc) / [compile times](https://github.com/ggml-org/llama.cpp-dev/blob/master/README-compile-times.md) / [lib llama API](https://github.com/ggml-org/llama.cpp/issues/9289) / [llama-server REST API](https://github.com/ggml-org/llama.cpp/issues/9291)
+**当前生产配置性能（16GB M4 Max, 8GB pool）**
+
+| 指标 | 值 |
+|---|---|
+| decode_tps（中位数） | **25.87** |
+| decode_tps（最佳） | **26.19** |
+| draft_accept_pct | ~96% |
+| 质量（qa-zh / longform-zh / coding） | 1.0 / 0.882 / 1.0 |
 
 </div>
+
+## 关于本分支
+
+本分支是 [llama.cpp](https://github.com/ggml-org/llama.cpp) 的 CGC Engine 优化分支，专注于 **MoE (Mixture of Experts) 模型的专家缓存与推理加速**，目标是在资源受限的边缘设备（如 16GB M4 Max MacBook）上运行大参数 MoE 模型时，通过智能缓存、预取和计算融合，实现高吞吐推理。
+
+**核心设计理念**：A3B 模型每 token 仅激活 top-8/256 专家（约 3B 参数），但跨 token 的累计 working set 远大于此。Expert Cache 池的大小根据 routing mass 分布动态调整，而非加载全部 35B 参数。
+
+## 核心特性
+
+### 1. L4 Expert Cache Pool（生产）
+GPU 端专家权重缓存，按 slot 管理，配合 LRU 淘汰。通过 `CGC_SERVER_EXPERT_CACHE_BYTES` 配置池大小（生产配置：8GB = 8589934592）。
+
+### 2. DBUF — Double Buffer Step-Ahead Refill（生产）
+在 per-layer GPU-idle hook 窗口，将当前 step 的 ZERO-mapped cold union 成员加入 prefetch 队列，让 next step 找到它们 resident。
+- `CGC_DBUF=1` 启用
+- `CGC_DBUF_CAP=24` 队列容量上限
+
+### 3. SPAC — Spatial Activated Estimator（生产）
+EMA 效用估计器，per-(layer, expert) EMA utility，预测 next active expert，用于 prefetch 目标选择和 EMA-biased 淘汰。
+- `CGC_SPAC=1` 启用
+- `CGC_SPAC_ALPHA=0.75` EMA 衰减系数（已调优，细扫描最佳值）
+- `CGC_SPAC_K=8` 每次 refresh 预取的 top-K expert 数量
+- `CGC_SPAC_REFRESH` 刷新间隔（token 数）
+
+### 4. P0 Down Projection Batch Combine（实验性，默认 OFF）
+参考 Perplexity Lily 推理引擎，将 8 个 per-expert down GEMV + 7 次 add 合并为 1 个 kernel，减少 kernel launch 开销。
+- `CGC_DOWN_COMBINE=1` 启用（**默认 OFF**，未设置时与基线 byte-identical）
+- 仅支持 decode（n_tokens==1）、Q3_K down weights
+- **测试结果**：23.29 t/s 中位数 / 25.09 最佳（vs baseline 25.87），质量 3/3 = 1.0
+
+### 5. MTP Speculative Decoding（生产）
+Multi-Token Prediction 投机解码，draft_accept ~96%，显著提升有效吞吐。
+- **注意**：MTP 生产配置必须设置 `CGC_NO_PREFETCH=1`（0000 防护），因为 MTP+OA_ASYNC + 背景 pool fill 会导致 mid-decode 崩溃。
+
+## 快速开始
+
+### 生产配置启动
+
+```bash
+cd /path/to/flashkv-devserver
+CGC_SERVER_EXPERT_CACHE_BYTES=8589934592 \
+CGC_DBUF=1 \
+CGC_SPAC=1 \
+CGC_SPAC_ALPHA=0.75 \
+CGC_NO_PREFETCH=1 \
+./scripts/run_server.sh
+```
+
+### 启用 P0 Down-Combine（实验性）
+
+```bash
+CGC_SERVER_EXPERT_CACHE_BYTES=8589934592 \
+CGC_DBUF=1 \
+CGC_SPAC=1 \
+CGC_SPAC_ALPHA=0.75 \
+CGC_NO_PREFETCH=1 \
+CGC_DOWN_COMBINE=1 \
+./scripts/run_server.sh
+```
+
+### 运行基准测试
+
+```bash
+python3 scripts/check/replay_server_profile.py \
+  --profile coding \
+  --base-url http://127.0.0.1:8080/v1 \
+  --model test \
+  --max-tokens 512 \
+  --seed 42 \
+  --runs 3 \
+  --warmup
+```
+
+## 质量与速度测试方法
+
+### 3 Profile 质量评估
+
+| Profile | Baseline 质量 | 内容类型 |
+|---|---|---|
+| `qa-zh` | 1.0 | 中文问答（事实性、准确性、完整性） |
+| `longform-zh` | 0.882 | 中文长文生成（连贯性、结构、深度） |
+| `coding` | 1.0 | 代码生成（语法正确性、逻辑正确性、可运行性） |
+
+**质量判定标准**：任何优化必须保持 3 个 profile 的质量不低于 baseline。
+
+### 严格 A/B 测试协议
+
+为排除机器状态干扰，验证优化效果时使用严格的 A/B 交替测试协议：
+1. 相同 prompt、相同 max_tokens（如 coding 固定 512 tokens）
+2. 交替执行（A = 无优化, B = 有优化, A, B...）
+3. 固定 Seed=42
+4. 对比 steady decode tps（去掉前 50 tokens 的 warmup）
+5. 每次测试前 kill 残留 llama-server，确保干净启动
+6. 关闭其他应用，释放内存，减少机器波动
+
+### 速度指标定义
+
+| 指标 | 定义 | 目标 |
+|---|---|---|
+| `decode_tps` | decode 阶段 tokens/second（去掉 prefill） | ≥ 25.0 |
+| `draft_accept_pct` | MTP speculative decoding 的 draft token 接受率 | ≥ 90% |
+| `completion_tokens` | 实际生成的 token 数 | = max-tokens（无提前停止） |
+| `decode_tps_degenerate` | 是否为退化输出（循环/重复） | 必须为 False |
+
+## 已弃用特性（不要使用）
+
+| Option | 弃用原因 |
+|---|---|
+| `CGC_DBUF2` | 完整双缓冲 active/scratch 指针原子切换，6GB/8GB 反而慢 40-48% |
+| `CGC_FAST_WAIT` | 等待 in-flight fill 而非 ZERO-mapping，decode 慢 29-48% |
+| `CGC_MMV_FUSE` | GLU 融合（gate+up+GLU），平均 15.94 t/s（vs 基线 22.07），draft accept 暴跌 |
+| `CGC_RN_ROUTING` | Renorm routing（排除非 resident expert），质量 0.3 counting loop，NOOP bisect 确认 exclusion 是杀手 |
+| `CGC_WCOLD_EN` | Warm cold expert 处理，与 renorm 配合使用，已随 renorm 弃用 |
+
+## 文档
+
+- 📖 **[CGC Expert Cache 白皮书](docs/CGC_ExpertCache_WhitePaper.html)** — 完整架构概述、文件清单、所有 CGC_* option 详解、测试方法、性能里程碑、P0 深度剖析、未来方向
+- 🔧 **[Decode 版本里程碑](docs/CGC_Step23_RenormRouting_AB_2026-09-06.html)** — 24 小时内关键版本的速度/质量/稳定性里程碑说明
+
+## 未来方向
+
+### 短期（1-2 周）
+- P0 Down-Combine 并行度优化（当前 513 threadgroups vs 原始 4104），目标稳定 25+ t/s
+- P1：MoE routing 移到 GPU，减少 CPU-GPU 同步（参考 Lily），预期 +5-15%
+- P3：批量同步优化，减少 kernel launch 之间的 barrier 开销
+
+### 中期（1-2 月）
+- 鸿蒙系统移植：所有 CGC_* option 设计为可配置，便于跨平台迁移
+- 32GB 硬件验证：更大 pool（128-192 slots/layer）下的质量-速度平衡点
+- Gated DeltaNet 层 Apple GPU 专项优化（如果模型包含），预期 +10-20%
+
+### 长期
+- 多模型 MoT (Model-on-Transfer) 端云协同：云端 DeepSeek V4 Flash 负责 Prefill+Speculative Draft，端侧 Qwen3.6-35B-A3B 仅执行 Verify
+- KV Translation 跨模型张量对齐技术
+- CGC Engine 商业化：仓储 AGV 与具身智能场景的边缘推理部署
+
+---
+
+# 原始 llama.cpp 文档
+
+以下为上游 llama.cpp 原始文档，保留供参考。
 
 ## Quick start
 
