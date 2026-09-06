@@ -305,6 +305,9 @@ bool llama_expert_cache_adopt_pool_region(llama_expert_cache * cache, uint32_t l
 // first accesses are pool HITS instead of re-preading the same bytes — otherwise every short
 // prompt pays a cold refill window (measured: L4@4GiB short-prompt decode 122ms vs base 88ms).
 void llama_expert_cache_prepopulate(llama_expert_cache * cache, uint32_t layer, uint32_t n_slots);
+// [CGC 2026-09-06] load-time pin prefill: fill every PIN_PROFILE member (hot experts) into the
+// pool and static-pin it, BEFORE any request. Requires load_pin_profile to have run first.
+size_t llama_expert_cache_pin_prefill(llama_expert_cache * cache);
 // True when the static per-layer pool is active (LLAMA_EXPERT_CACHE_POOL=1 at init).
 bool llama_expert_cache_pool_active(const llama_expert_cache * cache);
 // Per-layer slot table: expert id -> slot index (-1 = not resident). nullptr when pool inactive.

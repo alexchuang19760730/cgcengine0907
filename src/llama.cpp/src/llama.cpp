@@ -394,6 +394,9 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
                 // region (zero copy — the Metal FFN reads the pool directly). Then mark the first
                 // n_slots experts of every layer resident: their bytes were already pre-read into the
                 // pool during load, so the first accesses are pool hits instead of cold preads.
+                // [CGC 2026-09-06 load-time pin prefill] ORDER MATTERS: adopt regions first
+                // (pin prefill preads into the adopted Metal pool regions), then load the pin
+                // profile + fill the hot experts, then prepopulate identity slots for the rest.
                 if (model->expert_cache_pool_capacity > 0) {
                     for (const auto & ref : ml.l4_pool_tensors) {
                         if (ref.tensor == nullptr || ref.tensor->data == nullptr) {
@@ -403,6 +406,21 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
                                 ref.layer, ref.kind, (const uint8_t *) ref.tensor->data,
                                 (int64_t) model->expert_cache_pool_capacity, ref.expert_bytes);
                     }
+                }
+                // static profile pin (LLAMA_EXPERT_CACHE_PIN_PROFILE) — load + prefill BEFORE
+                // prepopulate so the routing-hot experts own slots first and prepopulate only
+                // covers the remaining (identity) slots. prepopulate's slot_owner guard makes
+                // it naturally skip slots the pins already took.
+                const char * pin_profile = getenv("LLAMA_EXPERT_CACHE_PIN_PROFILE");
+                if (pin_profile && pin_profile[0]) {
+                    const size_t n_pinned = llama_expert_cache_load_pin_profile(model->expert_cache, pin_profile);
+                    LLAMA_LOG_INFO("%s: expert cache PIN_PROFILE: %zu experts pinned (%s)\n", __func__, n_pinned, pin_profile);
+                    // fill + static-pin the hot experts now (real pread through the ensure_slot
+                    // path, bit-identical bytes) so the first requests hit instead of stalling
+                    // the hook on cold preads.
+                    llama_expert_cache_pin_prefill(model->expert_cache);
+                }
+                if (model->expert_cache_pool_capacity > 0) {
                     for (const auto & ref : ml.l4_pool_tensors) {
                         if (ref.kind != 0) {
                             continue;
@@ -410,12 +428,6 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
                         llama_expert_cache_prepopulate(model->expert_cache, ref.layer,
                                 (uint32_t) model->expert_cache_pool_capacity);
                     }
-                }
-                // static profile pin (LLAMA_EXPERT_CACHE_PIN_PROFILE)
-                const char * pin_profile = getenv("LLAMA_EXPERT_CACHE_PIN_PROFILE");
-                if (pin_profile && pin_profile[0]) {
-                    const size_t n_pinned = llama_expert_cache_load_pin_profile(model->expert_cache, pin_profile);
-                    LLAMA_LOG_INFO("%s: expert cache PIN_PROFILE: %zu experts pinned (%s)\n", __func__, n_pinned, pin_profile);
                 }
             } else {
                 LLAMA_LOG_WARN("%s: expert cache init failed (budget=%zu, index=%zu)\n",

@@ -1113,6 +1113,41 @@ uint32_t llama_expert_cache_slots_per_layer_l(const llama_expert_cache * cache, 
     return cache == nullptr ? 0 : slots_l(cache, layer);
 }
 
+// [CGC 2026-09-06 load-time pin prefill] Fill + static-pin every PIN_PROFILE member at load
+// time. Previously the pin profile only marked slots pinned AFTER a runtime ensure_batch filled
+// them, so the first requests still paid cold preads for the (measured) hottest experts and the
+// pool started with identity-ordered prepopulated slots instead of routing-weight-ordered ones.
+// Uses ensure_slot (count=false => prewarm accounting, bit-identical fill path); the pin marking
+// then runs here so pick_slot can never hand these slots to tail experts. Returns filled count.
+size_t llama_expert_cache_pin_prefill(llama_expert_cache * cache) {
+    if (cache == nullptr || cache->pin_profile.empty()) {
+        return 0;
+    }
+    size_t filled = 0;
+    for (uint32_t layer = 0; layer < cache->pin_profile.size(); ++layer) {
+        const uint32_t usable = llama_expert_cache_usable_slots(cache, layer);
+        uint32_t done = 0;
+        for (uint32_t e : cache->pin_profile[layer]) {
+            if (done >= usable) {
+                break; // profile lists more than the layer can hold; keep the head (hot) ones
+            }
+            const int32_t slot = llama_expert_cache_ensure_slot(cache, layer, e, /*count=*/false);
+            if (slot < 0) {
+                continue;
+            }
+            std::lock_guard<std::mutex> lk(cache->m);
+            if (!cache->slot_pinned_static[layer][slot]) {
+                cache->slot_pinned_static[layer][slot] = 1;
+                cache->n_pin_marked++;
+            }
+            done++;
+            filled++;
+        }
+    }
+    fprintf(stderr, "llama_expert_cache: pin prefill: %zu experts filled+static-pinned at load\n", filled);
+    return filled;
+}
+
 // CGC L3 Option A: kernel slot-table registry (defined in ggml-cpu.c)
 extern "C" void ggml_cpu_clear_mmid_slot_tables_all(void);
 
