@@ -1136,7 +1136,8 @@ void llama_expert_cache_record_routes(llama_expert_cache * cache, uint32_t layer
 void llama_expert_cache_masscov_record(llama_expert_cache * cache, uint32_t layer,
                                        const uint32_t * experts, const float * w_sel, size_t n) {
     if (cache == nullptr || layer >= cache->massc_mass.size() || n == 0 ||
-        layer >= cache->massc_total.size() || layer >= cache->massc_cur_cov.size()) {
+        layer >= cache->massc_total.size() || layer >= cache->massc_cur_cov.size() ||
+        layer >= cache->massc_sel_total.size() || layer >= cache->massc_sel_cold.size()) {
         return;
     }
     std::lock_guard<std::mutex> lk(cache->m);
@@ -1150,6 +1151,14 @@ void llama_expert_cache_masscov_record(llama_expert_cache * cache, uint32_t laye
         const double w = (double) w_sel[i];
         mm[e] += w;
         cache->massc_total[layer] += w;
+        // [CGC count-cold 2026-09-07] per-step SELECTED count-cold: how many of the step's
+        // selected expert ids were non-resident (slot<0) — the count-based tail metric that
+        // drives the cold guard / ZERO-slot contamination. Accumulated per selection so the
+        // MASSCOV dump can report sel_cold/sel_total per layer (count ratio, not mass).
+        cache->massc_sel_total[layer]++;
+        if (st[e] < 0) {
+            cache->massc_sel_cold[layer]++;
+        }
         if (st[e] >= 0) {
             cache->massc_cur_cov[layer] += w;
         }
@@ -1558,6 +1567,9 @@ llama_expert_cache::~llama_expert_cache() {
                 const uint32_t n_ex = n_expert;
                 double cur_sum = 0.0, cur_min = 1.0, cur_max = 0.0;
                 uint32_t cur_n = 0;
+                // [CGC count-cold 2026-09-07] selected-id count-cold aggregates (sel_cold/sel_total)
+                double sc_sum = 0.0, sc_min = 1.0, sc_max = 0.0;
+                uint32_t sc_n = 0;
                 double cov[5] = {0,0,0,0,0}, cmin[5] = {1,1,1,1,1}, cmax[5] = {0,0,0,0,0};
                 uint32_t cov_n[5] = {0,0,0,0,0};
                 for (uint32_t l = 0; l < massc_mass.size() && l < massc_total.size(); ++l) {
@@ -1566,6 +1578,10 @@ llama_expert_cache::~llama_expert_cache() {
                     }
                     const double cur = massc_cur_cov[l] / massc_total[l];
                     cur_sum += cur; cur_min = std::min(cur_min, cur); cur_max = std::max(cur_max, cur); cur_n++;
+                    if (l < massc_sel_total.size() && massc_sel_total[l] > 0) {
+                        const double sc = (double) massc_sel_cold[l] / (double) massc_sel_total[l];
+                        sc_sum += sc; sc_min = std::min(sc_min, sc); sc_max = std::max(sc_max, sc); sc_n++;
+                    }
                     std::vector<uint32_t> order(n_ex);
                     for (uint32_t e = 0; e < n_ex; ++e) {
                         order[e] = e;
@@ -1586,6 +1602,10 @@ llama_expert_cache::~llama_expert_cache() {
                 if (cur_n > 0) {
                     fprintf(stderr, "  CURRENT membership (run slots=%u): mass coverage mean=%.1f%% min=%.1f%% max=%.1f%%  -> the pool TODAY serves this much of the model's routing mass resident\n",
                             k_run, 100.0 * cur_sum / cur_n, 100.0 * cur_min, 100.0 * cur_max);
+                    if (sc_n > 0) {
+                        fprintf(stderr, "  SELECTED count-cold (of top-k expert ids, not mass): mean=%.1f%% min=%.1f%% max=%.1f%%  -> this share of the step's SELECTED experts was non-resident (ZERO-mapped / guard-tripped)\n",
+                                100.0 * sc_sum / sc_n, 100.0 * sc_min, 100.0 * sc_max);
+                    }
                     for (int ki = 0; ki < 5; ++ki) {
                         fprintf(stderr, "  COUNTERFACTUAL top-K by mass: K=%3u  mass coverage mean=%.1f%% min=%.1f%% max=%.1f%%\n",
                                 ks[ki], 100.0 * cov[ki] / cov_n[ki], 100.0 * cmin[ki], 100.0 * cmax[ki]);
@@ -1599,6 +1619,11 @@ llama_expert_cache::~llama_expert_cache() {
                         for (uint32_t l = 0; l < massc_mass.size(); ++l) {
                             fprintf(mf, "layer %u total=%.4f cur=%.4f", l, massc_total[l],
                                     massc_total[l] > 0 ? massc_cur_cov[l] / massc_total[l] : 0.0);
+                            if (l < massc_sel_total.size() && massc_sel_total[l] > 0) {
+                                fprintf(mf, " selcold=%.4f sel=%llu",
+                                        (double) massc_sel_cold[l] / (double) massc_sel_total[l],
+                                        (unsigned long long) massc_sel_total[l]);
+                            }
                             if (massc_total[l] > 0.0) {
                                 std::vector<uint32_t> order(n_ex);
                                 for (uint32_t e = 0; e < n_ex; ++e) {
@@ -2140,6 +2165,8 @@ llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t b
         cache->massc_mass.assign(max_layer, std::vector<double>(cache->n_expert, 0.0));
         cache->massc_total.assign(max_layer, 0.0);
         cache->massc_cur_cov.assign(max_layer, 0.0);
+        cache->massc_sel_total.assign(max_layer, 0);
+        cache->massc_sel_cold.assign(max_layer, 0);
         // [CGC SpAc 2026-09-06] EMA utility, seeded 0.5 (profile-like warm start — an expert
         // that never routed yet still outranks a decayed-to-0 newcomer on refresh #1, mirroring
         // MoESpAcEstimator's seed so the first pool re-target does not degenerate to expert-id

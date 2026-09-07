@@ -141,6 +141,8 @@ struct llama_expert_cache {
     std::vector<std::vector<double>> massc_mass;  // [layer][expert] summed selection mass
     std::vector<double> massc_total;              // [layer] total mass of all selections
     std::vector<double> massc_cur_cov;            // [layer] mass of selections resident NOW (slot>=0)
+    std::vector<uint64_t> massc_sel_total;        // [layer] total SELECTED expert ids seen (count, not mass)
+    std::vector<uint64_t> massc_sel_cold;         // [layer] selected expert ids that were COLD (slot<0)
     bool hot_prewarm_done = false;                // prewarm_hot runs once, before the 1st decode
     std::vector<std::vector<int32_t>> slot_owner;        // [layer][slot] = expert (-1 free)
     std::vector<std::vector<uint64_t>> slot_last_use;    // [layer][slot]

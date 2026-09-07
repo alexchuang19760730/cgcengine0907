@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CGC 品質漂移修復方案開發建議書 2026-09-07</title>
+<style>
+  :root {
+    --bg: #0f1420; --card: #171e2e; --ink: #e8ecf4; --sub: #9aa5b8;
+    --line: #2a3350;
+    --accent: #ffd479; --good: #8fe3a0; --warn: #f08a8a; --sdpa: #7fb8f0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: -apple-system, "PingFang TC", "Noto Sans TC", sans-serif; padding: 32px 20px 60px; }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  h2 { font-size: 19px; margin: 30px 0 10px; color: var(--accent); border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+  h3 { font-size: 15px; margin: 18px 0 8px; }
+  .sub { color: var(--sub); font-size: 14px; margin-bottom: 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; margin-bottom: 20px; }
+  .card .desc { color: var(--sub); font-size: 13px; margin: 0 0 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--sub); font-weight: 600; font-size: 11.5px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .hl { color: var(--accent); font-weight: 700; }
+  .good { color: var(--good); font-weight: 700; }
+  .warn { color: var(--warn); font-weight: 700; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 11px; margin-left: 6px; }
+  .tag.g { background: #1c3a24; color: #8fe3a0; }
+  .tag.r { background: #3a1c1c; color: #f08a8a; }
+  .tag.y { background: #3a321c; color: #e3cf8f; }
+  .tag.b { background: #1c2a3a; color: #7fb8f0; }
+  code { background: #0c1019; border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 11.5px; font-family: "SF Mono", Menlo, monospace; color: #7fb8f0; }
+  pre { background: #0c1019; border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; font-size: 12px; font-family: "SF Mono", Menlo, monospace; color: #7fb8f0; overflow-x: auto; line-height: 1.5; margin: 12px 0; }
+  .review { background: #1a2030; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 14px 16px; margin: 12px 0; font-size: 13px; line-height: 1.6; }
+  .review .label { color: var(--accent); font-weight: 700; font-size: 12px; text-transform: uppercase; margin-bottom: 6px; }
+  .review.red { border-left-color: var(--warn); }
+  .review.red .label { color: var(--warn); }
+  .review.green { border-left-color: var(--good); }
+  .review.green .label { color: var(--good); }
+  .toc { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 13px; }
+  .toc a { color: var(--sdpa); text-decoration: none; }
+  ul, ol { margin: 6px 0 10px; padding-left: 22px; line-height: 1.65; }
+  li { margin-bottom: 4px; }
+  .note { font-size: 12.5px; color: var(--sub); margin-top: 10px; line-height: 1.6; }
+  .note b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>CGC 品質漂移修復方案開發建議書</h1>
+<div class="sub">qwen3.6-35B-A3B IQ3_XXS · 16GB Mac · 8GB expert cache · 2026-09-07 · 供 review</div>
+
+<div class="card">
+<h3 style="margin-top:0">目錄</h3>
+<div class="toc">
+  <a href="#s1">1. 摘要與結論</a>
+  <a href="#s2">2. 現況：已量測的證據</a>
+  <a href="#s3">3. 根因分析：三因子模型</a>
+  <a href="#s4">4. 已驗證失敗的路徑（不要再走）</a>
+  <a href="#s5">5. 解決方案架構（分階段）</a>
+  <a href="#s6">6. 成功指標與驗證方法</a>
+  <a href="#s7">7. 風險與開放決策</a>
+  <a href="#s8">8. 建議執行順序與時間表</a>
+</div>
+</div>
+
+<!-- ============ 1. 摘要 ============ -->
+<h2 id="s1">1. 摘要與結論</h2>
+<div class="card">
+<p style="margin-top:0"><b>問題</b>：8GB expert cache 下，IQ3_XXS 仍會在長 generation（尤其 coding）塌進重複迴圈（echo prompt、<code>```python</code> fence loop、<code>計算費氏數列第 n 項</code> 無限重複），品質閘門卻給 1.0。</p>
+<p><b>核心發現（全部為當日量測）</b>：8GB pool 的 mass residency 已經在理論天花板（91.2% ≈ 完美 top-K 的 91.1%），所以<b>漂移不是「pool 不夠大」</b>，而是三因子交乘：</p>
+<ol>
+  <li><b>長尾 count-cold</b>：每步被選中的 top-8 裡，平均 <b>14.9%</b>（各層 12–18%）的 expert 不在 resident set 內（新儀器 selcold 量測）。</li>
+  <li><b>ZERO-slot 污染</b>：cold expert 被 ZERO-map 後貢獻 0 logit 但仍佔 softmax 分母 → 每步微小 renormalization error → 200–700 tokens 累積成重複迴圈。</li>
+  <li><b>記憶體壓力</b>：16GB Mac 上 8GB pool + 7.9GB model RSS → 只剩 15–26% free → fills 卡住 → guard 的慢路徑（ensure_batch）失效 → 只能走 ZERO 路徑 → 因子 2 惡化。同一個 binary：安靜機器 25.17 t/s + quality 1.0；記憶體壓力下 14 t/s + 迴圈。</li>
+</ol>
+<p><b>已關閉的路徑</b>：renorm（Step-3）在 4/8/10GB 都測出確定性 0.3——排除 9% 冷 mass 本身就改變 top-8 選擇，IQ3_XXS 對 routing 擾動太敏感。不要再投入。</p>
+<p><b>建議路線</b>：Phase 0 先把量測變誠實（loop 偵測進 gate、selcold 進 commit）→ Phase 1 直接打擊長尾（10GB pool / K=192 的 97.4% mass ceiling 是唯一已驗證可達的槓桿；SpAc K 調大）→ Phase 2 讓 guard 在記憶體壓力下也不 ZERO（修 WCOLD produce side + selective fill + bounded wait）→ Phase 3 記憶體預算工程（需決策）→ Phase 4 模板根因（real special tokens）→ Phase 5 SpAc look-ahead（野心路線）。</p>
+</div>
+
+<!-- ============ 2. 現況 ============ -->
+<h2 id="s2">2. 現況：已量測的證據</h2>
+
+<div class="card">
+<h3>2.1 品質現況（8GB pool · DBUF+SPAC · α=0.75 · HEAD 62777a53c + auto-anchor）</h3>
+<table>
+<tr><th>Profile</th><th>內容（客觀判定）</th><th>decode t/s</th><th>備註</th></tr>
+<tr><td>qa-zh</td><td class="good">✅ 是法蘭西共和國的首（warm pool 時正確）</td><td class="num">7.4–18.3</td><td>marker stops 已擋住無限迴圈</td></tr>
+<tr><td>longform-zh</td><td class="warn">❌ 「1805到1805的這些年間」迴圈（E2E 2/3 timeout）</td><td class="num">9.3–15.2</td><td>warm 時可正常</td></tr>
+<tr><td>coding</td><td class="warn">❌ 「計算費氏數列第 n 項」迴圈（replay decode 19.93）</td><td class="num">13–22.6</td><td>長 decode 是重災區</td></tr>
+</table>
+<div class="note"><b>關鍵</b>：品質閘門把這些迴圈判成 1.0（只查 expected-substring，無片語級 loop 偵測）。<b>目前所有 1.0 分數都不可信</b>。</div>
+</div>
+
+<div class="card">
+<h3>2.2 MASSCOV：8GB pool（143 slots）mass 覆蓋率已在天花板</h3>
+<table>
+<tr><th>量測</th><th>mean</th><th>min</th><th>解讀</th></tr>
+<tr><td>當前 membership（143 slots）</td><td class="num">91.2%</td><td class="num">0.0%（layer 0 設計性）</td><td>max 100%（layer 40 MTP）</td></tr>
+<tr><td>反事實 perfect top-K @ K=143</td><td class="num">91.1%</td><td class="num">87.8%</td><td><b>實際 pool 已達理論上限</b></td></tr>
+<tr><td>反事實 @ K=192（10.8GB）</td><td class="num">97.4%</td><td class="num">96.0%</td><td>下一個量級</td></tr>
+<tr><td>反事實 @ K=256（14.4GB）</td><td class="num">100%</td><td class="num">100%</td><td>16GB 放不下</td></tr>
+</table>
+<div class="note">layer 0 的 0.0% 是 <code>L4_SKIP_LAYER0</code> 設計（CPU full-weight，不入 pool 但照常 routing）——不是 bug。各 pooled layer（1–39）87–93%。</div>
+</div>
+
+<div class="card">
+<h3>2.3 新的 selcold 儀器：per-selection count-cold（本建議書新加的 MASSCOV 欄位）</h3>
+<p class="desc">量測「每步被選中的 top-8 裡有幾個 expert 不 resident」（count，不是 mass）——這是 ZERO 污染的真正驅動量。qa-zh session（1128 selections/層）：</p>
+<table>
+<tr><th>層</th><th>selcold（被選中卻不 resident 的比例）</th></tr>
+<tr><td>layer 0</td><td class="warn">100%（CPU skip-layer，設計性，不算）</td></tr>
+<tr><td>layer 1</td><td class="num">15.1%</td></tr>
+<tr><td>layer 2–39</td><td class="num">12–18%</td></tr>
+<tr><td>layer 40（MTP）</td><td class="num">0%</td></tr>
+<tr><td><b>加權平均</b></td><td class="hl">14.9%</td></tr>
+</table>
+<p class="desc">同 session 的 cold-guard 觸發次數：<b>E2E 退化 session 458 次 → 本次僅 9 次</b>（SpAc EMA 收斂效應已可見），但觸發時的比值仍高（37–63%，早期冷啟動）。</p>
+<div class="note">意義：平均每 token 每層的 8 個選中 expert 有 ~1.2 個被 ZERO-map。softmax 吸收能力讓短輸出還 OK（qa-zh 正確），但長 decode 每步累積 → 迴圈。</div>
+</div>
+
+<div class="card">
+<h3>2.4 速度：同 binary，兩種環境</h3>
+<table>
+<tr><th>環境</th><th>decode t/s</th><th>品質</th></tr>
+<tr><td>安靜機器（milestone doc）</td><td class="num">25.87 median / 26.19 peak</td><td class="good">1.0</td></tr>
+<tr><td>16GB Mac 日常（15–26% free）</td><td class="num">coding 12.9–22.5（53% variance）</td><td class="warn">迴圈</td></tr>
+</table>
+<div class="note">draft accept 在 healthy（82–98%）與迴圈（92–98%）都高——<b>迴圈不是 accept 崩潰</b>，是記憶體壓力 + 內容退化。TPOT 45–77ms 不穩定（60–104% spread）。</div>
+</div>
+
+<!-- ============ 3. 根因 ============ -->
+<h2 id="s3">3. 根因分析：三因子模型</h2>
+<div class="card">
+<h3>3.1 因子一：長尾 count-cold（15%）</h3>
+<p>pool 裝的是 top-143 <b>by mass</b>（91% mass），但每步 top-8 <b>選擇</b> 的長尾（mass 排序 143 名之後的低質量 expert）偶爾進 top-8。8GB 的 mass ceiling 是 91%——<b>這是容量數學，不是 policy 問題</b>。唯一把長尾從 15% 砍到 ~7% 的容量級槓桿是 K=192（10.8GB, 97.4%）。</p>
+<h3>3.2 因子二：ZERO-slot 污染（品質殺手）</h3>
+<p>fast path 對 cold expert ZERO-map（讀預留的 zero slot）：該 expert 貢獻 0 logit，但 softmax 分母仍算它 → 每次 renormalization 都偏 → 數百 token 後塌進重複迴圈。這是「品質崩潰」的機制，不是「品質微降」。</p>
+<h3>3.3 因子三：記憶體壓力（觸發器）</h3>
+<p>16GB 上 8GB pool + 7.9GB RSS ≈ 0 頭部空間。guard 觸發 → ensure_batch 的 fills（每 expert 1–3ms，多達 24–100 個/步）跟 GPU decode 搶頻寬 → 卡住 → guard 只剩 ZERO 路徑 → 因子二全面發作。安靜機器沒有因子三，所以同 binary 25+ t/s 且 1.0。</p>
+<div class="review green"><div class="label">結論</div>
+三因子缺一不可：沒有長尾（因子一）→ 不會 ZERO；沒有記憶體壓力（因子三）→ fills 來得及 → guard 走 ensure_batch → 沒有污染。修復要同時打因子一（容量/成員）與因子三（記憶體），並在因子二留安全網（guard 寧可慢不可 ZERO）。</div>
+</div>
+
+<!-- ============ 4. 已關閉路徑 ============ -->
+<h2 id="s4">4. 已驗證失敗的路徑（不要再走）</h2>
+<div class="card">
+<table>
+<tr><th>路徑</th><th>結果（當日重測）</th><th>為何關閉</th></tr>
+<tr><td>renorm（Step-3, CGC_RN_ROUTING）</td><td class="warn">3/3 profile 退化（qa echo、longform/coding 迴圈）</td><td>排除 9% 冷 mass 改變 top-8 選擇；IQ3_XXS 對 routing 擾動太敏感。NOOP 對照組 longform 健康 → 問題在「排除」本身不在機制。</td></tr>
+<tr><td>4GB pool</td><td class="warn">74.8% mass coverage → 0.3 品質</td><td>容量不足（現已 8GB）</td></tr>
+<tr><td>WCOLD weighted guard（Step-2 produce）</td><td class="warn">從未觸發（1e9 sentinel 常駐）</td><td>logits callback 在 decode 路徑收不到 <code>ffn_moe_logits-*</code>（收到 <code>ffn_moe_gate-X</code>）；count-based fallback 仍在用</td></tr>
+<tr><td>模板 no-pipe markers</td><td class="warn">scaffold 無限 echo</td><td><code>&lt;im_start&gt;</code> 是普通 sub-token，不是模型 real special（<code>&lt;|im_start|&gt;</code>=248045 / <code>&lt;|im_end|&gt;</code>=248046=EOS）→ 永遠不會自然終止。marker stops 已緩解（≤712 tokens 封頂）但根因未除</td></tr>
+</table>
+</div>
+
+<!-- ============ 5. 方案 ============ -->
+<h2 id="s5">5. 解決方案架構（分階段）</h2>
+
+<div class="card">
+<h3>Phase 0 — 誠實的量測基建 <span class="tag r">P0</span> 半天–1 天</h3>
+<p class="desc">沒有可信的尺，後面全部白做。目前 gate 把迴圈判成 1.0。</p>
+<ul>
+  <li><b>0.1</b> 片語級 loop 偵測進 <code>replay_server_profile.py</code> 的 <code>evaluate_quality</code>（相同 6+ 字元片語連續重複 ≥3 次即判 loop，分數歸 0）。<span class="tag y">已要求兩次，從未落地——本次建議書把它列為第一優先</span></li>
+  <li><b>0.2</b> commit selcold 儀器（本建議書已實作、已 build：MASSCOV dump 加 per-layer <code>selcold=</code>，summary 加 SELECTED count-cold 行）</li>
+  <li><b>0.3</b> session 基準腳本：每 session 自動記錄 memory free %、guard 觸發次數、selcold、loop 偵測結果</li>
+</ul>
+<div class="review green"><div class="label">驗收</div>gate 不再給迴圈 1.0；coding 迴圈重測分數 &lt;0.5。</div>
+</div>
+
+<div class="card">
+<h3>Phase 1 — 直接打擊長尾 count-cold <span class="tag r">P0</span> 1–2 天</h3>
+<ul>
+  <li><b>1.1 10GB pool A/B</b>：<code>CGC_EXPERT_CACHE_BYTES=10GiB</code> → K≈192 → mass ceiling 91%→97.4%（min 96%）。<span class="tag g">10GB pool 已有穩定證據：先前 session 穩定跑 2h22m、RSS 9.64GB</span>。預期 selcold 15%→~6–8%。這是唯一已驗證可達的容量級槓桿。</li>
+  <li><b>1.2 SpAc K 調大</b>：<code>CGC_SPAC_K</code> 8→16–32（每次 refresh 多 re-target 一些長尾）；並確認 refresh 真正落在 decode B-section（spac_prefetch call site 已存在，驗證非死碼）。</li>
+  <li><b>1.3 驗證 prewarm_hot</b>：確認 prefill route-frequency 有餵（短 prompt 的 prewarm 是 garbage 的已知風險——檢查 <code>LLAMA_EXPERT_CACHE_PREWARM_HOT</code> 狀態）。</li>
+</ul>
+<div class="review"><div class="label">驗收</div>selcold &lt;8%；guard 觸發 &lt;1% steps；coding replay 在 loop 偵測下 &gt;0.5。</div>
+</div>
+
+<div class="card">
+<h3>Phase 2 — Guard 安全網（讓因子二無害）<span class="tag y">P1</span> 2–3 天</h3>
+<ul>
+  <li><b>2.1 修 WCOLD produce side</b>：callback 的 tensor 名稱比對改收 <code>ffn_moe_gate-X</code>（實際收到的名字），讓 weighted cold ratio 真實寫入 <code>cgc_weighted_cold_ratio[il]</code>——低權重冷 expert 的層留在 fast path（不再整層 block）。</li>
+  <li><b>2.2 selective fill</b>：guard 決定 fall through 時只填高權重冷 expert（code 已有雛形，驗證 + 開 gate）。</li>
+  <li><b>2.3 bounded wait 取代 ZERO</b>：guard 觸發且 fills 在途時，等待 ≤X ms（<code>CGC_FAST_WAIT</code> 已存在但預設 off）——<b>寧可慢，不可 ZERO</b>。這是「品質不退化」的最後防線。</li>
+</ul>
+<div class="review"><div class="label">驗收</div>15% memory 壓力下重跑 coding：迴圈消失（慢但正確），guard 統計顯示 ZERO 路徑使用率 0。</div>
+</div>
+
+<div class="card">
+<h3>Phase 3 — 記憶體預算工程 <span class="tag y">P1</span> 1 天 <span class="tag r">需決策</span></h3>
+<p class="desc">因子三是今天所有數字被污染的共因。選項：</p>
+<ul>
+  <li><b>3a（推薦先試，免費）</b>：測試時清環境（關閉其他 app），<code>CGC_SERVER_MEMORY_MODE=prod</code> auto-degrade（run_server.sh 已留入口）</li>
+  <li><b>3b</b>：ctx 8192→4096 釋放 KV ~1.5–2GB（代價：Claude Code 長 prompt 可能塞不下——需量 3,100-token prefill 是否仍 fit）</li>
+  <li><b>3c（結構性）</b>：24–32GB 機器。10GB pool（Phase 1）在 16GB 上偏緊，32GB 上無痛</li>
+</ul>
+<div class="review red"><div class="label">開放決策（請 review 時決定）</div>
+16GB 是否為目標硬體？若是，Phase 1 的 10GB pool 與 3b 的 ctx 縮減必須取其一（兩者都要會 OOM）。若可接受 32GB，Phase 1 + 3c 是無痛組合。</div>
+</div>
+
+<div class="card">
+<h3>Phase 4 — 模板根因修復 <span class="tag b">P2</span> 1 天</h3>
+<ul>
+  <li>模板改用模型 real special tokens：<code>&lt;|im_start|&gt;</code>（248045）/ <code>&lt;|im_end|&gt;</code>（248046=EOS），讓 scaffold 重發時模型能真正自然終止（現在靠 server 端 marker stops 強切）。</li>
+  <li>保留 marker stops 作雙保險。</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>Phase 5 — SpAc L3 look-ahead（野心路線）<span class="tag b">P2/P3</span> 3–5 天</h3>
+<ul>
+  <li>MTP draft 已算 next-3-token 的 router logits 與 top-8（draft_accept 92–98% 證明路由高度一致）——把 draft 階段的 (layer, expert_ids) 直接塞進 prefetch queue，等於零成本精確預取。</li>
+  <li>EMA 每 refresh 重選 top-K 已存在（Phase 1.2 調 K）；look-ahead 是把「歷史頻率」升級成「未來精確」。</li>
+  <li>Swift turbo-fieldfare 已驗證此架構（MoESpAcEstimator + PreadExpertStreamer）。</li>
+</ul>
+<div class="note">這是唯一能把 4GB pool 的覆蓋率拉回可用的路線（draft 路由預測覆蓋 85–95%），但工程量最大、風險中高（需在 draft decode 路徑插樁）。建議 Phase 1–2 驗證後再決定。</div>
+</div>
+
+<!-- ============ 6. 指標 ============ -->
+<h2 id="s6">6. 成功指標與驗證方法</h2>
+<div class="card">
+<table>
+<tr><th>指標</th><th>現況</th><th>目標</th><th>驗證方式</th></tr>
+<tr><td>decode t/s（安靜機器）</td><td class="num">25.87 median</td><td class="good">≥25 且 variance &lt;10%</td><td>replay × 3 runs，quiet env</td></tr>
+<tr><td>decode t/s（16GB 日常）</td><td class="num">12.9–22.5</td><td>≥20 且 variance &lt;20%</td><td>replay × 3 runs，日常 env</td></tr>
+<tr><td>selcold（per-selection）</td><td class="num">14.9%</td><td class="good">&lt;8%</td><td>MASSCOV dump（Phase 0.2）</td></tr>
+<tr><td>cold-guard 觸發</td><td class="num">458/session（退化時）</td><td class="good">&lt;1% steps</td><td>log 統計（Phase 0.3）</td></tr>
+<tr><td>品質閘門</td><td class="warn">loop 給 1.0</td><td class="good">loop 判 0；3 profile ≥0.5</td><td>Phase 0.1 loop 偵測後 re-baseline</td></tr>
+<tr><td>ZERO 路徑使用率（壓力下）</td><td class="warn">高</td><td class="good">0（寧可慢）</td><td>guard 統計（Phase 2.3）</td></tr>
+<tr><td>TPOT</td><td class="num">45–77ms 不穩</td><td>≤50ms 穩定</td><td>server log task 分解</td></tr>
+<tr><td>TTFT（3,100-token CLI prefill）</td><td class="warn">未量測</td><td>&lt;60s（≥26 t/s prefill）</td><td>真實 Claude Code session（已知：小 prompt prefill 19–26 t/s）</td></tr>
+</table>
+</div>
+
+<!-- ============ 7. 風險 ============ -->
+<h2 id="s7">7. 風險與開放決策</h2>
+<div class="card">
+<table>
+<tr><th>風險</th><th>等級</th><th>說明 / 緩解</th></tr>
+<tr><td>16GB 硬體天花板</td><td class="warn">高</td><td>8GB pool + 7.9GB RSS ≈ 0 頭部空間。10GB pool 需實測 OOM 邊界（2h22m 穩定證據支持可行）。緩解：Phase 3 決策</td></tr>
+<tr><td>10GB pool OOM</td><td class="warn">中</td><td>先前 session 穩定證據（RSS 9.64GB）支持，但每次重啟的 transient 分配是風險點。緩解：先測 startup + 長 decode</td></tr>
+<tr><td>IQ3_XXS 量化敏感度</td><td class="warn">高</td><td>routing 一擾動就退化（renorm 已證明）。任何 membership 改動都要 loop 偵測把關（Phase 0.1 先行）</td></tr>
+<tr><td>SpAc look-ahead 工程量</td><td class="y">中</td><td>draft 路徑插樁 + double-buffer 風險。Swift 已驗證架構，但 llama.cpp 整合 ~400–500 行。緩解：Phase 1–2 先拿 80% 收益</td></tr>
+<tr><td>gate 分數誤導</td><td class="warn">高（現在）</td><td>1.0 分數含迴圈。Phase 0.1 後一切 re-baseline</td></tr>
+</table>
+
+<div class="review red"><div class="label">開放決策（review 時請給方向）</div>
+<ol style="margin:6px 0 0">
+  <li><b>硬體目標</b>：16GB 持續（選 3b ctx 縮減 + 10GB pool 擇一）還是接受 32GB（3c）？</li>
+  <li><b>優先序</b>：本建議書採 0 → 1.1 → 2.1 → 3 → 4 → 1.2 → 5。你先前建議 4 → 1 → 2 → 3 → 5 → 6（速度項目），兩者對照後以你 review 的為準。</li>
+  <li><b>SpAc look-ahead（Phase 5）</b>是否投入？它是 4GB pool 可行的唯一路線，但 Phase 1（10GB pool）若達標則非必要。</li>
+  <li><b>模板改 real special tokens（Phase 4）</b>：marker stops 已緩解症狀，是否要動根因？</li>
+</ol>
+</div>
+</div>
+
+<!-- ============ 8. 時間表 ============ -->
+<h2 id="s8">8. 建議執行順序與時間表</h2>
+<div class="card">
+<table>
+<tr><th>順序</th><th>工作</th><th>預估</th><th>依賴</th><th>預期收益</th></tr>
+<tr><td>1</td><td>Phase 0：loop 偵測 + selcold commit + session 基準</td><td class="num">0.5–1 天</td><td>—</td><td>所有分數變可信</td></tr>
+<tr><td>2</td><td>Phase 1.1：10GB pool A/B（K=192）</td><td class="num">0.5 天</td><td>0</td><td>selcold 15%→~7%，迴圈機率大降</td></tr>
+<tr><td>3</td><td>Phase 2.1+2.3：WCOLD produce 修復 + bounded wait</td><td class="num">1–2 天</td><td>0</td><td>記憶體壓力下不再 ZERO 污染</td></tr>
+<tr><td>4</td><td>Phase 3：記憶體決策 + 執行</td><td class="num">1 天</td><td>需決策</td><td>因子三消除 → 25+ 可重現</td></tr>
+<tr><td>5</td><td>Phase 4：模板 real special tokens</td><td class="num">1 天</td><td>—</td><td>scaffold echo 根因消除</td></tr>
+<tr><td>6</td><td>Phase 1.2：SpAc K 調大 + prewarm 驗證</td><td class="num">0.5 天</td><td>0</td><td>長尾再降 2–3pt</td></tr>
+<tr><td>7</td><td>Phase 5：SpAc look-ahead（視決策）</td><td class="num">3–5 天</td><td>1–6</td><td>4GB pool 也可行；25+ 穩態</td></tr>
+</table>
+<div class="note"><b>總預估</b>：核心路線（0–4）約 4–6 天；含 Phase 5 約 7–11 天。每個 phase 完成即 commit + 跑 Phase 0.3 session 基準，不堆疊。</div>
+</div>
+
+</div>
+</body>
+</html>

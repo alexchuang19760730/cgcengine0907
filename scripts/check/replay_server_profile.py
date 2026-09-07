@@ -19,6 +19,7 @@ replay_server_profile.py — 應用層 replay benchmark + 質量/速度/內存�
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -244,11 +245,81 @@ def detect_phrase_loop(text, min_unit=6, max_unit=300, min_repeat=3):
     return _find(collapsed)
 
 
+def detect_numeric_sequence_loop(text, min_lines=12, min_unit=6):
+    """偵測單調遞增/遞減的數字迴圈 (如 if n == 0: if n == 1: ... if n == 22: 重複)。
+
+    與 detect_phrase_loop 的『相同片語』不同, 此型每行數字都不同 (0,1,2,...),
+    但結構模板完全相同, 且連續行數爆量 (>= min_lines) 即為退化迴圈。
+    只在模板長度 >= min_unit 且數字前綴相同 (如 'if n == ') 時觸發, 降低誤判。
+    回傳 (template_prefix, first_num, last_num, line_count) 或 None。
+    """
+    if not text:
+        return None
+    lines = text.split('\n')
+    # 找候選行: 同一模板 (移除數字後相同) 連續出現 >= min_lines 次
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        m = re.match(r'^(.*?)([0-9]+)([^0-9]*)$', line)
+        if m and len(m.group(1)) >= min_unit:
+            pre, dig, suf = m.group(1), m.group(2), m.group(3)
+            j = i + 1
+            nums = [int(dig)]
+            while j < n:
+                m2 = re.match(r'^(.*?)([0-9]+)([^0-9]*)$', lines[j])
+                if not m2 or m2.group(1) != pre or m2.group(3) != suf:
+                    break
+                nums.append(int(m2.group(2)))
+                j += 1
+            if j - i >= min_lines:
+                # 退化迴圈兩種型: (a) 單調遞增/遞減 (0,1,2,... 數到底);
+                # (b) 循環重複 (0..13 後又 4..12 — 有值重複出現 = 模型重頭再來)。
+                monotonic = all(nums[k] <= nums[k+1] for k in range(len(nums)-1)) or \
+                            all(nums[k] >= nums[k+1] for k in range(len(nums)-1))
+                cycling = len(set(nums)) < len(nums)
+                if monotonic or cycling:
+                    return (pre.strip(), nums[0], nums[-1], j - i)
+            i = j
+        else:
+            i += 1
+    return None
+
+
 def evaluate_quality(profile, content, finish_reason, reference_rules):
     """根據 reference rules 給 0.0-1.0 score。回傳 (score, checks_list)。"""
+    # [Phase-0 2026-09-07] loop 偵測永遠先跑 (不依賴 reference rules):
+    # 舊邏輯在無 reference 時直接 return 1.0, 繞過所有 check, 造成迴圈輸出
+    # 拿 1.0 假高分 (今日 renorm 3 profile 迴圈全部 1.0 即因此)。
+    phrase_loop = detect_phrase_loop(content) if content else None
+    numeric_loop = detect_numeric_sequence_loop(content) if content else None
+    loop_run_ok = True
+    loop_max_run = 8
+    if content:
+        max_run = 1
+        cur_run = 1
+        for i in range(1, len(content)):
+            if content[i] == content[i-1]:
+                cur_run += 1
+                if cur_run > max_run:
+                    max_run = cur_run
+            else:
+                cur_run = 1
+        loop_run_ok = max_run <= loop_max_run
+
     rules = reference_rules.get(profile, {}) if reference_rules else {}
     if not rules:
-        return 1.0, [{"check": "no_reference", "result": "skip", "note": "no reference rules provided"}]
+        # 無 reference rules: 只以 loop 偵測判定 (迴圈 <= 0.3, 其餘 1.0)
+        checks = []
+        if phrase_loop is not None:
+            checks.append({"check": "loop_phrase", "result": "fail", "unit": phrase_loop[0], "start": phrase_loop[1], "count": phrase_loop[2], "note": "no reference rules; loop detection only"})
+        if numeric_loop is not None:
+            checks.append({"check": "loop_numeric", "result": "fail", "template": numeric_loop[0], "count": numeric_loop[3], "note": "no reference rules; loop detection only"})
+        if not loop_run_ok:
+            checks.append({"check": "loop_run", "result": "fail", "max_run": max_run, "limit": loop_max_run, "note": "no reference rules; loop detection only"})
+        if not checks:
+            return 1.0, [{"check": "no_reference", "result": "skip", "note": "no reference rules provided; no loop detected"}]
+        return 0.3, checks
 
     checks = []
     score = 0.0
@@ -328,7 +399,6 @@ def evaluate_quality(profile, content, finish_reason, reference_rules):
     # 7) phrase-level loop detection: 相同 6+ 字元片語連續重複 >= 3 次 = 語意迴圈
     #    舊 loop_run 只抓連續相同字元, 抓不到片語級重複 (如長句迴圈輸出),
     #    造成 loop 內容仍拿 1.0 高分。此 check 權重最高 + 硬閘門壓分。
-    phrase_loop = detect_phrase_loop(content) if content else None
     if phrase_loop is not None:
         unit, start, cnt = phrase_loop
     else:
@@ -347,12 +417,30 @@ def evaluate_quality(profile, content, finish_reason, reference_rules):
     score += (1.0 if phrase_loop is None else 0.0) * w
     weight_sum += w
 
+    # 7b) numeric-sequence loop detection (單調遞增/遞減數字模板重複 >= 12 行)
+    if numeric_loop is not None:
+        npre, nfirst, nlast, ncnt = numeric_loop
+    else:
+        npre = nfirst = nlast = ncnt = None
+    checks.append({
+        "check": "loop_numeric",
+        "result": "pass" if numeric_loop is None else "fail",
+        "min_lines": 12,
+        "template": npre,
+        "first": nfirst,
+        "last": nlast,
+        "count": ncnt,
+    })
+    w = 0.3
+    score += (1.0 if numeric_loop is None else 0.0) * w
+    weight_sum += w
+
     if weight_sum == 0:
         return 1.0, checks
     final = score / weight_sum
-    # 硬閘門: 偵測到語意迴圈 (片語重複 或 連續字元爆量) 時壓到 0.3 以下,
+    # 硬閘門: 偵測到語意迴圈 (片語重複 / 數字序列 或 連續字元爆量) 時壓到 0.3 以下,
     # 不讓迴圈輸出靠 required_any 命中關鍵字而拿到 0.5+ 的假高分。
-    if phrase_loop is not None or not loop_ok:
+    if phrase_loop is not None or numeric_loop is not None or not loop_ok:
         final = min(final, 0.3)
     return round(final, 3), checks
 
