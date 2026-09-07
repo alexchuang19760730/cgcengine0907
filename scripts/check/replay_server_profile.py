@@ -55,9 +55,9 @@ def http_json(url, payload, timeout):
 # ---------------------------------------------------------------------------
 
 def build_payload(profile, model, max_tokens, seed=0):
-    """固定 seed (預設 0) + temperature 0 (greedy), 讓採樣確定性。
-    seed 對 greedy 無作用, 但若 server 端有非 greedy 路徑 (如 MTP draft),
-    固定 seed 可消掉殘餘採樣噪聲。
+    """固定 seed (預設 0) + temperature 0.4 (與 server MTP 配置一致),
+    確保 draft acceptance 高 (~95%+)。seed 可消掉殘餘採樣噪聲。
+    top_p=0.8 與 server 配置一致。
     """
     if profile == "qa-zh":
         return {
@@ -65,7 +65,8 @@ def build_payload(profile, model, max_tokens, seed=0):
             "messages": [
                 {"role": "user", "content": "巴黎是哪個國家的首都？請只用一句中文回答。"},
             ],
-            "temperature": 0,
+            "temperature": 0.4,
+            "top_p": 0.8,
             "seed": seed,
             "max_tokens": max_tokens or 24,
             "chat_template_kwargs": {
@@ -84,7 +85,8 @@ def build_payload(profile, model, max_tokens, seed=0):
                 },
                 {"role": "user", "content": "為什麼巴黎會成為法國的政治與文化中心？請用一段中文說明。"},
             ],
-            "temperature": 0,
+            "temperature": 0.4,
+            "top_p": 0.8,
             "seed": seed,
             "max_tokens": max_tokens or 220,
             # CGC FIX 2026-09-06: 舊 prefill 以 ",並且匯聚了" 收尾,
@@ -105,7 +107,8 @@ def build_payload(profile, model, max_tokens, seed=0):
             "messages": [
                 {"role": "user", "content": "寫一個 Python function，計算費氏數列第 n 項。"},
             ],
-            "temperature": 0,
+            "temperature": 0.4,
+            "top_p": 0.8,
             "seed": seed,
             "max_tokens": max_tokens or 512,
             # CGC FIX 2026-09-06: 裸 ```python 前綴在 IQ3_XXS 是自強化吸引子,
@@ -114,7 +117,10 @@ def build_payload(profile, model, max_tokens, seed=0):
             "chat_template_kwargs": {
                 "assistant_prefill": "```python\ndef fibonacci(n):\n    ",
             },
-            "stop": ["```", "<|end|>", "<|output|>", "<|user|>"] + CHATML_STOPS,
+            # CGC FIX 2026-09-07: 移除 "```" stop 條件——model 生成完整函數後輸出 ``` 結束代碼塊,
+            # 會被 stop 截斷導致只生成 ~50 tokens, 無法準確測量 512 tokens 長生成的 decode 速度與 draft_accept。
+            # 06:52 生產基線 (26.25 t/s, 98.2% draft_accept) 即為不帶 "```" stop 的 512 tokens 長生成。
+            "stop": ["<|end|>", "<|output|>", "<|user|>"] + CHATML_STOPS,
         }
 
     raise ValueError(f"unsupported profile: {profile}")

@@ -388,6 +388,23 @@ if [ "${N30CACHE_NO_CLEAN:-0}" != 1 ]; then
     sleep 1
 fi
 
+# [防護 1b] sudo purge 清理記憶體（2026-09-07：16GB 機器上 35B MoE + 8GB pool 記憶體壓力大，
+# purge 可釋放 inactive/purgeable 記憶體，減少 compressor 與 swap 波動）
+# 用法：
+#   CGC_PURGE=1 ./scripts/run_server.sh              # 執行 sudo purge（需手動輸入密碼）
+#   CGC_PURGE=1 CGC_SUDO_PASSWORD=xxx ./scripts/run_server.sh  # 自動輸入密碼（不安全，僅供測試）
+#   預設 CGC_PURGE=0（不執行，避免需要密碼）
+CGC_PURGE="${CGC_PURGE:-0}"
+if [ "$CGC_PURGE" = "1" ]; then
+    if [ -n "${CGC_SUDO_PASSWORD:-}" ]; then
+        echo "$CGC_SUDO_PASSWORD" | sudo -S purge 2>/dev/null && echo "  [purge] sudo purge 完成（自動密碼）" || echo "  [purge] sudo purge 失敗（密碼錯誤？）"
+    else
+        echo "  [purge] 執行 sudo purge（請輸入密碼）..."
+        sudo purge 2>/dev/null && echo "  [purge] sudo purge 完成" || echo "  [purge] sudo purge 失敗（已跳過）"
+    fi
+    sleep 1
+fi
+
 # [防護 2] 記憶體水位（模型 13.2GB --no-mmap + 8GiB expert pool default；低水位先記 warning，
 # 再交由下方 memory guard 統一決定是 fail fast 還是 prod fallback）
 FREE_PCT=$(memory_pressure -Q 2>/dev/null | awk -F': ' '/free percentage/{print int($2)}')
@@ -492,7 +509,7 @@ SERVER_ARGS=(
     --no-mmap
     -t 8
     -c "$CTX"
-    -np 1
+    -np "${CGC_SERVER_CONCURRENCY:-1}"
     --no-kv-unified
     -sps 0
     --host "$HOST_BIND"
@@ -540,12 +557,11 @@ if [ "$SERVER_SKIP_CHAT_PARSING" = "1" ]; then
     SERVER_ARGS+=(--skip-chat-parsing)
 fi
 # [CGC IQ3_XXS Sampling] Optimized for low-bit quantization quality
-# presence_penalty breaks repetition loops; min_p cuts noisy tail; temp reduces randomness
-SERVER_ARGS+=(--temp "0.4")
-#SERVER_ARGS+=(--min-p "0.05")
-#SERVER_ARGS+=(--presence-penalty "1.5")
-SERVER_ARGS+=(--top-k "0")
-SERVER_ARGS+=(--top-p "0.8")
+# temp 0.4 + top_p 0.8 是 06:52 生產基線 (26.25 t/s, 98.2% draft_accept) 的配置
+# 可通過 CGC_SERVER_TEMP / CGC_SERVER_TOP_P 覆蓋
+SERVER_ARGS+=(--temp "${CGC_SERVER_TEMP:-0.4}")
+SERVER_ARGS+=(--top-k "${CGC_SERVER_TOP_K:-0}")
+SERVER_ARGS+=(--top-p "${CGC_SERVER_TOP_P:-0.8}")
 
 SERVER_ENV=(
     CGC_EXPERT_CACHE_BYTES="$BUDGET"
@@ -589,6 +605,21 @@ fi
 # CGC PREFETCH: rolling window size for hist prefetch source (for tuning). Pass through if externally set.
 if [ -n "${CGC_PREFETCH_WINDOW:-}" ]; then
     SERVER_ENV+=(CGC_PREFETCH_WINDOW="$CGC_PREFETCH_WINDOW")
+fi
+# CGC DBUF: hook-time step-ahead refill (production ON by default, b8a564d45 verified +25% coding speed).
+# Set CGC_DBUF=0 to disable.
+if [ "${CGC_DBUF:-1}" != "0" ]; then
+    SERVER_ENV+=(CGC_DBUF=1)
+fi
+# CGC SPAC: EMA utility-based prefetch (production ON by default, α=0.75 is the tuned sweet spot).
+# Set CGC_SPAC=0 to disable; override alpha with CGC_SPAC_ALPHA.
+if [ "${CGC_SPAC:-1}" != "0" ]; then
+    SERVER_ENV+=(CGC_SPAC=1)
+    if [ -n "${CGC_SPAC_ALPHA:-}" ]; then
+        SERVER_ENV+=(CGC_SPAC_ALPHA="$CGC_SPAC_ALPHA")
+    else
+        SERVER_ENV+=(CGC_SPAC_ALPHA=0.75)
+    fi
 fi
 if [ "$SERVER_GLU_FUSED_DOWN" = "1" ]; then
     SERVER_ENV+=(CGC_GLU_FUSED_DOWN=1)
