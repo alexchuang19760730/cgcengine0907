@@ -995,10 +995,23 @@ json oaicompat_chat_params_parse(
     }
 
     // Handle "stop" field
+    const bool cgc_client_gave_stop = body.contains("stop");
     if (body.contains("stop") && body.at("stop").is_string()) {
         llama_params["stop"] = json::array({body.at("stop").get<std::string>()});
     } else {
         llama_params["stop"] = json_value(body, "stop", json::array());
+    }
+    // 2026-09-07 CGC: when the client supplies no stop list, default to the
+    // ChatML marker stops so a model that re-opens a turn (echoes
+    // <im_end>/<im_start> as plain text because the active template renders
+    // them without pipes) is truncated instead of looping forever. Mirrors
+    // the replay harness CHATML_STOPS; only applies when the client omitted
+    // an explicit stop list, so replay/tuned callers are unaffected.
+    static const bool cgc_default_marker_stops = getenv("CGC_SERVER_DEFAULT_MARKER_STOPS") ? true : false;
+    if (cgc_default_marker_stops && !cgc_client_gave_stop) {
+        for (const char * s : { "<im_end>", "<im_start>", "<|im_end|>", "<|im_start|>" }) {
+            llama_params["stop"].push_back(s);
+        }
     }
 
     auto json_schema = json_value(body, "json_schema", json());
@@ -1163,6 +1176,90 @@ json oaicompat_chat_params_parse(
         if (reasoning_effort == "none") {
             inputs.enable_thinking = false;
         } // other reasoning_effort values are model-specific and not yet handled
+    }
+
+    // ====================================================================
+    // 2026-09-07 CGC auto-anchor (CGC_SERVER_AUTO_ANCHOR=1, default on):
+    // When a plain-text chat turn (fresh generation prompt, no tools, no
+    // assistant continuation) does NOT carry an assistant_prefill, inject a
+    // language/format-matched starter so the IQ3_XXS model anchors into an
+    // answer instead of echoing the prompt / re-emitting template markers.
+    // Measured: unanchored free-form prompts loop forever because the server
+    // template renders <im_start>/<im_end> (no pipes) as plain sub-tokens
+    // (real specials are <|im_start|>=248045 / <|im_end|>=248046=EOS), so no
+    // stop can fire; a content/language-matched prefill breaks the echo.
+    // Replay profiles always send assistant_prefill themselves and are
+    // therefore untouched by this default.
+    // ====================================================================
+    static const bool cgc_auto_anchor = getenv("CGC_SERVER_AUTO_ANCHOR") ? true : false;
+    // 2026-09-07 CGC v2: Claude Code always sends tool_choice:null + tool schemas even on
+    // plain-text question turns, so gating on inputs.tools.empty() skipped the anchor on the
+    // real customer path (echo loop returned). Gate instead on FORCED tool turns only
+    // (tool_choice==required) where a text prefill would break the tool grammar; null/auto
+    // with tools is a free-text turn (the model may answer OR call a tool - anchoring to
+    // text answers is what the customer wants, and it kills the system-reminder echo).
+    if (cgc_auto_anchor
+            && inputs.add_generation_prompt
+            && inputs.continue_final_message == COMMON_CHAT_CONTINUATION_NONE
+            && inputs.chat_template_kwargs.find("assistant_prefill") == inputs.chat_template_kwargs.end()
+            && inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_REQUIRED
+            && inputs.json_schema.empty()
+            && !inputs.messages.empty()) {
+        const common_chat_msg & last = inputs.messages.back();
+        // Claude Code (Anthropic API) sends content as an array of typed parts,
+        // which the OAI-compat parser stores in content_parts leaving .content
+        // empty. Reassemble the text so the classifier sees the actual prompt.
+        std::string last_user_text = last.content;
+        if (last_user_text.empty()) {
+            for (const auto & part : last.content_parts) {
+                if (part.type == "text" || part.type.empty()) {
+                    last_user_text += part.text;
+                }
+            }
+        }
+        if (last.role == "user" && !last_user_text.empty()) {
+            // classify: CJK vs latin, and code-like vs prose/QA
+            const std::string & c = last_user_text;
+            bool has_cjk = false;
+            for (unsigned char ch : c) {
+                if (ch >= 0xE4 && ch <= 0xE9) { has_cjk = true; break; } // CJK UTF-8 lead bytes
+            }
+            std::string cl = c;
+            for (auto & ch : cl) { ch = (char)std::tolower((unsigned char)ch); }
+            bool code_like =
+                cl.find("```")          != std::string::npos ||
+                cl.find("def ")          != std::string::npos ||
+                cl.find("function")      != std::string::npos ||
+                cl.find("class ")        != std::string::npos ||
+                cl.find("import ")       != std::string::npos ||
+                cl.find("python")        != std::string::npos ||
+                cl.find("implement")     != std::string::npos ||
+                cl.find("write a")       != std::string::npos ||
+                cl.find("module")        != std::string::npos ||
+                cl.find("代码")           != std::string::npos ||
+                cl.find("程式")           != std::string::npos ||
+                cl.find("寫一個")         != std::string::npos ||
+                cl.find("写一个")         != std::string::npos ||
+                cl.find("实现")           != std::string::npos ||
+                cl.find("實現")           != std::string::npos;
+            // Anchor choice (measured 2026-09-07): a bare ```python fence is a
+            // self-reinforcing attractor on IQ3_XXS (the replay harness hit the
+            // same wall and switched to content-specific 'def name(' prefills).
+            // A server cannot know the requested function name, so for code-like
+            // turns we do NOT open a fence; we anchor with the language-typical
+            // prose opener that steers the model toward writing, and rely on the
+            // default marker stops to bound any residual scaffold echo.
+            std::string anchor;
+            if (code_like) {
+                anchor = has_cjk ? "好的，以下是实现：\n" : "Here is the implementation:\n";
+            } else if (has_cjk) {
+                anchor = "答：";
+            } else {
+                anchor = "Sure — ";
+            }
+            inputs.chat_template_kwargs["assistant_prefill"] = json(anchor).dump();
+            SRV_DBG("%s: CGC auto-anchor: inject assistant_prefill=%s\n", __func__, anchor.c_str());
+        }
     }
 
     inputs.force_pure_content = opt.force_pure_content;
