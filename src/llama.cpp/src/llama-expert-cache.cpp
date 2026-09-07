@@ -2227,6 +2227,12 @@ llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t b
         // ~41 x 8 uint32 + 41 bool) so the collect phase needs no resize.
         cache->draft_prefetch_ids.assign(max_layer, std::vector<uint32_t>());
         cache->draft_prefetch_valid.assign(max_layer, false);
+        // [CGC prev-token prefetch 2026-09-08] double-buffered per-layer expert ids for prev-token
+        // prediction. prev is used for prefetch at il==1; curr collects the current token's ids;
+        // swapped at the trigger boundary. Sized eagerly (~41 x 8 uint32 x 2 + 41 bool).
+        cache->prev_token_expert_ids.assign(max_layer, std::vector<uint32_t>());
+        cache->curr_token_expert_ids.assign(max_layer, std::vector<uint32_t>());
+        cache->prev_token_valid.assign(max_layer, false);
         cache->pool.assign(max_layer, std::vector<std::vector<uint8_t>>(4));
         cache->pool_ext.assign(max_layer, std::vector<const uint8_t *>(4, nullptr));
         cache->pool_ext_stride.assign(max_layer, std::vector<size_t>(4, 0));

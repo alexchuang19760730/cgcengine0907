@@ -291,6 +291,17 @@ struct llama_expert_cache {
     size_t n_draft_prefetch_queued = 0;    // experts queued for prefetch from draft predictions
     size_t n_draft_prefetch_hit = 0;       // draft-predicted experts actually selected by verify
     size_t n_draft_prefetch_miss = 0;      // draft-predicted experts NOT selected by verify (wasted)
+    // [CGC prev-token prefetch 2026-09-08] Use the PREVIOUS token's per-layer expert ids to prefetch
+    // the CURRENT token. Adjacent tokens have strong routing correlation (~70-90% overlap in MoE
+    // expert selection), so this provides a simple, high-hit-rate prediction that covers ALL layers
+    // (unlike MTP draft ctx which only computes the last layer). Double-buffered: curr collects the
+    // current token's ids while prev is used for prefetch; swapped at the il==1 trigger boundary.
+    std::vector<std::vector<uint32_t>> prev_token_expert_ids;  // [layer] previous token's top-8 expert ids (for prefetch)
+    std::vector<std::vector<uint32_t>> curr_token_expert_ids;  // [layer] current token's top-8 expert ids (being collected)
+    std::vector<bool> prev_token_valid;                          // [layer] true if prev has valid data
+    size_t n_prev_token_prefetch_queued = 0;  // experts queued from prev-token prediction
+    size_t n_prev_token_prefetch_hit = 0;     // prev-token predicted experts actually selected
+    size_t n_prev_token_prefetch_miss = 0;    // prev-token predicted experts NOT selected
     // [CGC routing-aware placement 2026-08-29] static-pin telemetry: how many fills landed on
     // pin_profile members (got slot_pinned_static) and how many static pins were evicted by
     // pick_slot's overflow pass 2 (a fill needed the slot and nothing else was available —

@@ -3331,7 +3331,7 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
 
     // [CGC MTP Draft Prefetch DEBUG] trace every on_topk call to verify draft ctx reaches here
     static int cgc_draft_pf_dbg_count = 0;
-    if (cgc_draft_prefetch_on() && cgc_draft_pf_dbg_count < 50) {
+    if (cgc_draft_prefetch_on() && cgc_draft_pf_dbg_count < 500) {  // increased from 50 to 500 to capture decode phase
         const char * ctype = cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP ? "MTP" : "DEF";
         fprintf(stderr, "CGC-DRAFT-PF-DBG: on_topk il=%d n_tokens=%lld ctx_type=%s n_expert_used=%lld\n",
                 il, (long long) n_tokens, ctype, (long long) n_expert_used);
@@ -3430,34 +3430,70 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
                 ids[0], ids[1], ids[2], ids[3], ids[4], ids[5], ids[6], ids[7]);
     }
     // [CGC MTP Draft Prefetch 2026-09-07] COLLECT phase: during MTP draft decode
-    // (ctx_type == MTP, n_tokens == 1), the draft ctx computes the top-8 expert ids for the
+    // (ctx_type == MTP, n_tokens >= 1), the draft ctx computes the top-8 expert ids for the
     // NEXT token one step ahead of the trunk verify ctx. Since draft_accept is 92-98%, these
     // draft-predicted expert ids are highly likely to be selected by the verify step. We collect
     // them per layer here, then the verify ctx's il==1 hook triggers the prefetch (see below).
     // This attacks the count-cold problem (15% of selected experts are non-resident) by prefetching
     // the EXACT experts the draft predicts will be needed next step. CGC_DRAFT_PREFETCH=1 enables.
+    //
+    // [FIX 2026-09-08] Changed n_tokens == 1 to n_tokens >= 1:
+    //   MTP draft ctx processes multiple tokens at once (n_tokens = draft_n_max, typically 3).
+    //   The ids tensor layout is [n_expert_used, n_tokens], so token j's experts are at
+    //   ids[j*n_expert_used ... (j+1)*n_expert_used - 1].
+    //   We take the FIRST token (j=0) because verify ctx validates from the first predicted token.
+    //   Previously n_tokens == 1 caused collect to never fire under MTP (loaded=0 always).
     if (cgc_draft_prefetch_on() &&
-        cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP && n_tokens == 1 &&
+        cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP && n_tokens >= 1 &&
         il >= 0 && (size_t) il < cache->draft_prefetch_ids.size()) {
         // snapshot the top-8 expert ids for this layer (draft predicts next token's routing)
+        // Take the FIRST token (j=0) from the ids tensor — verify validates from the first.
         std::vector<uint32_t> &dst = cache->draft_prefetch_ids[il];
         dst.resize((size_t) n_expert_used);
         for (int64_t i = 0; i < n_expert_used; ++i) {
-            dst[i] = (uint32_t) ids[i];
+            dst[i] = (uint32_t) ids[i];  // j=0 offset is 0
         }
         cache->draft_prefetch_valid[il] = true;
         if (il <= 1) {
-            fprintf(stderr, "CGC-DRAFT-PF: collect il=%d ids=[%u %u %u %u %u %u %u %u]\n",
-                    il, dst[0], dst[1], dst[2], dst[3], dst[4], dst[5], dst[6], dst[7]);
+            fprintf(stderr, "CGC-DRAFT-PF: collect il=%d ntok=%lld ids=[%u %u %u %u %u %u %u %u]\n",
+                    il, (long long) n_tokens,
+                    dst[0], dst[1], dst[2], dst[3], dst[4], dst[5], dst[6], dst[7]);
         }
-    } else if (cgc_draft_prefetch_on() &&
-               cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP && n_tokens != 1 &&
-               il >= 0 && (size_t) il < cache->draft_prefetch_ids.size()) {
-        // #12: Collect skip — draft collection only fires when ctx==MTP && n_tokens==1;
-        // any batched draft step (n_tokens > 1) silently produces no prediction.
-        // Count once per layer per batched draft step (n_expert_used experts predicted but skipped).
-        cache->drop_stats.collect_skipped += (size_t) n_expert_used;
-        cache->n_prefetch_dropped += (size_t) n_expert_used;
+    }
+    // Note: #12 collect_skipped counter removed — with n_tokens >= 1, batched draft steps
+    // are now collected (first token), not skipped. The counter remains in prefetch_drop_stats
+    // for backward compatibility but will always be 0 under this fixed path.
+
+    // [CGC prev-token prefetch 2026-09-08] For verify ctx (DEFAULT), collect the current token's
+    // per-layer expert ids into curr_token_expert_ids. At il==0, swap prev<->curr so prev holds
+    // the COMPLETE previous token's ids (all layers) for prefetch. This attacks count-cold by
+    // predicting the current token's experts from the previous token (adjacent tokens have ~70-90%
+    // routing overlap). CGC_PREV_TOKEN_PREFETCH=1 enables; default OFF = byte-identical legacy.
+    static const bool cgc_prev_token_prefetch = getenv("CGC_PREV_TOKEN_PREFETCH") != nullptr &&
+                                                  getenv("CGC_PREV_TOKEN_PREFETCH")[0] == '1';
+    if (cgc_prev_token_prefetch &&
+        cparams.ctx_type == LLAMA_CONTEXT_TYPE_DEFAULT && n_tokens >= 1 &&
+        il >= 0 && (size_t) il < cache->curr_token_expert_ids.size()) {
+        // At il==0, swap prev<->curr: prev now holds the complete previous token's ids,
+        // curr starts collecting the current token's ids.
+        if (il == 0) {
+            cache->prev_token_expert_ids.swap(cache->curr_token_expert_ids);
+            // Mark all prev layers as valid (they were collected in the previous token)
+            for (size_t l = 0; l < cache->prev_token_valid.size(); ++l) {
+                cache->prev_token_valid[l] = !cache->prev_token_expert_ids[l].empty();
+            }
+        }
+        // Collect current token's first-token expert ids (j=0 offset is 0)
+        std::vector<uint32_t> &dst = cache->curr_token_expert_ids[il];
+        dst.resize((size_t) n_expert_used);
+        for (int64_t i = 0; i < n_expert_used; ++i) {
+            dst[i] = (uint32_t) ids[i];  // j=0 offset is 0
+        }
+        if (il <= 1) {
+            fprintf(stderr, "CGC-PREV-PF: collect il=%d ntok=%lld ids=[%u %u %u %u %u %u %u %u]\n",
+                    il, (long long) n_tokens,
+                    dst[0], dst[1], dst[2], dst[3], dst[4], dst[5], dst[6], dst[7]);
+        }
     }
     // [CGC bit-bisect 2026-08-30] small batches (prefill chunks / tail / verify / draft): dump
     // the FULL ids tensor so the expert selection of the SAME token can be compared across
@@ -3574,7 +3610,7 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     }
 
     // [CGC MTP Draft Prefetch 2026-09-07] TRIGGER phase: during trunk verify decode
-    // (ctx_type == DEFAULT, n_tokens > 1), at the first MoE layer (il==1), load ALL layers'
+    // (ctx_type == DEFAULT, n_tokens >= 1), at the first MoE layer (il==1), load ALL layers'
     // draft-predicted expert ids SYNCHRONOUSLY. The draft ctx collected these one step ahead
     // (see COLLECT phase above); now we load them directly in this thread so the verify
     // decode's later layers find them resident. This is the exact-prediction counterpart to
@@ -3582,8 +3618,13 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     // loaded experts will actually be selected. CGC_DRAFT_PREFETCH=1 enables.
     // SYNC mode (CGC_DRAFT_PREFETCH_SYNC=1): load in this thread (blocks decode, but safe under MTP+OA_ASYNC)
     // ASYNC mode (default): queue to bg thread (faster, but may crash under MTP+OA_ASYNC)
+    //
+    // [FIX 2026-09-08] Changed n_tokens > 1 to n_tokens >= 1:
+    //   MTP verify ctx validates one token at a time (n_tokens == 1), so n_tokens > 1
+    //   caused trigger to never fire (loaded=0 always). The batched n_tokens > 1 case is
+    //   handled by the same code path (first token's experts are at ids[0..n_expert_used-1]).
     if (cgc_draft_prefetch_on() &&
-        cparams.ctx_type == LLAMA_CONTEXT_TYPE_DEFAULT && n_tokens > 1 && il == 1) {
+        cparams.ctx_type == LLAMA_CONTEXT_TYPE_DEFAULT && n_tokens >= 1 && il == 1) {
         size_t queued = 0;
         size_t sync_loaded = 0;
         uint64_t sync_usec = 0;
@@ -3640,13 +3681,83 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         }
     }
 
+    // [CGC prev-token prefetch 2026-09-08] TRIGGER phase: at il==1 of verify decode, prefetch
+    // the PREVIOUS token's per-layer expert ids. Adjacent tokens have strong routing correlation
+    // (~70-90% overlap), so this provides high-hit-rate prediction covering ALL layers (unlike
+    // MTP draft which only has the last layer). CGC_PREV_TOKEN_PREFETCH=1 enables.
+    // SYNC mode (CGC_PREV_TOKEN_PREFETCH_SYNC=1): load in this thread (blocks decode, but safe)
+    // ASYNC mode (default): queue for bg prefetch (faster, but may need CGC_NO_PREFETCH removed)
+    if (cgc_prev_token_prefetch &&
+        cparams.ctx_type == LLAMA_CONTEXT_TYPE_DEFAULT && n_tokens >= 1 && il == 1) {
+        size_t queued = 0;
+        size_t sync_loaded = 0;
+        uint64_t sync_usec = 0;
+        const size_t n_layers = cache->prev_token_expert_ids.size();
+        const bool sync_mode = getenv("CGC_PREV_TOKEN_PREFETCH_SYNC") != nullptr &&
+                               getenv("CGC_PREV_TOKEN_PREFETCH_SYNC")[0] == '1';
+        size_t valid_layers = 0;
+        size_t total_cold = 0;
+        size_t total_resident = 0;
+        for (size_t layer = 0; layer < n_layers; ++layer) {
+            if (!cache->prev_token_valid[layer]) continue;
+            valid_layers++;
+            const std::vector<uint32_t> &pred = cache->prev_token_expert_ids[layer];
+            const int32_t *st = cache->slot_table.data() + layer * cache->n_expert;
+            size_t layer_queued = 0;
+            size_t layer_cold = 0;
+            for (uint32_t e : pred) {
+                if (e >= cache->n_expert) continue;
+                if (st[e] >= 0) { total_resident++; continue; }  // already resident
+                layer_cold++;
+                total_cold++;
+                if (sync_mode) {
+                    // SYNC: load directly in this thread (blocks decode, but safe)
+                    const auto t0 = std::chrono::high_resolution_clock::now();
+                    int32_t slot = llama_expert_cache_ensure_slot(cache, (uint32_t) layer, e, /*count=*/false);
+                    const auto t1 = std::chrono::high_resolution_clock::now();
+                    sync_usec += (uint64_t) std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+                    if (slot >= 0) {
+                        ++queued;
+                        ++sync_loaded;
+                        ++layer_queued;
+                    }
+                } else {
+                    // ASYNC: queue for bg prefetch (non-blocking)
+                    int32_t slot = llama_expert_cache_prefetch_slot(cache, (uint32_t) layer, e);
+                    if (slot >= 0) {
+                        ++queued;
+                        ++layer_queued;
+                    }
+                }
+            }
+            if (layer_cold > layer_queued) {
+                const size_t skipped = layer_cold - layer_queued;
+                cache->n_prefetch_dropped += skipped;
+                cache->drop_stats.one_shot_consumed += skipped;
+            }
+        }
+        cache->n_prev_token_prefetch_queued += queued;
+        if (sync_mode) {
+            fprintf(stderr, "CGC-PREV-PF: trigger SYNC loaded=%zu/%zu cold (valid_layers=%zu/%zu, resident=%zu, total_queued=%zu, sync_usec=%llu)\n",
+                    sync_loaded, total_cold, valid_layers, n_layers, total_resident,
+                    (unsigned long long) cache->n_prev_token_prefetch_queued,
+                    (unsigned long long) sync_usec);
+        } else {
+            fprintf(stderr, "CGC-PREV-PF: trigger ASYNC queued=%zu/%zu cold (valid_layers=%zu/%zu, resident=%zu, total_queued=%zu)\n",
+                    queued, total_cold, valid_layers, n_layers, total_resident,
+                    (unsigned long long) cache->n_prev_token_prefetch_queued);
+        }
+    }
+
     // [CGC MTP Draft Prefetch 2026-09-07] HIT-RATE measurement: during trunk verify decode,
     // compare this layer's ACTUAL selected experts (uni) against the draft-predicted experts
     // (draft_prefetch_ids[il]) to measure prediction accuracy. This tells us how much of the
     // prefetch is wasted (miss) vs useful (hit). Draft_accept ~92-98% should translate to
     // similar hit rates here.
+    //
+    // [FIX 2026-09-08] Changed n_tokens > 1 to n_tokens >= 1 (same reason as TRIGGER phase).
     if (cgc_draft_prefetch_on() &&
-        cparams.ctx_type == LLAMA_CONTEXT_TYPE_DEFAULT && n_tokens > 1 &&
+        cparams.ctx_type == LLAMA_CONTEXT_TYPE_DEFAULT && n_tokens >= 1 &&
         il >= 0 && (size_t) il < cache->draft_prefetch_ids.size() &&
         cache->draft_prefetch_valid[il]) {
         const std::vector<uint32_t> &pred = cache->draft_prefetch_ids[il];
