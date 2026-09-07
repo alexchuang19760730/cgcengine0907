@@ -19,7 +19,6 @@ replay_server_profile.py — 應用層 replay benchmark + 質量/速度/內存�
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -51,14 +50,184 @@ def http_json(url, payload, timeout):
         return json.loads(resp.read().decode("utf-8"))
 
 
+def http_get_json(url, timeout):
+    """HTTP GET, return parsed JSON. Used for /cgc_stats, /health, /metrics."""
+    req = urlrequest.Request(url, method="GET")
+    with urlrequest.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def get_cgc_stats(base_url, timeout=10):
+    """[CGC Three-Factor Measurement 2026-09-07] Get expert cache stats from /cgc_stats endpoint.
+
+    Directly measures the three factors that cause quality degradation:
+      Factor 1 (count-cold): fraction of selected experts that are non-resident
+      Factor 2 (ZERO-slot pollution): fraction of steps that use the ZERO slot
+      Factor 3 (memory pressure): resident memory usage vs pool capacity
+    Plus auxiliary metrics: cache hit rate, prefetch stats, load latency, EMA feeds, draft prefetch.
+
+    Returns None if the endpoint is not available (e.g. expert cache not enabled).
+    """
+    try:
+        url = base_url.rstrip("/") + "/cgc_stats"
+        return http_get_json(url, timeout)
+    except Exception as e:
+        return {"error": str(e), "available": False}
+
+
+def compute_cgc_stats_delta(before, after):
+    """[CGC Three-Factor Measurement] Compute the delta (this request's contribution) between two stats snapshots.
+
+    For cumulative counters (n_fast_calls, n_fast_cold, etc.), compute the difference.
+    For rates (cold_rate_all_pct, etc.), use the 'after' value directly (they're already rates).
+    For memory (resident_mib), use the 'after' value directly.
+    """
+    if before is None or after is None:
+        return {"available": False}
+    if "error" in before or "error" in after:
+        return {"available": False, "error": before.get("error") or after.get("error")}
+
+    delta = {"available": True}
+
+    # Factor 1: count-cold (rates are already percentages, use 'after' value)
+    if "factor1_count_cold" in after:
+        f1_after = after["factor1_count_cold"]
+        delta["factor1_count_cold"] = {
+            "cold_rate_all_pct": f1_after.get("cold_rate_all_pct"),
+            "cold_rate_verify_pct": f1_after.get("cold_rate_verify_pct"),
+            "cold_rate_draft_pct": f1_after.get("cold_rate_draft_pct"),
+        }
+        # Compute delta for cumulative counters
+        if "factor1_count_cold" in before:
+            f1_before = before["factor1_count_cold"]
+            for key in ["n_fast_calls", "n_fast_union", "n_fast_cold",
+                        "n_fast_draft_calls", "n_fast_draft_union", "n_fast_draft_cold"]:
+                if key in f1_after and key in f1_before:
+                    delta["factor1_count_cold"][key + "_delta"] = f1_after[key] - f1_before[key]
+
+    # Factor 2: ZERO-slot pollution
+    if "factor2_zero_slot" in after:
+        f2_after = after["factor2_zero_slot"]
+        delta["factor2_zero_slot"] = {
+            "zero_slot_enabled": f2_after.get("zero_slot_enabled"),
+            "zero_slot_usage_rate_pct": f2_after.get("zero_slot_usage_rate_pct"),
+        }
+
+    # Factor 3: memory pressure
+    if "factor3_memory_pressure" in after:
+        f3_after = after["factor3_memory_pressure"]
+        delta["factor3_memory_pressure"] = {
+            "resident_mib": f3_after.get("resident_mib"),
+            "n_layers": f3_after.get("n_layers"),
+            "n_expert_per_layer": f3_after.get("n_expert_per_layer"),
+            "total_slots": f3_after.get("total_slots"),
+            "slot_utilization_pct": f3_after.get("slot_utilization_pct"),
+            "pool_active": f3_after.get("pool_active"),
+        }
+
+    # Auxiliary metrics
+    if "auxiliary" in after:
+        aux_after = after["auxiliary"]
+        delta["auxiliary"] = {
+            "cache_hit_rate_pct": aux_after.get("cache_hit_rate_pct"),
+            "prefetch_drop_rate_pct": aux_after.get("prefetch_drop_rate_pct"),
+            "spac_enabled": aux_after.get("spac_enabled"),
+            "draft_prefetch_enabled": aux_after.get("draft_prefetch_enabled"),
+            "draft_prefetch_hit_rate_pct": aux_after.get("draft_prefetch_hit_rate_pct"),
+        }
+        # Compute delta for cumulative counters
+        if "auxiliary" in before:
+            aux_before = before["auxiliary"]
+            for key in ["n_requests", "n_hits", "n_misses", "n_prefetch_queued",
+                        "n_prefetch_dropped", "n_reads", "spac_feeds",
+                        "draft_prefetch_queued", "draft_prefetch_hit", "draft_prefetch_miss"]:
+                if key in aux_after and key in aux_before:
+                    delta["auxiliary"][key + "_delta"] = aux_after[key] - aux_before[key]
+
+    return delta
+
+
+def parse_prefetch_drop_breakdown_from_log(log_file_path):
+    """[CGC Prefetch Drop Audit 2026-09-08] Parse the prefetch drop breakdown from server log.
+
+    The expert cache destructor outputs a line like:
+      llama_expert_cache: prefetch drop breakdown (total=N):
+        #1 no_free_slot=X  #2 dbuf_cap_skip=X  #3 drain_cleared=X
+        #4 zero_slot_fallback=X  #5 lru_evicted_predicted=X
+        #6 bg_reassign_race=X  #7 guard_reject=X
+        #8 dbuf2_scratch_invisible=X  #9 one_shot_consumed=X
+        #10 fast_wait_expired=X  #11 trigger_too_late=X  #12 collect_skipped=X
+
+    This function parses that line and returns a dict with the 12 drop point counters.
+    Returns None if the log file doesn't exist or the breakdown line isn't found.
+    """
+    import re
+    import os
+
+    if not log_file_path or not os.path.exists(log_file_path):
+        return None
+
+    try:
+        with open(log_file_path, 'r', errors='replace') as f:
+            content = f.read()
+
+        # Find the drop breakdown line
+        pattern = r'llama_expert_cache: prefetch drop breakdown \(total=(\d+)\):\s*(.*)'
+        match = re.search(pattern, content)
+        if not match:
+            return None
+
+        total = int(match.group(1))
+        rest = match.group(2)
+
+        # Parse each #N name=value pair
+        result = {"total": total, "available": True}
+        drop_points = [
+            ("#1", "no_free_slot"),
+            ("#2", "dbuf_cap_skip"),
+            ("#3", "drain_cleared"),
+            ("#4", "zero_slot_fallback"),
+            ("#5", "lru_evicted_predicted"),
+            ("#6", "bg_reassign_race"),
+            ("#7", "guard_reject"),
+            ("#8", "dbuf2_scratch_invisible"),
+            ("#9", "one_shot_consumed"),
+            ("#10", "fast_wait_expired"),
+            ("#11", "trigger_too_late"),
+            ("#12", "collect_skipped"),
+        ]
+
+        for num, name in drop_points:
+            # Match "name=value" (allow optional #N prefix)
+            pattern = rf'(?:{num}\s+)?{name}=(\d+)'
+            m = re.search(pattern, rest)
+            if m:
+                result[name] = int(m.group(1))
+            else:
+                result[name] = 0
+
+        # Compute percentages
+        if total > 0:
+            for num, name in drop_points:
+                result[name + "_pct"] = round(100.0 * result[name] / total, 2)
+        else:
+            for num, name in drop_points:
+                result[name + "_pct"] = 0.0
+
+        return result
+
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+
 # ---------------------------------------------------------------------------
 # Payload
 # ---------------------------------------------------------------------------
 
 def build_payload(profile, model, max_tokens, seed=0):
-    """固定 seed (預設 0) + temperature 0.4 (與 server MTP 配置一致),
-    確保 draft acceptance 高 (~95%+)。seed 可消掉殘餘採樣噪聲。
-    top_p=0.8 與 server 配置一致。
+    """固定 seed (預設 0) + temperature 0 (greedy), 讓採樣確定性。
+    seed 對 greedy 無作用, 但若 server 端有非 greedy 路徑 (如 MTP draft),
+    固定 seed 可消掉殘餘採樣噪聲。
     """
     if profile == "qa-zh":
         return {
@@ -66,8 +235,7 @@ def build_payload(profile, model, max_tokens, seed=0):
             "messages": [
                 {"role": "user", "content": "巴黎是哪個國家的首都？請只用一句中文回答。"},
             ],
-            "temperature": 0.4,
-            "top_p": 0.8,
+            "temperature": 0,
             "seed": seed,
             "max_tokens": max_tokens or 24,
             "chat_template_kwargs": {
@@ -86,8 +254,7 @@ def build_payload(profile, model, max_tokens, seed=0):
                 },
                 {"role": "user", "content": "為什麼巴黎會成為法國的政治與文化中心？請用一段中文說明。"},
             ],
-            "temperature": 0.4,
-            "top_p": 0.8,
+            "temperature": 0,
             "seed": seed,
             "max_tokens": max_tokens or 220,
             # CGC FIX 2026-09-06: 舊 prefill 以 ",並且匯聚了" 收尾,
@@ -108,8 +275,7 @@ def build_payload(profile, model, max_tokens, seed=0):
             "messages": [
                 {"role": "user", "content": "寫一個 Python function，計算費氏數列第 n 項。"},
             ],
-            "temperature": 0.4,
-            "top_p": 0.8,
+            "temperature": 0,
             "seed": seed,
             "max_tokens": max_tokens or 512,
             # CGC FIX 2026-09-06: 裸 ```python 前綴在 IQ3_XXS 是自強化吸引子,
@@ -118,10 +284,7 @@ def build_payload(profile, model, max_tokens, seed=0):
             "chat_template_kwargs": {
                 "assistant_prefill": "```python\ndef fibonacci(n):\n    ",
             },
-            # CGC FIX 2026-09-07: 移除 "```" stop 條件——model 生成完整函數後輸出 ``` 結束代碼塊,
-            # 會被 stop 截斷導致只生成 ~50 tokens, 無法準確測量 512 tokens 長生成的 decode 速度與 draft_accept。
-            # 06:52 生產基線 (26.25 t/s, 98.2% draft_accept) 即為不帶 "```" stop 的 512 tokens 長生成。
-            "stop": ["<|end|>", "<|output|>", "<|user|>"] + CHATML_STOPS,
+            "stop": ["```", "<|end|>", "<|output|>", "<|user|>"] + CHATML_STOPS,
         }
 
     raise ValueError(f"unsupported profile: {profile}")
@@ -202,6 +365,363 @@ def summarize_rss(samples):
 
 
 # ---------------------------------------------------------------------------
+# 機器狀態分檔量化 (Machine State Tiering 2026-09-07)
+# ---------------------------------------------------------------------------
+
+def _run_cmd(cmd, timeout=5):
+    """執行 shell 命令,回傳 stdout 字串;失敗回空字串。"""
+    try:
+        out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        return out.stdout.strip()
+    except Exception:
+        return ""
+
+
+def get_memory_state():
+    """[Machine State Tiering] 收集完整記憶體狀態並分檔。
+    
+    Returns:
+        dict with:
+          - total_gb, free_gb, active_gb, inactive_gb, speculative_gb
+          - compressed_gb, wired_gb, used_pct, free_pct
+          - tier: 'A (寬鬆)' / 'B (正常)' / 'C (緊張)' / 'D (危險)'
+          - swap_total_mb, swap_used_mb, swap_free_mb
+    """
+    result = {
+        "total_gb": None, "free_gb": None, "active_gb": None,
+        "inactive_gb": None, "speculative_gb": None,
+        "compressed_gb": None, "wired_gb": None,
+        "used_pct": None, "free_pct": None,
+        "tier": None,
+        "swap_total_mb": None, "swap_used_mb": None, "swap_free_mb": None,
+    }
+    
+    # macOS vm_stat
+    vm_out = _run_cmd("vm_stat")
+    if vm_out:
+        page_size = 16384  # macOS default page size
+        stats = {}
+        for line in vm_out.splitlines()[1:]:
+            parts = line.strip().rstrip('.').split(':')
+            if len(parts) == 2:
+                try:
+                    stats[parts[0].strip()] = int(parts[1].strip())
+                except ValueError:
+                    pass
+        
+        total = sum(stats.values())
+        free = stats.get('Pages free', 0)
+        active = stats.get('Pages active', 0)
+        inactive = stats.get('Pages inactive', 0)
+        speculative = stats.get('Pages speculative', 0)
+        compressed = stats.get('Pages occupied by compressor', 0)
+        wired = stats.get('Pages wired down', 0)
+        
+        if total > 0:
+            free_pct = free / total * 100
+            used_pct = (total - free - speculative) / total * 100
+            
+            result.update({
+                "total_gb": round(total * page_size / 1024**3, 1),
+                "free_gb": round(free * page_size / 1024**3, 2),
+                "active_gb": round(active * page_size / 1024**3, 2),
+                "inactive_gb": round(inactive * page_size / 1024**3, 2),
+                "speculative_gb": round(speculative * page_size / 1024**3, 2),
+                "compressed_gb": round(compressed * page_size / 1024**3, 2),
+                "wired_gb": round(wired * page_size / 1024**3, 2),
+                "used_pct": round(used_pct, 1),
+                "free_pct": round(free_pct, 1),
+            })
+            
+            # 分檔
+            if free_pct > 30:
+                result["tier"] = "A (寬鬆)"
+            elif free_pct > 20:
+                result["tier"] = "B (正常)"
+            elif free_pct > 10:
+                result["tier"] = "C (緊張)"
+            else:
+                result["tier"] = "D (危險)"
+    
+    # Swap
+    swap_out = _run_cmd("sysctl vm.swapusage")
+    if swap_out and "=" in swap_out:
+        try:
+            # vm.swapusage: total = 2048.00M  used = 722.50M  free = 1325.50M
+            parts = swap_out.split("=")
+            if len(parts) >= 4:
+                result["swap_total_mb"] = float(parts[1].strip().rstrip("M").strip())
+                result["swap_used_mb"] = float(parts[2].strip().rstrip("M").strip())
+                result["swap_free_mb"] = float(parts[3].strip().rstrip("M").strip())
+        except (ValueError, IndexError):
+            pass
+    
+    return result
+
+
+def get_cpu_state():
+    """[Machine State Tiering] 收集 CPU 狀態。
+    
+    Returns:
+        dict with:
+          - user_pct, sys_pct, idle_pct
+          - load_avg_1m, load_avg_5m, load_avg_15m
+          - tier: 'A (正常)' / 'B (輕度負載)' / 'C (重度負載)'
+    """
+    result = {
+        "user_pct": None, "sys_pct": None, "idle_pct": None,
+        "load_avg_1m": None, "load_avg_5m": None, "load_avg_15m": None,
+        "tier": None,
+    }
+    
+    # CPU usage (top -l 1)
+    top_out = _run_cmd("top -l 1 -n 0 | grep 'CPU usage'")
+    if top_out:
+        try:
+            # CPU usage: 12.50% user, 11.18% sys, 76.31% idle
+            parts = top_out.split(":")[-1].split(",")
+            for part in parts:
+                part = part.strip()
+                if "user" in part:
+                    result["user_pct"] = float(part.replace("% user", "").strip())
+                elif "sys" in part:
+                    result["sys_pct"] = float(part.replace("% sys", "").strip())
+                elif "idle" in part:
+                    result["idle_pct"] = float(part.replace("% idle", "").strip())
+        except (ValueError, IndexError):
+            pass
+    
+    # Load average
+    load_out = _run_cmd("sysctl vm.loadavg")
+    if load_out and "{" in load_out:
+        try:
+            # vm.loadavg: { 3.44 4.06 3.78 }
+            vals = load_out.split("{")[1].split("}")[0].strip().split()
+            if len(vals) >= 3:
+                result["load_avg_1m"] = float(vals[0])
+                result["load_avg_5m"] = float(vals[1])
+                result["load_avg_15m"] = float(vals[2])
+        except (ValueError, IndexError):
+            pass
+    
+    # 分檔 (based on idle %)
+    if result["idle_pct"] is not None:
+        if result["idle_pct"] > 50:
+            result["tier"] = "A (正常)"
+        elif result["idle_pct"] > 30:
+            result["tier"] = "B (輕度負載)"
+        else:
+            result["tier"] = "C (重度負載)"
+    
+    return result
+
+
+def get_process_interference():
+    """[Machine State Tiering] 偵測其他進程干擾。
+    
+    Returns:
+        dict with:
+          - other_llama_servers: list of PIDs
+          - other_quantization_processes: list of PIDs
+          - heavy_processes: list of (pid, cpu_pct, mem_pct, command)
+          - interference_level: 0 (無) / 1 (輕度) / 2 (嚴重)
+    """
+    result = {
+        "other_llama_servers": [],
+        "other_quantization_processes": [],
+        "heavy_processes": [],
+        "interference_level": 0,
+    }
+    
+    # 找其他 llama-server 進程 (排除自己)
+    ps_out = _run_cmd("ps aux | grep 'llama-server' | grep -v grep")
+    if ps_out:
+        for line in ps_out.splitlines():
+            parts = line.split()
+            if len(parts) >= 11:
+                pid = parts[1]
+                result["other_llama_servers"].append(int(pid))
+    
+    # 找量化進程 (llama-quantize, convert, etc.)
+    quant_out = _run_cmd("ps aux | grep -E 'llama-quantize|convert|quantize' | grep -v grep")
+    if quant_out:
+        for line in quant_out.splitlines():
+            parts = line.split()
+            if len(parts) >= 11:
+                pid = parts[1]
+                result["other_quantization_processes"].append(int(pid))
+    
+    # 找重度進程 (CPU > 50% 或 MEM > 10%)
+    heavy_out = _run_cmd("ps aux | sort -k3 -nr | head -10")
+    if heavy_out:
+        for line in heavy_out.splitlines()[1:]:  # skip header
+            parts = line.split()
+            if len(parts) >= 11:
+                try:
+                    cpu = float(parts[2])
+                    mem = float(parts[3])
+                    pid = int(parts[1])
+                    cmd = " ".join(parts[10:])[:80]
+                    if cpu > 50 or mem > 10:
+                        result["heavy_processes"].append({
+                            "pid": pid, "cpu_pct": cpu, "mem_pct": mem, "command": cmd
+                        })
+                except (ValueError, IndexError):
+                    pass
+    
+    # 干擾等級
+    if len(result["other_llama_servers"]) > 1 or len(result["other_quantization_processes"]) > 0:
+        result["interference_level"] = 2  # 嚴重
+    elif len(result["heavy_processes"]) > 3:
+        result["interference_level"] = 1  # 輕度
+    else:
+        result["interference_level"] = 0  # 無
+    
+    return result
+
+
+def get_metal_gpu_state(log_file=None):
+    """[Machine State Tiering] 收集 Metal/GPU 狀態。
+    
+    Args:
+        log_file: optional path to llama-server log file for OOM warning detection
+    
+    Returns:
+        dict with:
+          - oom_warnings: count of OOM warnings in log
+          - oom_tier: 0 (無) / 1 (加載時) / 2 (decode 時)
+          - gpu_available: whether GPU is accessible
+    """
+    result = {
+        "oom_warnings": 0,
+        "oom_tier": 0,
+        "gpu_available": True,
+    }
+    
+    if log_file and os.path.exists(log_file):
+        try:
+            with open(log_file, "r", errors="ignore") as f:
+                content = f.read()
+                oom_count = content.lower().count("out of memory") + content.lower().count("oom")
+                result["oom_warnings"] = oom_count
+                
+                if oom_count > 0:
+                    # 判斷是加載時還是 decode 時
+                    if "decode" in content.lower() and "out of memory" in content.lower():
+                        result["oom_tier"] = 2  # decode 時
+                    else:
+                        result["oom_tier"] = 1  # 加載時
+        except Exception:
+            pass
+    
+    return result
+
+
+def get_system_state(server_pid=None, log_file=None):
+    """[Machine State Tiering] 收集完整機器狀態並分檔。
+    
+    這是 replay gate 的核心指標之一,用於區分「代碼問題」和「機器狀態問題」。
+    每次測試前後都會調用,記錄在輸出 JSON 中。
+    
+    Args:
+        server_pid: llama-server PID for process-specific metrics
+        log_file: optional path to llama-server log for OOM detection
+    
+    Returns:
+        dict with:
+          - timestamp: ISO format timestamp
+          - memory: get_memory_state() result
+          - cpu: get_cpu_state() result
+          - process_interference: get_process_interference() result
+          - metal_gpu: get_metal_gpu_state() result
+          - server_process: {pid, cpu_pct, mem_pct, rss_mb} if server_pid provided
+          - overall_tier: 綜合分檔 'A' / 'B' / 'C' / 'D'
+          - expected_decode_tps: 基於機器狀態的預期 decode 速度範圍
+    """
+    import datetime
+    
+    result = {
+        "timestamp": datetime.datetime.now().isoformat(),
+        "memory": get_memory_state(),
+        "cpu": get_cpu_state(),
+        "process_interference": get_process_interference(),
+        "metal_gpu": get_metal_gpu_state(log_file),
+        "server_process": None,
+        "overall_tier": None,
+        "expected_decode_tps": None,
+    }
+    
+    # Server process specific metrics
+    if server_pid and server_pid > 0:
+        try:
+            ps_out = _run_cmd(f"ps -p {server_pid} -o %cpu,%mem,rss= 2>/dev/null")
+            if ps_out:
+                parts = ps_out.split()
+                if len(parts) >= 3:
+                    result["server_process"] = {
+                        "pid": server_pid,
+                        "cpu_pct": float(parts[0]),
+                        "mem_pct": float(parts[1]),
+                        "rss_mb": round(int(parts[2]) / 1024, 1),
+                    }
+        except (ValueError, IndexError):
+            pass
+    
+    # 綜合分檔 (取最差的那檔)
+    tiers = []
+    mem_tier = result["memory"].get("tier")
+    if mem_tier:
+        tiers.append(mem_tier[0])  # 'A', 'B', 'C', 'D'
+    cpu_tier = result["cpu"].get("tier")
+    if cpu_tier:
+        tiers.append(cpu_tier[0])
+    if result["process_interference"]["interference_level"] == 2:
+        tiers.append("D")
+    elif result["process_interference"]["interference_level"] == 1:
+        tiers.append("C")
+    if result["metal_gpu"]["oom_tier"] == 2:
+        tiers.append("D")
+    elif result["metal_gpu"]["oom_tier"] == 1:
+        tiers.append("C")
+    
+    if tiers:
+        result["overall_tier"] = max(tiers)  # 'D' is worst, 'A' is best
+    
+    # 基於機器狀態的預期 decode 速度範圍
+    overall = result["overall_tier"]
+    if overall == "A":
+        result["expected_decode_tps"] = "25+ t/s"
+    elif overall == "B":
+        result["expected_decode_tps"] = "22-25 t/s"
+    elif overall == "C":
+        result["expected_decode_tps"] = "18-22 t/s"
+    elif overall == "D":
+        result["expected_decode_tps"] = "< 18 t/s, 可能 OOM"
+    else:
+        result["expected_decode_tps"] = "unknown"
+    
+    return result
+
+
+def system_state_to_summary(state):
+    """[Machine State Tiering] 將完整機器狀態壓縮成一行摘要,方便日誌輸出。"""
+    if not state:
+        return "system_state: unknown"
+    
+    mem = state.get("memory", {})
+    cpu = state.get("cpu", {})
+    overall = state.get("overall_tier", "?")
+    expected = state.get("expected_decode_tps", "?")
+    
+    return (
+        f"tier={overall} | "
+        f"mem_free={mem.get('free_gb', '?')}GB ({mem.get('free_pct', '?')}%) | "
+        f"cpu_idle={cpu.get('idle_pct', '?')}% | "
+        f"expected={expected}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 質量評分 (啟發式, 從 --reference 讀 rules)
 # ---------------------------------------------------------------------------
 
@@ -245,81 +765,91 @@ def detect_phrase_loop(text, min_unit=6, max_unit=300, min_repeat=3):
     return _find(collapsed)
 
 
-def detect_numeric_sequence_loop(text, min_lines=12, min_unit=6):
-    """偵測單調遞增/遞減的數字迴圈 (如 if n == 0: if n == 1: ... if n == 22: 重複)。
+def evaluate_quality(profile, content, finish_reason, reference_rules, cgc_stats=None):
+    """根據 reference rules + CGC three-factor measurement 給 0.0-1.0 score。
 
-    與 detect_phrase_loop 的『相同片語』不同, 此型每行數字都不同 (0,1,2,...),
-    但結構模板完全相同, 且連續行數爆量 (>= min_lines) 即為退化迴圈。
-    只在模板長度 >= min_unit 且數字前綴相同 (如 'if n == ') 時觸發, 降低誤判。
-    回傳 (template_prefix, first_num, last_num, line_count) 或 None。
+    [CGC Three-Factor Measurement 2026-09-07] Directly measures the three factors that cause
+    quality degradation, instead of relying on output heuristics alone:
+      Factor 1 (count-cold): fraction of selected experts that are non-resident (>10% = warning, >15% = fail)
+      Factor 2 (ZERO-slot pollution): fraction of steps that use the ZERO slot (>5% = warning, >10% = fail)
+      Factor 3 (memory pressure): resident memory vs pool capacity (>90% utilization = warning)
+
+    These factors are measured directly from the /cgc_stats endpoint, not inferred from output.
+    They are combined with the traditional reference-rule checks (length, keywords, loop detection).
+
+    回傳 (score, checks_list)。
     """
-    if not text:
-        return None
-    lines = text.split('\n')
-    # 找候選行: 同一模板 (移除數字後相同) 連續出現 >= min_lines 次
-    i = 0
-    n = len(lines)
-    while i < n:
-        line = lines[i]
-        m = re.match(r'^(.*?)([0-9]+)([^0-9]*)$', line)
-        if m and len(m.group(1)) >= min_unit:
-            pre, dig, suf = m.group(1), m.group(2), m.group(3)
-            j = i + 1
-            nums = [int(dig)]
-            while j < n:
-                m2 = re.match(r'^(.*?)([0-9]+)([^0-9]*)$', lines[j])
-                if not m2 or m2.group(1) != pre or m2.group(3) != suf:
-                    break
-                nums.append(int(m2.group(2)))
-                j += 1
-            if j - i >= min_lines:
-                # 退化迴圈兩種型: (a) 單調遞增/遞減 (0,1,2,... 數到底);
-                # (b) 循環重複 (0..13 後又 4..12 — 有值重複出現 = 模型重頭再來)。
-                monotonic = all(nums[k] <= nums[k+1] for k in range(len(nums)-1)) or \
-                            all(nums[k] >= nums[k+1] for k in range(len(nums)-1))
-                cycling = len(set(nums)) < len(nums)
-                if monotonic or cycling:
-                    return (pre.strip(), nums[0], nums[-1], j - i)
-            i = j
-        else:
-            i += 1
-    return None
-
-
-def evaluate_quality(profile, content, finish_reason, reference_rules):
-    """根據 reference rules 給 0.0-1.0 score。回傳 (score, checks_list)。"""
-    # [Phase-0 2026-09-07] loop 偵測永遠先跑 (不依賴 reference rules):
-    # 舊邏輯在無 reference 時直接 return 1.0, 繞過所有 check, 造成迴圈輸出
-    # 拿 1.0 假高分 (今日 renorm 3 profile 迴圈全部 1.0 即因此)。
-    phrase_loop = detect_phrase_loop(content) if content else None
-    numeric_loop = detect_numeric_sequence_loop(content) if content else None
-    loop_run_ok = True
-    loop_max_run = 8
-    if content:
-        max_run = 1
-        cur_run = 1
-        for i in range(1, len(content)):
-            if content[i] == content[i-1]:
-                cur_run += 1
-                if cur_run > max_run:
-                    max_run = cur_run
-            else:
-                cur_run = 1
-        loop_run_ok = max_run <= loop_max_run
-
     rules = reference_rules.get(profile, {}) if reference_rules else {}
+    checks = []
+
+    # [CGC Three-Factor Measurement] Factor checks first (directly measured, most reliable)
+    three_factor_score = 1.0
+    if cgc_stats and cgc_stats.get("available"):
+        # Factor 1: count-cold rate
+        f1 = cgc_stats.get("factor1_count_cold", {})
+        cold_rate = f1.get("cold_rate_all_pct")
+        if cold_rate is not None:
+            if cold_rate > 15:
+                checks.append({"check": "factor1_count_cold", "rate_pct": cold_rate,
+                              "threshold": 15, "result": "fail",
+                              "note": "count-cold > 15% = severe quality degradation risk"})
+                three_factor_score = min(three_factor_score, 0.3)
+            elif cold_rate > 10:
+                checks.append({"check": "factor1_count_cold", "rate_pct": cold_rate,
+                              "threshold": 10, "result": "warning",
+                              "note": "count-cold > 10% = moderate quality degradation risk"})
+                three_factor_score = min(three_factor_score, 0.7)
+            else:
+                checks.append({"check": "factor1_count_cold", "rate_pct": cold_rate,
+                              "result": "pass", "note": "count-cold < 10% = acceptable"})
+
+        # Factor 2: ZERO-slot pollution
+        f2 = cgc_stats.get("factor2_zero_slot", {})
+        zero_enabled = f2.get("zero_slot_enabled", False)
+        zero_rate = f2.get("zero_slot_usage_rate_pct")
+        if zero_enabled and zero_rate is not None:
+            if zero_rate > 10:
+                checks.append({"check": "factor2_zero_slot", "rate_pct": zero_rate,
+                              "threshold": 10, "result": "fail",
+                              "note": "ZERO-slot usage > 10% = severe quality degradation (logits zeroed)"})
+                three_factor_score = min(three_factor_score, 0.3)
+            elif zero_rate > 5:
+                checks.append({"check": "factor2_zero_slot", "rate_pct": zero_rate,
+                              "threshold": 5, "result": "warning",
+                              "note": "ZERO-slot usage > 5% = moderate quality degradation"})
+                three_factor_score = min(three_factor_score, 0.7)
+            else:
+                checks.append({"check": "factor2_zero_slot", "rate_pct": zero_rate,
+                              "result": "pass", "note": "ZERO-slot usage < 5% = acceptable"})
+        elif zero_enabled:
+            checks.append({"check": "factor2_zero_slot", "result": "skip",
+                          "note": "ZERO-slot enabled but rate not available"})
+
+        # Factor 3: memory pressure
+        f3 = cgc_stats.get("factor3_memory_pressure", {})
+        slot_util = f3.get("slot_utilization_pct")
+        resident_mib = f3.get("resident_mib")
+        if slot_util is not None:
+            if slot_util > 90:
+                checks.append({"check": "factor3_memory_pressure", "slot_util_pct": slot_util,
+                              "resident_mib": resident_mib, "threshold": 90, "result": "warning",
+                              "note": "slot utilization > 90% = memory pressure, fills may stall"})
+                three_factor_score = min(three_factor_score, 0.8)
+            else:
+                checks.append({"check": "factor3_memory_pressure", "slot_util_pct": slot_util,
+                              "resident_mib": resident_mib, "result": "pass",
+                              "note": "slot utilization < 90% = acceptable"})
+    else:
+        checks.append({"check": "three_factors", "result": "skip",
+                      "note": "CGC stats not available (expert cache not enabled or endpoint not reachable)"})
+
+    # Traditional reference-rule checks
     if not rules:
-        # 無 reference rules: 只以 loop 偵測判定 (迴圈 <= 0.3, 其餘 1.0)
-        checks = []
-        if phrase_loop is not None:
-            checks.append({"check": "loop_phrase", "result": "fail", "unit": phrase_loop[0], "start": phrase_loop[1], "count": phrase_loop[2], "note": "no reference rules; loop detection only"})
-        if numeric_loop is not None:
-            checks.append({"check": "loop_numeric", "result": "fail", "template": numeric_loop[0], "count": numeric_loop[3], "note": "no reference rules; loop detection only"})
-        if not loop_run_ok:
-            checks.append({"check": "loop_run", "result": "fail", "max_run": max_run, "limit": loop_max_run, "note": "no reference rules; loop detection only"})
-        if not checks:
-            return 1.0, [{"check": "no_reference", "result": "skip", "note": "no reference rules provided; no loop detected"}]
-        return 0.3, checks
+        # No reference rules: use three-factor score as the primary quality metric
+        final_score = three_factor_score
+        checks.append({"check": "no_reference", "result": "skip",
+                      "note": "no reference rules provided, using three-factor measurement"})
+        return round(final_score, 3), checks
 
     checks = []
     score = 0.0
@@ -399,6 +929,7 @@ def evaluate_quality(profile, content, finish_reason, reference_rules):
     # 7) phrase-level loop detection: 相同 6+ 字元片語連續重複 >= 3 次 = 語意迴圈
     #    舊 loop_run 只抓連續相同字元, 抓不到片語級重複 (如長句迴圈輸出),
     #    造成 loop 內容仍拿 1.0 高分。此 check 權重最高 + 硬閘門壓分。
+    phrase_loop = detect_phrase_loop(content) if content else None
     if phrase_loop is not None:
         unit, start, cnt = phrase_loop
     else:
@@ -417,31 +948,30 @@ def evaluate_quality(profile, content, finish_reason, reference_rules):
     score += (1.0 if phrase_loop is None else 0.0) * w
     weight_sum += w
 
-    # 7b) numeric-sequence loop detection (單調遞增/遞減數字模板重複 >= 12 行)
-    if numeric_loop is not None:
-        npre, nfirst, nlast, ncnt = numeric_loop
-    else:
-        npre = nfirst = nlast = ncnt = None
-    checks.append({
-        "check": "loop_numeric",
-        "result": "pass" if numeric_loop is None else "fail",
-        "min_lines": 12,
-        "template": npre,
-        "first": nfirst,
-        "last": nlast,
-        "count": ncnt,
-    })
-    w = 0.3
-    score += (1.0 if numeric_loop is None else 0.0) * w
-    weight_sum += w
-
     if weight_sum == 0:
-        return 1.0, checks
-    final = score / weight_sum
-    # 硬閘門: 偵測到語意迴圈 (片語重複 / 數字序列 或 連續字元爆量) 時壓到 0.3 以下,
+        # No reference rules: use three-factor score as the primary quality metric
+        final = three_factor_score
+    else:
+        final = score / weight_sum
+        # [CGC Three-Factor Measurement] Combine reference-rule score with directly-measured factors.
+        # Three-factor score acts as a hard gate: if factors indicate severe quality degradation,
+        # the final score cannot exceed the three-factor score (no matter how good the output looks).
+        final = min(final, three_factor_score)
+
+    # 硬閘門: 偵測到語意迴圈 (片語重複 或 連續字元爆量) 時壓到 0.3 以下,
     # 不讓迴圈輸出靠 required_any 命中關鍵字而拿到 0.5+ 的假高分。
-    if phrase_loop is not None or numeric_loop is not None or not loop_ok:
+    if phrase_loop is not None or not loop_ok:
         final = min(final, 0.3)
+
+    # Add three-factor summary to checks
+    checks.append({
+        "check": "three_factor_combined_score",
+        "three_factor_score": round(three_factor_score, 3),
+        "reference_rule_score": round(score / weight_sum, 3) if weight_sum > 0 else None,
+        "final_score": round(final, 3),
+        "result": "pass" if final >= 0.9 else ("warning" if final >= 0.7 else "fail"),
+    })
+
     return round(final, 3), checks
 
 
@@ -457,6 +987,14 @@ def run_profile(args, profile, reference_rules):
 
     url = args.base_url.rstrip("/") + "/chat/completions"
     server_pid = args.server_pid
+    log_file = getattr(args, "log_file", None)
+
+    # [Machine State Tiering] Get system state BEFORE the request (baseline)
+    system_state_before = get_system_state(server_pid=server_pid, log_file=log_file)
+    print(f"  [system] before: {system_state_to_summary(system_state_before)}")
+
+    # [CGC Three-Factor Measurement] Get stats BEFORE the request (baseline)
+    cgc_stats_before = get_cgc_stats(args.base_url, timeout=5)
 
     # 跑 + 同時採樣 RSS
     def _do_request():
@@ -467,6 +1005,16 @@ def run_profile(args, profile, reference_rules):
     else:
         resp = _do_request()
         rss_samples = []
+
+    # [CGC Three-Factor Measurement] Get stats AFTER the request
+    cgc_stats_after = get_cgc_stats(args.base_url, timeout=5)
+
+    # [Machine State Tiering] Get system state AFTER the request
+    system_state_after = get_system_state(server_pid=server_pid, log_file=log_file)
+    print(f"  [system] after:  {system_state_to_summary(system_state_after)}")
+
+    # Compute delta (this request's contribution)
+    cgc_stats_delta = compute_cgc_stats_delta(cgc_stats_before, cgc_stats_after)
 
     content = resp["choices"][0]["message"]["content"]
     finish_reason = resp["choices"][0]["finish_reason"]
@@ -489,7 +1037,25 @@ def run_profile(args, profile, reference_rules):
             degenerate_decode = True
             decode_tps = None
 
-    quality_score, quality_checks = evaluate_quality(profile, content, finish_reason, reference_rules)
+    quality_score, quality_checks = evaluate_quality(
+        profile, content, finish_reason, reference_rules, cgc_stats_delta)
+
+    # [Machine State Tiering] 判斷速度是否符合機器狀態預期
+    speed_vs_expected = "unknown"
+    if decode_tps and system_state_after.get("overall_tier"):
+        tier = system_state_after["overall_tier"]
+        if tier == "A" and decode_tps >= 25:
+            speed_vs_expected = "meets_or_exceeds"
+        elif tier == "B" and 22 <= decode_tps <= 25:
+            speed_vs_expected = "meets"
+        elif tier == "C" and 18 <= decode_tps <= 22:
+            speed_vs_expected = "meets"
+        elif tier == "D" and decode_tps < 18:
+            speed_vs_expected = "meets (expected slow)"
+        elif tier in ("A", "B") and decode_tps < 20:
+            speed_vs_expected = "below_expected (possible regression)"
+        else:
+            speed_vs_expected = "within_range"
 
     return {
         "profile": profile,
@@ -504,6 +1070,7 @@ def run_profile(args, profile, reference_rules):
             "decode_tps_degenerate": degenerate_decode,
             "completion_tokens": predicted_n,
             "draft_accept_pct": round(accept_pct, 2) if accept_pct is not None else None,
+            "speed_vs_expected": speed_vs_expected,
         },
         "memory": summarize_rss(rss_samples),
         "timings": {
@@ -512,6 +1079,16 @@ def run_profile(args, profile, reference_rules):
             "predicted_n": predicted_n,
             "draft_n": draft_n,
             "draft_n_accepted": draft_n_accepted,
+        },
+        # [CGC Three-Factor Measurement] directly measured factors that cause quality degradation
+        "three_factors": cgc_stats_delta,
+        # [Machine State Tiering] complete system state before/after for regression attribution
+        "system_state": {
+            "before": system_state_before,
+            "after": system_state_after,
+            "overall_tier": system_state_after.get("overall_tier"),
+            "expected_decode_tps": system_state_after.get("expected_decode_tps"),
+            "speed_vs_expected": speed_vs_expected,
         },
         # raw content 放最後,方便人工 debug
         "content": content,
@@ -612,11 +1189,17 @@ def run_profile_robust(args, profile, reference_rules):
 # ---------------------------------------------------------------------------
 
 def aggregate(profiles_dict):
-    """從 3 個 profile 算 speed / memory 的平均 + 中位數 + min/max,供 precommit hook 看趨勢。"""
+    """從 3 個 profile 算 speed / memory / system_state 的平均 + 中位數 + min/max,供 precommit hook 看趨勢。"""
     speed_decode = [p["speed"]["decode_tps"] for p in profiles_dict.values() if p["speed"]["decode_tps"] is not None]
     speed_prefill = [p["speed"]["prefill_tps"] for p in profiles_dict.values() if p["speed"]["prefill_tps"] is not None]
     quality_scores = [p["quality"]["score"] for p in profiles_dict.values()]
     mem_peaks = [p["memory"]["peak_mb"] for p in profiles_dict.values() if p["memory"]["peak_mb"] is not None]
+    
+    # [Machine State Tiering] 聚合機器狀態
+    system_tiers = [p.get("system_state", {}).get("overall_tier") for p in profiles_dict.values() if p.get("system_state", {}).get("overall_tier")]
+    memory_free_pcts = [p.get("system_state", {}).get("after", {}).get("memory", {}).get("free_pct") for p in profiles_dict.values() if p.get("system_state", {}).get("after", {}).get("memory", {}).get("free_pct") is not None]
+    cpu_idle_pcts = [p.get("system_state", {}).get("after", {}).get("cpu", {}).get("idle_pct") for p in profiles_dict.values() if p.get("system_state", {}).get("after", {}).get("cpu", {}).get("idle_pct") is not None]
+    speed_vs_expected = [p.get("speed", {}).get("speed_vs_expected") for p in profiles_dict.values() if p.get("speed", {}).get("speed_vs_expected")]
 
     def _stats(vals):
         if not vals:
@@ -630,12 +1213,40 @@ def aggregate(profiles_dict):
             "max": max(s),
             "n": n,
         }
+    
+    def _tier_stats(tiers):
+        """統計機器狀態分檔分佈。"""
+        if not tiers:
+            return {"worst": None, "best": None, "distribution": {}}
+        from collections import Counter
+        dist = dict(Counter(tiers))
+        return {
+            "worst": max(tiers),  # 'D' is worst
+            "best": min(tiers),   # 'A' is best
+            "distribution": dist,
+        }
+    
+    def _categorical_stats(cats):
+        """統計分類變數分佈。"""
+        if not cats:
+            return {"distribution": {}, "most_common": None}
+        from collections import Counter
+        dist = dict(Counter(cats))
+        most_common = max(dist, key=dist.get) if dist else None
+        return {"distribution": dist, "most_common": most_common}
 
     return {
         "decode_tps": _stats(speed_decode),
         "prefill_tps": _stats(speed_prefill),
         "quality_score": _stats(quality_scores),
         "peak_rss_mb": _stats(mem_peaks),
+        # [Machine State Tiering] 機器狀態聚合
+        "system_state": {
+            "tier": _tier_stats(system_tiers),
+            "memory_free_pct": _stats(memory_free_pcts),
+            "cpu_idle_pct": _stats(cpu_idle_pcts),
+            "speed_vs_expected": _categorical_stats(speed_vs_expected),
+        },
     }
 
 
@@ -673,7 +1284,39 @@ def parse_args():
                         help="量測前先送一次 warmup request 暖 expert pool (default off).")
     parser.add_argument("--seed", type=int, default=0,
                         help="固定採樣 seed (default 0), 消除殘餘採樣噪聲.")
+    parser.add_argument("--log-file", default=None,
+                        help="llama-server log file path for Metal OOM detection (default: auto-detect from Backup/cgc_logs/).")
+    parser.add_argument("--db-save", action="store_true",
+                        help="[Database 2026-09-07] 自動保存測試結果到 replay benchmark 數據庫 (data/replay_bench/).")
+    parser.add_argument("--db-verdict", choices=["pass", "fail", "neutral"], default=None,
+                        help="[Database] 測試結論 (pass/fail/neutral), 用於數據庫記錄.")
+    parser.add_argument("--db-version", default=None,
+                        help="[Database] 版本編號 (如 v1.0.0, release-2026-09-07), 用於數據庫記錄.")
+    parser.add_argument("--db-branch", default=None,
+                        help="[Database] git branch 名稱, 用於數據庫記錄 (默認自動檢測).")
     return parser.parse_args()
+
+
+def _auto_detect_log_file():
+    """[Machine State Tiering] 自動檢測最新的 llama-server log 文件。"""
+    import glob
+    # 優先級: 環境變數 > 項目目錄 > /tmp
+    candidates = []
+    
+    # 項目目錄的 log
+    project_logs = os.path.expanduser("~/Documents/flashkv-devserver/Backup/cgc_logs/llama_server_*.log")
+    candidates.extend(glob.glob(project_logs))
+    
+    # /tmp 的 log
+    candidates.extend(glob.glob("/tmp/cgc_*.log"))
+    candidates.extend(glob.glob("/tmp/llama_server_*.log"))
+    
+    if not candidates:
+        return None
+    
+    # 取最新的
+    candidates.sort(key=os.path.getmtime, reverse=True)
+    return candidates[0]
 
 
 def main():
@@ -681,6 +1324,15 @@ def main():
     if not args.profile and not args.all_profiles:
         print("error: must specify --profile or --all-profiles", file=sys.stderr)
         return 2
+
+    # [Machine State Tiering] 自動檢測 log 文件
+    if not args.log_file:
+        args.log_file = _auto_detect_log_file()
+        if args.log_file:
+            print(f"[system] auto-detected log file: {args.log_file}")
+    
+    # 把 log_file 傳給 run_profile (通過 args 對象)
+    # run_profile 會用 getattr(args, "log_file", None) 獲取
 
     reference_rules = {}
     if args.reference:
@@ -697,6 +1349,31 @@ def main():
         r = run_profile_robust(args, p, reference_rules)
         results[p] = r
 
+    # [CGC Prefetch Drop Audit 2026-09-08] Parse prefetch drop breakdown from server log.
+    # The expert cache destructor outputs a detailed breakdown when the server shuts down.
+    # We parse the latest server log file to extract the 12 drop point counters.
+    prefetch_drop_breakdown = None
+    try:
+        import glob
+        # Determine log file path: explicit --server-log > auto-detect latest
+        log_file = args.server_log
+        if not log_file:
+            # Auto-detect: check Backup/cgc_logs/ first, then /tmp/
+            candidates = []
+            project_logs = os.path.expanduser("~/Documents/flashkv-devserver/Backup/cgc_logs/llama_server_*.log")
+            candidates.extend(glob.glob(project_logs))
+            candidates.extend(glob.glob("/tmp/llama_server_*.log"))
+            candidates.extend(glob.glob("/tmp/cgc_server_*.log"))
+            if candidates:
+                log_file = max(candidates, key=os.path.getmtime)
+
+        if log_file and os.path.exists(log_file):
+            prefetch_drop_breakdown = parse_prefetch_drop_breakdown_from_log(log_file)
+            if prefetch_drop_breakdown and prefetch_drop_breakdown.get("available"):
+                print(f"[replay] prefetch drop breakdown parsed from {log_file}: total={prefetch_drop_breakdown.get('total')}", file=sys.stderr)
+    except Exception as e:
+        print(f"[replay] warning: failed to parse prefetch drop breakdown: {e}", file=sys.stderr)
+
     if args.all_profiles:
         output = {
             "schema_version": args.schema_version,
@@ -706,9 +1383,11 @@ def main():
             "base_url": args.base_url,
             "profiles": results,
             "aggregate": aggregate(results),
+            "prefetch_drop_breakdown": prefetch_drop_breakdown,
         }
     else:
         output = results[profiles[0]]
+        output["prefetch_drop_breakdown"] = prefetch_drop_breakdown
 
     text = json.dumps(output, ensure_ascii=False, indent=2)
     print(text)
@@ -721,6 +1400,40 @@ def main():
         except Exception as e:
             print(f"error: failed to write bench output: {e}", file=sys.stderr)
             return 1
+    
+    # [Database 2026-09-07] 自動保存結果到數據庫
+    if args.db_save:
+        try:
+            import subprocess
+            # 先保存到臨時文件
+            temp_file = f"/tmp/replay_bench_{int(time.time())}.json"
+            with open(temp_file, "w") as f:
+                f.write(text)
+            
+            # 調用數據庫管理腳本
+            db_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "replay_bench_database.py")
+            cmd = [sys.executable, db_script, "add", "--input", temp_file]
+            # 傳遞 commit (從 args.commit 獲取)
+            if args.commit and args.commit != "unknown":
+                cmd.extend(["--commit", args.commit])
+            # 傳遞 branch
+            if args.db_branch:
+                cmd.extend(["--branch", args.db_branch])
+            # 傳遞 version
+            if args.db_version:
+                cmd.extend(["--version", args.db_version])
+            # 傳遞 verdict
+            if args.db_verdict:
+                cmd.extend(["--verdict", args.db_verdict])
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode == 0:
+                print("[database] 測試結果已保存到數據庫", file=sys.stderr)
+                print(result.stdout, file=sys.stderr)
+            else:
+                print(f"[database] 保存失敗: {result.stderr}", file=sys.stderr)
+        except Exception as e:
+            print(f"[database] 保存異常: {e}", file=sys.stderr)
 
     return 0
 

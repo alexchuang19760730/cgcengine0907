@@ -806,6 +806,7 @@ void llama_expert_cache_drain_layer(llama_expert_cache * cache, uint32_t layer) 
             cache->slot_queued[layer][slot] = 0;
             cache->slot_owner[layer][slot]  = -1; // free for the sync fill path
             cache->n_prefetch_dropped++;
+            cache->drop_stats.drain_cleared++;  // #3: drain_layer clears queued-but-not-started fills
         }
     }
     // wait for in-flight bg fills on this layer (slot_loading) to land
@@ -837,6 +838,8 @@ int32_t llama_expert_cache_prefetch_slot(llama_expert_cache * cache, uint32_t la
                     cache ? (int) (expert < cache->n_expert) : -1,
                     cache ? (int) (cache->key_segs.find(make_key(layer, expert)) != cache->key_segs.end()) : -1);
         }
+        cache->n_prefetch_dropped++;
+        cache->drop_stats.guard_reject++;  // #7: guard-reject — expert not in key_segs / layer OOR / pool inactive
         return -1;
     }
     int32_t * table = cache->slot_table.data() + (size_t) layer * cache->n_expert;
@@ -924,6 +927,7 @@ int32_t llama_expert_cache_prefetch_slot(llama_expert_cache * cache, uint32_t la
                         layer, expert, cold, warm, (unsigned long long) min_use, (unsigned long long) cache->tick);
             }
             cache->n_prefetch_dropped++;
+            cache->drop_stats.no_free_slot++;  // #1: prefetch_slot — no free slot AND no evictable slot
             return -1;
         }
     }
@@ -987,6 +991,17 @@ size_t llama_expert_cache_dbuf_refill(llama_expert_cache * cache, uint32_t layer
         }
         cold++;
         if (busy >= cgc_dbuf_cap()) {
+            // #2: dbuf_refill — backlog full (busy >= CGC_DBUF_CAP → break, skip remaining experts)
+            // Count ALL remaining cold experts in this layer's union that get skipped due to cap.
+            size_t skipped = 1; // this expert
+            for (size_t j = i + 1; j < n; ++j) {
+                const uint32_t e2 = experts[j];
+                if (e2 < cache->n_expert && st[e2] < 0) {
+                    skipped++;
+                }
+            }
+            cache->n_prefetch_dropped += skipped;
+            cache->drop_stats.dbuf_cap_skip += skipped;
             break; // backlog full: skip the rest of this step (existing cold handling applies)
         }
         if (llama_expert_cache_prefetch_slot(cache, layer, e) == 0) {
@@ -1470,6 +1485,27 @@ llama_expert_cache::~llama_expert_cache() {
                 (unsigned long long) pread_usec.load(std::memory_order_relaxed),
                 (unsigned long long) fill_batch_usec.load(std::memory_order_relaxed),
                 n_prefetch, n_prefetch_dropped);
+        // [CGC Prefetch Drop Audit 2026-09-07] per-reason drop breakdown. The legacy
+        // n_prefetch_dropped only counted 2 of 12 drop points; this line shows the full
+        // classification so replay/database/precommit can see the real loss breakdown.
+        // Drop reasons #1-#12 correspond to the audit inventory; zeros mean that path
+        // wasn't exercised (or the counter isn't instrumented yet — see header for status).
+        if (n_prefetch_dropped > 0 || drop_stats.total() > 0) {
+            fprintf(stderr,
+                    "llama_expert_cache: prefetch drop breakdown (total=%zu): "
+                    "#1 no_free_slot=%zu  #2 dbuf_cap_skip=%zu  #3 drain_cleared=%zu  "
+                    "#4 zero_slot_fallback=%zu  #5 lru_evicted_predicted=%zu  "
+                    "#6 bg_reassign_race=%zu  #7 guard_reject=%zu  "
+                    "#8 dbuf2_scratch_invisible=%zu  #9 one_shot_consumed=%zu  "
+                    "#10 fast_wait_expired=%zu  #11 trigger_too_late=%zu  #12 collect_skipped=%zu\n",
+                    n_prefetch_dropped,
+                    drop_stats.no_free_slot, drop_stats.dbuf_cap_skip, drop_stats.drain_cleared,
+                    drop_stats.zero_slot_fallback, drop_stats.lru_evicted_predicted,
+                    drop_stats.bg_reassign_race, drop_stats.guard_reject,
+                    drop_stats.dbuf2_scratch_invisible, drop_stats.one_shot_consumed,
+                    drop_stats.fast_wait_expired, drop_stats.trigger_too_late,
+                    drop_stats.collect_skipped);
+        }
         const size_t n_dec_req = n_requests - n_map_requests;
         const size_t n_dec_hit = n_hits - n_map_hits;
         fprintf(stderr, "llama_expert_cache: decode/pool (ensure_slot+batch) hits=%zu/%zu (%.1f%%)  gather (ensure) hits=%zu/%zu\n",
@@ -1491,6 +1527,16 @@ llama_expert_cache::~llama_expert_cache() {
                     v_union ? 100.0 * (double) v_cold / (double) v_union : 0.0,
                     n_fast_draft_calls, n_fast_draft_union, n_fast_draft_cold,
                     n_fast_draft_union ? 100.0 * (double) n_fast_draft_cold / (double) n_fast_draft_union : 0.0);
+        }
+        // [CGC MTP Draft Prefetch 2026-09-07] final stats: how many experts were queued for
+        // prefetch from draft predictions, and how many of those predictions were actually selected
+        // by the verify step (hit) vs wasted (miss). Hit rate should track draft_accept (~92-98%).
+        // This is the exact-prediction counterpart to SpAc's frequency-based prefetch.
+        if (n_draft_prefetch_queued > 0 || n_draft_prefetch_hit > 0 || n_draft_prefetch_miss > 0) {
+            const size_t total = n_draft_prefetch_hit + n_draft_prefetch_miss;
+            fprintf(stderr, "llama_expert_cache: MTP draft prefetch: queued=%zu experts  hit=%zu miss=%zu hitrate=%.1f%%\n",
+                    n_draft_prefetch_queued, n_draft_prefetch_hit, n_draft_prefetch_miss,
+                    total ? 100.0 * (double) n_draft_prefetch_hit / (double) total : 0.0);
         }
         // [CGC routing-aware placement §2/2 2026-08-29] dump per-layer top-K route-frequency
         // lists in PIN_PROFILE format (line i = layer i, space-separated expert ids, K = usable
@@ -1726,6 +1772,8 @@ void llama_expert_cache::bg_loop() {
                     // slot reassigned by a synchronous fill racing the queue: drop the fill
                     slot_queued[layer][slot]  = 0;
                     slot_loading[layer][slot] = 0;
+                    n_prefetch_dropped++;
+                    drop_stats.bg_reassign_race++;  // #6: bg_loop reassign-race — sync fill grabbed slot between queue and pickup
                     continue;
                 }
                 // mark in-flight so drain_layer waits for us (its predicate checks slot_loading)
@@ -2172,6 +2220,13 @@ llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t b
         // MoESpAcEstimator's seed so the first pool re-target does not degenerate to expert-id
         // ordering). Sized eagerly (cheap: ~41 x 256 doubles) so spac_update needs no resize.
         cache->spac_util.assign(max_layer, std::vector<double>(cache->n_expert, 0.5));
+        // [CGC MTP Draft Prefetch 2026-09-07] draft-predicted expert ids per layer, collected
+        // during MTP draft decode (ctx_type == MTP, 1-token) and consumed during trunk verify
+        // decode (ctx_type == DEFAULT, multi-token) at il==1. draft_prefetch_valid marks layers
+        // that have fresh predictions from the most recent draft step. Sized eagerly (cheap:
+        // ~41 x 8 uint32 + 41 bool) so the collect phase needs no resize.
+        cache->draft_prefetch_ids.assign(max_layer, std::vector<uint32_t>());
+        cache->draft_prefetch_valid.assign(max_layer, false);
         cache->pool.assign(max_layer, std::vector<std::vector<uint8_t>>(4));
         cache->pool_ext.assign(max_layer, std::vector<const uint8_t *>(4, nullptr));
         cache->pool_ext_stride.assign(max_layer, std::vector<size_t>(4, 0));

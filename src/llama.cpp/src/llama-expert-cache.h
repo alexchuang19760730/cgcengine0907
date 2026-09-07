@@ -216,7 +216,57 @@ struct llama_expert_cache {
     size_t n_prewarm_hits     = 0;
     size_t n_prewarm_misses   = 0;
     size_t n_prefetch = 0;          // pool prefetches queued to the bg thread
-    size_t n_prefetch_dropped = 0;  // skipped (queue full / no free slot / already resident)
+    size_t n_prefetch_dropped = 0;  // skipped (queue full / no free slot / already resident) — TOTAL of all drop reasons below
+    // [CGC Prefetch Drop Audit 2026-09-07] per-reason drop counters. The legacy n_prefetch_dropped
+    // only counted 2 of 12 drop points (drain_layer + prefetch_slot no-evictable). This struct
+    // classifies EVERY silent drop so replay/database/precommit can see the real loss breakdown.
+    // Drop points #1-#12 correspond to the audit inventory; each counter is incremented at the
+    // exact site where the expert is discarded. n_prefetch_dropped is kept as the TOTAL (sum of
+    // all per-reason counters) for backward compatibility with existing logs and dashboards.
+    struct prefetch_drop_stats {
+        // #1: prefetch_slot — no free slot AND no evictable slot (pool full, LRU all protected)
+        size_t no_free_slot = 0;
+        // #2: dbuf_refill — backlog full (busy >= CGC_DBUF_CAP → break, skip remaining layers)
+        size_t dbuf_cap_skip = 0;
+        // #3: drain_layer — clears queued-but-not-started fills (context teardown / layer reset)
+        size_t drain_cleared = 0;
+        // #4: Draft never blocks — cold → ZERO slot at verify read (fast path doesn't wait)
+        //     NOTE: this is a structural drop, not a prefetch_slot failure; counted separately
+        //     because it's the downstream consequence of #1-#3, #6-#9, not an independent drop.
+        size_t zero_slot_fallback = 0;
+        // #5: Pool capacity / LRU evicts predicted-correct experts between steps
+        //     (pick_slot batch-mask protects only the current step's union)
+        size_t lru_evicted_predicted = 0;
+        // #6: bg_loop reassign-race — synchronous fill grabs the slot between queue time and bg pickup
+        //     (slot_queued=0, slot_loading=0 → continue, silently discard)
+        size_t bg_reassign_race = 0;
+        // #7: guard-reject — expert not in key_segs / layer OOR / pool inactive → return -1
+        //     (only logged when PFDBG is on; invisible by default)
+        size_t guard_reject = 0;
+        // #8: DBUF2 scratch invisibility — bg fill completes but publishes to scratch table;
+        //     if dbuf2_swap doesn't land before verify reads, completed fill is still invisible
+        //     (the fill "succeeded" but the expert reads as cold → ZERO)
+        size_t dbuf2_scratch_invisible = 0;
+        // #9: One-shot consumption — trigger sets draft_prefetch_valid[layer]=false after queueing;
+        //     experts that failed to queue (cap/slot) are never retried — prediction consumed anyway
+        size_t one_shot_consumed = 0;
+        // #10: Fast-Path Wait expiry (default OFF) — bounded wait_loading deadline expires → ZERO
+        size_t fast_wait_expired = 0;
+        // #11: Trigger timing gap — predictions for ALL layers submitted only when verify's il==1
+        //     hook fires; layers 0-1 of that same verify step have zero lead time from this cycle
+        //     (structural: counted as "prediction arrived too late for this step")
+        size_t trigger_too_late = 0;
+        // #12: Collect skip — draft collection only fires when ctx==MTP && n_tokens==1;
+        //     any batched draft step silently produces no prediction
+        size_t collect_skipped = 0;
+        // Helper: total of all per-reason counters (should equal n_prefetch_dropped + structural)
+        size_t total() const {
+            return no_free_slot + dbuf_cap_skip + drain_cleared + zero_slot_fallback +
+                   lru_evicted_predicted + bg_reassign_race + guard_reject +
+                   dbuf2_scratch_invisible + one_shot_consumed + fast_wait_expired +
+                   trigger_too_late + collect_skipped;
+        }
+    } drop_stats;
     // [CGC SpAc 2026-09-06] per-(layer, expert) EMA utility estimator (CGC_SPAC=1), ported from
     // the turbo-fieldfare MoE-SpAc scheduler (MoESpAcEstimator.swift): utility[L][e] =
     // alpha*utility[L][e] + (1-alpha)*routed(e) with alpha=CGC_SPAC_ALPHA (default 0.85). Every
@@ -229,6 +279,18 @@ struct llama_expert_cache {
     // that has never routed this session still outranks a 0-utility newcomer on refresh #1).
     std::vector<std::vector<double>> spac_util;   // [layer][expert] EMA utility, seeded 0.5
     uint64_t spac_feeds = 0;                      // routed-feed counter (refresh cadence)
+    // [CGC MTP Draft Prefetch 2026-09-07] exact next-step expert prefetch from MTP draft ctx.
+    // The MTP draft ctx (ctx_type == MTP, 1-token decode) computes the top-8 expert ids for the
+    // NEXT token one step ahead of the trunk verify ctx (ctx_type == DEFAULT, multi-token). Since
+    // draft_accept is 92-98%, these draft-predicted expert ids are highly likely to be selected by
+    // the verify step. We collect them during draft decode and queue them for prefetch before the
+    // verify step starts, so the verify decode finds them resident (no ZERO-slot contamination).
+    // CGC_DRAFT_PREFETCH=1 enables; default OFF = byte-identical legacy behavior.
+    std::vector<std::vector<uint32_t>> draft_prefetch_ids;  // [layer] draft-predicted top-8 expert ids
+    std::vector<bool> draft_prefetch_valid;                   // [layer] true if draft collected this round
+    size_t n_draft_prefetch_queued = 0;    // experts queued for prefetch from draft predictions
+    size_t n_draft_prefetch_hit = 0;       // draft-predicted experts actually selected by verify
+    size_t n_draft_prefetch_miss = 0;      // draft-predicted experts NOT selected by verify (wasted)
     // [CGC routing-aware placement 2026-08-29] static-pin telemetry: how many fills landed on
     // pin_profile members (got slot_pinned_static) and how many static pins were evicted by
     // pick_slot's overflow pass 2 (a fill needed the slot and nothing else was available —
@@ -366,6 +428,18 @@ static inline uint32_t cgc_spac_refresh() {
         if (v < 1) v = 1;
         if (v > 256) v = 256;
     }
+    return v;
+}
+
+// [CGC MTP Draft Prefetch 2026-09-07] exact next-step expert prefetch from MTP draft ctx.
+// When CGC_DRAFT_PREFETCH=1, the draft ctx's top-8 expert ids are collected per layer and
+// queued for prefetch before the verify step starts. This attacks the count-cold problem
+// (15% of selected experts are non-resident) by prefetching the EXACT experts the draft
+// predicts will be needed next step (draft_accept 92-98% = prediction accuracy). Default
+// OFF = byte-identical legacy behavior (no draft prefetch).
+static inline bool cgc_draft_prefetch_on() {
+    static const bool v = getenv("CGC_DRAFT_PREFETCH") != nullptr &&
+                          getenv("CGC_DRAFT_PREFETCH")[0] != '\0';
     return v;
 }
 

@@ -524,6 +524,14 @@ SERVER_ARGS=(
     --port "$PORT"
     --jinja
 )
+# [CGC 2026-09-08 KV cache Q8 quantization] reduce KV cache memory by ~45% (FP16 -> Q8_0).
+# For Qwen3.6-35B-A3B at ctx=8192: saves ~0.56GB (1.25GB -> 0.69GB). Quality impact is
+# negligible (<1%) for typical workloads. Set CGC_SERVER_KV_Q8=0 to disable (fall back to FP16).
+SERVER_KV_Q8="${CGC_SERVER_KV_Q8:-1}"
+if [ "$SERVER_KV_Q8" = "1" ]; then
+    SERVER_ARGS+=(--cache-type-k q8_0 --cache-type-v q8_0)
+    echo "[kv]     cache-type-k=q8_0 cache-type-v=q8_0 (saves ~0.56GB at ctx=8192)"
+fi
 if [ -n "$SERVER_BATCH" ]; then
     SERVER_ARGS+=(-b "$SERVER_BATCH")
 fi
@@ -570,6 +578,18 @@ fi
 SERVER_ARGS+=(--temp "${CGC_SERVER_TEMP:-0.4}")
 SERVER_ARGS+=(--top-k "${CGC_SERVER_TOP_K:-0}")
 SERVER_ARGS+=(--top-p "${CGC_SERVER_TOP_P:-0.8}")
+# [CGC 2026-09-07 IQ3_XXS repetition guard] mid-generation repetition collapse
+# (coding loops like 'def test_f fibonacci():' xN) is a SAMPLING property, not an
+# expert-cache one (persists at 5.6-7.1% selcold across 8/10GB pools). Measured:
+# rp=1.3 breaks the echo/repeat loop and pivots to real code, at a small draft-accept
+# cost on genuine content. Default 1.0 = stock behavior; override via CGC_SERVER_REPEAT_PENALTY.
+SERVER_ARGS+=(--repeat-penalty "${CGC_SERVER_REPEAT_PENALTY:-1.0}")
+# [CGC 2026-09-07 DRY sampling] structural repetition breaker: unlike blanket rp,
+# DRY only applies its multiplier when a repeated sequence is DETECTED (Z-algorithm),
+# so MTP draft acceptance on healthy text is untouched. Default multiplier 0 = disabled.
+SERVER_ARGS+=(--dry-multiplier "${CGC_SERVER_DRY_MULTIPLIER:-0.0}")
+SERVER_ARGS+=(--dry-allowed-length "${CGC_SERVER_DRY_ALLOWED_LEN:-6}")
+SERVER_ARGS+=(--dry-penalty-last-n "${CGC_SERVER_DRY_LAST_N:-512}")
 
 SERVER_ENV=(
     CGC_EXPERT_CACHE_BYTES="$BUDGET"
