@@ -264,7 +264,13 @@ SPEC_DRAFT_N_MAX="${CGC_SERVER_MTP_N_MAX:-3}"  # MTP draft tokens
 SERVER_LAYER_CAPS="${CGC_SERVER_LAYER_CAPS:-}"  # Layer caps for expert cache
 
 if [ "$SERVER_MTP" = "1" ]; then
-    CTX_DEFAULT=3072
+    # [CGC 2026-09-07 ctx 3072 -> 8192] Claude Code CLI sends ~3117 tokens MINIMUM
+    # (its agent system prompt + 3 tool schemas + <system-reminder> wrappers), which
+    # exceeded n_ctx=3072 and made every CLI request fail with HTTP 400
+    # "exceeds the available context size". 8192 fits the CLI floor + output headroom;
+    # verified load + healthy runtime on the 16GB M4 Max (RSS ~7.9GB, MTP + 8GiB pool).
+    # Profile-specific CTX (e.g. coding 4096) still overrides below when set.
+    CTX_DEFAULT=8192
     if [ "$SERVER_OOM_SAFE" = "1" ] && [ "$PHYS_MEM_GB" -le 16 ]; then
         CTX_DEFAULT=1024
         NGL_DEFAULT=8
