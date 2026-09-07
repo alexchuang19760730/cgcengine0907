@@ -651,6 +651,19 @@ if [ "${CGC_SPAC:-1}" != "0" ]; then
         SERVER_ENV+=(CGC_SPAC_ALPHA=0.75)
     fi
 fi
+# CGC Soft Pool: L0/L1 tier partition (production default L0=48/L1=48, tuned for 8GB pool / 143 slots).
+# L0 = fixed hot slots (no LRU eviction), L1 = warm LRU slots. L0+L1 <= n_slots.
+# Set CGC_SOFT_POOL_L0=0 / CGC_SOFT_POOL_L1=0 to disable partition (legacy uniform behavior).
+if [ -n "${CGC_SOFT_POOL_L0:-}" ]; then
+    SERVER_ENV+=(CGC_SOFT_POOL_L0="$CGC_SOFT_POOL_L0")
+else
+    SERVER_ENV+=(CGC_SOFT_POOL_L0=48)
+fi
+if [ -n "${CGC_SOFT_POOL_L1:-}" ]; then
+    SERVER_ENV+=(CGC_SOFT_POOL_L1="$CGC_SOFT_POOL_L1")
+else
+    SERVER_ENV+=(CGC_SOFT_POOL_L1=48)
+fi
 if [ "$SERVER_GLU_FUSED_DOWN" = "1" ]; then
     SERVER_ENV+=(CGC_GLU_FUSED_DOWN=1)
 fi
