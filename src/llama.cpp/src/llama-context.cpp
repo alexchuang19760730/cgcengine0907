@@ -3952,6 +3952,34 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
                 }
             }
         }
+        // [CGC Draft Guard 2026-09-08] Strict cold guard for the MTP draft context.
+        // The generic guard above uses CGC_FAST_COLD_MAX=0.30 (default) which almost never
+        // fires for draft: draft's union is only 8 experts (1 token x 8), so 1-2 cold =
+        // 12-25% < 30% -> draft keeps ZERO-mapping. Draft ZERO skews the proposed token
+        // distribution and cascades into verify accept decisions.
+        // Fix: draft is a cheap 1-token prediction (<=8 experts fill cost), so fall back to
+        // exact ensure_batch on ANY cold expert. Gated by CGC_DRAFT_STRICT (default 1).
+        if (cgc_fast_eligible && draft_fast) {
+            const char * cgc_ds_env = getenv("CGC_DRAFT_STRICT");
+            const bool cgc_draft_strict = cgc_ds_env ? atoi(cgc_ds_env) != 0 : true;
+            if (cgc_draft_strict) {
+                const int32_t * cgc_st = cache->slot_table.data() + (size_t) il * cache->n_expert;
+                size_t cgc_dcold = 0;
+                for (size_t i = 0; i < uni.size(); ++i) {
+                    const uint32_t e = uni[i];
+                    if (e < cache->n_expert && cgc_st[e] < 0) {
+                        cgc_dcold++;
+                    }
+                }
+                if (cgc_dcold > 0) {
+                    cgc_fast_eligible = false;
+                    if (il <= 1) {
+                        fprintf(stderr, "CGC-DRAFT-GUARD: il=%d cold=%zu/%zu -> exact ensure_batch (strict draft)\n",
+                                il, cgc_dcold, uni.size());
+                    }
+                }
+            }
+        }
         static int cgc_warm_dbg = 0;
         if (cgc_warm_dbg < 24 && il <= 1) {
             cgc_warm_dbg++;
