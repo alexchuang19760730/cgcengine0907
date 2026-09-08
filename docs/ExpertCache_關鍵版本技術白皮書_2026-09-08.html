@@ -540,6 +540,18 @@
 </table>
 
 <h2>📌 未解決事項（
+
+<h2 id="prev-token-prefetch-test">Prev-Token Prefetch 實測（2026-09-08）</h2>
+<table>
+<tr><th>項目</th><th>結果</th></tr>
+<tr><td>機制驗證</td><td>CGC_PREV_TOKEN_PREFETCH=1 + SYNC：collect 覆蓋全部 41 層（valid_layers=40/41），trigger 正常觸發，total_queued=55-56 — 與 MTP draft prefetch（只覆蓋 layer 40）完全不同，機制完整運作</td></tr>
+<tr><td>resident 命中</td><td>320/320（40 層 × 8）— 預測的 prev-token experts 幾乎全部已 resident，loaded=0/0 cold</td></tr>
+<tr><td>15+27 十連發</td><td>0/10 正確（9 echo + 1 loop）— 但此為記憶體壓力狀態（free 25-30%，swap 499MB 使用中）</td></tr>
+<tr><td>對照 A/B</td><td>同一記憶體狀態下：parent binary（無 callback fix）+ prev-pf = 0/10；HEAD binary + prev-pf = 0/10；HEAD 無 prefetch = 0/10。三組一致 → 品質崩潰與 prev-token prefetch 及 callback fix 皆無關，是記憶體/系統壓力（swap 中）造成</td></tr>
+<tr><td>硬體限制</td><td>16GB 機載入 7.9GB server + Freebuff 1.7GB 後 free 註定 ~25-30%，「>50% free 測試」物理上不可達成；要乾淨測量需關閉其他 agent / 重啟 Mac / 32GB 機</td></tr>
+<tr><td>結論</td><td>prev-token prefetch 是覆蓋全層的正確機制（vs draft prefetch 的 layer-40 極限），但在 prev-token 命中率極高的前提下其增量價值有限（320/320 已 resident）；抖動根因仍是 GPU 浮點 + IQ3_XXS 邊界，非 residency</td></tr>
+</table>
+
 <h2 id="mtp-draft-prefetch-verdict">MTP Draft Prefetch 架構性結論（2026-09-08）</h2>
 <table>
 <tr><th>發現</th><th>證據</th></tr>
