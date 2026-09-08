@@ -539,7 +539,18 @@
 </tbody>
 </table>
 
-<h2>📌 未解決事項（後續路線）</h2>
+<h2>📌 未解決事項（
+<h2 id="mtp-draft-prefetch-verdict">MTP Draft Prefetch 架構性結論（2026-09-08）</h2>
+<table>
+<tr><th>發現</th><th>證據</th></tr>
+<tr><td>collect 之前「0 次」是假象</td><td>print gate 設在 il&lt;=1，而 MTP draft 只執行 nextn block（il=n_layer=40），collect 有跑但從未印出；修 gate 後 286 次 collect 全在 il=40</td></tr>
+<tr><td>trigger loaded=0 是架構極限，非 bug</td><td>DECODER_MTP graph 只跑單一 nextn block，draft 路由只能覆蓋 layer 40；而 layer 40 每步都執行、永遠 resident，無需 prefetch。真正冷 miss 的 trunk 層 0-39 由 draft ctx 算不出來</td></tr>
+<tr><td>draft prefetch 無法解決 1/10 抖動</td><td>抖動源已證實為 GPU 浮點非確定性 + IQ3_XXS 邊界 logits（全 exact 15 連發仍 13% 抖）；與 expert residency 無關，prefetch 再完美也無效</td></tr>
+<tr><td>覆蓋 trunk 層的正確工具</td><td>CGC_PREV_TOKEN_PREFETCH（prev-token，覆蓋全部 41 層）才是冷啟動 prefetch 的方向</td></tr>
+<tr><td>callback 安裝潛在 bug 已修</td><td>sched_reserve() 重建 sched 會丟 eval callback；固定 shape ctx（MTP draft）graph 重用後永不重裝。改為每 ubatch 無條件安裝（ad9f6cca5）</td></tr>
+</table>
+
+後續路線）</h2>
 <ol>
 <li><strong>1/10 抖動根治</strong>：需 32GB 機器跑高精度檔驗證「logits 邊界分開 → 抖動歸零」理論</li>
 <li><strong>DBUF step-ahead 冷啟動強化</strong>：讓 decode 早期也走 step-ahead refill（目前只在 verify fast 觸發）</li>
