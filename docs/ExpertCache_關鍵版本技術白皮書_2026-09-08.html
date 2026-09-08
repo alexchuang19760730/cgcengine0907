@@ -433,7 +433,7 @@
 
 <p><strong>機制：</strong>「42」與「22」的開頭 token logits 差距極小（±1e-4 級），Metal parallel reduction 順序受並發負載影響 → 邊界 token 偶爾翻轉。expert cache 只是放大器之一，不是必要條件。三個條件疊加：① 模型 logits 邊界接近（必要條件）② GPU 浮點非確定性（扳機）③ expert cache 只是放大器之一。</p>
 
-<h3>2. Q4_K_M 檔（23GB）在 16GB 上不可用</h3>
+<h3>2. 替代模型檔 A/B（Q4_K_M / unsloth IQ4_XS）— 皆不可用，根因：experts 型態不符</h3>
 <table>
 <thead>
 <tr><th>配置</th><th>結果</th><th>根因</th></tr>
@@ -441,9 +441,12 @@
 <tbody>
 <tr class="bad"><td>Q4_K_M ngl=99</td><td>234 個 buffer nil + OOM 掛掉</td><td>experts 實際是 <strong>Q6_K</strong>（非 Q4_K），23GB 檔超出 16GB 載入能力，adoption 全失敗</td></tr>
 <tr class="bad"><td>Q4_K_M ngl=30</td><td>CPU crash</td><td>expert cache partial-offload 契約未修（既有問題）</td></tr>
-<tr class="best"><td>IQ3_XXS-denseIQ4X（現行）</td><td>90% 確定 + 28 t/s + 質量 1.0</td><td>experts IQ4_XS = expert cache 設計目標格式</td></tr>
+<tr class="bad"><td>unsloth IQ4_XS（18.2GB，名稱誤導）</td><td>短 QA 空輸出 / coding echo / decode 僅 11.4 t/s / accept 0.39</td><td>experts 實際是 <strong>IQ4_NL</strong>（39 層）非 IQ4_XS！型態不符 expert cache 驗證範圍</td></tr>
+<tr class="best"><td>IQ3_XXS-denseIQ4X（現行）</td><td>90% 確定 + 28 t/s + 質量 1.0</td><td>experts 真正 <strong>IQ4_XS</strong>（39 層）= expert cache 設計目標格式</td></tr>
 </tbody>
 </table>
+
+<p><strong>關鍵教訓（GGUF 檔名不可信，必須 parse tensor type）：</strong>unsloth「Qwen3.6-35B-A3B-UD-IQ4_XS.gguf」的 ffn_gate_exps 實際是 <span class="code">IQ4_NL</span>（39 層）+ IQ1_M/Q5_K 各 1；「Q4_K_M」檔的 experts 實際是 <span class="code">Q6_K</span>。只有 Nail 封裝的 denseIQ4X 檔 experts 才是真正 IQ4_XS。判定方法：<span class="code">python3 parse GGUF tensor table，檢查 blk.N.ffn_gate_exps.weight 的 type</span>（見 §0 工具）。</p>
 
 <h2>⚙️ 關鍵環境變數參數</h2>
 
