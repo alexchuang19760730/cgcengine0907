@@ -1544,7 +1544,16 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         }
         return v;
     }();
-    if (model.expert_cache_active && (uint32_t) ubatch.n_tokens <= cgc_pool_max_tokens() && getenv("CGC_NO_PREFETCH") == nullptr) {
+    // [CGC SpAc EMA membership 2026-09-08] the EMA refresh is EXEMPT from CGC_NO_PREFETCH:
+    // NO_PREFETCH stops the step/hist union bg prefetch (MTP-verify race mitigation), but the
+    // EMA refresh is the pool's routing-driven membership driver — without it the pool stays at
+    // the loader's identity-ordered prepopulate and decode's working set never becomes resident
+    // (measured ~44% count-cold at 143 slots -> ZERO-slot logits collapse -> degenerate loops).
+    // prefetch_slot publishes slot_table only after bytes land and its LRU victim is by
+    // construction not in the current step's union (union members were just LRU-touched), so the
+    // refresh cannot corrupt an in-flight remap. Runs every CGC_SPAC_REFRESH routed steps.
+    if (model.expert_cache_active && (uint32_t) ubatch.n_tokens <= cgc_pool_max_tokens() &&
+            (getenv("CGC_NO_PREFETCH") == nullptr || spac_on)) {
         llama_expert_cache * ec = model.expert_cache;
         if (ec != nullptr && llama_expert_cache_pool_active(ec)) {
             if (spac_on) {
@@ -3981,6 +3990,13 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         }
         static int cgc_pre_post_n = 0;
         const bool cgc_pp = cgc_pre_post_n < 24 && il <= 2;
+        // [CGC Exact Path Debug 2026-09-08] detailed prefill/exact-path tracing: dump every
+        // selected expert's slot_table value before/after ensure_batch, and the remap values
+        // written. Enabled by CGC_EXACT_PATH_DBG=1; limited to prefill (n_tokens>1) + first
+        // 3 layers to keep log volume manageable. This is the diagnostic for the oracle
+        // divergence at token 1 (chunk 0 exact path).
+        static const bool cgc_exact_dbg = getenv("CGC_EXACT_PATH_DBG") != nullptr;
+        const bool cgc_ep = cgc_exact_dbg && n_tokens > 1 && il <= 2;
         if (cgc_pp) {
             cgc_pre_post_n++;
             const int32_t * st0 = llama_expert_cache_slot_table(cache, (uint32_t) il);
@@ -3990,8 +4006,31 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
                     ids[4], st0 ? st0[ids[4]] : -2, ids[5], st0 ? st0[ids[5]] : -2,
                     ids[6], st0 ? st0[ids[6]] : -2, ids[7], st0 ? st0[ids[7]] : -2);
         }
+        if (cgc_ep) {
+            const int32_t * st0 = llama_expert_cache_slot_table(cache, (uint32_t) il);
+            fprintf(stderr, "CGC-EXACT-PRE: il=%d n_tokens=%lld n_expert_used=%lld uni_size=%zu\n",
+                    il, (long long) n_tokens, (long long) n_expert_used, uni.size());
+            for (size_t k = 0; k < uni.size(); ++k) {
+                const uint32_t e = uni[k];
+                fprintf(stderr, "  uni[%zu]=%u slot=%d owner=%d loading=%d queued=%d\n",
+                        k, e, st0 ? st0[e] : -2,
+                        (e < cache->n_expert && (uint32_t) il < cache->slot_owner.size()) ? cache->slot_owner[il][st0[e] >= 0 ? st0[e] : 0] : -3,
+                        (e < cache->n_expert && (uint32_t) il < cache->slot_loading.size() && st0[e] >= 0) ? cache->slot_loading[il][st0[e]] : -3,
+                        (e < cache->n_expert && (uint32_t) il < cache->slot_queued.size() && st0[e] >= 0) ? cache->slot_queued[il][st0[e]] : -3);
+            }
+        }
         llama_expert_cache_ensure_batch(cache, (uint32_t) il, uni.data(), uni.size());
         llama_expert_cache_drain_layer(cache, (uint32_t) il);
+        if (cgc_ep) {
+            const int32_t * st1 = llama_expert_cache_slot_table(cache, (uint32_t) il);
+            fprintf(stderr, "CGC-EXACT-POST: il=%d\n", il);
+            for (size_t k = 0; k < uni.size(); ++k) {
+                const uint32_t e = uni[k];
+                fprintf(stderr, "  uni[%zu]=%u slot=%d (was %d)\n",
+                        k, e, st1 ? st1[e] : -2,
+                        (e < cache->n_expert) ? -99 : -2);
+            }
+        }
 
         // NOTE: the FFN expert weight tensors were already repointed at the pool regions in
         // graph_get_cb (ffn_moe_topk_remap); the segmented dispatch submits with those pointers.
@@ -4021,6 +4060,23 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
                         il, ids[0], st ? st[ids[0]] : -1, ids[1], st ? st[ids[1]] : -1,
                         ids[2], st ? st[ids[2]] : -1, ids[3], st ? st[ids[3]] : -1,
                         rd[0], rd[1], rd[2], rd[3], rd[4], rd[5], rd[6], rd[7]);
+            }
+            // [CGC Exact Path Debug] dump every remap value written for prefill chunks
+            if (cgc_exact_dbg && n_tokens > 1 && il <= 2) {
+                fprintf(stderr, "CGC-EXACT-REMAP: il=%d n_tokens=%lld n_expert_used=%lld\n",
+                        il, (long long) n_tokens, (long long) n_expert_used);
+                for (int64_t j = 0; j < n_tokens; ++j) {
+                    fprintf(stderr, "  token[%lld]: ", j);
+                    for (int64_t i = 0; i < n_expert_used; ++i) {
+                        const uint32_t e = (uint32_t) ids[i + j * n_expert_used];
+                        const int32_t slot = rd[i + j * n_expert_used];
+                        fprintf(stderr, "e%u->s%d ", e, slot);
+                        if (slot < 0) {
+                            fprintf(stderr, "[NEGATIVE!] ");
+                        }
+                    }
+                    fprintf(stderr, "\n");
+                }
             }
         }
 

@@ -1225,6 +1225,9 @@ size_t llama_expert_cache_spac_prefetch(llama_expert_cache * cache) {
     const uint32_t K   = cgc_spac_k();
     const uint32_t ne  = cache->n_expert;
     size_t queued = 0;
+    // [CGC EMA membership 2026-09-08] per-layer membership probe (CGC_SPAC_DBG=1): how many of
+    // the EMA top-K are ALREADY resident vs queued now — the count-cold lever for ZERO-slot reads.
+    static const bool mem_dbg = getenv("CGC_SPAC_DBG") != nullptr;
     for (size_t layer = 0; layer < cache->spac_util.size(); ++layer) {
         if (llama_expert_cache_slots_per_layer_l(cache, (uint32_t) layer) == 0) {
             continue; // unpooled layer (skip-layer0 / no slots): nothing to re-target
@@ -1236,9 +1239,10 @@ size_t llama_expert_cache_spac_prefetch(llama_expert_cache * cache) {
         const int32_t * table = cache->slot_table.data() + layer * ne;
         std::vector<uint32_t> cand;
         cand.reserve(ne);
+        // full candidate set (resident or not) so the membership probe counts overlap;
+        // prefetch only the non-resident top-K members below.
         for (uint32_t e = 0; e < ne; ++e) {
-            if (table[e] < 0 &&
-                cache->key_segs.find(make_key((uint32_t) layer, e)) != cache->key_segs.end()) {
+            if (cache->key_segs.find(make_key((uint32_t) layer, e)) != cache->key_segs.end()) {
                 cand.push_back(e);
             }
         }
@@ -1248,9 +1252,23 @@ size_t llama_expert_cache_spac_prefetch(llama_expert_cache * cache) {
         const size_t ntake = std::min<size_t>(K, cand.size());
         std::partial_sort(cand.begin(), cand.begin() + ntake, cand.end(),
                           [&u](uint32_t a, uint32_t b) { return u[a] > u[b]; });
+        size_t n_resident = 0;
         for (size_t i = 0; i < ntake; ++i) {
+            if (table[cand[i]] >= 0) {
+                n_resident++;
+                continue;
+            }
             if (llama_expert_cache_prefetch_slot(cache, (uint32_t) layer, cand[i]) == 0) {
                 queued++;
+            }
+        }
+        if (mem_dbg && layer < 4) {
+            static int mem_dbg_n = 0;
+            if (mem_dbg_n++ < 60) {
+                fprintf(stderr, "CGC-SPAC-MEM: layer=%zu topK=%zu resident=%zu (%.0f%%) queued=%zu feeds=%llu\n",
+                        layer, ntake, n_resident,
+                        ntake > 0 ? (double) n_resident / ntake * 100.0 : 0.0,
+                        queued, (unsigned long long) cache->spac_feeds);
             }
         }
     }
