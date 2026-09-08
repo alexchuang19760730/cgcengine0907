@@ -534,6 +534,80 @@ cd /Users/alexchuang/Documents/flashkv-devserver
 
 ---
 
+## 11. 已修復的問題與最佳實踐 (2026-09-09 更新)
+
+### 11.1 已修復的問題
+
+本版本 (`0bf3a8e5c`) 修復了 Windows 端兩次回報的品質退化問題：
+
+| 問題 | 根本原因 | 修復方案 | 狀態 |
+|------|----------|----------|------|
+| `<think>` 標籤作為 literal text 輸出 | `--reasoning off --reasoning-format deepseek` 矛盾組合 | 改為 `--reasoning-format none` | ✅ 已修復 |
+| 短查詢 echo 循環 (T1/T2) | `CGC_FORCE_TEMP0=1` 強制 temperature=0，greedy 解碼進入循環 | 改為 `CGC_FORCE_TEMP0=0`，允許用戶端設置 temperature | ✅ 已修復 |
+| coding profile fibonacci 循環 | coding profile 缺少 `presence_penalty=1.5` | 添加 `presence_penalty=1.5` | ✅ 已修復 |
+| `/props` 顯示 MTP 沒開 | llama.cpp `/props` 顯示預設值而非實際運行值 | MTP 實際上是開的（`--spec-type draft-mtp`），文檔說明 | ✅ 已澄清 |
+
+### 11.2 測試結果驗證
+
+| 測試用例 | 修復前 | 修復後 | 說明 |
+|----------|--------|--------|------|
+| **T1: Short EN Q&A** | ❌ echo 循環 | ✅ PASS (2+2=4) | 12-15 t/s |
+| **T2: Short CN Q&A** | ❌ Content 為空 | ✅ PASS (15+27=42) | 15-20 t/s |
+| **T3: Code Gen** | ❌ 代碼 fence 循環 | ⚠️ 需要顯式 prefill | 見下方最佳實踐 |
+| **T4: Logic** | ❌ 只輸出 "1.\n" | ⚠️ IQ3_XXS 限制 | 見下方說明 |
+| **T5: Long Context** | ❌ `<think>` 標籤 | ⚠️ 需要顯式 prefill | 見下方最佳實踐 |
+
+### 11.3 最佳實踐：顯式添加 assistant_prefill
+
+**IQ3_XXS 量化模型的固有限制**：對於代碼生成和長文本生成，建議在請求中顯式添加 `chat_template_kwargs.assistant_prefill` 來引導模型，避免進入循環。
+
+#### 代碼生成示例
+
+```json
+{
+  "model": "default",
+  "messages": [{"role": "user", "content": "Write a Python function to calculate fibonacci."}],
+  "temperature": 0.3,
+  "max_tokens": 200,
+  "chat_template_kwargs": {
+    "assistant_prefill": "```python\ndef fibonacci(n):\n    "
+  }
+}
+```
+
+**驗證結果**：Decode 20.92 t/s，輸出包含完整的 fibonacci 函數定義和 return 語句 ✅
+
+#### 長文本生成示例
+
+```json
+{
+  "model": "default",
+  "messages": [{"role": "user", "content": "請用一段中文說明為什麼巴黎會成為法國的政治與文化中心。"}],
+  "temperature": 0.3,
+  "max_tokens": 300,
+  "chat_template_kwargs": {
+    "assistant_prefill": "巴黎之所以成為法國的政治與文化中心，主要是因為"
+  }
+}
+```
+
+### 11.4 推薦的 temperature 設置
+
+| 場景 | 推薦 temperature | 說明 |
+|------|-----------------|------|
+| **短查詢 (Q&A)** | 0.1-0.3 | 避免 greedy 循環，同時保持準確性 |
+| **代碼生成** | 0.3 + 顯式 prefill | prefill 是關鍵，temperature 次要 |
+| **長文本生成** | 0.3 + 顯式 prefill | prefill 是關鍵，避免 `<think>` 標籤 |
+| **創意寫作** | 0.5-0.7 | 可能需要更高的隨機性，但 IQ3_XXS 品質會下降 |
+
+**注意**：不要設置 `presence_penalty > 0.3` 或 `frequency_penalty > 0`，這會導致 IQ3_XXS 模型出現數字幻覺（如 "1.000000..."）。
+
+### 11.5 auto_anchor 的已知問題
+
+`CGC_SERVER_AUTO_ANCHOR=1` 已配置，但目前對於 code-like prompts 沒有有效注入 prefill。這是一個已知問題，後續版本會修復。在此期間，請使用顯式的 `chat_template_kwargs.assistant_prefill`。
+
+---
+
 ## 附錄 A: 快速開始 checklist
 
 - [ ] 確認 Mac 端 server 正在運行 (`ps aux | grep llama-server`)
