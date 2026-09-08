@@ -587,9 +587,21 @@ SERVER_ARGS+=(--repeat-penalty "${CGC_SERVER_REPEAT_PENALTY:-1.0}")
 # [CGC 2026-09-07 DRY sampling] structural repetition breaker: unlike blanket rp,
 # DRY only applies its multiplier when a repeated sequence is DETECTED (Z-algorithm),
 # so MTP draft acceptance on healthy text is untouched. Default multiplier 0 = disabled.
-SERVER_ARGS+=(--dry-multiplier "${CGC_SERVER_DRY_MULTIPLIER:-0.0}")
-SERVER_ARGS+=(--dry-allowed-length "${CGC_SERVER_DRY_ALLOWED_LEN:-6}")
+# [CGC 2026-09-08] DRY defaults hardened: multiplier 1.0 + allowed-length 10 verified
+# on 7-profile replay (coding 0.3->1.0/1.0/1.0 with draft accept back at 89-94%).
+# Sequence breakers: DEFAULT includes "\n" which lets newline-separated loops
+# (e.g. math echo '\n答：123 × 456 等于多少') escape DRY (rep_limit < allowed_length).
+# CGC_SERVER_DRY_BREAKERS (space-separated, replaces defaults; pass '' to disable all).
+SERVER_ARGS+=(--dry-multiplier "${CGC_SERVER_DRY_MULTIPLIER:-1.0}")
+SERVER_ARGS+=(--dry-allowed-length "${CGC_SERVER_DRY_ALLOWED_LEN:-10}")
 SERVER_ARGS+=(--dry-penalty-last-n "${CGC_SERVER_DRY_LAST_N:-512}")
+if [ -n "${CGC_SERVER_DRY_BREAKERS+x}" ]; then
+    _IFS_OLD="$IFS"; IFS=' '; set -f
+    for _b in ${CGC_SERVER_DRY_BREAKERS}; do
+        SERVER_ARGS+=(--dry-sequence-breaker "$_b")
+    done
+    set +f; IFS="$_IFS_OLD"
+fi
 
 SERVER_ENV=(
     CGC_EXPERT_CACHE_BYTES="$BUDGET"
@@ -611,6 +623,14 @@ fi
 # CGC hook profiling (diagnostic only, default off)
 if [ -n "${CGC_HOOK_PROFILE:-}" ]; then
     SERVER_ENV+=(CGC_HOOK_PROFILE="$CGC_HOOK_PROFILE")
+fi
+# CGC logits oracle dump (diagnostic only, default off)
+if [ -n "${CGC_LOGITS_ORACLE_DUMP:-}" ]; then
+    SERVER_ENV+=(CGC_LOGITS_ORACLE_DUMP="$CGC_LOGITS_ORACLE_DUMP")
+fi
+# CGC exact path debug (diagnostic only, default off)
+if [ -n "${CGC_EXACT_PATH_DBG:-}" ]; then
+    SERVER_ENV+=(CGC_EXACT_PATH_DBG="$CGC_EXACT_PATH_DBG")
 fi
 # CGC P0: down-combine nsg override (for tuning). Pass through if externally set.
 if [ -n "${CGC_DC_NSG:-}" ]; then

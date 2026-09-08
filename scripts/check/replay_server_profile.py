@@ -224,70 +224,173 @@ def parse_prefetch_drop_breakdown_from_log(log_file_path):
 # Payload
 # ---------------------------------------------------------------------------
 
-def build_payload(profile, model, max_tokens, seed=0):
+# ---------------------------------------------------------------------------
+# Multi-prompt profile definitions (mirror reference v2: 3 prompts per profile).
+# Overfit guard: --runs 3 會依序輪詢 3 個 prompts, 驗證 config 不是只對單一 prompt 有效。
+# ---------------------------------------------------------------------------
+PROFILE_PROMPTS = {
+    "qa-zh": [
+        "巴黎是哪個國家的首都？請只用一句中文回答。",
+        "太陽系有幾個行星？請列出名稱。",
+        "請問 15 + 27 等於多少？",
+    ],
+    "longform-zh": [
+        "為什麼巴黎會成為法國的政治與文化中心？請用一段中文說明。",
+        "請說明人工智慧的發展歷史、現狀和未來趨勢。",
+        "請介紹台灣的地理、文化和經濟特色。",
+    ],
+    "coding": [
+        "用 Python 寫一個函數計算斐波那契數列的第 n 項。",
+        "用 Python 寫一個冒泡排序函數。",
+        "用 Python 寫一個函數判斷一個字符串是否是回文。",
+    ],
+    "math": [
+        "請計算 123 × 456 等於多少？請顯示計算過程。",
+        "請問一個圓的半徑是 5，面積是多少？（π 取 3.14）",
+        "請解方程式 2x + 5 = 15，x 等於多少？",
+    ],
+    "reasoning": [
+        "如果所有的貓都是動物，所有的動物都需要水，那麼貓需要水嗎？請解釋推理過程。",
+        "一個農場有雞和兔子，總共 30 隻頭，80 隻腳。請問雞和兔子各有多少隻？",
+        "請問「所有的程式設計師都喜歡咖啡」和「小明不喜歡咖啡」，可以得出什麼結論？",
+    ],
+    "writing": [
+        "請寫一首關於春天的短詩（4-8 行）。",
+        "請寫一段關於日落的散文描寫（100-200 字）。",
+        "請寫一封感謝信，感謝老師的教導。",
+    ],
+    "translation": [
+        "請將「Hello, how are you?」翻譯成中文。",
+        "請將「人工智慧正在改變世界」翻譯成英文。",
+        "請將「Thank you for your help」翻譯成中文。",
+    ],
+}
+
+# prompt 關鍵字 → coding prefill anchor (prompt-specific, 避免通用前綴過擬合)
+CODING_ANCHORS = [
+    ("斐波那契", "```python\ndef fibonacci(n):\n    "),
+    ("費氏", "```python\ndef fibonacci(n):\n    "),
+    ("冒泡", "```python\ndef bubble_sort(arr):\n    "),
+    ("回文", "```python\ndef is_palindrome(s):\n    "),
+    ("字符串", "```python\ndef is_palindrome(s):\n    "),
+]
+
+
+def _resolve_prompts(profile, reference_rules):
+    """優先取 reference rules 的 prompts, 否則用內建 PROFILE_PROMPTS。"""
+    rules = (reference_rules or {}).get(profile) or {}
+    prompts = rules.get("prompts") or PROFILE_PROMPTS.get(profile)
+    return prompts or [""]
+
+
+def _coding_anchor(prompt):
+    for kw, anchor in CODING_ANCHORS:
+        if kw in prompt:
+            return anchor
+    return "```python\n"
+
+
+def build_payload(profile, model, max_tokens, seed=0, prompt=None, prompt_index=0):
     """固定 seed (預設 0) + temperature 0 (greedy), 讓採樣確定性。
     seed 對 greedy 無作用, 但若 server 端有非 greedy 路徑 (如 MTP draft),
-    固定 seed 可消掉殘餘採樣噪聲。
+    固定 seed 可消掉殘餘採樣噪聲。multi-prompt: prompt_index 輪詢 PROFILE_PROMPTS。
     """
+    prompts = _resolve_prompts(profile, None)
+    p = prompt if prompt is not None else prompts[prompt_index % len(prompts)]
+    stops_std = ["<|end|>", "<|output|>", "<|user|>"] + CHATML_STOPS
+
     if profile == "qa-zh":
         return {
             "model": model,
-            "messages": [
-                {"role": "user", "content": "巴黎是哪個國家的首都？請只用一句中文回答。"},
-            ],
+            "messages": [{"role": "user", "content": p}],
             "temperature": 0,
             "seed": seed,
             "max_tokens": max_tokens or 24,
-            "chat_template_kwargs": {
-                "assistant_prefill": "答:巴黎",
-            },
-            "stop": ["。", "<|end|>", "<|output|>", "<|user|>"] + CHATML_STOPS,
+            "chat_template_kwargs": {"assistant_prefill": "答:"},
+            "stop": ["。"] + stops_std,
         }
 
     if profile == "longform-zh":
-        return {
+        payload = {
             "model": model,
             "messages": [
                 {
                     "role": "system",
                     "content": "Answer directly, after thinking. Lead with the answer, then only what it needs to be correct and usable. Keep the final answer lean. Use plain prose. Never drop correctness.",
                 },
-                {"role": "user", "content": "為什麼巴黎會成為法國的政治與文化中心？請用一段中文說明。"},
+                {"role": "user", "content": p},
             ],
             "temperature": 0,
             "seed": seed,
             "max_tokens": max_tokens or 220,
-            # CGC FIX 2026-09-06: 舊 prefill 以 ",並且匯聚了" 收尾,
-            # IQ3_XXS 會 tail-copy 這一段造成迴圈。改成 open-ended 因果錨定
-            # (",主要因為" 未完成, model 被迫生成新內容),
-            # 配 presence_penalty 1.5 打破 copy-attractor,
-            # 再配 <im_end>/<im_start> stop 截斷 marker 迴圈。
-            "chat_template_kwargs": {
-                "assistant_prefill": "答:巴黎之所以成為法國的政治與文化中心,主要因為",
-            },
-            "presence_penalty": 1.5,
             "stop": LONGFORM_STOP,
         }
+        # 巴黎 prompt 保留已調校的 open-ended 錨定 + presence (2026-09-06 FIX);
+        # 其他 prompt 走裸生成, 交由 server 端 DRY 防迴圈 (驗證泛化)。
+        if "巴黎" in p:
+            payload["chat_template_kwargs"] = {
+                "assistant_prefill": "答:巴黎之所以成為法國的政治與文化中心,主要因為",
+            }
+            payload["presence_penalty"] = 1.5
+        return payload
 
     if profile == "coding":
         return {
             "model": model,
-            "messages": [
-                {"role": "user", "content": "寫一個 Python function，計算費氏數列第 n 項。"},
-            ],
+            "messages": [{"role": "user", "content": p}],
             "temperature": 0,
             "seed": seed,
             "max_tokens": max_tokens or 512,
-            # CGC FIX 2026-09-06: 裸 ```python 前綴在 IQ3_XXS 是自強化吸引子,
-            # model 會 100% 重複 ```python (冷 pool 也一樣, temp0/0.4 相同)。
-            # 改成 def 錨定進 code-mode: 迴圈率 ~100%→20%, 不再吃 marker/scaffold。
+            # def 錨定進 code-mode (prompt-specific anchor)
             "chat_template_kwargs": {
-                "assistant_prefill": "```python\ndef fibonacci(n):\n    ",
+                "assistant_prefill": _coding_anchor(p),
             },
             "stop": ["```", "<|end|>", "<|output|>", "<|user|>"] + CHATML_STOPS,
         }
 
+    if profile == "math":
+        return {
+            "model": model,
+            "messages": [{"role": "user", "content": p}],
+            "temperature": 0,
+            "seed": seed,
+            "max_tokens": max_tokens or 300,
+            "stop": stops_std,
+        }
+
+    if profile == "reasoning":
+        return {
+            "model": model,
+            "messages": [{"role": "user", "content": p}],
+            "temperature": 0,
+            "seed": seed,
+            "max_tokens": max_tokens or 400,
+            "stop": stops_std,
+        }
+
+    if profile == "writing":
+        return {
+            "model": model,
+            "messages": [{"role": "user", "content": p}],
+            "temperature": 0,
+            "seed": seed,
+            "max_tokens": max_tokens or 250,
+            "stop": stops_std,
+        }
+
+    if profile == "translation":
+        return {
+            "model": model,
+            "messages": [{"role": "user", "content": p}],
+            "temperature": 0,
+            "seed": seed,
+            "max_tokens": max_tokens or 120,
+            "stop": stops_std,
+        }
+
     raise ValueError(f"unsupported profile: {profile}")
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -979,8 +1082,10 @@ def evaluate_quality(profile, content, finish_reason, reference_rules, cgc_stats
 # 跑單一 profile
 # ---------------------------------------------------------------------------
 
-def run_profile(args, profile, reference_rules):
-    payload = build_payload(profile, args.model, args.max_tokens)
+def run_profile(args, profile, reference_rules, prompt_index=0):
+    prompts = _resolve_prompts(profile, reference_rules)
+    p = prompts[prompt_index % len(prompts)]
+    payload = build_payload(profile, args.model, args.max_tokens, prompt=p)
     if args.print_payload:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return None
@@ -1132,15 +1237,15 @@ def run_profile_robust(args, profile, reference_rules):
     if args.warmup:
         print(f"[replay] warmup {profile} (discard) ...", file=sys.stderr)
         try:
-            run_profile(args, profile, reference_rules)
+            run_profile(args, profile, reference_rules, prompt_index=0)
         except Exception as e:
             print(f"[replay] WARN warmup {profile} failed: {e}", file=sys.stderr)
 
-    # 2) N 次量測
+    # 2) N 次量測 (multi-prompt: run i 輪詢 prompt i, 避免過擬合單一 prompt)
     runs = []
     for i in range(args.runs):
-        print(f"[replay] run {i + 1}/{args.runs} {profile} ...", file=sys.stderr)
-        r = run_profile(args, profile, reference_rules)
+        print(f"[replay] run {i + 1}/{args.runs} {profile} (prompt {i % 3}) ...", file=sys.stderr)
+        r = run_profile(args, profile, reference_rules, prompt_index=i)
         if r is not None:
             runs.append(r)
     if not runs:
@@ -1259,10 +1364,10 @@ def parse_args():
         description="Replay fixed profile payloads against llama-server + collect quality/speed/memory metrics"
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:8080/v1")
-    parser.add_argument("--profile", choices=["qa-zh", "longform-zh", "coding"],
-                        help="Single profile. Use --all-profiles to run all three.")
+    parser.add_argument("--profile", choices=['qa-zh', 'longform-zh', 'coding', 'math', 'reasoning', 'writing', 'translation'],
+                        help="Single profile. Use --all-profiles to run all seven.")
     parser.add_argument("--all-profiles", action="store_true",
-                        help="Run qa-zh + longform-zh + coding in sequence, output combined JSON.")
+                        help="Run all profiles in sequence (7 profiles x 3 prompts each), output combined JSON.")
     parser.add_argument("--model", default="test")
     parser.add_argument("--max-tokens", type=int, default=0)
     parser.add_argument("--timeout", type=int, default=180)
@@ -1343,7 +1448,7 @@ def main():
             print(f"warning: failed to load reference {args.reference}: {e}", file=sys.stderr)
             reference_rules = {}
 
-    profiles = ["qa-zh", "longform-zh", "coding"] if args.all_profiles else [args.profile]
+    profiles = ['qa-zh', 'longform-zh', 'coding', 'math', 'reasoning', 'writing', 'translation'] if args.all_profiles else [args.profile]
     results = {}
     for p in profiles:
         r = run_profile_robust(args, p, reference_rules)
