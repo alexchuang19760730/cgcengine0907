@@ -1335,6 +1335,18 @@ json oaicompat_chat_params_parse(
         }
     }
 
+    // 2026-09-08 CGC: IQ3_XXS quality gate - this quant collapses under any
+    // temperature > 0 (logits are too noisy: measured echo/think-loop/"144" for
+    // 2+2 at temp 0.4/0.7, correct "4" at temp 0). Harness 1.0 quality was always
+    // measured at temp=0. When CGC_FORCE_TEMP0=1 (default on for this model tier),
+    // override any client-supplied temperature to greedy so remote OpenAI/Claude
+    // clients (which default to temp ~0.7-1.0) get deterministic quality.
+    static const bool cgc_force_temp0 = getenv("CGC_FORCE_TEMP0") ? true : false;
+    if (cgc_force_temp0) {
+        llama_params["temperature"] = 0.0f;
+        llama_params["seed"]        = llama_params.contains("seed") ? llama_params["seed"] : json(0);
+    }
+
     return llama_params;
 }
 

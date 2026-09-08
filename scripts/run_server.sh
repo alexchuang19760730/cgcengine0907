@@ -136,6 +136,8 @@ PHYS_MEM_GB=$(( PHYS_MEM_BYTES / 1024 / 1024 / 1024 ))
 SERVER_OOM_SAFE="${CGC_SERVER_OOM_SAFE:-0}"
 SERVER_AUTO_ANCHOR="${CGC_SERVER_AUTO_ANCHOR:-1}"        # 2026-09-07: free-form turns w/o prefill get lang-matched starter (kills IQ3_XXS echo)
 SERVER_DEFAULT_MARKER_STOPS="${CGC_SERVER_DEFAULT_MARKER_STOPS:-1}" # client 沒給 stop 時補 ChatML marker stops（截斷 scaffold 迴圈）
+CGC_FORCE_TEMP0="${CGC_FORCE_TEMP0:-1}" # 2026-09-08: IQ3_XXS 品質閘門 — client temperature 一律強制 0（greedy）。
+                                  # 量測：temp>0 下 2+2 答 144/1（噪聲），temp=0 答 4；遠端 OpenAI/Claude client 預設 temp 0.7-1.0 必崩。
 
 # qwen36 的 server chat 預設走 GGUF embedded ChatML（b66e0eaf7 驗證：Nail jinja 的
 # <|user|> token model 訓練不認，會重複 <|user|> 而非回答；只有明確想用 Nail jinja 的
@@ -615,6 +617,7 @@ SERVER_ENV=(
     CGC_OA_ASYNC="$SERVER_OA_ASYNC"  # §8.77/8.78: +12.6% speed (0000 bug fixed in C++)
     CGC_SERVER_AUTO_ANCHOR="$SERVER_AUTO_ANCHOR"
     CGC_SERVER_DEFAULT_MARKER_STOPS="$SERVER_DEFAULT_MARKER_STOPS"
+    CGC_FORCE_TEMP0="$CGC_FORCE_TEMP0"
 )
 # CGC P0: down-combine (Lily-style batch down projection). Pass through if externally set.
 if [ -n "${CGC_DOWN_COMBINE:-}" ]; then

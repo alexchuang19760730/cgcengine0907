@@ -348,6 +348,10 @@ def build_payload(profile, model, max_tokens, seed=0, prompt=None, prompt_index=
                 "assistant_prefill": _coding_anchor(p),
             },
             "stop": ["```", "<|end|>", "<|output|>", "<|user|>"] + CHATML_STOPS,
+            # 2026-09-09 FIX: presence_penalty 套用到 coding prompts (與 longform/math/reasoning 一致)。
+            # 量測: IQ3_XXS 在 pp=0 下 prefill 後即進入交替循環 ("fibonacci(n):" / "def fibonacci(n):")，
+            # pp=1.5 抑制重複 → 正常生成函數體。白皮書 §0.2 明確: 長輸出 profile (longform/coding) 的 pp=1.5 是必要修正。
+            "presence_penalty": 1.5,
         }
 
     if profile == "math":
