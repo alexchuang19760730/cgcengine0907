@@ -477,6 +477,30 @@
 <p><strong>操作指引：</strong>日後測確定性一律用裸探針（temp=0, seed=0, max_tokens=16, 無 prefill/pp）；測 harness 7-profile 時保持腳本參數不變並固定 --seed 0 --runs 3 --warmup。</p>
 </div>
 
+<h3>0.5 Pool 大小 vs decode 速度重測（2026-09-08 21:30，guard ON 誠實值）</h3>
+<div class="param-box">
+<h3>背景：</h3>
+<p>§0/§0.1 的速度欄（28 t/s、coding accept 94%）經查是 09-07 舊 binary 或短輸出瞬間值，非 09-08 guard ON 下的持續 decode 值。以今日 HEAD + coding profile + harness（--warmup --runs 3 --seed 0）重測 pool 曲線：</p>
+<table>
+<thead>
+<tr><th>Pool</th><th>slots/layer</th><th>品質</th><th>decode t/s</th><th>cold(ZERO)</th><th>備註</th></tr>
+</thead>
+<tbody>
+<tr class="best"><td>8GB</td><td>143</td><td>1.0</td><td><strong>16.1</strong></td><td>7.2%</td><td>✅ <strong>甜蜜點</strong></td></tr>
+<tr><td>6GB</td><td>107</td><td>1.0</td><td>14.0</td><td>9.6%</td><td>-13%</td></tr>
+<tr><td>4GB</td><td>71</td><td>1.0</td><td>9.85</td><td>18.7%</td><td>-39%</td></tr>
+<tr><td>10GB</td><td>179</td><td>1.0</td><td>16.7</td><td>4.7%</td><td>僅 +0.6（8→10GB 非槓桿）</td></tr>
+</tbody>
+</table>
+<p><strong>今日結論（取代 §0 舊「4/6GB 品質崩 50-60%」）：</strong></p>
+<ol>
+<li><strong>8GB 仍是甜蜜點</strong>：6GB -13%、4GB -39% decode；品質全 1.0（現代 Cold Guard 下 cold expert 走 exact 而非 ZERO，小 pool 不崩品質、只掉速度——與舊 guard 時代的「4GB 品質崩 60%」不同）</li>
+<li><strong>速度 ∝ cold 比率近乎線性</strong>：每降 1% cold(ZERO) ≈ +0.9 t/s（7.2%→16.1、9.6%→14.0、18.7%→9.85）。真正的速度槓桿是「降 cold 比率」（讓 pool 裝 decode 真正要的 experts），不是 pool 大小本身</li>
+<li><strong>10GB 不是速度槓桿</strong>：cold 4.7% vs 8GB 7.2% 差距小 → 只多 0.6 t/s，不值得吃記憶體</li>
+<li><strong>§0.1 表格速度欄修正</strong>：coding 22-28 t/s → 實際 16.1（長輸出持續值）；coding accept 94% → 0.45-0.57（見 §0.4）；「~28 (warm)」是短輸出瞬間峰值（見 §0.2 探針），非持續 decode</li>
+</ol>
+</div>
+
 <p><strong>注意：</strong>variance 來自每 profile 第一個 run（冷啟動期 pool 未 warm）——warm 後 run2+ 全部穩定。replay 的 <span class="code">--warmup</span> 即為此設計（先暖 pool 再測）。8GB pool 的甜蜜點判定依據：4/6GB 品質崩（50-60%）、10GB 無額外收益、8GB 在品質 1.0/0.882/1.0 與 28 t/s 間取得唯一平衡。</p>
 
 <h3>0.4 Draft Accept 0.97→0.45 調查：0.97 是 ZERO 污染時代的假象，0.45 是 guard 後的誠實值</h3>
