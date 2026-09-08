@@ -479,6 +479,32 @@
 
 <p><strong>注意：</strong>variance 來自每 profile 第一個 run（冷啟動期 pool 未 warm）——warm 後 run2+ 全部穩定。replay 的 <span class="code">--warmup</span> 即為此設計（先暖 pool 再測）。8GB pool 的甜蜜點判定依據：4/6GB 品質崩（50-60%）、10GB 無額外收益、8GB 在品質 1.0/0.882/1.0 與 28 t/s 間取得唯一平衡。</p>
 
+<h3>0.4 Draft Accept 0.97→0.45 調查：0.97 是 ZERO 污染時代的假象，0.45 是 guard 後的誠實值</h3>
+<div class="param-box">
+<h3>背景：</h3>
+<p>白皮書 §0.1 表格記錄 coding draft accept 94%（09-04 測得）。09-08 實測只剩 0.38-0.51、mean len 2.1-2.5，一度懷疑 regression。</p>
+<h3>調查過程（逐項 A/B 排除）：</h3>
+<table>
+<thead>
+<tr><th>變因</th><th>實驗</th><th>結果</th><th>判定</th></tr>
+</thead>
+<tbody>
+<tr><td>n_max</td><td>3→5</td><td>accept 0.15-0.29、mean len 1.76-2.45、decode 4.5-7.4</td><td>❌ n_max=5 讓 IQ3_XXS draft 撐不住，純 overhead</td></tr>
+<tr><td>DRY</td><td>1.0→0</td><td>accept 0.46-0.83、score 1.0、decode 15.5</td><td>❌ 非主因（無感）</td></tr>
+<tr><td>temp</td><td>0.4→0</td><td>accept 0.46-0.83、score 1.0、decode 15.6</td><td>❌ 非主因（無感）</td></tr>
+<tr><td>pp（harness）</td><td>1.5→0</td><td>長輸出 accept 0.45-0.57 vs 0.38</td><td>❌ 非主因（些微）</td></tr>
+<tr><td>09-04 同款採樣</td><td>temp 0 + 無 DRY + 無 pp</td><td>accept 0.45、品質崩（import loop）</td><td>❌ 引擎 guard 層已不同，回不去</td></tr>
+</tbody>
+</table>
+<h3>根因（log 證據）：</h3>
+<ol>
+<li><strong>09-04 的 0.97 是 ZERO 污染時代的假象</strong>：flashkv0516 log 顯示 <span class="code">cold(ZERO)=88790 (53.4%)</span> — 每步 53% 的 expert 是 ZERO-slot 污染的 weights。draft 與「污染後的 target」用同一批錯誤 weights → 高度一致（0.97）但兩邊都錯</li>
+<li><strong>09-07/09-08 guard 硬化後 target 變正確</strong>：phase discrimination（prefill exact）+ Cold Guard + DRY + loop guard 讓 ZERO 污染大減 → target logits 正確 → draft 與正確 target 的差異被暴露 → accept「誠實地」掉到 0.45</li>
+<li><strong>decode 25-37 t/s（09-04）也是污染速度</strong>：ZERO-slot 免載入 → 快但品質沒人驗證；現在 15-17 t/s 是品質 1.0 換來的誠實速度</li>
+</ol>
+<p><strong>結論：</strong>accept 0.45 不是 regression，是系統變正確的副作用。要提升 decode 不能靠放寬採樣（DRY/temp/pp 全部無感），只能讓 draft 本身變準（draft ctx 更高精度載入、或更準的預測來源）。</p>
+</div>
+
 <h3>1. IQ3_XXS 抖動根因：不是 expert cache，是 logits 邊界 + GPU 浮點</h3>
 <p><strong>決定性實驗：</strong>全 exact（<span class="code">CGC_VERIFY_DECODE=0 CGC_DRAFT_DECODE=0</span>，零 ZERO-slot）15 連發仍抖——42×13 / 22×2（13% 抖動率），與 fast path 的 10% 幾乎相同。這推翻了「ZERO 污染是抖動源」的方向。</p>
 
