@@ -364,21 +364,74 @@
 
 <h2>🎯 關鍵實驗結論（2026-09-08）</h2>
 
-<h3>1. IQ3_XXS 抖動根因：不是 expert cache，是 logits 邊界 + GPU 浮點</h3>
+<h3>0. Pool 大小 vs 確定性 — 完整曲線（甜蜜點實驗方法）</h3>
+
+<div class="param-box">
+<h3>實驗設計（如何複現）</h3>
+<p><strong>探針：</strong>qa-zh profile 的 <span class="code">15 + 27 = ? 只回答數字</span>，正確答案「42」</p>
+<p><strong>請求參數：</strong><span class="code">temperature=0, seed=0, max_tokens=16</span>（greedy decoding，理論上應完全確定）</p>
+<p><strong>連發：</strong>同一 payload 連續發 10 次（或 6 次），統計輸出分布</p>
+<p><strong>判定標準：</strong>輸出全部為「42」= 確定；出現「22」= logits 邊界翻轉；出現「4×」或 echo = 污染</p>
+<p><strong>變更 pool 大小：</strong><span class="code">CGC_SERVER_EXPERT_CACHE_BYTES=4294967296 / 6442450944 / 8589934592 / 10737418240</span>（4/6/8/10GiB）</p>
+<p><strong>對照組：</strong>全 exact（<span class="code">CGC_VERIFY_DECODE=0 CGC_DRAFT_DECODE=0</span>）＝ 零 ZERO-slot 的理論上限</p>
+<p><strong>監測：</strong>log 中 <span class="code">CGC-COLD-GUARD</span> 觸發次數（guard 擋住走 exact 的次數）</p>
+<p><strong>每組配置重啟 server</strong>（改 pool 大小必須重啟），並記錄 RSS 與 decode t/s</p>
+</div>
+
 <table>
 <thead>
-<tr><th>配置</th><th>確定性（15+27 × 6-10）</th><th>速度</th><th>結論</th></tr>
+<tr><th>Pool</th><th>分布</th><th>正確率</th><th>Guard 觸發</th><th>速度</th><th>備註</th></tr>
 </thead>
 <tbody>
-<tr class="best"><td>全 exact（VERIFY=0 DRAFT=0）</td><td>42×13 / 22×2（<strong>仍 13% 抖</strong>）</td><td>6.3 t/s ❌</td><td>ZERO-slot 不是根因</td></tr>
-<tr><td>8GB 預設 guard 0.30</td><td>42×9 / 22×1（90%）</td><td><strong>28 t/s</strong></td><td>甜蜜點</td></tr>
-<tr><td>10GB 無 RN</td><td>42×9 / 22×1（90%）</td><td>28 t/s</td><td>加大 pool 無額外收益</td></tr>
-<tr><td>4GB / 6GB</td><td>60% / 50% ❌</td><td>—</td><td>LRU churn 更糟</td></tr>
-<tr class="bad"><td>10GB + RN_ROUTING</td><td>全同但全錯（echo）</td><td>21-22 t/s</td><td>renorm 改選擇 → 確定地錯</td></tr>
+<tr class="bad"><td>4GB</td><td>42×6 / 22×2 / 4×1 / echo×1</td><td>60%</td><td>32 次</td><td>—</td><td>LRU churn 兇，exact 也缺 expert</td></tr>
+<tr class="bad"><td>6GB</td><td>42×5 / 22×4 / echo×1</td><td>50%</td><td>11 次</td><td>—</td><td><strong>最差</strong></td></tr>
+<tr class="best"><td>8GB</td><td>42×9 / 22×1</td><td><strong>90%</strong></td><td>~1 次</td><td><strong>28 t/s</strong></td><td>✅ <strong>甜蜜點</strong></td></tr>
+<tr><td>10GB</td><td>42×9 / 22×1</td><td>90%</td><td>0 次</td><td>28 t/s</td><td>無額外收益</td></tr>
+<tr class="bad"><td>10GB+RN</td><td>全同但全錯</td><td>0%（確定地錯）</td><td>0</td><td>21-22 t/s</td><td>renorm 改選擇</td></tr>
+<tr class="best"><td>全 exact</td><td>42×13 / 22×2</td><td>87%（早期 6/6 測試 100%）</td><td>—</td><td>6.3 t/s ❌</td><td>理論上限，太慢</td></tr>
 </tbody>
 </table>
 
-<p><strong>機制：</strong>「42」與「22」的開頭 token logits 差距極小（±1e-4 級），Metal parallel reduction 順序受並發負載影響 → 邊界 token 偶爾翻轉。expert cache 只是放大器之一，不是必要條件。</p>
+<p><strong>核心結論（直覺被數據否決）：</strong></p>
+<ol>
+<li><strong>更小 = 更糟，不是更確定</strong>——4/6GB 下 guard 確實更常觸發（32/11 次），但沒觸發的層照走 ZERO，部分污染依然存在；更糟的是小 pool 的 LRU churn 讓「已 resident」的 expert 也被換掉 → fast path 命中率暴跌、exact path 也要重新 fill → 品質崩到 50-60%</li>
+<li><strong>確定性真正的來源是「冷 expert 少」（8GB 以上），不是「guard 擋得多」</strong></li>
+<li><strong>8GB = 16GB 機器的確定性甜蜜點</strong>（90%，28 t/s）——不值得為省 2GB 換 50-60%</li>
+<li>殘餘 1/10 抖動來自冷啟動期（見 §1 根因）</li>
+</ol>
+
+<h3>0.1 如何用 7-profile replay 測得甜蜜點</h3>
+
+<div class="param-box">
+<h3>7-profile replay 基準測試方法</h3>
+<p><strong>腳本：</strong><span class="code">scripts/check/replay_server_profile.py</span>（--all-profiles 帶 reference rules）</p>
+<p><strong>7 個 profile：</strong>qa-zh / longform-zh / coding / math / reasoning / writing / translation，每個 profile 3 個 prompts（共 21 個 prompts）</p>
+<p><strong>執行：</strong><span class="code">python3 scripts/check/replay_server_profile.py --all-profiles --warmup --runs 3 --seed 0</span></p>
+<p><strong>品質判定：</strong>evaluate_quality 依 reference rules 給分（含片語級 loop 偵測：相同 ≥6 字元片語連續 ≥3 次即判 loop）</p>
+<p><strong>甜蜜點判定：</strong>在每個候選 pool 大小下跑完整 7-profile，取品質 ≥0.8 且 decode t/s 最高者</p>
+</div>
+
+<table>
+<thead>
+<tr><th>Profile</th><th>8GB pool 分數</th><th>Variance</th><th>Decode t/s</th><th>Draft Accept</th></tr>
+</thead>
+<tbody>
+<tr class="best"><td>qa-zh</td><td>1.0</td><td>0.0</td><td>~28 (warm)</td><td>37.5%</td></tr>
+<tr class="best"><td>longform-zh</td><td>0.882</td><td>0.003</td><td>~28 (warm)</td><td>23.8%</td></tr>
+<tr class="best"><td>coding</td><td>1.0</td><td>0.022</td><td>22-28</td><td>94%</td></tr>
+<tr><td>math</td><td>1.0</td><td>0.109</td><td>~16</td><td>65%</td></tr>
+<tr><td>reasoning</td><td>1.0</td><td>0.109</td><td>~12</td><td>58%</td></tr>
+<tr><td>writing</td><td>1.0</td><td>0.075</td><td>~10</td><td>38%</td></tr>
+<tr><td>translation</td><td>1.0</td><td>0.012</td><td>~12</td><td>58%</td></tr>
+</tbody>
+</table>
+
+<p><strong>注意：</strong>variance 來自每 profile 第一個 run（冷啟動期 pool 未 warm）——warm 後 run2+ 全部穩定。replay 的 <span class="code">--warmup</span> 即為此設計（先暖 pool 再測）。8GB pool 的甜蜜點判定依據：4/6GB 品質崩（50-60%）、10GB 無額外收益、8GB 在品質 1.0/0.882/1.0 與 28 t/s 間取得唯一平衡。</p>
+
+<h3>1. IQ3_XXS 抖動根因：不是 expert cache，是 logits 邊界 + GPU 浮點</h3>
+<p><strong>決定性實驗：</strong>全 exact（<span class="code">CGC_VERIFY_DECODE=0 CGC_DRAFT_DECODE=0</span>，零 ZERO-slot）15 連發仍抖——42×13 / 22×2（13% 抖動率），與 fast path 的 10% 幾乎相同。這推翻了「ZERO 污染是抖動源」的方向。</p>
+
+<p><strong>機制：</strong>「42」與「22」的開頭 token logits 差距極小（±1e-4 級），Metal parallel reduction 順序受並發負載影響 → 邊界 token 偶爾翻轉。expert cache 只是放大器之一，不是必要條件。三個條件疊加：① 模型 logits 邊界接近（必要條件）② GPU 浮點非確定性（扳機）③ expert cache 只是放大器之一。</p>
 
 <h3>2. Q4_K_M 檔（23GB）在 16GB 上不可用</h3>
 <table>
