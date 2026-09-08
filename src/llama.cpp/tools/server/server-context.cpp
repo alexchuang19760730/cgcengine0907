@@ -16,6 +16,7 @@
 #include "speculative.h"
 #include "mtmd.h"
 #include "mtmd-helper.h"
+#include "../../src/llama-ext.h" // staging API: llama_context_set_cgc_phase (CGC Phase Discrimination)
 
 #include <algorithm>
 #include <cstddef>
@@ -2994,6 +2995,11 @@ private:
             llama_set_embeddings(ctx_tgt, slot_batched->need_embd());
         }
 
+        // [CGC Phase Discrimination 2026-09-08] classify the WHOLE batch once, before the
+        // view loop. Per-view classification is wrong: slot.i_batch is reset to -1 after
+        // sampling, so the 2nd+ view would be misread as UNKNOWN and lose the fast path.
+        const cgc_phase_t cgc_batch_phase = classify_batch_phase();
+
         llama_batch batch_view;
         int32_t off_next = 0;
         int32_t n_batch = llama_n_batch(ctx_tgt);
@@ -3004,7 +3010,7 @@ private:
                 // TODO @ngxson : maybe handle n_batch == 1 here instead of inside decode()
 
                 batch_view = batch.get_view(off, n_tokens);
-                bool ok = decode(n_batch, off, batch_view);
+                bool ok = decode(n_batch, off, batch_view, cgc_batch_phase);
 #ifdef DEBUG_TIMINGS
                 llama_synchronize(ctx_tgt);
 #endif
@@ -3758,9 +3764,62 @@ private:
         }
     }
 
+    // [CGC Phase Discrimination 2026-09-08] classify the current full batch (batch.tokens,
+    // mapped to slots by id_slot) into one explicit phase: VERIFY if every token belongs to a
+    // slot's speculative verify round (spec_i_batch), PREFILL if every token is prompt
+    // processing, NORMAL_DECODE if every token is a plain generation token, else UNKNOWN
+    // (mixed batches / no active slot -> fail-closed exact path).
+    cgc_phase_t classify_batch_phase() {
+        bool have_verify  = false;
+        bool have_prefill = false;
+        bool have_normal  = false;
+
+        for (const auto & bt : batch.tokens) {
+            if (bt.id_slot < 0 || bt.id_slot >= (int32_t) slots.size()) {
+                continue;
+            }
+            const server_slot & slot = slots[bt.id_slot];
+            if (!slot.is_processing()) {
+                continue;
+            }
+
+            bool is_verify = false;
+            if (!slot.spec_i_batch.empty()) {
+                for (int32_t bi : slot.spec_i_batch) {
+                    if (bi >= 0 && bi < (int32_t) batch.tokens.size() &&
+                            batch.tokens[bi].id_slot == bt.id_slot) {
+                        is_verify = true;
+                        break;
+                    }
+                }
+            }
+
+            if (is_verify) {
+                have_verify = true;
+            } else if (slot.state == SLOT_STATE_PROCESSING_PROMPT || slot.state == SLOT_STATE_STARTED ||
+                       slot.state == SLOT_STATE_DONE_PROMPT) {
+                have_prefill = true;
+            } else if (slot.state == SLOT_STATE_GENERATING) {
+                have_normal = true;
+            }
+        }
+
+        const int n_phases = (int) have_verify + (int) have_prefill + (int) have_normal;
+        if (n_phases == 1) {
+            if (have_verify) {
+                return CGC_PHASE_VERIFY;
+            }
+            if (have_prefill) {
+                return CGC_PHASE_PREFILL;
+            }
+            return CGC_PHASE_NORMAL_DECODE;
+        }
+        return CGC_PHASE_UNKNOWN; // mixed or empty -> fail-closed exact path
+    }
+
     // returns true = success ; false = retry with smaller batch size
     // throw std::runtime_error on fatal error
-    bool decode(int32_t & n_batch, int32_t off, llama_batch & batch_view) {
+    bool decode(int32_t & n_batch, int32_t off, llama_batch & batch_view, cgc_phase_t cgc_phase = CGC_PHASE_UNKNOWN) {
         SRV_DBG("n_batch (effective) = %d, off = %d\n", n_batch, off);
 
         if (batch.size() == 0) {
@@ -3782,6 +3841,17 @@ private:
                 SRV_ERR("%s", "unsupported batch.has_embd + spec case\n");
                 throw std::runtime_error("unsupported batch.has_embd + spec case");
             }
+        }
+
+        // [CGC Phase Discrimination 2026-09-08] the phase for this view was computed once at
+        // the batch level (classify_batch_phase) before the view loop; apply it here. UNKNOWN
+        // is fail-closed (exact ensure_batch, no ZERO-slot fast path).
+        llama_context_set_cgc_phase(ctx_tgt, cgc_phase);
+
+        if (getenv("CGC_PHASE_DBG") != nullptr) {
+            const char * phase_names[] = {"UNKNOWN", "PREFILL", "VERIFY", "DRAFT", "CATCHUP", "NORMAL_DECODE"};
+            SRV_DBG("CGC-PHASE: set ctx_tgt phase=%s (n_batch=%d, off=%d)\n",
+                    phase_names[cgc_phase], n_batch, off);
         }
 
         const int ret = llama_decode(ctx_tgt, batch_view);

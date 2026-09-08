@@ -17,7 +17,9 @@
 // decode, e.g. speculative/MTP verify batches). Batches <= this go through the pool
 // (remap leaf built, FFN reads pool regions by slot); larger batches use the prefill
 // path (full expert tensors). Default 8 covers MTP n_max up to 7 (verify = n_max+1).
-// Tunable via CGC_POOL_MAX_TOKENS (clamped to [2, 16]).
+// Tunable via CGC_POOL_MAX_TOKENS (clamped to [2, 64]).
+// [2026-09-08] Increased upper bound from 16 to 64 to allow larger prefill batches
+// for better GPU utilization. Note: larger values may increase memory pressure.
 static inline uint32_t cgc_pool_max_tokens() {
     static const uint32_t v = []() {
         uint32_t x = 8;
@@ -30,7 +32,7 @@ static inline uint32_t cgc_pool_max_tokens() {
             }
         }
         if (x < 2)  x = 2;
-        if (x > 16) x = 16;
+        if (x > 64) x = 64;
         return x;
     }();
     return v;

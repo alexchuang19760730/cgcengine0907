@@ -1260,6 +1260,26 @@ void llama_context::set_warmup(bool value) {
     //sched_need_reserve = true;
 }
 
+// [CGC Phase Discrimination 2026-09-08] Set/get the current decode phase.
+// Must be called before llama_decode() for each batch.
+// UNKNOWN is the safe default: exact ensure_batch path, no ZERO-slot fast path.
+void llama_context::set_cgc_phase(cgc_phase_t phase) {
+    cgc_current_phase = phase;
+}
+
+cgc_phase_t llama_context::get_cgc_phase() const {
+    return cgc_current_phase;
+}
+
+// Public API wrappers (declared in llama-ext.h)
+void llama_context_set_cgc_phase(llama_context * ctx, cgc_phase_t phase) {
+    ctx->set_cgc_phase(phase);
+}
+
+cgc_phase_t llama_context_get_cgc_phase(const llama_context * ctx) {
+    return ctx->get_cgc_phase();
+}
+
 bool llama_context::set_sampler(llama_seq_id seq_id, llama_sampler * sampler) {
     if (!sampler && sampling.samplers.count(seq_id) == 0) {
         return true;
@@ -3836,17 +3856,19 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     const uint32_t n_slots = llama_expert_cache_slots_per_layer_l(cache, (uint32_t) il);
     if (llama_expert_cache_pool_active(cache) && uni.size() <= n_slots) {
         // [CGC MTP fast path] CGC_VERIFY_DECODE / CGC_DRAFT_DECODE (rebuilt 2026-08-28 from
-        // MTP轉正規劃書_v1.1.md): route MTP verify / draft through the decode fast path (touch +
-        // ZERO-slot, no synchronous pread). Detection:
-        //   - verify = ctx_tgt (DEFAULT) + embeddings_nextn + multi-token + seqmax > n_tokens-1
-        //     (n_past>0; the n_past==0 tiny-prompt prefill has seqmax == n_tokens-1 and stays exact)
-        //   - draft  = ctx_dft (MTP) 1-token
-        //   - process catch-up (MTP && n_tokens>1) and all non-MTP runs (no env) fall through to
-        //     the exact-load path below -> byte-identical base behaviour.
+        // [CGC Phase Discrimination 2026-09-08] Use explicit phase marker set by the caller
+        // (server-context.cpp / common/speculative.cpp) instead of unreliable n_tokens/seq_pos_max
+        // heuristics. Phase is set before each llama_decode() call.
+        //   - VERIFY: target context MTP verify batch (can be n_tokens==1 when L4 splits it)
+        //   - DRAFT:  MTP draft context single-token decode
+        //   - PREFILL / CATCHUP / NORMAL_DECODE / UNKNOWN: exact ensure_batch path, no ZERO-slot
+        // UNKNOWN is the safe default: when caller forgets to set phase, we fall back to exact path.
+        const cgc_phase_t cgc_phase = cgc_current_phase;
         const bool verify_fast = getenv("CGC_VERIFY_DECODE") != nullptr &&
-            cparams.ctx_type == LLAMA_CONTEXT_TYPE_DEFAULT && cparams.embeddings_nextn &&
-            n_tokens > 1 && llama_memory_seq_pos_max(get_memory(), 0) > n_tokens - 1;
+            cgc_phase == CGC_PHASE_VERIFY &&
+            cparams.ctx_type == LLAMA_CONTEXT_TYPE_DEFAULT;
         const bool draft_fast = getenv("CGC_DRAFT_DECODE") != nullptr &&
+            cgc_phase == CGC_PHASE_DRAFT &&
             cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP && n_tokens == 1;
         // [CGC warmup gate 2026-08-30] 短 prompt 的 prefill 餵不飽 pool（55 tok ≈ 7 chunk），
         // decode 冷啟動期大量 cold expert 被 ZERO-slot 讀成零權重 → logits 崩潰成 0000...。
@@ -3854,12 +3876,30 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         // ratio 門檻會誤傷長 prompt）。確定性修復：n_past 未達暖機門檻（pool 尚未餵飽）時
         // 禁用 fast path，走下方 exact ensure_batch 補槽；n_past 達標後恢復 fast path。長
         // prompt prefill 已餵飽 pool，decode 首步 n_past 就超門檻，完全不受影響。env
-        // CGC_WARM_NPAST 可調（預設 256）。
+        // CGC_WARM_NPAST 可調（預設 2048，從 256 提高以覆蓋更多 prefill 場景）。
+        // Note: warmup gate is kept as a second-layer safety net, but the primary phase
+        // discrimination now comes from cgc_current_phase set by the caller.
         const long long cgc_n_past = llama_memory_seq_pos_max(get_memory(), 0);
         const char * cgc_warm_env = getenv("CGC_WARM_NPAST");
-        const long long cgc_warm_npast = cgc_warm_env ? atoll(cgc_warm_env) : 256;
+        const long long cgc_warm_npast = cgc_warm_env ? atoll(cgc_warm_env) : 2048;
         const bool cgc_warm_gate = cgc_n_past < cgc_warm_npast;
         bool cgc_fast_eligible = !cgc_warm_gate;
+
+        // [CGC Phase safety] Only VERIFY and DRAFT phases are allowed to use the fast path
+        // (ZERO-slot). PREFILL / CATCHUP / NORMAL_DECODE / UNKNOWN must use exact ensure_batch.
+        // This is the primary gate; warmup gate above is secondary.
+        if (cgc_phase != CGC_PHASE_VERIFY && cgc_phase != CGC_PHASE_DRAFT) {
+            cgc_fast_eligible = false;
+        }
+
+        // [診斷] 記錄 phase 判別結果（CGC_PHASE_DBG=1 啟用，只看前 2 層避免日誌過多）
+        if (getenv("CGC_PHASE_DBG") != nullptr && il <= 1) {
+            const char * phase_names[] = {"UNKNOWN", "PREFILL", "VERIFY", "DRAFT", "CATCHUP", "NORMAL_DECODE"};
+            fprintf(stderr, "CGC-PHASE-DBG: il=%d phase=%s n_past=%lld n_tokens=%lld "
+                    "warm_gate=%d verify_fast=%d draft_fast=%d fast_eligible=%d\n",
+                    il, phase_names[cgc_phase], cgc_n_past, (long long)n_tokens,
+                    (int)cgc_warm_gate, (int)verify_fast, (int)draft_fast, (int)cgc_fast_eligible);
+        }
 
         // [CGC Fast-Path Cold Guard] When too many of this step's top-k experts are cold
         // (slot_table == -1), the ZERO-slot contamination exceeds softmax's absorption

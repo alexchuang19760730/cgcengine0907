@@ -9,6 +9,19 @@
 #include <cstdint>
 #include <map>
 
+// [CGC Phase Discrimination 2026-09-08] Explicit decode phase marker.
+// Used by expert_cache_on_topk() to distinguish prefill vs verify vs draft,
+// replacing the unreliable n_tokens/seq_pos_max heuristics.
+// UNKNOWN is the safe default: exact ensure_batch path, no ZERO-slot fast path.
+enum cgc_phase_t {
+    CGC_PHASE_UNKNOWN = 0,
+    CGC_PHASE_PREFILL,        // normal prompt/chunk prefill (ctx_type == DEFAULT)
+    CGC_PHASE_VERIFY,         // target context MTP verify batch
+    CGC_PHASE_DRAFT,          // MTP draft context single-token decode
+    CGC_PHASE_CATCHUP,        // draft context catch-up decode (n_tokens > 1)
+    CGC_PHASE_NORMAL_DECODE   // normal single-token decode (no MTP)
+};
+
 // Reserve a new compute graph. It is valid until the next call to llama_graph_reserve.
 LLAMA_API struct ggml_cgraph * llama_graph_reserve(
         struct llama_context * ctx,
@@ -130,3 +143,13 @@ LLAMA_API uint32_t        llama_model_target_layer_ids_n(const struct llama_mode
 // if out is nullptr, returns the number of tokens without writing to out
 // caller must allocate enough memory for out before calling
 LLAMA_API uint32_t llama_model_get_tok_embd(const struct llama_model * model, float * out);
+
+//
+// [CGC Phase Discrimination 2026-09-08] Explicit decode phase marker API.
+// Used by expert_cache_on_topk() to distinguish prefill vs verify vs draft,
+// replacing the unreliable n_tokens/seq_pos_max heuristics.
+// Must be called before llama_decode() for each batch.
+// UNKNOWN is the safe default: exact ensure_batch path, no ZERO-slot fast path.
+//
+LLAMA_API void llama_context_set_cgc_phase(struct llama_context * ctx, cgc_phase_t phase);
+LLAMA_API cgc_phase_t llama_context_get_cgc_phase(const struct llama_context * ctx);

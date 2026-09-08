@@ -299,6 +299,9 @@ struct common_speculative_impl_draft_simple : public common_speculative_impl {
             common_batch_add(batch, dp.id_last, dp.n_past, { seq_id }, true);
         }
 
+        // [CGC Phase Discrimination 2026-09-08] Set DRAFT phase for draft context decode.
+        llama_context_set_cgc_phase(ctx_dft, CGC_PHASE_DRAFT);
+
         int ret = llama_decode(ctx_dft, batch);
         if (ret != 0) {
             SPC_ERR("llama_decode returned %d\n", ret);
@@ -361,6 +364,9 @@ struct common_speculative_impl_draft_simple : public common_speculative_impl {
             if (batch.n_tokens == 0) {
                 break;
             }
+
+            // [CGC Phase Discrimination 2026-09-08] Set DRAFT phase for draft context decode.
+            llama_context_set_cgc_phase(ctx_dft, CGC_PHASE_DRAFT);
 
             // evaluate the drafted tokens on the draft model
             ret = llama_decode(ctx_dft, batch);
@@ -1548,6 +1554,10 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                     llama_set_nextn_layer_offset(ctx_dft, head);
                 }
 
+                // [CGC Phase Discrimination 2026-09-08] Set CATCHUP phase for draft context catch-up decode.
+                // This is a multi-token re-decode of the drafted range, not a single-token draft.
+                llama_context_set_cgc_phase(ctx_dft, CGC_PHASE_CATCHUP);
+
                 const int32_t rc = llama_decode(ctx_dft, batch);
                 if (rc != 0) {
                     SPC_ERR("llama_decode(ctx_dft) head=%d failed rc=%d (pos=%d)\n",
@@ -1680,6 +1690,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                         batch.token[0], (long long) batch.pos[0], batch.embd[0], batch.embd[1], batch.embd[2], batch.embd[3], sqrt(nr), batch.n_tokens);
             }
 #endif
+            // [CGC Phase Discrimination 2026-09-08] MTP draft single-token decode: the only
+            // draft-context fast-path-allowed phase. Reset to UNKNOWN after the draft loop.
+            llama_context_set_cgc_phase(ctx_dft, CGC_PHASE_DRAFT);
             int ret = llama_decode(ctx_dft, batch);
             if (ret != 0) {
                 SPC_ERR("llama_decode[%d] returned %d\n", i, ret);
@@ -1776,6 +1789,11 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         if (chain_heads) {
             llama_set_nextn_layer_offset(ctx_dft, 0); // restore default for non-draft decodes
         }
+
+        // [CGC Phase Discrimination 2026-09-08] the draft loop is the only draft-context
+        // fast-path-allowed phase; reset to fail-closed UNKNOWN so a missed marker can never
+        // accidentally ZERO-map an exact-path batch.
+        llama_context_set_cgc_phase(ctx_dft, CGC_PHASE_UNKNOWN);
 
         for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
             auto & dp = dparams[seq_id];

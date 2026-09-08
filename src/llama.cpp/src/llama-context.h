@@ -120,6 +120,12 @@ struct llama_context {
     void set_causal_attn(bool value);
     void set_warmup(bool value);
 
+    // [CGC Phase Discrimination 2026-09-08] Set the current decode phase.
+    // Must be called before llama_decode() for each batch.
+    // UNKNOWN is the safe default (exact path, no ZERO-slot fast path).
+    void set_cgc_phase(cgc_phase_t phase);
+    cgc_phase_t get_cgc_phase() const;
+
     void set_adapters_lora(llama_adapter_lora ** adapters, size_t n_adapters, float * scales);
 
     bool adapters_lora_are_same(llama_adapter_lora ** adapters, size_t n_adapters, float * scales);
@@ -471,6 +477,12 @@ private:
 
     // env: LLAMA_GRAPH_REUSE_DISABLE
     bool graph_reuse_disable = false;
+
+    // [CGC Phase Discrimination 2026-09-08] Current decode phase.
+    // Set by set_cgc_phase() before each llama_decode() call.
+    // Used by expert_cache_on_topk() to distinguish prefill vs verify vs draft.
+    // UNKNOWN is the safe default: exact ensure_batch path, no ZERO-slot fast path.
+    cgc_phase_t cgc_current_phase = CGC_PHASE_UNKNOWN;
 
     // perf
     mutable int64_t t_start_us  = 0;

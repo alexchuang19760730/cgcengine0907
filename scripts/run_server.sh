@@ -632,6 +632,23 @@ fi
 if [ -n "${CGC_EXACT_PATH_DBG:-}" ]; then
     SERVER_ENV+=(CGC_EXACT_PATH_DBG="$CGC_EXACT_PATH_DBG")
 fi
+# CGC Fast-Path Wait: wait for in-flight fills instead of ZERO-mapping (default off)
+if [ -n "${CGC_FAST_WAIT:-}" ]; then
+    SERVER_ENV+=(CGC_FAST_WAIT="$CGC_FAST_WAIT")
+fi
+if [ -n "${CGC_FAST_WAIT_US:-}" ]; then
+    SERVER_ENV+=(CGC_FAST_WAIT_US="$CGC_FAST_WAIT_US")
+fi
+if [ -n "${CGC_FAST_WAIT_MAX:-}" ]; then
+    SERVER_ENV+=(CGC_FAST_WAIT_MAX="$CGC_FAST_WAIT_MAX")
+fi
+# CGC prev-token prefetch (default off)
+if [ -n "${CGC_PREV_TOKEN_PREFETCH:-}" ]; then
+    SERVER_ENV+=(CGC_PREV_TOKEN_PREFETCH="$CGC_PREV_TOKEN_PREFETCH")
+fi
+if [ -n "${CGC_PREV_TOKEN_PREFETCH_SYNC:-}" ]; then
+    SERVER_ENV+=(CGC_PREV_TOKEN_PREFETCH_SYNC="$CGC_PREV_TOKEN_PREFETCH_SYNC")
+fi
 # CGC P0: down-combine nsg override (for tuning). Pass through if externally set.
 if [ -n "${CGC_DC_NSG:-}" ]; then
     SERVER_ENV+=(CGC_DC_NSG="$CGC_DC_NSG")
