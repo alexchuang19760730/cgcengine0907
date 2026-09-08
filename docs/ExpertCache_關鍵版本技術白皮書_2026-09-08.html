@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expert Cache 關鍵版本技術白皮書</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; color: #333; }
+  h1 { color: #1a1a2e; border-bottom: 3px solid #16213e; padding-bottom: 10px; }
+  h2 { color: #16213e; margin-top: 30px; border-left: 4px solid #0f3460; padding-left: 10px; }
+  h3 { color: #0f3460; }
+  table { border-collapse: collapse; width: 100%; margin: 15px 0; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  th { background: #16213e; color: white; padding: 10px 8px; text-align: left; font-size: 13px; }
+  td { padding: 8px; border-bottom: 1px solid #eee; font-size: 13px; }
+  tr:hover { background: #f0f4ff; }
+  .best { background: #d4edda; font-weight: bold; }
+  .good { background: #fff3cd; }
+  .bad { background: #f8d7da; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
+  .tag-best { background: #28a745; color: white; }
+  .tag-good { background: #ffc107; color: #333; }
+  .tag-bad { background: #dc3545; color: white; }
+  .tag-info { background: #17a2b8; color: white; }
+  .summary-box { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; margin: 20px 0; }
+  .summary-box h2 { color: white; border: none; }
+  .param-box { background: #e8f4f8; border-left: 4px solid #17a2b8; padding: 15px; margin: 10px 0; border-radius: 0 5px 5px 0; }
+  .param-name { font-family: 'Courier New', monospace; font-weight: bold; color: #0f3460; }
+  .param-default { color: #28a745; font-weight: bold; }
+  .footer { text-align: center; color: #888; margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; }
+  .milestone { background: white; padding: 15px; margin: 10px 0; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-left: 4px solid #667eea; }
+  .milestone h3 { margin-top: 0; }
+  .code { font-family: 'Courier New', monospace; background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+  .diagram { background: #1e1e2e; color: #cdd6f4; font-family: 'Courier New', monospace; padding: 20px; border-radius: 8px; margin: 15px 0; font-size: 13px; line-height: 1.6; overflow-x: auto; }
+  .diagram .hl { color: #a6e3a1; font-weight: bold; }
+  .diagram .red { color: #f38ba8; }
+  .diagram .ylw { color: #f9e2af; }
+  .diagram .cyn { color: #89dceb; }
+</style>
+</head>
+<body>
+
+<h1>Expert Cache 關鍵版本技術白皮書</h1>
+<p><strong>生成時間：</strong>2026-09-08 19:30 PDT</p>
+<p><strong>模型：</strong>Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf（23GB 檔不適用，見 §6）</p>
+<p><strong>硬件：</strong>MacBook Pro M4 Max 16GB</p>
+<p><strong>分支：</strong>production @ 474d07f13（已推送 cgcengine0907）</p>
+<p><strong>目標：</strong>25+ tok/s decode、質量 1.0/0.882/1.0 三 profile、16GB 記憶體邊界內穩定運行</p>
+
+<div class="summary-box">
+<h2>📊 最終成果</h2>
+<p><strong>生產版本：v1.0.0（9dde528a5）</strong>— CGC Expert Cache 25.17 t/s，三 profile 質量 baseline（qa-zh 1.0 / longform-zh 0.882 / coding 1.0）</p>
+<p><strong>推薦配置：</strong>8GB pool + phase discrimination（prefill exact / verify+draft fast）+ Cold Guard 0.30 + DRAFT_STRICT + loop guard</p>
+<p><strong>關鍵結論：</strong>殘餘 1/10 抖動根因 = IQ3_XXS logits 邊界 + GPU 浮點非確定性，與 expert cache 無關（全 exact 15 連發仍 13% 抖動）</p>
+</div>
+
+<h2>📋 版本里程碑（2026-08-30 → 2026-09-08）</h2>
+
+<table>
+<thead>
+<tr>
+  <th>Commit</th>
+  <th>時間</th>
+  <th>版本描述</th>
+  <th>Decode (t/s)</th>
+  <th>質量</th>
+  <th>里程碑</th>
+</tr>
+</thead>
+<tbody>
+<tr class="best">
+  <td class="code">474d07f13</td>
+  <td>09-08 18:12</td>
+  <td>MTP draft 嚴格冷 guard（CGC_DRAFT_STRICT）</td>
+  <td>28.4 (warm)</td>
+  <td>1.0</td>
+  <td><span class="tag tag-best">確定性加固</span></td>
+</tr>
+<tr class="best">
+  <td class="code">16745cf3e</td>
+  <td>09-08 17:32</td>
+  <td>replay harness presence_penalty=1.5（longform 0.235→0.882、math/writing 0.3→1.0）</td>
+  <td>—</td>
+  <td>1.0/0.882/1.0</td>
+  <td><span class="tag tag-best">質量修復</span></td>
+</tr>
+<tr class="best">
+  <td class="code">c76f222d8</td>
+  <td>09-08 16:44</td>
+  <td>顯式 CGC decode-phase 判別（prefill exact / verify+draft fast）</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-best">污染源關閉</span></td>
+</tr>
+<tr>
+  <td class="code">9fc07b0e9</td>
+  <td>09-08 12:56</td>
+  <td>server-side phrase-loop guard（CGC_LOOP_GUARD, ON）</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-good">防迴圈</span></td>
+</tr>
+<tr>
+  <td class="code">d7c8167fe</td>
+  <td>09-08 12:46</td>
+  <td>SpAc EMA membership 豁免 CGC_NO_PREFETCH + telemetry</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-info">基礎架構</span></td>
+</tr>
+<tr>
+  <td class="code">4715610df</td>
+  <td>09-08 12:45</td>
+  <td>7-profile multi-prompt replay harness + DRY 1.0/len10 預設</td>
+  <td>—</td>
+  <td>全 1.0</td>
+  <td><span class="tag tag-info">測試基礎</span></td>
+</tr>
+<tr>
+  <td class="code">8a078454c</td>
+  <td>09-08 04:13</td>
+  <td>prev-token prefetch（CGC_PREV_TOKEN_PREFETCH, OFF）</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-info">實驗</span></td>
+</tr>
+<tr>
+  <td class="code">ca47e0367</td>
+  <td>09-08 04:11</td>
+  <td>v2 quality reference rules + Soft Pool L0=48/L1=48 預設</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-info">測試基礎</span></td>
+</tr>
+<tr>
+  <td class="code">74f83a82f</td>
+  <td>09-08 02:46</td>
+  <td>KV cache Q8 量化 + prefetch drop audit（12 drop points）</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-info">記憶體優化</span></td>
+</tr>
+<tr>
+  <td class="code">ef5eea24c</td>
+  <td>09-07 20:32</td>
+  <td>Phase-0 誠實測量：loop detection + selcold + session baseline</td>
+  <td>—</td>
+  <td>—</td>
+  <td><span class="tag tag-info">測量基礎</span></td>
+</tr>
+<tr>
+  <td class="code">62777a53c</td>
+  <td>09-07 19:43</td>
+  <td>auto-anchor + marker-stop 預設（未錨定 CLI turn）</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-good">CLI 相容</span></td>
+</tr>
+<tr>
+  <td class="code">29e477964</td>
+  <td>09-07 17:44</td>
+  <td>MTP server ctx 3072→8192（Claude Code CLI 最低 3117 tokens）</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-good">CLI 相容</span></td>
+</tr>
+<tr class="best">
+  <td class="code">9dde528a5</td>
+  <td>09-07 07:17</td>
+  <td><strong>release v1.0.0 production — CGC Expert Cache 25.17 t/s</strong></td>
+  <td><strong>25.17</strong></td>
+  <td>1.0/0.882/1.0</td>
+  <td><span class="tag tag-best">發布版</span></td>
+</tr>
+<tr>
+  <td class="code">13b78a08f</td>
+  <td>09-06 22:48</td>
+  <td>EMA alpha 預設 0.75（調校）+ decode 里程碑文件</td>
+  <td>25.87 (median)</td>
+  <td>1.0</td>
+  <td><span class="tag tag-good">+α 調校</span></td>
+</tr>
+<tr>
+  <td class="code">a875c2faf</td>
+  <td>09-06 21:33</td>
+  <td>DBUF2 prefill 修復（僅 decode step swap）</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-info">修復</span></td>
+</tr>
+<tr>
+  <td class="code">21ad09153</td>
+  <td>09-06 21:13</td>
+  <td>DBUF2 完整雙緩衝（active/scratch）</td>
+  <td>12.47</td>
+  <td>1.0</td>
+  <td><span class="tag tag-bad">16GB 性能退化</span></td>
+</tr>
+<tr>
+  <td class="code">9e1ac6416</td>
+  <td>09-06 20:35</td>
+  <td>Fast-Path Wait（等待 in-flight fill）</td>
+  <td>17.22</td>
+  <td>1.0</td>
+  <td><span class="tag tag-bad">速度下降</span></td>
+</tr>
+<tr class="best">
+  <td class="code">10bdf0128</td>
+  <td>09-06 20:05</td>
+  <td>DBUF spike（hook-time step-ahead refill）</td>
+  <td><strong>24.83</strong></td>
+  <td>1.0</td>
+  <td><span class="tag tag-best">突破 25</span></td>
+</tr>
+<tr>
+  <td class="code">a23195e01</td>
+  <td>09-06 19:15</td>
+  <td>EMA-victim + 4GB/8GB pool A/B</td>
+  <td>17.41 (8GB)</td>
+  <td>1.0</td>
+  <td><span class="tag tag-good">+113%</span></td>
+</tr>
+<tr>
+  <td class="code">e3689887f</td>
+  <td>09-06 18:25</td>
+  <td>RN quality bisect（exclusion 是殺手）</td>
+  <td>25.9</td>
+  <td>0.3 ❌</td>
+  <td><span class="tag tag-bad">renorm 已死</span></td>
+</tr>
+<tr>
+  <td class="code">9e046443e</td>
+  <td>09-06 18:16</td>
+  <td>pool 預設 4GiB → 8GiB（16GB 機 A/B 驗證）</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-good">配置優化</span></td>
+</tr>
+<tr>
+  <td class="code">df3ee17a6</td>
+  <td>09-06 17:57</td>
+  <td>SpAc EMA estimator port（env-gated, OFF）</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-info">基礎架構</span></td>
+</tr>
+<tr>
+  <td class="code">27d46ac7e</td>
+  <td>09-06 17:12</td>
+  <td>mass-coverage instrumentation + renorm 可行性判定</td>
+  <td>—</td>
+  <td>—</td>
+  <td><span class="tag tag-info">測量基礎</span></td>
+</tr>
+<tr>
+  <td class="code">fce656c02</td>
+  <td>09-06 16:36</td>
+  <td>Step-2a produce + Step-3 renorm routing（env-gated, OFF）</td>
+  <td>—</td>
+  <td>—</td>
+  <td><span class="tag tag-info">實驗</span></td>
+</tr>
+<tr>
+  <td class="code">9100b0230</td>
+  <td>09-06 14:30</td>
+  <td>Step-2/3 weighted cold guard + logits eval callback</td>
+  <td>—</td>
+  <td>—</td>
+  <td><span class="tag tag-info">實驗</span></td>
+</tr>
+<tr>
+  <td class="code">7e8afd3b5</td>
+  <td>09-06 12:31</td>
+  <td>load-time pin prefill（PIN_PROFILE 載入期 pread + static-pin）</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-info">加速</span></td>
+</tr>
+<tr class="best">
+  <td class="code">37305dbc6</td>
+  <td>09-06 04:44</td>
+  <td><strong>質量修復後 re-baseline</strong>（longform 0.882 / coding 1.0 / qa-zh 1.0）</td>
+  <td>~12</td>
+  <td>1.0/0.882/1.0</td>
+  <td><span class="tag tag-best">基準線</span></td>
+</tr>
+<tr>
+  <td class="code">2c8848420</td>
+  <td>09-06 04:34</td>
+  <td>longform-zh marker 迴圈修復：open-ended 錨定 + pp 1.5 + ChatML stop</td>
+  <td>—</td>
+  <td>0.882</td>
+  <td><span class="tag tag-good">質量修復</span></td>
+</tr>
+<tr>
+  <td class="code">2f2f2da51</td>
+  <td>09-06 01:38</td>
+  <td>coding profile def 錨定 — 修正 ```python header 無限迴圈</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-good">質量修復</span></td>
+</tr>
+<tr>
+  <td class="code">26b9d0e71</td>
+  <td>09-06 00:45</td>
+  <td>loop_phrase 片語級重複偵測 + 誠實 re-baseline</td>
+  <td>—</td>
+  <td>—</td>
+  <td><span class="tag tag-info">CI 修復</span></td>
+</tr>
+<tr>
+  <td class="code">5d677093e</td>
+  <td>09-05 23:30</td>
+  <td>Quality-first config：no-think ChatML + IQ3_XXS sampling + deepseek reasoning</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-good">質量優先</span></td>
+</tr>
+<tr>
+  <td class="code">96522f4f9</td>
+  <td>09-05 20:51</td>
+  <td><strong>Fast-Path Cold Guard</strong>（冷比例超 30% 走 exact ensure_batch）</td>
+  <td>—</td>
+  <td>1.0</td>
+  <td><span class="tag tag-best">質量守門員</span></td>
+</tr>
+<tr>
+  <td class="code">1c4e890ee</td>
+  <td>09-05 15:21</td>
+  <td>bit-correctness gate（V1 hash + V2 logits oracle）</td>
+  <td>—</td>
+  <td>—</td>
+  <td><span class="tag tag-info">驗證基礎</span></td>
+</tr>
+<tr>
+  <td class="code">4a746c724</td>
+  <td>08-30 17:54</td>
+  <td>ensure_batch deadlock 修復（min_tick → exact batch_owned mask）</td>
+  <td>—</td>
+  <td>—</td>
+  <td><span class="tag tag-best">穩定性</span></td>
+</tr>
+</tbody>
+</table>
+
+<h2>🔧 架構演化（四層防護體系）</h2>
+
+<div class="diagram">
+<span class="hl">第一層：正確性閘門（V1/V2 oracle）</span>          ← 1c4e890ee
+  V1 hash（tensor data 逐位元比對）+ V2 logits oracle（輸出 logits 比對）
+  → 抓出 expert cache 啟動後第一 token 就開始的 logits 不一致
+
+<span class="hl">第二層：Cold Guard（fast-path 守門員）</span>      ← 96522f4f9 / 474d07f13
+  verify union 冷比例 &gt; CGC_FAST_COLD_MAX(0.30) → 整層 exact ensure_batch
+  draft union 有 1 個冷 expert → exact（CGC_DRAFT_STRICT，draft 只有 8 個 expert）
+
+<span class="hl">第三層：Phase Discrimination（污染源分類）</span>  ← c76f222d8
+  PREFILL / CATCHUP / NORMAL_DECODE / UNKNOWN → <span class="red">exact（無 ZERO-slot）</span>
+  VERIFY / DRAFT → fast path（速度）
+  → prefill 階段的 ZERO-slot 污染源正式關閉
+
+<span class="hl">第四層：Loop Guard（輸出防護網）</span>          ← 9fc07b0e9
+  相同 ≥6 字元片語連續 ≥3 次 → 強制截斷（片語級，比 token 級更早攔截）
+</div>
+
+<h2>🎯 關鍵實驗結論（2026-09-08）</h2>
+
+<h3>1. IQ3_XXS 抖動根因：不是 expert cache，是 logits 邊界 + GPU 浮點</h3>
+<table>
+<thead>
+<tr><th>配置</th><th>確定性（15+27 × 6-10）</th><th>速度</th><th>結論</th></tr>
+</thead>
+<tbody>
+<tr class="best"><td>全 exact（VERIFY=0 DRAFT=0）</td><td>42×13 / 22×2（<strong>仍 13% 抖</strong>）</td><td>6.3 t/s ❌</td><td>ZERO-slot 不是根因</td></tr>
+<tr><td>8GB 預設 guard 0.30</td><td>42×9 / 22×1（90%）</td><td><strong>28 t/s</strong></td><td>甜蜜點</td></tr>
+<tr><td>10GB 無 RN</td><td>42×9 / 22×1（90%）</td><td>28 t/s</td><td>加大 pool 無額外收益</td></tr>
+<tr><td>4GB / 6GB</td><td>60% / 50% ❌</td><td>—</td><td>LRU churn 更糟</td></tr>
+<tr class="bad"><td>10GB + RN_ROUTING</td><td>全同但全錯（echo）</td><td>21-22 t/s</td><td>renorm 改選擇 → 確定地錯</td></tr>
+</tbody>
+</table>
+
+<p><strong>機制：</strong>「42」與「22」的開頭 token logits 差距極小（±1e-4 級），Metal parallel reduction 順序受並發負載影響 → 邊界 token 偶爾翻轉。expert cache 只是放大器之一，不是必要條件。</p>
+
+<h3>2. Q4_K_M 檔（23GB）在 16GB 上不可用</h3>
+<table>
+<thead>
+<tr><th>配置</th><th>結果</th><th>根因</th></tr>
+</thead>
+<tbody>
+<tr class="bad"><td>Q4_K_M ngl=99</td><td>234 個 buffer nil + OOM 掛掉</td><td>experts 實際是 <strong>Q6_K</strong>（非 Q4_K），23GB 檔超出 16GB 載入能力，adoption 全失敗</td></tr>
+<tr class="bad"><td>Q4_K_M ngl=30</td><td>CPU crash</td><td>expert cache partial-offload 契約未修（既有問題）</td></tr>
+<tr class="best"><td>IQ3_XXS-denseIQ4X（現行）</td><td>90% 確定 + 28 t/s + 質量 1.0</td><td>experts IQ4_XS = expert cache 設計目標格式</td></tr>
+</tbody>
+</table>
+
+<h2>⚙️ 關鍵環境變數參數</h2>
+
+<div class="param-box">
+<h3>核心開關（生產 ON）</h3>
+<p><span class="param-name">CGC_VERIFY_DECODE</span> / <span class="param-name">CGC_DRAFT_DECODE</span> — ZERO-slot fast path（phase 判別後 verify/draft 專用）<br>
+<span class="param-default">預設：ON</span> | 關掉 = 全 exact = 6.3 t/s（確定但太慢）</p>
+
+<p><span class="param-name">CGC_FAST_COLD_MAX</span> — verify cold guard 門檻（冷比例超標走 exact）<br>
+<span class="param-default">預設：0.30</span> | 0.0 = guard 停用（ZERO 全開，勿設）</p>
+
+<p><span class="param-name">CGC_DRAFT_STRICT</span> — draft 有 1 個冷 expert 即 exact<br>
+<span class="param-default">預設：ON</span> | draft 每步只有 8 個 expert，fill 成本極小</p>
+
+<p><span class="param-name">CGC_LOOP_GUARD</span> — server-side phrase-loop guard<br>
+<span class="param-default">預設：ON</span> | 相同 ≥6 字元片語連續 ≥3 次截斷</p>
+</div>
+
+<div class="param-box">
+<h3>Pool 配置</h3>
+<p><span class="param-name">CGC_SERVER_EXPERT_CACHE_BYTES</span> — expert cache pool 大小<br>
+<span class="param-default">預設：8GiB (8589934592)</span> | 16GB 機甜蜜點；4/6GB 品質崩、10GB 無額外收益</p>
+
+<p><span class="param-name">CGC_SERVER_CTX</span> — context 長度<br>
+<span class="param-default">預設：8192</span>（Claude Code CLI 最低 3117 tokens）</p>
+
+<p><span class="param-name">LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0</span> — layer 0 排除 L4 pool<br>
+<span class="param-default">預設：ON</span> | layer-0 保留完整權重避免污染</p>
+</div>
+
+<div class="param-box">
+<h3>實驗參數（預設 OFF，勿在生產開啟）</h3>
+<p><span class="param-name">CGC_RN_ROUTING</span> — router softmax 前 mask 冷 expert 至 -inf<br>
+<span class="param-default">預設：OFF</span> | 已驗證死路：改選擇 → 確定地錯（質量 0.3）</p>
+
+<p><span class="param-name">CGC_WCOLD_EN</span> — weighted cold ratio guard<br>
+<span class="param-default">預設：OFF</span> | logits callback 未穩定觸發，count-based 較可靠</p>
+
+<p><span class="param-name">CGC_DBUF</span> / <span class="param-name">CGC_DBUF2</span> — step-ahead refill / 雙緩衝<br>
+<span class="param-default">預設：OFF</span> | DBUF spike 曾達 24.83 t/s，但 16GB 上 DBUF2 降速 40%</p>
+
+<p><span class="param-name">CGC_FAST_WAIT</span> — 等待 in-flight fill 而非 ZERO-map<br>
+<span class="param-default">預設：OFF</span> | 只對「已在載入」的 expert 有效，冷啟動無效</p>
+
+<p><span class="param-name">CGC_PREV_TOKEN_PREFETCH</span> — prev-token prefetch<br>
+<span class="param-default">預設：OFF</span></p>
+
+<p><span class="param-name">CGC_SPAC</span> / <span class="param-name">CGC_SPAC_ALPHA</span> — SpAc EMA estimator<br>
+<span class="param-default">預設：OFF / α=0.75</span>（v1.0.0 前曾為 25.17 t/s 的配置）</p>
+</div>
+
+<div class="param-box">
+<h3>採樣參數（質量防護）</h3>
+<p><span class="param-name">--temp</span> — <span class="param-default">0.4</span>（降低首 token 噪聲）</p>
+<p><span class="param-name">--top-k</span> — <span class="param-default">0（禁用）</span>，用 min-p 動態閾值替代</p>
+<p><span class="param-name">--top-p</span> — <span class="param-default">0.8</span>（no-think 官方推薦）</p>
+<p><span class="param-name">--dry-multiplier</span> / <span class="param-name">--dry-allowed-length</span> — <span class="param-default">1.0 / 10</span>（DRY 防迴圈）</p>
+<p><span class="param-name">presence_penalty</span> — <span class="param-default">1.5（replay harness 全部 prompt）</span>：pp=0 開頭 echo `thinking\nresponse`，pp=1.5 正常開頭</p>
+</div>
+
+<h2>🚀 推薦生產配置</h2>
+
+<div class="milestone">
+<h3>16GB Mac M4 Max（production @ 474d07f13）</h3>
+<p><span class="code">8GB pool + ctx 8192 + ngl 99 + MTP n_max 3 + CGC_FAST_COLD_MAX=0.30 + CGC_DRAFT_STRICT=1 + CGC_LOOP_GUARD=1 + DRY 1.0/10 + temp 0.4/top-p 0.8</span></p>
+<p><strong>預期：</strong>decode 28 t/s（warm）、質量 1.0/0.882/1.0、確定性 90%</p>
+</div>
+
+<div class="milestone">
+<h3>32GB+ 機器</h3>
+<p><span class="code">CGC_SERVER_EXPERT_CACHE_BYTES=17179869184（16GB pool）</span></p>
+<p><strong>可試：</strong>CGC_DBUF2=1（雙緩衝）、Q4_K_M/Q4_K_XL 高精度檔（logits 邊界分開 → 抖動可能歸零，需 32GB）</p>
+</div>
+
+<h2>📈 已驗證的死路（不要重複嘗試）</h2>
+
+<table>
+<thead>
+<tr><th>方向</th><th>結果</th><th>原因</th></tr>
+</thead>
+<tbody>
+<tr><td>CGC_RN_ROUTING（renorm）</td><td class="bad">25.9 t/s 但質量 0.3</td><td>exclusion 改 top-8 選擇，IQ3_XXS 看不到它要的 expert → 確定地錯</td></tr>
+<tr><td>加大 pool 到 10GB</td><td class="bad">確定性仍 90%（1/10 抖）</td><td>10GB 下 guard 0 觸發但殘餘 6-16% 冷 ZERO 破壞力不變</td></tr>
+<tr><td>4GB / 6GB pool</td><td class="bad">正確率 60% / 50%</td><td>LRU churn 讓已 resident expert 也被換掉</td></tr>
+<tr><td>Q4_K_M 檔（23GB）</td><td class="bad">ngl=99 OOM / ngl=30 crash</td><td>experts 是 Q6_K、partial-offload 契約未修</td></tr>
+<tr><td>CGC_FAST_WAIT</td><td class="bad">仍抖 + 降速</td><td>只等 in-flight fill，冷啟動 expert 根本沒被請求</td></tr>
+<tr><td>CGC_DBUF2（16GB）</td><td class="bad">降速 40%</td><td>per-step swap 鎖競爭；32GB 可試</td></tr>
+<tr><td>verify fast + draft exact</td><td class="bad">仍抖</td><td>任何 fast path 的 ZERO 都造成非確定性</td></tr>
+<tr><td>ngl=30 + expert cache</td><td class="bad">CPU crash</td><td>跨 backend 契約未修（既有限制）</td></tr>
+</tbody>
+</table>
+
+<h2>📌 未解決事項（後續路線）</h2>
+<ol>
+<li><strong>1/10 抖動根治</strong>：需 32GB 機器跑高精度檔驗證「logits 邊界分開 → 抖動歸零」理論</li>
+<li><strong>DBUF step-ahead 冷啟動強化</strong>：讓 decode 早期也走 step-ahead refill（目前只在 verify fast 觸發）</li>
+<li><strong>draft 路由複用（MTP look-ahead）</strong>：draft 已算 next-3-token 路由，直接餵 prefetch queue（零計算成本）</li>
+<li><strong>10GB+ pool + 更精確 membership</strong>：SpAc EMA per-step 追蹤 decode 實際 routing</li>
+</ol>
+
+<div class="footer">
+<p>Expert Cache 關鍵版本技術白皮書 | 生成時間：2026-09-08 19:30 PDT</p>
+<p>Commit 範圍：4a746c724 → 474d07f13（2026-08-30 → 2026-09-08）| 分支：production（已推送 cgcengine0907）</p>
+<p>本文檔隨代碼一同 commit，後續版本更新請同步更新</p>
+</div>
+
+</body>
+</html>
