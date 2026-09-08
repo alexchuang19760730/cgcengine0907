@@ -683,6 +683,13 @@ if [ -n "${CGC_SOFT_POOL_L1:-}" ]; then
     SERVER_ENV+=(CGC_SOFT_POOL_L1="$CGC_SOFT_POOL_L1")
 else
     SERVER_ENV+=(CGC_SOFT_POOL_L1=48)
+# [CGC phrase-loop guard 2026-09-08] server-side truncation of live phrase loops
+# (>=6 char block x3 consecutive, mirroring the replay quality gate). Default ON;
+# set CGC_LOOP_GUARD=0 to disable. CGC_LOOP_GUARD_EVERY = check cadence (tokens).
+if [ "${CGC_LOOP_GUARD:-1}" != "0" ]; then
+    SERVER_ENV+=(CGC_LOOP_GUARD=1)
+    [ -n "${CGC_LOOP_GUARD_EVERY:-}" ] && SERVER_ENV+=(CGC_LOOP_GUARD_EVERY="$CGC_LOOP_GUARD_EVERY")
+fi
 fi
 if [ "$SERVER_GLU_FUSED_DOWN" = "1" ]; then
     SERVER_ENV+=(CGC_GLU_FUSED_DOWN=1)

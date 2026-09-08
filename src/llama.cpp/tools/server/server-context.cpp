@@ -1928,6 +1928,58 @@ private:
         return true;
     }
 
+    // [CGC phrase-loop guard 2026-09-08] mirror replay_server_profile.detect_phrase_loop:
+    // any >= min_unit char block appearing >= min_repeat CONSECUTIVE times is a live loop.
+    // Scans only the last `window` chars (a live loop must manifest at the tail) so the
+    // cost per check is bounded; runs every CGC_LOOP_GUARD_EVERY tokens. Gated by
+    // CGC_LOOP_GUARD=1 (default off in code; run_server.sh enables).
+    static bool cgc_loop_guard_on() {
+        static const bool v = getenv("CGC_LOOP_GUARD") != nullptr && getenv("CGC_LOOP_GUARD")[0] == '1';
+        return v;
+    }
+
+    static int cgc_loop_guard_every() {
+        static const int v = []() {
+            const char * e = getenv("CGC_LOOP_GUARD_EVERY");
+            return e && atoi(e) > 0 ? atoi(e) : 4;
+        }();
+        return v;
+    }
+
+    static bool cgc_detect_phrase_loop(const std::string & text, size_t window = 256) {
+        const size_t min_unit   = 6;
+        const size_t min_repeat = 3;
+        const size_t max_unit   = 300;
+        auto find = [&](const std::string & t) -> bool {
+            const size_t n = t.size();
+            if (n < min_unit * min_repeat) return false;
+            const size_t max_len = std::min(max_unit, n / min_repeat);
+            for (size_t p = min_unit; p <= max_len; ++p) {
+                const size_t limit = n - p * min_repeat;
+                for (size_t i = 0; i <= limit; ++i) {
+                    size_t cnt = 1;
+                    size_t j = i + p;
+                    while (j + p <= n && t.compare(j, p, t, i, p) == 0) {
+                        ++cnt;
+                        j += p;
+                        if (cnt >= min_repeat) return true;
+                    }
+                }
+            }
+            return false;
+        };
+        const size_t start = text.size() > window ? text.size() - window : 0;
+        if (find(text.substr(start))) return true;
+        // whitespace-stripped tail (newlines/indent can break the consecutive run)
+        std::string stripped;
+        stripped.reserve(std::min(text.size() - start, window));
+        for (size_t i = start; i < text.size(); ++i) {
+            const char c = text[i];
+            if (c != ' ' && c != '\n' && c != '\t' && c != '\r') stripped.push_back(c);
+        }
+        return find(stripped);
+    }
+
     bool process_token(completion_token_output & result, server_slot & slot) {
         // remember which tokens were sampled - used for repetition penalties during sampling
         const std::string token_str = result.text_to_send;
@@ -1988,6 +2040,21 @@ private:
 
             SLT_DBG(slot, "stopped due to running out of context capacity, prompt.n_tokens() = %d, task.n_tokens = %d, n_decoded = %d, n_ctx = %d\n",
                     slot.prompt.n_tokens(), slot.task->n_tokens(), slot.n_decoded, slot.n_ctx);
+        }
+
+        // [CGC phrase-loop guard 2026-09-08] truncate live phrase loops (>=6 char block
+        // x3 consecutive). Runs after incomplete-UTF8/stop-word handling, before the
+        // limits check; every N tokens on a bounded tail window so healthy text is
+        // untouched (draft accept unaffected) and the quality gate sees truncated
+        // non-loop content instead of a flaky 0.3 loop.
+        if (cgc_loop_guard_on() && slot.has_next_token && !incomplete &&
+                slot.n_decoded >= 8 && (slot.n_decoded % cgc_loop_guard_every()) == 0 &&
+                cgc_detect_phrase_loop(slot.generated_text)) {
+            slot.stop           = STOP_TYPE_LIMIT;
+            slot.has_next_token = false;
+            const size_t tail = slot.generated_text.size() > 40 ? slot.generated_text.size() - 40 : 0;
+            SLT_INF(slot, "CGC-LOOP-GUARD: phrase loop detected at %zu generated chars, forcing stop (tail: %s)\n",
+                    slot.generated_text.size(), slot.generated_text.substr(tail).c_str());
         }
 
         // check the limits
