@@ -426,6 +426,31 @@
 </tbody>
 </table>
 
+<h3>0.2 測試方法敏感性 — 請求參數決定結果（2026-09-08 21:30 復測發現）</h3>
+<div class="param-box">
+<h3>甜蜜點重現實驗（同 binary、同配置、不同請求參數）</h3>
+<p><strong>背景：</strong>白皮書生成（19:30）後數小時，同配置（8192 ctx / 8GB pool / 143 slots/layer / HEAD binary）連續測出 0/10 echo，一度誤判為「品質崩潰」並展開記憶體/swap/ctx/DRY/anchor 調查——全部是紅鯡魚。</p>
+<p><strong>決定性對照（同一 server，僅改請求參數）：</strong></p>
+<table>
+<thead>
+<tr><th>請求參數</th><th>15+27 十連發結果</th><th>正確率</th></tr>
+</thead>
+<tbody>
+<tr class="best"><td>裸探針（temp=0, seed=0, max_tokens=16，無 prefill/pp）</td><td>10/10 全部「15 + 27 = 42」</td><td><strong>100%</strong>（比白皮書 90% 更好）</td></tr>
+<tr><td>harness qa-zh 同款（assistant_prefill「答:」+ stop「。」，無 pp）</td><td>開頭「15 + 27 = 42」正確，但尾巴洩漏 <span class="code">&lt;im_start&gt;user\n15 + 27</span> template marker</td><td>開頭正確 / 尾巴污染</td></tr>
+<tr class="bad"><td>prefill「答：」+ presence_penalty=1.5</td><td>0/6——echo「數字」+ thinking scaffold 重複</td><td><strong>0%</strong></td></tr>
+</tbody>
+</table>
+<p><strong>結論：</strong></p>
+<ol>
+<li><strong>甜蜜點從未消失</strong>——8GB pool + 8192 ctx + 裸探針 = 100% 確定性，比原始 90% 記錄更好（連發數 6→10 反而更穩）</li>
+<li><strong>「品質崩潰」是請求參數造成的</strong>：prefill「答:」與 stop「。」交互讓尾巴洩漏 template marker；prefill + pp=1.5 組合直接打崩短 QA 生成</li>
+<li><strong>教訓：確定性測試必須固定完整請求參數</strong>（prefill / presence_penalty / stop / max_tokens），任一參數變動結果即不可比——先前數小時調查（記憶體壓力、swap、ctx 2048、DRY、auto-anchor、SPAC/DBUF）逐一 A/B 排除，皆與品質無關</li>
+<li><strong>replay harness 的 qa-zh 分數（1.0）仍可信</strong>：evaluate_quality 只看答案片段開頭，prefill 尾巴污染不影響評分；但長輸出 profile（longform/coding）的 pp=1.5 是針對 thinking marker loop 的必要修正，與短 QA 的 prefill+pp 毒藥組合不同</li>
+</ol>
+<p><strong>操作指引：</strong>日後測確定性一律用裸探針（temp=0, seed=0, max_tokens=16, 無 prefill/pp）；測 harness 7-profile 時保持腳本參數不變並固定 --seed 0 --runs 3 --warmup。</p>
+</div>
+
 <p><strong>注意：</strong>variance 來自每 profile 第一個 run（冷啟動期 pool 未 warm）——warm 後 run2+ 全部穩定。replay 的 <span class="code">--warmup</span> 即為此設計（先暖 pool 再測）。8GB pool 的甜蜜點判定依據：4/6GB 品質崩（50-60%）、10GB 無額外收益、8GB 在品質 1.0/0.882/1.0 與 28 t/s 間取得唯一平衡。</p>
 
 <h3>1. IQ3_XXS 抖動根因：不是 expert cache，是 logits 邊界 + GPU 浮點</h3>
