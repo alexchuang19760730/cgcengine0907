@@ -325,13 +325,15 @@ def build_payload(profile, model, max_tokens, seed=0, prompt=None, prompt_index=
             "max_tokens": max_tokens or 220,
             "stop": LONGFORM_STOP,
         }
-        # 巴黎 prompt 保留已調校的 open-ended 錨定 + presence (2026-09-06 FIX);
-        # 其他 prompt 走裸生成, 交由 server 端 DRY 防迴圈 (驗證泛化)。
+        # 2026-09-08 FIX: presence_penalty 套用到所有 longform prompts (不只巴黎)。
+        # 量測: IQ3_XXS 在 pp=0 下開頭即 echo thinking/response marker loop
+        # (pp=0 -> "\n thinking\n response...", pp=1.5 -> 正常開頭), 與 prefill 無關。
+        # 巴黎 prompt 保留已調校的 open-ended 錨定 (2026-09-06 FIX)。
+        payload["presence_penalty"] = 1.5
         if "巴黎" in p:
             payload["chat_template_kwargs"] = {
                 "assistant_prefill": "答:巴黎之所以成為法國的政治與文化中心,主要因為",
             }
-            payload["presence_penalty"] = 1.5
         return payload
 
     if profile == "coding":
@@ -356,6 +358,8 @@ def build_payload(profile, model, max_tokens, seed=0, prompt=None, prompt_index=
             "seed": seed,
             "max_tokens": max_tokens or 300,
             "stop": stops_std,
+            # 2026-09-08: IQ3_XXS 裸生成開頭即 echo prompt 迴圈, presence_penalty 必要
+            "presence_penalty": 1.5,
         }
 
     if profile == "reasoning":
@@ -366,6 +370,7 @@ def build_payload(profile, model, max_tokens, seed=0, prompt=None, prompt_index=
             "seed": seed,
             "max_tokens": max_tokens or 400,
             "stop": stops_std,
+            "presence_penalty": 1.5,
         }
 
     if profile == "writing":
@@ -376,6 +381,7 @@ def build_payload(profile, model, max_tokens, seed=0, prompt=None, prompt_index=
             "seed": seed,
             "max_tokens": max_tokens or 250,
             "stop": stops_std,
+            "presence_penalty": 1.5,
         }
 
     if profile == "translation":
