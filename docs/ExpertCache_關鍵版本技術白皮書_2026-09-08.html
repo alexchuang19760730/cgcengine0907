@@ -448,6 +448,32 @@
 <li><strong>教訓：確定性測試必須固定完整請求參數</strong>（prefill / presence_penalty / stop / max_tokens），任一參數變動結果即不可比——先前數小時調查（記憶體壓力、swap、ctx 2048、DRY、auto-anchor、SPAC/DBUF）逐一 A/B 排除，皆與品質無關</li>
 <li><strong>replay harness 的 qa-zh 分數（1.0）仍可信</strong>：evaluate_quality 只看答案片段開頭，prefill 尾巴污染不影響評分；但長輸出 profile（longform/coding）的 pp=1.5 是針對 thinking marker loop 的必要修正，與短 QA 的 prefill+pp 毒藥組合不同</li>
 </ol>
+<h3>0.3 prev-token prefetch A/B（SYNC / ASYNC）— 品質保留但速度不達標，維持 OFF</h3>
+<div class="param-box">
+<h3>結論：</h3>
+<p><strong>prev-token prefetch 覆蓋全部 41 層（機制正確），但兩種模式都無法同時達到「品質 1.0 + 28 t/s」：</strong></p>
+<table>
+<thead>
+<tr><th>Profile</th><th>甜蜜點（OFF）</th><th>SYNC</th><th>ASYNC</th></tr>
+</thead>
+<tbody>
+<tr><td>qa-zh</td><td>~28</td><td>11.7</td><td>19.6</td></tr>
+<tr><td>longform-zh</td><td>~28</td><td>13.3</td><td>13.3</td></tr>
+<tr><td>coding</td><td>22-28</td><td>9.5</td><td>16.3</td></tr>
+<tr><td>math</td><td>~16</td><td>—</td><td>14.0</td></tr>
+<tr><td>reasoning</td><td>~12</td><td>—</td><td>9.9</td></tr>
+<tr><td>writing</td><td>~10</td><td>—</td><td>9.8</td></tr>
+<tr><td>translation</td><td>~12</td><td>—</td><td>12.6</td></tr>
+</tbody>
+</table>
+<p><strong>分析：</strong></p>
+<ol>
+<li><strong>品質：</strong>SYNC 與 ASYNC 的 7-profile 品質全數 1.0，裸探針 15+27 十連發 10/10（含冷啟動）— prefetch 不傷品質</li>
+<li><strong>速度：</strong>SYNC 每步同步 pread 阻塞 decode（快 profile 掉到 7-13 t/s）；ASYNC 背景 worker 不阻塞但仍有預載排隊競爭（qa-zh 19.6 / coding 16.3，未達 28 門檻）</li>
+<li><strong>決定：</strong>未達「品質 1.0 + 回到 ~28 t/s」門檻 → 維持甜蜜點 OFF 配置（8GB pool / 8192 ctx / prev-token OFF）</li>
+</ol>
+</div>
+
 <p><strong>操作指引：</strong>日後測確定性一律用裸探針（temp=0, seed=0, max_tokens=16, 無 prefill/pp）；測 harness 7-profile 時保持腳本參數不變並固定 --seed 0 --runs 3 --warmup。</p>
 </div>
 
