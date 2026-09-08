@@ -1420,6 +1420,14 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
     // in order to correctly reuse a graph, it's full topology has to be uniquely determined by these parameters
     const auto gparams = graph_params(res, ubatch, mctx, gtype);
 
+    // [CGC fix 2026-09-08] install the eval wrapper on EVERY ubatch, not only in the
+    // fresh-graph branch. sched_reserve() recreates the sched (ggml_backend_sched_new),
+    // which drops the callback; a fixed-shape context (MTP draft: constant n_tokens) then
+    // reuses its graph forever and never reinstalls it -> expert_cache_on_topk never fires
+    // for the draft ctx -> CGC_DRAFT_PREFETCH collect stays empty (loaded=0 across all
+    // layers, prediction never populated). Idempotent and cheap (pointer store).
+    ggml_backend_sched_set_eval_callback(sched.get(), expert_cache_eval_cb, this);
+
     if (!graph_reuse_disable && res->can_reuse(gparams)) {
         //LLAMA_LOG_DEBUG("%s: reusing previous graph\n", __func__);
 
@@ -1435,9 +1443,6 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         res->reset();
 
         ggml_backend_sched_reset(sched.get());
-        // CGC expert-cache: always install the wrapper; it forwards to the user callback and
-        // only dispatches the top-k hook when the cache is active (mirrors build-test3 0x6a654).
-        ggml_backend_sched_set_eval_callback(sched.get(), expert_cache_eval_cb, this);
 
         // CGC: restore any FFN expert weights repointed at the cache pool by the previous
         // step's graph, so every freshly built graph starts from the full original weights.
@@ -3483,7 +3488,9 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
             dst[i] = (uint32_t) ids[i];  // j=0 offset is 0
         }
         cache->draft_prefetch_valid[il] = true;
-        if (il <= 1) {
+        // print for the trunk start (il<=1) AND the MTP block layer (il == n_layer): the MTP
+        // draft graph only executes the single nextn block, so collect fires at il == n_layer.
+        if (il <= 1 || il == (int) model.hparams.n_layer()) {
             fprintf(stderr, "CGC-DRAFT-PF: collect il=%d ntok=%lld ids=[%u %u %u %u %u %u %u %u]\n",
                     il, (long long) n_tokens,
                     dst[0], dst[1], dst[2], dst[3], dst[4], dst[5], dst[6], dst[7]);
