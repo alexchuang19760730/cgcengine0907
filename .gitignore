@@ -398,3 +398,14 @@ dsh/node_modules/
 dsh/apps/*/dist/
 dsh/packages/*/dist/
 docs/FusionRoute-ref/
+
+# 临时测试文件
+agent_harness/test_mac_1240.py
+agent_harness/tmpl_test.py
+agent_harness/tmpl_test2.py
+agent_harness/tmpl_test3.py
+
+# 日志文件
+agent_harness/bridge.log
+agent_harness/bridge_err.log
+agent_harness/harness/logs/
