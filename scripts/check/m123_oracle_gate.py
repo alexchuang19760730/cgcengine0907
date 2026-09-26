@@ -173,7 +173,7 @@ COMPARE = ROOT / "scripts" / "check" / "cgc_logits_oracle_compare.py"
 #
 # Not a diagnostic key, and deliberately so: CGC_IDS_LINEAR_READ stays in the comparability stamp,
 # because a reference dumped with the old read must never compare clean against a fixed binary.
-DEFAULT_REF = ROOT / "Backup" / "knifeedge_matrix" / "ref_iq3_pool8gb_M2_6144_bitident_v6_nbaware.jsonl"
+DEFAULT_REF = ROOT / "Backup" / "knifeedge_matrix" / "ref_iq3_pool8gb_M2_6144_bitident_v7_20260926.jsonl"
 RESULT_DIR = ROOT / "Backup" / "m123_oracle_gate"
 
 # ★ The reference is an UNTRACKED asset (Backup/ is gitignored) and every verdict is measured against
@@ -185,7 +185,15 @@ RESULT_DIR = ROOT / "Backup" / "m123_oracle_gate"
 #   --write-ref writes the .cap sidecar but does NOT update this table; after a deliberate
 #   re-baseline, update the md5 here in the same commit, so the change is reviewable.
 REF_PINS = {
+    # v6 — the baseline the tree carried until 2026-09-26. It last produced 9/9 on 09-23 11:32
+    # (pfx-ckpt2); every run after that reports 6/9, and the three differing rows are all
+    # ctx_type='MTP' while the DEF rows still match. Kept so the old number stays reproducible.
     "ref_iq3_pool8gb_M2_6144_bitident_v6_nbaware.jsonl": "72d82a33ad79e0e69bc935acd24228f2",
+    # v7 — re-baselined 2026-09-26 on tree 591d7cfac. WHY THIS IS A RE-BASELINE AND NOT A FIX:
+    # the engine is reproducible (two independent dumps are byte-identical, md5 e1663cc10d, which
+    # is exactly the ref the 12:29 fn_on run compared against at 9/9), so there is no numerical
+    # bug to fix — the MTP bucket's semantics moved. See docs/M1M2M3_REBASELINE_2026-09-26.md.
+    "ref_iq3_pool8gb_M2_6144_bitident_v7_20260926.jsonl": "e1663cc10d529571553e7105b4a7a51b",
 }
 
 
@@ -311,7 +319,37 @@ def server_listeners(port: int) -> list[str]:
     return [x for x in out.split() if x.strip().isdigit()]
 
 
-def engine_digest() -> dict:
+ENGINE_BIN = ROOT / "src" / "llama.cpp" / "build" / "bin"
+
+# The artifacts, named as the loader SEES them: the version-less dylib is a symlink to the versioned
+# file, and the loader maps the TARGET. Hashing the version-less name therefore means following the
+# link -- not guessing a version string.
+#
+# Why this list is spelled this way (fixed 2026-09-26, measured on this box):
+#   * it used to hash `libllama.0.0.279.dylib`, which is a STALE leftover in build/bin while
+#     `libllama.0.dylib -> libllama.0.0.578.dylib` is what actually runs. So the digest recorded the
+#     bytes of a file no process had loaded.
+#   * it did not include `libllama-common.0.dylib` at all -- and `common/speculative.cpp` is compiled
+#     INTO that dylib. The consequence was measured this same day: the pre-fix and the k_eff-fixed
+#     engine produced summaries with IDENTICAL engine_digest (libllama.0.0.279=0cd5a628,
+#     llama-server=054fb22f, ...), i.e. the one comparison the digest exists to make -- "is this the
+#     same build?" -- was blind on the exact axis under test, and `m123_gate_window.digests_agree()`
+#     would have certified two different engines as one.
+#
+# libllama-server-impl.dylib belongs here for the same reason as the rest: it is where the server's
+# own logic lives, and `llama-server` is a ~50 KB launcher whose md5 does NOT move when that logic
+# changes. Found by measurement on 2026-09-23: three runs with different server-context.cpp
+# behaviour (6c/6e, four arms) all recorded llama-server=054fb22f04a01c5c, so the summaries could not
+# have told them apart -- the exact failure mode this function's docstring describes.
+# (Spelled without the audit module's filename on purpose -- and the same for the harness's: the
+# shared window probe's audit decides "is this launcher gated?" by TEXT search for those names, so
+# naming one here reports this file as newly gated and invites the ungated baseline to be lowered on
+# a phantom. It did, twice, before this sentence was rewritten.)
+ENGINE_ARTIFACTS = ("libllama.0.dylib", "libllama-common.0.dylib", "libggml-metal.0.dylib",
+                    "libggml-base.0.dylib", "libllama-server-impl.dylib", "llama-server")
+
+
+def engine_digest(bin_dir: Path | None = None) -> dict:
     """md5 of the linked engine artifacts, recorded with every verdict.
 
     Why this is not optional: on 2026-09-19 the same probe with the same env and argv produced
@@ -320,28 +358,23 @@ def engine_digest() -> dict:
     disk, so the build could not be bisected after the fact. An M1/M2/M3 verdict has the same
     exposure: "the gate passed" is only a statement about a build if the build is named. With the
     digest in the summary, a flip is build identity, not a mystery.
+
+    `bin_dir` exists for the self-test: it is the only way to feed this function a stale file next
+    to a symlink and check that the symlink wins.
     """
+    bin_dir = ENGINE_BIN if bin_dir is None else Path(bin_dir)
     out = {}
-    # libllama-server-impl.dylib belongs here for the same reason as the rest: it is where the
-    # server's own logic lives, and `llama-server` is a ~50 KB launcher whose md5 does NOT move when
-    # that logic changes. Found by measurement on 2026-09-23: three runs with different
-    # server-context.cpp behaviour (6c/6e, four arms) all recorded llama-server=054fb22f04a01c5c, so
-    # the summaries could not have told them apart -- the exact failure mode this function's docstring
-    # describes. The decode-window harness's own digest() already includes it; this one did not.
-    # (Spelled without the audit module's filename on purpose -- and the same for the harness's: the
-    # shared window probe's audit decides "is this launcher gated?" by TEXT search for those names,
-    # so naming one here reports this file as newly gated and invites the ungated baseline to be
-    # lowered on a phantom. It did, twice, before this sentence was rewritten.)
-    for name in ("libllama.0.0.279.dylib", "libggml-metal.0.19.0.dylib",
-                 "libggml-base.0.19.0.dylib", "libllama-server-impl.dylib", "llama-server"):
-        p = ROOT / "src" / "llama.cpp" / "build" / "bin" / name
+    for name in ENGINE_ARTIFACTS:
+        p = bin_dir / name
         if not p.exists():
             continue
+        real = p.resolve()   # the file the loader maps; `name` stays the key so diffs compare links
         h = hashlib.md5()
-        with open(p, "rb") as f:
+        with open(real, "rb") as f:
             for chunk in iter(lambda: f.read(1 << 20), b""):
                 h.update(chunk)
-        out[name] = {"md5": h.hexdigest()[:16], "mtime": int(p.stat().st_mtime)}
+        out[name] = {"md5": h.hexdigest()[:16], "mtime": int(real.stat().st_mtime),
+                     "resolves_to": real.name}
     return out
 
 
@@ -651,6 +684,53 @@ def pool_counters_for_run(launch_log: Path, wait_s: float = 20.0) -> dict:
         time.sleep(0.5)
 
 
+def selftest_engine_digest() -> int:
+    """A digest that records a file nobody loaded is worse than no digest: it certifies identity.
+
+    The incident this guards (2026-09-26) is in the comment on ENGINE_ARTIFACTS: two engines that
+    differed in `common/speculative.cpp` (compiled into `libllama-common`) produced the SAME recorded
+    digest, because the list hashed a stale versioned `libllama` and omitted `libllama-common`.
+    """
+    import tempfile
+    cases = []
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        (d / "libllama.0.0.999.dylib").write_bytes(b"nobody links this")     # the stale-file shape
+        (d / "libllama.0.0.1.dylib").write_bytes(b"the linked bytes")
+        (d / "libllama.0.dylib").symlink_to("libllama.0.0.1.dylib")
+        (d / "libllama-common.0.0.2.dylib").write_bytes(b"common bytes")
+        (d / "libllama-common.0.dylib").symlink_to("libllama-common.0.0.2.dylib")
+        (d / "llama-server").write_bytes(b"launcher")
+        got = engine_digest(d)
+        cases += [
+            ("the digest follows the symlink to the linked file",
+             got["libllama.0.dylib"]["resolves_to"] == "libllama.0.0.1.dylib"),
+            ("... and hashes ITS bytes, not the stale neighbour's",
+             got["libllama.0.dylib"]["md5"] == hashlib.md5(b"the linked bytes").hexdigest()[:16]),
+            ("a versioned name that nothing links is not invented into the record",
+             "libllama.0.0.999.dylib" not in got),
+            ("libllama-common is recorded (it holds common/speculative.cpp)",
+             got.get("libllama-common.0.dylib", {}).get("md5")
+             == hashlib.md5(b"common bytes").hexdigest()[:16]),
+            ("missing artifacts are skipped, not faked",
+             [k for k in got if k not in ENGINE_ARTIFACTS] == []),
+        ]
+    real = engine_digest()
+    cases += [
+        ("the real build/bin digest names the linked libllama",
+         real.get("libllama.0.dylib", {}).get("resolves_to", "").startswith("libllama.0.0.")),
+        ("... and includes libllama-common", "libllama-common.0.dylib" in real),
+        ("no key is a versioned name nothing links",
+         all(k in ENGINE_ARTIFACTS for k in real)),
+    ]
+    bad = 0
+    for name, ok in cases:
+        print(f"  [{'ok' if ok else 'FAIL'}] {name}")
+        bad += 0 if ok else 1
+    print(f"engine-digest selftest: {len(cases) - bad}/{len(cases)} passed")
+    return 0 if bad == 0 else 1
+
+
 def selftest_pool_counters() -> int:
     """Positive cases and, more importantly, negatives: a parser that returned zeros for a missing
     line would make "no pressure" and "no reading" identical."""
@@ -787,13 +867,14 @@ def main() -> int:
                     help="seconds to wait for the server log's teardown stats before recording the "
                          "probe's pool counters as unreadable (default 20).")
     ap.add_argument("--selftest", action="store_true",
-                    help="run the pool-counter parser's self-test and exit (no server is launched).")
+                    help="run the pool-counter parser's and the engine-digest self-tests and exit "
+                         "(no server is launched).")
     ap.add_argument("--ready-timeout", type=float, default=300.0)
     ap.add_argument("--teardown-timeout", type=float, default=90.0)
     args = ap.parse_args()
 
     if args.selftest:
-        return selftest_pool_counters()
+        return selftest_pool_counters() | selftest_engine_digest()
 
     tag = args.tag or time.strftime("%Y%m%d_%H%M")
     ref = Path(args.ref)
