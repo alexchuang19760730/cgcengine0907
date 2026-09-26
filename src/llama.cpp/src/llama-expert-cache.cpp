@@ -32,6 +32,42 @@ static int  cgc_pool_madvise_mode();
 static void cgc_discard_pool_slot(llama_expert_cache * cache, uint32_t layer, int32_t slot);
 
 
+// ─────────────────────────────────────────────────────────────────────────────
+// [CGC 2026-09-26 fill-nocache] Keep the expert reads out of the unified buffer cache.
+//
+// One measured arm reads the GGUF's expert segments ~82k times. Those reads fill a buffer cache the
+// box cannot hold, so the pages they evict come back as pageins or as compressor work: same cell,
+// same launch swap band, compressions measured at 32 GB vs 127 GB per arm, with tg tracking them
+// inversely (11.36 vs 8.31 t/s). The variable that moves the speed is the cache/compressor state,
+// not the swap number -- which is why "wait for swap == 0" was never the right admission rule.
+//
+// F_NOCACHE says "do not cache these" to the kernel. It changes WHERE the bytes come from, never
+// WHICH bytes are read: same pread, same offsets, same destination buffers. Off by default
+// (CGC_FILL_NOCACHE unset = byte-identical to the current path).
+// ─────────────────────────────────────────────────────────────────────────────
+static bool cgc_fill_nocache_on() {
+    static const bool on = []() {
+        const char * v = getenv("CGC_FILL_NOCACHE");
+        return v != nullptr && v[0] == '1';
+    }();
+    return on;
+}
+
+static std::atomic<uint64_t> cgc_fn_applied{0};
+static std::atomic<uint64_t> cgc_fn_failed{0};
+
+// Once per opened handle. The counters exist so a run can prove the knob bit instead of assuming it.
+static void cgc_fill_nocache(FILE * f) {
+    if (!cgc_fill_nocache_on() || f == nullptr) {
+        return;
+    }
+    if (::fcntl(fileno(f), F_NOCACHE, 1) == 0) {
+        cgc_fn_applied.fetch_add(1);
+    } else {
+        cgc_fn_failed.fetch_add(1);
+    }
+}
+
 // One pread job: read seg.bytes from (file_idx, file_offset) into dst. Accumulates wall time
 // into cache->pread_usec and counts one file read. Thread-safe: each job writes a DISTINCT dst,
 // and the telemetry counters are atomic. Result via *ok (1 = read in full).
@@ -3790,6 +3826,7 @@ llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t b
             if (f == 0) {
                 cache->files[f] = fopen(model->expert_cache_path.c_str(), "rb");
                 if (cache->files[f] != nullptr) {
+                    cgc_fill_nocache(cache->files[f]); // [CGC 2026-09-26] no-op unless CGC_FILL_NOCACHE=1
                     cache->files_path[f] = model->expert_cache_path;
                 }
             }
@@ -3801,6 +3838,11 @@ llama_expert_cache * llama_expert_cache_init(const llama_model * model, size_t b
             llama_expert_cache_free(cache);
             return nullptr;
         }
+    }
+    if (cgc_fill_nocache_on()) {
+        fprintf(stderr, "CGC-FILL-NOCACHE: applied=%llu failed=%llu handles=%zu — expert reads bypass the buffer cache\n",
+                (unsigned long long) cgc_fn_applied.load(), (unsigned long long) cgc_fn_failed.load(),
+                cache->files.size());
     }
 
     // key -> index positions (immutable after init)

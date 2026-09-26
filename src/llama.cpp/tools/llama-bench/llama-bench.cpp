@@ -2764,6 +2764,49 @@ static bool bench_spec_setup(bench_spec_state & s, llama_model * model, llama_co
         s.params.sampling.min_p = (float) atof(v);
     }
 
+    // [CGC 2026-09-26 carrier pin] SAMPLING SEED -- the third parity axis, and the one that makes
+    // E a property of the CONFIG rather than of the draw.
+    //
+    // WHY. `common_params_sampling::seed` defaults to LLAMA_DEFAULT_SEED, and
+    // llama_sampler_init_dist() resolves that through get_rng_seed(), which returns a fresh
+    // std::random_device draw per process (llama-sampler.cpp:340-350; llama.h:1404 -- "seed ==
+    // LLAMA_DEFAULT_SEED to use a random seed"). So every launch of this tool sampled a DIFFERENT
+    // token stream. The MTP accept step compares the draft token against the TARGET's sampled
+    // token, so the accept rate -- and therefore E = 1 + accepted/rounds -- was a per-process
+    // draw. Measured 2026-09-26 (k=2, one config, two reps of one pass): E = 0.984 vs 1.442, 46%
+    // apart, while the same cell's measured k-dependence is smaller than that. No m/k ranking
+    // taken from those artifacts is quotable, and the artifact had no way to say so.
+    //
+    // WHAT IS PINNED. Two streams, because both can move the accepted count:
+    //   * the sampler's (mt19937 seeded from seed_cur) -- which target token the draft meets;
+    //   * the C library's, because the generation loop's FIRST token is
+    //     `llama_vocab_get_add_bos() ? bos : std::rand() % n_vocab` (test_gen_spec) and this tool
+    //     has never called srand(), so with an add_bos-less vocab that start token is a fixed
+    //     process-wide stream rather than a free choice. `std::srand` runs ONCE here, before the
+    //     prompt/depth fills and before both generation calls, so the whole process -- prompt
+    //     fill, untimed --warm-skip generation, timed generation -- becomes a function of
+    //     (config, seed). That is what makes a repeated launch an exact repeat instead of a sample.
+    //
+    // WHY THIS AND NOT GREEDY. temp 0 also makes the token stream deterministic (the dist sampler
+    // collapses to argmax), but it CHANGES the accept rate: a sharper target puts more mass on the
+    // draft token and accepts more -- that is exactly why the parity block above exists. E feeds
+    // S = E/(1+F+m*k_eff) for the DELIVERY regime (run_server.sh: temp 0.4 / top-p 0.8), so the
+    // carrier keeps that distribution and removes only the draw. The seed itself is arbitrary; it
+    // only has to be the same one in every arm of a comparison.
+    //
+    // The witness line is printed unconditionally so an artifact can tell "no seed was asked for"
+    // from "a seed was asked for and this engine ignored it" -- the failure mode that has cost
+    // this project several rounds (CGC_SERVER_* keys that silently never reached the engine).
+    const char * seed_env = getenv("CGC_SERVER_SEED");
+    const bool   seed_pinned = seed_env && *seed_env;
+    if (seed_pinned) {
+        s.params.sampling.seed = (uint32_t) std::strtoul(seed_env, nullptr, 10);
+        std::srand((unsigned) s.params.sampling.seed);
+    }
+    fprintf(stderr, "[CGC seed] sampler_seed=%u pinned=%d temp=%.2f top_p=%.2f top_k=%d\n",
+            s.params.sampling.seed, seed_pinned ? 1 : 0,
+            s.params.sampling.temp, s.params.sampling.top_p, s.params.sampling.top_k);
+
     s.smpl.reset(common_sampler_init(model, s.params.sampling));
     if (!s.smpl) {
         fprintf(stderr, "%s: failed to initialise the sampler\n", __func__);
@@ -2774,7 +2817,7 @@ static bool bench_spec_setup(bench_spec_state & s, llama_model * model, llama_co
 }
 
 static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, int n_threads,
-                          bench_spec_state & s) {
+                          bench_spec_state & s, const char * phase) {
     llama_set_n_threads(ctx, n_threads, n_threads);
 
     const llama_vocab * vocab   = llama_model_get_vocab(model);
@@ -2839,6 +2882,19 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
     // before.
     int n_past = (int) llama_memory_seq_pos_max(llama_get_memory(ctx), seq_id) + 1;
     int n_done = 0;
+
+    // [CGC 2026-09-26] The accept witness. Until this existed, "at what accept was this t/s
+    // measured" was unanswerable from a bench artifact: the counters existed (CGC-MTP-PERF,
+    // gated on an env that the bench path drops) but no line tied them to the run. These three
+    // are the SERVER's own quantities, so the two carriers' reports are comparable:
+    //   n_rounds  = slot.n_draft_verif_steps  (one per verify decode, replay rounds included)
+    //   n_drafted = slot.n_draft_total        (drafts handed to verify, summed per round)
+    //   n_acc_drf = slot.n_draft_accepted     (committed drafts, with the replay discount -- the
+    //                                          server's `if (spec_is_replay && n_accepted > 0)`)
+    // The printed mean_len is the server's `1 + n_draft_accepted / n_draft_verif_steps`.
+    size_t n_rounds  = 0;
+    size_t n_drafted = 0;
+    size_t n_acc_drf = 0;
 
     // [CGC MTP path parity 2026-09-18] THE SIZE OF THIS VECTOR IS LOAD-BEARING. It used to be 0.
     //
@@ -3023,6 +3079,11 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
             fprintf(stderr, "SPECDBG round: n_done=%d n_past=%d draft=%zu\n", n_done, n_past - 1, draft.size());
         }
 
+        // the round happened: it was verified whatever it commits (a replay round is still a
+        // verification step by the server's accounting, and its drafts were still generated)
+        n_rounds  += 1;
+        n_drafted += draft.size();
+
         common_speculative_process(spec, batch);
 
         // Save the sampler state before sampling. The replay path below has to put it back, or the
@@ -3055,6 +3116,11 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
             ckpt.load_tgt(ctx, seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
             llama_memory_seq_rm(llama_get_memory(ctx), seq_id, ckpt.pos_max + 1, -1);
 
+            // server-context.cpp:4321 discounts one token here: in a replay the accepted tokens
+            // were counted as accepted on the round that first produced them (`ids` becomes the
+            // next draft), so counting them again would inflate accept.
+            n_acc_drf += ids.size() >= 2 ? ids.size() - 2 : 0;
+
             common_sampler_copy(smpl_save.get(), smpl);
 
             n_past = (int) ckpt.n_tokens;
@@ -3081,6 +3147,8 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
         // commits anything.
         common_speculative_accept(spec, seq_id, (uint16_t) (ids.size() - 1));
 
+        n_acc_drf += ids.size() - 1;
+
         n_past += (int) ids.size() - 1;
         n_done += (int) ids.size();
         id_last = ids.back();
@@ -3090,6 +3158,29 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
 
     llama_synchronize(ctx);
     llama_batch_free(batch);
+
+    // [CGC 2026-09-26] The witness itself. Unconditional on purpose: the neighbours are gated by
+    // LLAMA_BENCH_SPEC_DBG / CGC_MTP_PERF, and an env-gated instrument is one the carrier can drop
+    // silently -- this repo has already paid for that twice (the missing CGC_PHASE_VERIFY, and the
+    // harness-bench route dropping DECPROF). Absence prints NA, never 0, because a 0.000 mean_len
+    // and "no rounds happened" are different facts and this project has confused them before.
+    // `phase` says which call this was: launchers run the spec loop twice per rep on --warm-skip
+    // (once untimed, once timed), so an unlabelled line would be unattributable.
+    {
+        char s_mean_len[16];
+        char s_ratio   [16];
+        if (n_rounds == 0) {
+            snprintf(s_mean_len, sizeof(s_mean_len), "NA");
+            snprintf(s_ratio,    sizeof(s_ratio),    "NA");
+        } else {
+            snprintf(s_mean_len, sizeof(s_mean_len), "%.4f", 1.0 + (double) n_acc_drf / (double) n_rounds);
+            snprintf(s_ratio,    sizeof(s_ratio),    "%.5f", n_drafted ? (double) n_acc_drf / (double) n_drafted : 0.0);
+        }
+        fprintf(stderr,
+                "CGC-BENCH-ACCEPT phase=%s rounds=%zu drafted=%zu acc_drafts=%zu mean_len=%s "
+                "draft_ratio=%s gen_tokens=%d n_gen=%d\n",
+                phase, n_rounds, n_drafted, n_acc_drf, s_mean_len, s_ratio, n_done, n_gen);
+    }
 
     common_speculative_print_stats(spec);
     return true;
@@ -3413,7 +3504,7 @@ int llama_bench(int argc, char ** argv) {
                 // t_ns, and its token count is removed from t.n_gen after the loop.
                 if (n_warm_skip > 0) {
                     const uint64_t w0   = get_time_ns();
-                    const bool     wres = cgc_spec_on ? test_gen_spec(ctx, lmodel, n_warm_skip, t.n_threads, spec_state)
+                    const bool     wres = cgc_spec_on ? test_gen_spec(ctx, lmodel, n_warm_skip, t.n_threads, spec_state, "warm_skip")
                                                       : test_gen(ctx, n_warm_skip, t.n_threads);
                     if (!wres) {
                         fprintf(stderr, "%s: error: failed to run warm-skip gen\n", __func__);
@@ -3423,7 +3514,7 @@ int llama_bench(int argc, char ** argv) {
                     }
                     t_warm_ns = get_time_ns() - w0;
                 }
-                bool res = cgc_spec_on ? test_gen_spec(ctx, lmodel, t.n_gen - n_warm_skip, t.n_threads, spec_state)
+                bool res = cgc_spec_on ? test_gen_spec(ctx, lmodel, t.n_gen - n_warm_skip, t.n_threads, spec_state, "timed")
                                        : test_gen(ctx, t.n_gen - n_warm_skip, t.n_threads);
                 if (!res) {
                     fprintf(stderr, "%s: error: failed to run gen\n", __func__);

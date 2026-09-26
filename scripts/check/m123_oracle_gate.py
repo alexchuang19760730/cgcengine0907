@@ -232,6 +232,12 @@ DIAGNOSTIC_KEYS = {
     # reference, so the gate could never express the one proposition it exists to test. If the
     # claim is false the gate fails on the LOGITS, which is exactly where it should fail.
     "CGC_SLOT_TABLE_GPU",
+    # [CGC 2026-09-26 fill-nocache] Same kind of claim as CGC_SLOT_TABLE_GPU above: F_NOCACHE on the
+    # expert-file handle changes WHERE the bytes come from, never WHICH bytes are read (same pread,
+    # same offsets, same destination buffers). Leaving the key out would make every knob-on run
+    # report "incomparable" against a knob-off reference, i.e. the gate could not express the one
+    # proposition the knob rests on. If the claim is false the gate fails on the LOGITS.
+    "CGC_FILL_NOCACHE",
 }
 # CGCENV scalars that are comparability-irrelevant (paths/timing only).
 DIAGNOSTIC_CGCENV = {"LOG", "PORT"}

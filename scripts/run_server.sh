@@ -2433,6 +2433,15 @@ fi
 if [ -n "${CGC_RHO_PREFETCH_MAXQ:-}" ]; then
     SERVER_ENV+=(CGC_RHO_PREFETCH_MAXQ="$CGC_RHO_PREFETCH_MAXQ")
 fi
+# [CGC 2026-09-26 fill-nocache] Expert reads bypass the unified buffer cache (F_NOCACHE on the
+# cache's file handle, llama-expert-cache.cpp cgc_fill_nocache). MUST be listed here: the launch
+# line runs the child through `env "${SERVER_ENV[@]}"`, an ALLOWLIST — an unlisted CGC_* is
+# dropped silently (same trap as CGC_RHO_PREFETCH_MAXQ / CGC_MMV_FUSE above).
+# Default OFF: unset = the read path is byte-identical to before. The engine prints
+# `CGC-FILL-NOCACHE: applied=.. failed=..` so a run can prove the knob bit.
+if [ -n "${CGC_FILL_NOCACHE:-}" ]; then
+    SERVER_ENV+=(CGC_FILL_NOCACHE="$CGC_FILL_NOCACHE")
+fi
 # [CGC 2026-09-24 swap-miss P0/P1/P2] 同一個 binary、只有 env 不同的三臂 A/B 開關。
 # 白名單是**必須**的：launch line 走 `env "${SERVER_ENV[@]}"`，沒列到的 CGC_* 會被靜默丟掉
 # （與 CGC_RHO_PREFETCH_MAXQ 同一個陷阱）⇒ 不列進來，A/B 三臂會跑出一模一樣的數字而不報錯。
