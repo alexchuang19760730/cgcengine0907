@@ -3434,7 +3434,10 @@ static bool cgc_node_in_graph(ggml_cgraph * gf, const ggml_tensor * t) {
 // `where`, when non-null, records which list matched: 0 = nodes (an op result), 1 = leafs (a
 // host-writable tensor), -1 = neither. Callers that only care about op results keep using
 // cgc_node_in_graph; nothing existing was switched over, to keep the blast radius on this one bug.
-static bool cgc_tensor_in_graph(ggml_cgraph * gf, const ggml_tensor * t, int * where) {
+// `where` defaults to nullptr: callers that only need the yes/no answer (and do not want the
+// nodes-vs-leafs detail) do not have to pass it. It is NOT defaulted on cgc_node_in_graph itself --
+// that function is deliberately nodes-only and must stay that way for its existing callers.
+static bool cgc_tensor_in_graph(ggml_cgraph * gf, const ggml_tensor * t, int * where = nullptr) {
     if (t == nullptr) {
         return false;
     }
@@ -4086,11 +4089,27 @@ ggml_status llama_context::graph_compute(
                 // Same two tests for the two other tensors this entry reads; a capture that fails
                 // either one is dropped to null, and every use below already handles null (the header
                 // prints -1 / 0x0 and the differential is skipped).
-                if (!cgc_node_in_graph(gf, rm) || !cgc_is_i32_n(rm, ntot) ||
+                // [CGC 2026-09-27 · leaf membership APPLIED, not just documented] These two used to
+                // be `cgc_node_in_graph`, which walks `nodes` ONLY. Both captures here are leaves:
+                // `ffn_moe_topk_remap` (llama-graph.cpp:2508/:2555) and `ffn_moe_slot_table`
+                // (llama-graph.cpp:2266) are ggml_new_tensor_2d + ggml_set_output with no producer
+                // op, so ggml_visit_parents files them under `cgraph->leafs`. The nodes-only test
+                // therefore returned false for EVERY layer and both tensors were pinned to nullptr
+                // on every step. That is not a wrong number, it is NO NUMBER: the block below --
+                // CGC 2026-09-15's "decisive readback" and the only path that can set
+                // ids_src_valid -- never executed. Measured evidence that the leaves really were in
+                // the graph: 828f4d1c2 recorded n_leaf=39 wrote=0 skip_not_in_graph=39 skip_null=0,
+                // i.e. all 39 were allocated while the test still said "not in this graph".
+                // cgc_tensor_in_graph is a strict superset of cgc_node_in_graph (nodes first, then
+                // leafs), so an op result cannot become MORE accepted here -- only a leaf becomes
+                // correctly accepted. Both leaves are ggml_set_output, so their host buffers are
+                // still live after the synchronize; this mirrors what CGC-REMAP-POST above already
+                // does when it reads `r->data` directly.
+                if (!cgc_tensor_in_graph(gf, rm) || !cgc_is_i32_n(rm, ntot) ||
                         rm->ne[0] != s->ne[0] || rm->ne[1] != s->ne[1]) {
                     rm = nullptr;
                 }
-                if (!cgc_node_in_graph(gf, tb) || !cgc_is_i32_n(tb, tb->ne[1])) {
+                if (!cgc_tensor_in_graph(gf, tb) || !cgc_is_i32_n(tb, tb->ne[1])) {
                     tb = nullptr;
                 }
                 std::vector<int32_t> rbuf;
