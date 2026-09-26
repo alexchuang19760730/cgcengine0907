@@ -2069,6 +2069,11 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 //             draft->verify or step->step transition.
                 static int64_t gt_busy = 0, gt_union = 0, gt_gap = 0, gt_wait = 0;
                 static int64_t gt_nseg = 0, gt_nbuf = 0, gt_nstep = 0, gt_unsup = 0, gt_prev_end = -1;
+                // [CGC 2026-09-27] `gt_unsup` 原本把「slot 沒 buffer」與「buffer 還沒 Completed」混在一起，
+                // 所以同一個 n_main 下的 skip% 可以差十倍卻無法歸因。下面兩個把它拆開：
+                //   gt_unsup_nil = 結構性（該 worker 分不到節點，slot 從來沒有 buffer）
+                //   gt_unsup_nc  = 運行時（buffer 存在但讀的那一刻還沒 Completed ⇒ 時序／內存壓力）
+                static int64_t gt_unsup_nil = 0, gt_unsup_nc = 0;
 
                 auto seg_view = [&](int s) {
                     const int a = (s == 0) ? 0 : (as_idx[s-1] + 1);
@@ -2145,7 +2150,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     // not been submitted yet, so nothing else can be in flight.
                     int64_t sg_busy = 0, sg_union = 0, sg_gap = 0, sg_st = 0, sg_en = 0;
                     if (cgc_gpu_take != nullptr) {
-                        int64_t g[5] = {0, 0, 0, 0, 0};
+                        // [CGC 2026-09-27] 7 slots: {busy, union, start, end, unsup, unsup_nil, unsup_nc}
+                        int64_t g[7] = {0, 0, 0, 0, 0, 0, 0};
                         const int gns = cgc_gpu_take(split_backend, g);
                         sg_busy  = g[0];
                         sg_union = g[1];
@@ -2154,6 +2160,8 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                         gt_busy  += g[0];
                         gt_union += g[1];
                         gt_unsup += g[4];
+                        gt_unsup_nil += g[5];
+                        gt_unsup_nc  += g[6];
                         gt_nbuf  += gns;
                         if (gns > 0) {
                             gt_nseg++;
@@ -3044,14 +3052,16 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                             fprintf(stderr,
                                     "CGC-GPUTIME: step=%lld segs=%lld bufs=%lld skipped=%lld "
                                     "wait=%.2f gpu_busy_sum=%.2f (%.0f%%) gpu_union=%.2f (%.0f%%) "
-                                    "gap=%.2f (%.0f%%) ms\n",
+                                    "gap=%.2f (%.0f%%) ms  skip_nil=%lld skip_nc=%lld\n",
                                     (long long) gt_nstep, (long long) gt_nseg, (long long) gt_nbuf,
                                     (long long) gt_unsup, w,
-                                    b, b * pc, u, u * pc, gp, gp * pc);
+                                    b, b * pc, u, u * pc, gp, gp * pc,
+                                    (long long) gt_unsup_nil, (long long) gt_unsup_nc);
                         }
                     }
                     gt_busy = gt_union = gt_gap = gt_wait = 0;
                     gt_nseg = gt_nbuf = gt_unsup = 0;
+                    gt_unsup_nil = gt_unsup_nc = 0;
                     gt_prev_end = -1;
                 }
 

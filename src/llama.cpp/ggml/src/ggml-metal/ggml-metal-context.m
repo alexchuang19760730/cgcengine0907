@@ -534,16 +534,23 @@ int ggml_metal_cgc_done(ggml_metal_t ctx) {
 // cannot race (the main thread is the only mutator), and costs nothing when the env is unset
 // because the caller then never calls this.
 //
-// `out` must have 5 elements:
+// `out` must have 7 elements:
 //   out[0] = GPU busy sum   (ns)  -- sum over the segment's cmd buffers
 //   out[1] = GPU busy union (ns)  -- max(end) - min(start); << out[0] means the buffers overlap
 //   out[2] = earliest GPU start (ns, mach absolute clock -- comparable across segments)
 //   out[3] = latest   GPU end   (ns, same clock)
 //   out[4] = buffers without a usable timestamp (no buffer / not completed / 0.0 / NaN)
+//   out[5] = ... of those, slot had NO buffer at all   (structural)
+//   out[6] = ... of those, buffer existed but was not Completed (timing / memory pressure)
+//            (bad timestamp = out[4] - out[5] - out[6])
 // Returns the number of buffers that contributed. All zeros with a nonzero out[4] means the
 // platform does not report the timestamps and the line means nothing.
+// [CGC 2026-09-27] out[5]/out[6] were added because out[4] alone could not tell the two apart,
+// and the two have opposite remedies: a structural nil is a property of the n_main split, while
+// a not-completed buffer is a property of the window.
 int ggml_metal_cgc_gpu_take(ggml_metal_t ctx, int64_t * out) {
     out[0] = out[1] = out[2] = out[3] = out[4] = 0;
+    out[5] = out[6] = 0;
     if (ctx == NULL) {
         return 0;
     }
@@ -552,11 +559,23 @@ int ggml_metal_cgc_gpu_take(ggml_metal_t ctx, int64_t * out) {
     int64_t e_max = INT64_MIN;
     int n = 0;
     int unsup = 0;
+    int unsup_nil = 0;      // [CGC 2026-09-27] slot 沒有 buffer（結構性：該 worker 分不到節點）
+    int unsup_nc   = 0;     // [CGC 2026-09-27] buffer 存在但還沒 Completed（運行時：時序／內存壓力）
     const int n_bufs = ctx->n_cb + 1;
     for (int i = 0; i < n_bufs && i <= GGML_METAL_MAX_COMMAND_BUFFERS; ++i) {
         id<MTLCommandBuffer> cb = ctx->cmd_bufs[i].obj;
-        if (cb == nil || [cb status] != MTLCommandBufferStatusCompleted) {
+        // ★ 2026-09-27：這兩個條件原本寫在同一個 `||` 裡，共用一個 `unsup` 計數器，
+        //   於是在報表上完全分不出「這個 slot 根本沒被用」與「buffer 還沒跑完」——
+        //   而這兩者的處置完全不同：前者是結構（n_main 切分造成），後者是時序（窗口／內存壓力）。
+        //   實測需要它：同為 n_main=64，ctl64b 是 3.1% 而 off1 是 33.0%，差十倍卻無法歸因。
+        if (cb == nil) {
             unsup++;
+            unsup_nil++;
+            continue;
+        }
+        if ([cb status] != MTLCommandBufferStatusCompleted) {
+            unsup++;
+            unsup_nc++;
             continue;
         }
         const CFTimeInterval s = [cb GPUStartTime];
@@ -578,7 +597,9 @@ int ggml_metal_cgc_gpu_take(ggml_metal_t ctx, int64_t * out) {
         out[2] = s_min;
         out[3] = e_max;
     }
-    out[4] = unsup;
+    out[4] = unsup;          // 總數（向後相容：報表上的 `skipped` 仍讀這個）
+    out[5] = unsup_nil;      // 細分：slot 沒有 buffer（結構）
+    out[6] = unsup_nc;       // 細分：buffer 未 Completed（時序）；bad-ts = out[4]-out[5]-out[6]
     return n;
 }
 
