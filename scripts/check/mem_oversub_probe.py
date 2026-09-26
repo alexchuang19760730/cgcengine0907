@@ -60,7 +60,22 @@ KEYS = [
     "Pages occupied by compressor",
 ]
 
-PAGE = 4096
+# Page size must come from the kernel: this box reports 16384-byte pages, and a 4096 constant
+# understated every byte figure here by 4x (the same units bug this repo has fixed elsewhere).
+def _page_bytes() -> int:
+    try:
+        from memory_pressure import _page_size_kb
+        return int(_page_size_kb() * 1024)
+    except Exception:  # noqa: BLE001
+        import subprocess as _sp
+        try:
+            return int(_sp.run(["sysctl", "-n", "hw.pagesize"],
+                               capture_output=True, text=True).stdout.strip())
+        except Exception:  # noqa: BLE001
+            return 16384
+
+
+PAGE = _page_bytes()
 
 
 def vm_snapshot():
@@ -160,9 +175,19 @@ def series_between(samples, t0, t1):
 
 
 def delta(series, key):
+    """Counters' change over the series, or None when the series cannot support the claim.
+
+    Missing-at-either-end returns None rather than 0: a counter this probe could not read is not
+    a counter that did not move, and `compressor_pressure` turns the former into "unknown" --
+    fail-closed -- while a 0 would have read as a perfectly quiet box. (The absence-as-a-value
+    class this repo keeps catching.)
+    """
     if len(series) < 2:
         return None
-    return series[-1]["vm"].get(key, 0) - series[0]["vm"].get(key, 0)
+    for end in (series[0], series[-1]):
+        if key not in end["vm"]:
+            return None
+    return series[-1]["vm"][key] - series[0]["vm"][key]
 
 
 def main():
@@ -255,10 +280,11 @@ def main():
 
 
 def selftest():
-    ok = 0
+    ok = ran = 0
 
     def chk(name, cond):
-        nonlocal ok
+        nonlocal ok, ran
+        ran += 1
         print(f"  {'PASS' if cond else 'FAIL'}  {name}")
         ok += 1 if cond else 0
 
@@ -272,6 +298,8 @@ def selftest():
          {"t": 10.0, "vm": {"Decompressions": 300}, "swap_used_mib": 0}]
     chk("delta() computes 200", delta(s, "Decompressions") == 200)
     chk("short series -> None", delta([s[0]], "Decompressions") is None)
+    chk("missing counter -> None, not 0 (absent != unmoved)",
+        delta(s, "NotACounter") is None)
     chk("series_between windowing", len(series_between(s, 0.0, 10.0)) == 2)
 
     b = {"t0": 0.0, "lines": [{"t": 5.0, "line": "load time =   1234.56 ms"}]}
@@ -279,9 +307,10 @@ def selftest():
     chk("steady_start falls back to t0", steady_start({"t0": 1.0, "lines": []}) == 1.0)
 
     chk("bench script exists", BENCH.exists())
-    total = 10
-    print(f"\nselftest: {ok}/{total}")
-    return 0 if ok == total else 1
+    # The denominator counts the checks that actually ran: a hard-coded total made every added
+    # fixture read as a failure (11/10, rc=1) even when all of them passed.
+    print(f"\nselftest: {ok}/{ran}")
+    return 0 if ok == ran else 1
 
 
 if __name__ == "__main__":

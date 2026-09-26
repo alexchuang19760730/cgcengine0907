@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FILES = {
     "two_pass": "scripts/check/arm_two_pass.py",
     "watchdog": "scripts/check/lane_watchdog.py",
+    "server_window": "scripts/check/server_window.py",
     "harness": "scripts/check/harness.py",
     "matrix": "scripts/check/llama_bench_matrix.py",
     "commit_bench": "scripts/check/commit_bench.py",
@@ -55,12 +56,22 @@ def check_all(files: dict[str, str]) -> list[tuple[str, bool, str]]:
     hs = files.get("harness", "")
     mx = files.get("matrix", "")
 
-    # 1) 起跑 swap 門檻：arm_two_pass 的 --max-swap-mb 預設必須 = lane_watchdog 的 LAUNCH_SWAP_KILL
-    tp_swap = _search(tp, r'"--max-swap-mb"[^)]*?default=([0-9.]+)')
-    wd_launch = _search(wd, r"LAUNCH_SWAP_KILL\s*=\s*([0-9.]+)")
-    add("起跑 swap 門檻對齊（arm_two_pass == lane_watchdog.LAUNCH_SWAP_KILL）",
-        tp_swap is not None and wd_launch is not None and tp_swap == wd_launch == CANON_LAUNCH_SWAP_MB,
-        f"arm_two_pass={tp_swap} / lane_watchdog={wd_launch} / 期望 {CANON_LAUNCH_SWAP_MB}")
+    # 1) 起跑閘 = 壓縮機安靜度（2026-09-26 取代 swap 存量）。三支閘都必須走共享模組，而不是各自
+    #    再寫一條門檻 —— 「三處 swap 門檻各不相同」就是漂移的成因，只是這次換成了 flow。
+    sw = files.get("server_window", "")
+    into = {"arm_two_pass": "compressor_pressure" in tp,
+            "lane_watchdog": "compressor_pressure" in wd,
+            "server_window": "compressor_pressure" in sw}
+    add("起跑閘 = 壓縮機安靜度（三支閘均走 compressor_pressure）",
+        all(into.values()), f"{into}")
+
+    # 1b) 回歸防線：swap 存量不得再當 decider（把 stock 當 flow 就紅）。
+    tp_stock = '"swap_level"' not in tp
+    wd_stock = "> args.max_swap_mb" not in wd
+    add("swap 存量不得再當起跑閘（stock ≠ flow）",
+        tp_stock and wd_stock,
+        f"arm_two_pass 舊 swap_level 殘留={not tp_stock} / "
+        f"lane_watchdog 舊 > max_swap_mb 比較殘留={not wd_stock}")
 
     # 2) reps 預設 = 3（否則 judge_artifact 的散度判據永不觸發）
     tp_reps = _search(tp, r'"--reps"[^)]*?default=([0-9]+)', int)
@@ -130,10 +141,12 @@ def selftest() -> int:
         '"CGC_EXPERT_CACHE_BYTES": "8589934592",\n'
         'PIN_ABSENT = ["CGC_SERVER_MTP"]\n'
         '_procs_matching(["llama-bench", "llama-server", "watchdog_daemon"])\n'
+        'add("swap_label", True, "x")  # compressor_pressure\n'
         '"--prompt", "--gen", "--depths", "--warm-skip", "--ctx-size"\n')
     good = {
         "two_pass": good_two_pass,
-        "watchdog": "LAUNCH_SWAP_KILL = 2048.0\nSWAP_KILL = 3072.0\n",
+        "watchdog": "LAUNCH_SWAP_KILL = 2048.0\nSWAP_KILL = 3072.0\ncompressor_pressure\n",
+        "server_window": "import compressor_pressure as cp\n",
         "harness": "_BENCH_DEFAULTS = dict(prompt=2048, gen=128, depths='512', reps=3,\n                       warm_skip=64, ctx_size=0, batch=5632, ubatch=5632)\n",
         "matrix": '. "${REPO}/scripts/check/budget_gate.sh"\n',
         "commit_bench": "--prompt 2048 --gen 128 --depths 512 --warm-skip 64 --ctx-size 0\n",
@@ -143,10 +156,23 @@ def selftest() -> int:
     chk("樣本檢查項數 >= 8", len(rows) >= 8)
 
     bad = dict(good)
-    bad["two_pass"] = good_two_pass.replace("default=2048", "default=1024")
+    bad["server_window"] = "# 沒接壓縮機閘\n"
     rows = check_all(bad)
-    chk("起跑 swap 不對齊 ⇒ 紅",
-        any("起跑 swap" in n and not o for n, o, _ in rows))
+    chk("閘沒走 compressor_pressure ⇒ 紅",
+        any("起跑閘" in n and not o for n, o, _ in rows))
+
+    bad = dict(good)
+    bad["two_pass"] = good_two_pass.replace('add("swap_label", True, "x")',
+                                            'add("swap_level", True, "x")')
+    rows = check_all(bad)
+    chk("swap 存量重新當閘（swap_level 回歸）⇒ 紅",
+        any("stock" in n and not o for n, o, _ in rows))
+
+    bad = dict(good)
+    bad["watchdog"] = good["watchdog"] + "if s > args.max_swap_mb: bad.append(1)\n"
+    rows = check_all(bad)
+    chk("watchdog 重新用 > max_swap_mb 拒跑 ⇒ 紅",
+        any("stock" in n and not o for n, o, _ in rows))
 
     bad = dict(good)
     bad["two_pass"] = good_two_pass.replace("--reps\", type=int, default=3", "--reps\", type=int, default=1")

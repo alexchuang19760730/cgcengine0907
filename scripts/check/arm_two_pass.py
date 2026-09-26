@@ -184,13 +184,21 @@ def gate_environment(max_swap_mb: float) -> dict:
     except Exception as e:
         add("thermal_nominal", False, f"thermal probe error: {e}")
 
-    # swap
+    # 壓縮機安靜度 —— 決定起跑的那一項。校準與理由見 scripts/check/compressor_pressure.py：
+    # swap 存量分不出「陳年 swap + 壓縮機安靜」與「小 swap + 壓縮機忙」，而後者才是喫 t/s 的。
+    try:
+        cp = _load("cp_g1", "compressor_pressure.py")
+        cq_ok, cq_why = cp.require(where="arm_two_pass gate")
+        add("compressor_quiet", cq_ok, cq_why)
+    except Exception as e:  # noqa: BLE001  fail-closed
+        add("compressor_quiet", False, f"compressor probe error: {e}")
+
+    # swap 只是標籤：値照記，不再拒跑。
     try:
         swap = mp.swap_used_mb()
-        add("swap_level", swap is not None and swap <= max_swap_mb,
-            f"swap={swap:.0f} MiB (max {max_swap_mb:.0f})")
+        add("swap_label", True, f"swap={swap:.0f} MiB（標籤；--max-swap-mb {max_swap_mb:.0f} 不再決定）")
     except Exception as e:
-        add("swap_level", False, f"swap probe error: {e}")
+        add("swap_label", False, f"swap probe error: {e}")
 
     # 殘留進程（llama-bench / llama-server）
     residual = _procs_matching(["llama-bench", "llama-server"])

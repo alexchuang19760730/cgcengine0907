@@ -36,6 +36,7 @@ import glob
 import importlib.util
 import json
 import os
+import statistics
 import shutil
 import signal
 import subprocess
@@ -45,12 +46,16 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
+if str(HERE) not in sys.path:      # `compressor_pressure` lives next door to this file
+    sys.path.insert(0, str(HERE))
 RUNS_LOG = ROOT / "Backup" / "lane_watchdog" / "watchdog_runs.jsonl"
 
 # ── 閾值（MiB），依本機實測校準 ──
 SWAP_WARN, SWAP_KILL = 1024.0, 3072.0
 FREE_WARN, FREE_KILL = 400.0, 150.0
-LAUNCH_SWAP_KILL = 2048.0      # 產物記錄的啟動 swap > 此值 = 髒環境硬跑
+LAUNCH_SWAP_KILL = 2048.0      # 標籤，不是閘：產物記錄的啟動 swap > 此值只寫進 stress_note。
+                               # 決定起跑的是壓縮機流量（compressor_pressure），因為 stock
+                               # 分不出「8 GB 陳年 swap + 壓縮機安靜」與「2 GB swap + 壓縮機忙」。
 SWAP_GROWTH_KILL = 1500.0      # 單次測量製造的 swap growth > 此值
 RECENT_ARTIFACT_MIN = 90       # 檢查最近 N 分鐘完成的產物
 SPREAD_UNRELIABLE = 12.0       # rep採樣散度>此%=量具被壓垮、數字作廢（生產 cell 4.3%、壞 cell 38%）
@@ -201,6 +206,32 @@ def judge_proc(p: dict, sysst: dict) -> dict:
 
 
 # --------------------------------------------------------------------------- artifacts
+def split_regimes(sams: list[float]) -> dict | None:
+    """§3.3b: a sample set that mixes **cold** with **steady** must be split into two columns,
+    not discarded -- and not averaged, which is what hides it.
+
+    Criterion (frozen here, before it was applied to any round): exactly ONE sample sits more
+    than SPREAD_UNRELIABLE below the others, and the others agree within SPREAD_UNRELIABLE.
+    Anything else returns None -- in particular a round whose samples are all over the place.
+    Guessing which sample was cold would turn every noisy round into a split, which is the same
+    error in the opposite direction (see §3.3b's own warning that the low sample is not
+    necessarily the first rep).
+    """
+    if len(sams) < 3:
+        return None
+    rest = sorted(sams)[1:]
+    rest_mean = sum(rest) / len(rest)
+    if rest_mean <= 0:
+        return None
+    tight = (rest[-1] - rest[0]) / rest_mean * 100 <= SPREAD_UNRELIABLE
+    separated = (rest_mean - min(sams)) / min(sams) * 100 > SPREAD_UNRELIABLE
+    if not (tight and separated):
+        return None
+    return {"cold_tps": min(sams), "steady_tps": statistics.median(rest),
+            "n_cold": 1, "n_steady": len(rest),
+            "steady_spread_pct": round((rest[-1] - rest[0]) / rest_mean * 100, 2)}
+
+
 def judge_artifact(arm: dict) -> dict:
     """純判決：數字作廢與否由「thermal + 量具 rep 散度」裁決，**不由 swap**。
     swap 高只標 stressed（環境承壓、需結構修復），量具穩時數字仍可引用。"""
@@ -209,20 +240,26 @@ def judge_artifact(arm: dict) -> dict:
     ls, es = launch.get("swap_used_mb"), endd.get("swap_used_mb")
     growth = (es - ls) if (ls is not None and es is not None) else None
 
-    scores, rep_spread, row_sd = {}, {}, {}
+    scores, rep_spread, row_sd, mixed = {}, {}, {}, {}
     for r in arm.get("rows", []):
         kind = "pp" if r.get("n_prompt", 0) > 0 else "tg"
         avg, sams = r.get("avg_ts"), r.get("samples_ts") or []
         scores[kind], row_sd[kind] = avg, r.get("stddev_ts")
         if avg and sams and len(sams) >= 2:
             rep_spread[kind] = (max(sams) - min(sams)) / avg * 100
+        split = split_regimes(sams)
+        if split:
+            mixed[kind] = split
 
     th = arm.get("thermal", {}) or {}
     th_worst = (th.get("worst", {}) or {}).get("label")
     thermal_bad = th_worst not in (None, "NOMINAL")
     spread_tg = rep_spread.get("tg")
     spread_high = spread_tg is not None and spread_tg > SPREAD_UNRELIABLE
-    unreliable = thermal_bad or spread_high
+    # §3.3b: a splittable set is a regime mixture, not a broken instrument, so the high spread
+    # alone no longer makes the round unquotable -- the steady column is. Thermal still can.
+    tg_mixed = mixed.get("tg")
+    unreliable = thermal_bad or (spread_high and not tg_mixed)
     stressed = bool(
         (ls is not None and ls > LAUNCH_SWAP_KILL) or
         (growth is not None and growth > SWAP_GROWTH_KILL))
@@ -230,8 +267,15 @@ def judge_artifact(arm: dict) -> dict:
     kill_notes, stress_notes = [], []
     if thermal_bad:
         kill_notes.append(f"thermal worst={th_worst}（GPU 時脈非正常）")
-    if spread_high:
+    regime_note = None
+    if spread_high and not tg_mixed:
         kill_notes.append(f"量具散度 {spread_tg:.0f}%>{SPREAD_UNRELIABLE:.0f}%（不可重複）")
+    elif tg_mixed:
+        # Deliberately NOT a kill_note: `kill_notes` is what the quarantine path reads as reasons
+        # to discard, and §3.3b says this round is quotable after the split.
+        regime_note = (f"mixed-regime（拆欄後 cold 為診斷值、steady 仍需 thermal 裁決）："
+                       f"cold {tg_mixed['cold_tps']:.2f} / steady {tg_mixed['steady_tps']:.2f} "
+                       f"t/s（steady 散度 {tg_mixed['steady_spread_pct']}%）")
     if ls is not None and ls > LAUNCH_SWAP_KILL:
         stress_notes.append(f"啟動 swap={ls:.0f}")
     if growth is not None and growth > SWAP_GROWTH_KILL:
@@ -239,6 +283,8 @@ def judge_artifact(arm: dict) -> dict:
     return {"launch_swap": ls, "growth": growth, "scores": scores,
             "row_sd": row_sd, "rep_spread": rep_spread, "thermal_worst": th_worst,
             "thermal_bad": thermal_bad, "spread_high": spread_high,
+            "regime": "mixed" if tg_mixed else "single", "columns": mixed,
+            "regime_note": regime_note,
             "unreliable": unreliable, "stressed": stressed,
             "kill_notes": kill_notes, "stress_notes": stress_notes}
 
@@ -290,7 +336,9 @@ def recent_artifacts(minutes: int = RECENT_ARTIFACT_MIN) -> list[dict]:
                 "min_free": worst.get("min_free_mb"),
                 "stressed": v["stressed"], "polluted": v["unreliable"],
                 "kill_notes": v["kill_notes"], "stress_notes": v["stress_notes"],
-                "notes": v["kill_notes"] + v["stress_notes"],
+                "regime": v.get("regime"), "columns": v.get("columns", {}),
+                "notes": ([v["regime_note"]] if v.get("regime_note") else [])
+                         + v["kill_notes"] + v["stress_notes"],
             })
     # 去重（同 path+tag）
     seen, uniq = set(), []
@@ -484,13 +532,23 @@ def cmd_audit(paths: list[str]) -> int:
 
 
 def cmd_gate(args) -> int:
-    """run 前 preflight：環境髒（thermal/swap/free/殘留進程/watchdog）→ 非 0，runner 拒跑。"""
+    """run 前 preflight：環境髒（thermal/壓縮機/free/殘留進程/watchdog）→ 非 0，runner 拒跑。
+
+    起跑條件是「壓縮機安靜」，不是 swap 存量：2026-09-26 實測同一台機器上，7993 MiB 的陳年
+    swap 存量配 0.00 MiB/s 流量 ＝ 乾淨盒，而一臂生產負載是 ~150 MiB/s。舊的 swap 存量閘在
+    兩種盒況下都會判錯方向（拒跑乾淨的、放行髒的）。存量仍印出來，只是標籤。
+    """
     s = system_state()
     bad = []
     if s.get("thermal") != "NOMINAL":
         bad.append(f"thermal={s.get('thermal')}")
-    if s.get("swap_used_mb") is not None and s["swap_used_mb"] > args.max_swap_mb:
-        bad.append(f"swap {s['swap_used_mb']:.0f} > {args.max_swap_mb:.0f} MiB")
+    try:
+        import compressor_pressure as cp
+        cq_ok, cq_why = cp.require(where="lane_watchdog gate")
+    except Exception as e:  # noqa: BLE001  fail-closed
+        cq_ok, cq_why = False, f"unknown: compressor probe unavailable: {e}"
+    if not cq_ok:
+        bad.append(cq_why)
     if s.get("free_mb") is not None and s["free_mb"] < args.min_free_mb:
         bad.append(f"RAM free {s['free_mb']:.0f} < {args.min_free_mb:.0f} MiB")
     if not args.allow_shared:
@@ -506,8 +564,9 @@ def cmd_gate(args) -> int:
         for b in bad:
             print(f"  - {b}")
         return 2
-    print(f"PREFLIGHT PASS  thermal={s.get('thermal')} swap={s.get('swap_used_mb'):.0f} "
-          f"free={s.get('free_mb'):.0f}")
+    print(f"PREFLIGHT PASS  thermal={s.get('thermal')} free={s.get('free_mb'):.0f} "
+          f"compressor={cq_why}  [swap stock {s.get('swap_used_mb'):.0f} MiB is a label, "
+          f"--max-swap-mb {args.max_swap_mb:.0f} no longer decides]")
     return 0
 
 
@@ -645,6 +704,37 @@ def selftest() -> int:
         if not cond:
             fails.append(name)
 
+    print("§3.3b：cold/steady 混合要拆欄，不是作廢；拆不開的才作廢")
+    arm = lambda sams: {"memory": {"launch": {"swap_used_mb": 0.0}, "end": {"swap_used_mb": 100.0}},
+                        "thermal": {"worst": {"label": "NOMINAL"}},
+                        "rows": [{"n_prompt": 2048, "avg_ts": 295.0, "stddev_ts": 5.0,
+                                  "samples_ts": [300.15, 297.14, 289.98]},
+                                 {"n_prompt": 0, "avg_ts": 10.23, "stddev_ts": 2.38,
+                                  "samples_ts": sams}]}
+    j = judge_artifact(arm([7.47938, 11.5274, 11.6835]))
+    check("a cold rep + two steady reps => mixed, NOT unquotable",
+          j["regime"] == "mixed" and not j["unreliable"])
+    check("...and nothing is sent to the quarantine path (kill_notes stays empty)",
+          j["kill_notes"] == [] and "mixed-regime" in j["regime_note"])
+    check("steady column is the median of the rest, and its spread is under the line",
+          round(j["columns"]["tg"]["steady_tps"], 3) == 11.605
+          and j["columns"]["tg"]["steady_spread_pct"] < SPREAD_UNRELIABLE)
+    check("cold column is kept as the diagnostic value",
+          round(j["columns"]["tg"]["cold_tps"], 3) == 7.479)
+    j = judge_artifact(arm([10.1, 12.2, 9.4]))
+    check("samples all over the place => still UNRELIABLE (no invented cold rep)",
+          j["regime"] == "single" and j["unreliable"] and j["spread_high"])
+    j = judge_artifact(arm([11.5, 11.60, 11.70]))
+    check("three tight samples => single, no split",
+          j["regime"] == "single" and not j["unreliable"])
+    j = judge_artifact(arm([9.9, 10.0]))
+    check("two samples cannot be split (needs >=3)", j["regime"] == "single")
+    check("split_regimes refuses a non-positive cluster", split_regimes([-1.0, 0.0, 0.0]) is None)
+    j = judge_artifact({**arm([7.47938, 11.5274, 11.6835]),
+                        "thermal": {"worst": {"label": "HEAVY"}}})
+    check("thermal still decides an otherwise-splittable round",
+          j["regime"] == "mixed" and j["unreliable"])
+
     print("乾淨系統 + 正常 bench -> ok，不誤殺")
     clean_sys = {"swap_used_mb": 200.0, "free_mb": 2000.0, "thermal": "NOMINAL"}
     p = {"pid": 1, "is_bench": True, "batch": 5632, "load_mode": "none"}
@@ -760,7 +850,8 @@ def main(argv=None) -> int:
     # 子命令 gate（run 前 preflight）
     if raw and raw[0] == "gate":
         gp = argparse.ArgumentParser(description="run 前環境 preflight")
-        gp.add_argument("--max-swap-mb", type=float, default=1024)
+        gp.add_argument("--max-swap-mb", type=float, default=1024,
+                        help="標籤用（印出來）：起跑閘是壓縮機安靜度，不是 swap 存量")
         gp.add_argument("--min-free-mb", type=float, default=400)
         gp.add_argument("--allow-shared", action="store_true")
         return cmd_gate(gp.parse_args(raw[1:]))

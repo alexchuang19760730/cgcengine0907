@@ -52,6 +52,8 @@ ROOT = Path(__file__).resolve().parents[2]
 HARNESS = ROOT / "scripts" / "check" / "decode_window_harness.py"
 CHECK_DIR = ROOT / "scripts" / "check"
 LAUNCHER = ROOT / "scripts" / "run_server.sh"
+if str(CHECK_DIR) not in sys.path:      # `compressor_pressure` lives next door to this file
+    sys.path.insert(0, str(CHECK_DIR))
 
 # The launcher states its own verdict in this line (run_server.sh, `[guard] ...`). Everything after
 # `other_llama_servers=` is optional on purpose: a worktree whose run_server.sh predates the verdict
@@ -122,11 +124,29 @@ def _fallback_llama():
     return hits
 
 
+def compressor() -> tuple[bool, str]:
+    """Is the memory COMPRESSOR quiet? -- the window term a swap STOCK cannot answer.
+
+    Calibrated 2026-09-26 (`scripts/check/compressor_pressure.py`): an idle box carrying 7993 MiB
+    of swap stock reads 0.00 MiB/s of compressor flow, while one production arm on the same box
+    reads ~150 MiB/s. The stock was what the earlier launch gates refused on, and it is exactly the
+    number that cannot tell those two boxes apart -- so a gate built on it blocks clean runs and
+    passes dirty ones. Kept as its own term rather than folded into the memory term: "can I fit"
+    (availability) and "is the box drifting" (flow) are different questions.
+    """
+    try:
+        import compressor_pressure as cp
+        return cp.require(where="server_window")
+    except Exception as e:  # noqa: BLE001  fail-closed: not being able to read is not a pass
+        return False, f"unknown: compressor probe unavailable: {e}"
+
+
 def quiet(port: int = PROD_PORT, need_mb: float = NEED_MB) -> tuple[bool, str]:
-    """(is-quiet, reason). The same three questions, asked once, for every launcher."""
+    """(is-quiet, reason). The same four questions, asked once, for every launcher."""
     free = float(_probe("vm_free_mb", lambda: 0.0)())
     busy = _probe("foreign_llama", _fallback_llama)()
     held = _probe("listening", lambda p: False)(port)
+    cq, cq_why = compressor()
     reasons = []
     if held:
         reasons.append(f"port {port} already listened on {held}")
@@ -134,7 +154,10 @@ def quiet(port: int = PROD_PORT, need_mb: float = NEED_MB) -> tuple[bool, str]:
         reasons.append(f"other llama process(es): {busy}")
     if free < need_mb:
         reasons.append(f"reclaimable={free:.0f}MB<{need_mb:.0f}")
-    return (not reasons), ("; ".join(reasons) or f"quiet (reclaimable {free:.0f}MB)")
+    if not cq:
+        reasons.append(f"compressor not quiet: {cq_why}")
+    return (not reasons), ("; ".join(reasons) or
+                           f"quiet (reclaimable {free:.0f}MB, compressor quiet)")
 
 
 def launcher_guard() -> dict | None:
@@ -185,7 +208,9 @@ def decision(port: int = PROD_PORT, need_mb: float = NEED_MB) -> dict:
     free = float(_probe("vm_free_mb", lambda: 0.0)())
     busy = _probe("foreign_llama", _fallback_llama)()
     held = _probe("listening", lambda p: False)(port)
-    harness_terms = {"memory": free >= need_mb, "foreign": not busy, "port": not held}
+    cq, cq_why = compressor()
+    harness_terms = {"memory": free >= need_mb, "foreign": not busy, "port": not held,
+                     "compressor": cq}
     harness_admits = all(harness_terms.values())
     g = launcher_guard() or {}
     launcher_admits = g.get("admits")
@@ -200,6 +225,7 @@ def decision(port: int = PROD_PORT, need_mb: float = NEED_MB) -> dict:
     return {
         "port": port, "need_mb": need_mb,
         "reclaimable_mb": free, "foreign_llama": busy, "port_held": held,
+        "compressor": cq, "compressor_reason": cq_why,
         "harness_admits": harness_admits, "harness_terms": harness_terms,
         "launcher_class": g.get("class"), "launcher_free_pct": g.get("free_pct"),
         "launcher_req_pct": g.get("req_free_pct"),

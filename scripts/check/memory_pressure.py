@@ -43,6 +43,7 @@ swap_log.tsv series is the calibration set) before any harness starts gating on 
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -119,11 +120,31 @@ _PAGE_KB = _page_size_kb()
 
 
 def llama_procs() -> int:
-    """How many llama-named processes are alive right now (neighbours = contention)."""
+    """How many ENGINE processes are alive right now (neighbours = contention).
+
+    Matches the *program* (argv[0]'s basename), not any line that contains the word. The previous
+    rule -- `"llama" in line` over `ps aux` -- counted a shell whose command text merely names the
+    tool, an editor with such a file open, a `pgrep -fl llama...` (and `ps aux` truncates its
+    command column, so whether a mention was even visible depended on how long the asking command
+    was). That mattered because `attribution()` turns `max_procs > 1` into a `contention` verdict:
+    a text match could therefore alibi a bad reading with a neighbour engine that does not exist.
+    Measured 2026-09-26: the counter read 1 on a box with zero engine processes, and, with two
+    real processes running, 0.
+    """
     try:
-        out = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=5)
-        n = sum(1 for l in out.stdout.splitlines() if "llama" in l.lower()
-                and "grep" not in l.lower())
+        out = subprocess.run(["ps", "-Ao", "pid=,command="], capture_output=True, text=True,
+                             timeout=5)
+        n = 0
+        for line in out.stdout.splitlines():
+            pid, _, cmd = line.strip().partition(" ")
+            if not pid.isdigit() or not cmd:
+                continue
+            try:                       # a program is the first token; its basename is the name
+                prog = os.path.basename(cmd.split()[0])
+            except IndexError:
+                continue
+            if "llama" in prog.lower():
+                n += 1
         return n
     except Exception:  # noqa: BLE001
         return -1
@@ -166,12 +187,18 @@ def top_rss(n: int = 5) -> list[dict]:
 
 
 def swap_advice(limit_mb: float = SWAP_START_LIMIT_MB, wait_mb: float = 500.0) -> dict:
-    """Verdict on the box's swap BEFORE a launch, with the named consumers.
+    """LABEL on the box's swap stock BEFORE a launch, with the named consumers.
 
-    `wait` (swap usable, not growing) => `ok`; `advise` (system swap already over the start
-    limit with the engine not running) => the knobs cannot help, because nothing of ours holds
-    those pages: the message names the processes to close. Fail-closed is deliberately NOT used
-    here -- the launcher is not the owner of the user's desktop; it is the messenger.
+    2026-09-26: this judges a STOCK, and the launch gate is a FLOW (`compressor_pressure`). The two
+    do not agree on purpose: an idle box carrying 7993 MiB of stock reads 0.00 MiB/s of compressor
+    flow (clean), while a busy one reads 245-540 MiB/s. So the verdict here is advisory wording about
+    pressure budget -- it must not be read as "this box cannot be measured", which is why callers
+    render it as a label and `harness.py` gates on the compressor instead.
+
+    `ok` (≤ wait); `warn` (over `wait`, within `limit`, engine not running); `advise` (over `limit`
+    with nothing of ours holding those pages) -- the message names the processes to close. Fail-closed
+    is deliberately NOT used here: the launcher is not the owner of the user's desktop, it is the
+    messenger.
     """
     used = swap_used_mb()
     procs = llama_procs()
@@ -185,13 +212,14 @@ def swap_advice(limit_mb: float = SWAP_START_LIMIT_MB, wait_mb: float = 500.0) -
     if used <= limit_mb and procs <= 0:
         return {"verdict": "warn", "swap_used_mb": used, "llama_procs": procs,
                 "limit_mb": limit_mb, "top": top_rss(5),
-                "why": f"swap {used:.0f} MiB 已高於乾淨線 {wait_mb:.0f}、但在起跑門檻 "
-                       f"{limit_mb:.0f} 以內"}
+                "why": f"swap 存量 {used:.0f} MiB 已高於乾淨線 {wait_mb:.0f}（標籤；閘門是壓縮機流量）"}
     return {"verdict": "advise", "swap_used_mb": used, "llama_procs": procs,
             "limit_mb": limit_mb, "top": top_rss(5),
-            "why": (f"swap 已用 {used:.0f} MiB > 起跑門檻 {limit_mb:.0f} MiB，而機器上只有 "
-                    f"{procs} 個 llama 行程 ⇒ 這些頁不是引擎的（P0/P1/P2 管不到別人的駐留）。"
-                    f"關掉下表其中幾項（或重開機）再跑，否則這輪一開跑就已飽和")}
+            "why": (f"swap 存量 {used:.0f} MiB > 舊起跑線 {limit_mb:.0f} MiB（**標籤，不是閘**；"
+                    f"起跑閘是壓縮機安靜度，見 compressor_pressure.py），機器上只有 {procs} 個 "
+                    f"llama 行程 ⇒ 這些頁不是引擎的（P0/P1/P2 管不到別人的駐留）。存量大本身不降速"
+                    f"（2026-09-26 實測：存量 7862 MiB、流量 0.00 MiB/s 的盒子量到 tg 11.46）；"
+                    f"它只是壓縮機的壓力預算小。關掉下表幾項可讓壓縮機少被觸發")}
 
 
 def stamp() -> dict:

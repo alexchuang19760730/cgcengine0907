@@ -58,13 +58,27 @@ CROSS_SESSION_RULE = (
 
 # ── the window ────────────────────────────────────────────────────────────────
 
+def _compressor_veto() -> tuple[bool, str]:
+    """Default compressor probe: the shared gate, fail-closed when unreadable."""
+    try:
+        import compressor_pressure as cp
+        return cp.require(where="restart_rerun window")
+    except Exception as e:  # noqa: BLE001  not being able to read is not a pass
+        return False, f"unknown: compressor probe unavailable: {e}"
+
+
 def window_state(swap_limit_mb: float = DEFAULT_SWAP_LIMIT_MB, port: int = sw.PROD_PORT,
                  need_mb: float | None = None, *,
-                 swap=None, procs=None, thermal=None, decision=None) -> dict:
+                 swap=None, procs=None, thermal=None, decision=None, compressor=None) -> dict:
     """(ok, reasons, evidence). Probes are injectable so the selftest can feed a busy box.
 
-    The vetoes are the terms that actually dominated the 2026-09-25 readings: carried swap,
-    thermal, neighbours, the port, and the launcher's own guard. Memory is EVIDENCE unless
+    The vetoes are the terms that actually dominated the 2026-09-25 readings: **compressor
+    flow**, thermal, neighbours, the port, and the launcher's own guard. The swap STOCK is not
+    one of them any more, and that replacement is measured rather than stylistic: on 2026-09-26
+    this box read 7993 MiB of stock with 0.00 MiB/s of compressor flow (clean) and ~150 MiB/s
+    during one arm (dirty), so a stock gate refused clean runs and passed dirty ones. The stock
+    is still recorded in `evidence` -- as a label, with `swap_is_veto` stating which it is.
+    Memory is EVIDENCE unless
     `need_mb` is given, and that is a deliberate choice rather than a threshold nobody meets:
     measured right after the reboot, `server_window.quiet()`'s reclaimable term reads 5848 MB
     against its own 8000 MB default while swap is 0.00M and no llama process exists. 8000 MB is
@@ -76,7 +90,9 @@ def window_state(swap_limit_mb: float = DEFAULT_SWAP_LIMIT_MB, port: int = sw.PR
     procs = procs or mp.llama_procs
     thermal = thermal or tp.level
     decision = decision or sw.decision
+    compressor = compressor or _compressor_veto
     swap_mb, n_procs, lv = swap(), procs(), thermal()
+    cq_ok, cq_why = compressor()
     dec = decision(port) or {}
     terms = dec.get("harness_terms") or {}
     reasons = []
@@ -84,8 +100,8 @@ def window_state(swap_limit_mb: float = DEFAULT_SWAP_LIMIT_MB, port: int = sw.PR
         reasons.append(f"llama process(es) alive: {n_procs}")
     if swap_mb is None:
         reasons.append("swap unreadable")
-    elif swap_mb > swap_limit_mb:
-        reasons.append(f"swap {swap_mb:.0f}MB > limit {swap_limit_mb:.0f}MB")
+    if not cq_ok:
+        reasons.append(cq_why)
     if lv != 0:
         reasons.append(f"thermal {tp.label(lv)} (need NOMINAL)")
     if terms.get("foreign") is False:
@@ -98,7 +114,9 @@ def window_state(swap_limit_mb: float = DEFAULT_SWAP_LIMIT_MB, port: int = sw.PR
     if dec.get("launcher_admits") is False:
         reasons.append("launcher's own guard refuses: " + ",".join(dec.get("refused_by") or []))
     return {"ok": not reasons, "reasons": reasons,
-            "evidence": {"swap_used_mb": swap_mb, "llama_procs": n_procs,
+            "evidence": {"swap_used_mb": swap_mb, "swap_limit_mb": swap_limit_mb,
+                         "swap_is_veto": False, "compressor_ok": cq_ok,
+                         "compressor_reason": cq_why, "llama_procs": n_procs,
                          "thermal": tp.label(lv), "thermal_level": lv,
                          "reclaimable_mb": dec.get("reclaimable_mb"),
                          "harness_admits": dec.get("harness_admits"),
@@ -269,9 +287,16 @@ def render(sess: dict, p0: dict, s1: dict) -> str:
                  f"{ev.get('thermal')} |")
     L.append("\n## 2. P0/P1/P2 四臂（in-session 判定）\n")
     if isinstance(p0, dict) and p0.get("arms"):
-        L.append(f"- 判定：**{p0.get('verdict', {}).get('verdict', '(無)')}**")
-        L.append(f"- pct_vs_armed：`{p0.get('verdict', {}).get('pct_vs_armed')}`"
-                 f"（負 = 該臂比 armed 慢）")
+        v = p0.get("verdict") or {}
+        L.append(f"- 判定：**{v.get('verdict', '(無)')}**")
+        L.append(f"- pct_vs_armed：`{v.get('pct_vs_armed')}`（負 = 該臂比 armed 慢）")
+        if v.get("start_swap_spread_mib") is not None:
+            L.append(f"- 每臂起跑 swap：`{v.get('start_swap_mib')}`"
+                     f"（跨臂散佈 **{v['start_swap_spread_mib']} MiB**"
+                     f"，>512 ⇒ 前提失敗：這一族比的是盒子不是開關）")
+        if v.get("order_drift_pct") is not None:
+            L.append(f"- 啟動序漂移：**{v['order_drift_pct']:+.1f}%**"
+                     f"（最早槽 vs 最晚槽；與要解析的 5% 同量級就無判定）")
         L.append(f"- 每臂散度：`{p0.get('verdict', {}).get('spread_pct')}`")
         L.append(f"- 臂序（逐 pass 輪替）：`{p0.get('arm_order')}`；冷卻 {p0.get('cool_s')} s")
         L.append("\n| tag | pass | 序 | tg | pp | thermal | reads | pread_us | warm_skip_applied | Δswap | swap_arms |\n"
@@ -373,12 +398,17 @@ def selftest() -> int:
                              "harness_admits": free >= 8000.0 and not d, "launcher_admits": launcher,
                              "agree": True, "binding": None, "refused_by": [] if launcher else ["launcher"]}
 
-    clean = dict(swap=lambda: 0.0, procs=lambda: 0, thermal=lambda: 0, decision=dec(False))
+    calm = lambda: (True, "quiet (compressions 0.00, pageouts 0.00 MiB/s)")  # noqa: E731
+    clean = dict(swap=lambda: 0.0, procs=lambda: 0, thermal=lambda: 0, decision=dec(False),
+                 compressor=calm)
     st = window_state(swap=clean["swap"], procs=clean["procs"], thermal=clean["thermal"],
-                      decision=clean["decision"])
+                      decision=clean["decision"], compressor=clean["compressor"])
     expect("clean box -> open", st["ok"], True)
     for name, kw, want in (
-            ("swap above limit", {"swap": lambda: 4096.0}, "swap 4096MB > limit 2048MB"),
+            ("compressor busy",
+             {"compressor": lambda: (False, "compressor busy at launch: compressions 150.00 > "
+                                               "1.00 MiB/s")},
+             "compressor busy at launch: compressions 150.00 > 1.00 MiB/s"),
             ("swap unreadable", {"swap": lambda: None}, "swap unreadable"),
             ("a llama process alive", {"procs": lambda: 1}, "llama process(es) alive: 1"),
             ("thermal MODERATE", {"thermal": lambda: 1}, "thermal MODERATE (need NOMINAL)"),
@@ -388,10 +418,19 @@ def selftest() -> int:
         env = dict(clean)
         env.update(kw)
         st = window_state(swap=env["swap"], procs=env["procs"], thermal=env["thermal"],
-                          decision=env["decision"])
+                          decision=env["decision"], compressor=env["compressor"])
         expect(name + " -> closed", st["ok"], False)
         if want not in st["reasons"]:
             bad.append(f"{name}: reason missing ({st['reasons']})")
+
+    # The fixture this replacement exists for: the number the OLD gate refused on (4096 > 2048)
+    # must now be a recorded label, not a veto. Would have been red before this change.
+    st = window_state(swap=lambda: 4096.0, procs=lambda: 0, thermal=lambda: 0,
+                      decision=dec(False), compressor=calm)
+    expect("swap stock over the old 2048 line + quiet compressor -> OPEN (stock is a label)",
+           st["ok"], True)
+    expect("...and the stock is still recorded", st["evidence"]["swap_used_mb"], 4096.0)
+    expect("...and evidence states it is not a veto", st["evidence"]["swap_is_veto"], False)
 
     # This box, right after the reboot: 5848 MB reclaimable, 0 swap, 0 neighbours. It must be
     # OPEN by default (that is the whole point of the run) and CLOSED when the veto is asked for.

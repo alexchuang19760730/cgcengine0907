@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>prod-new 的 MTP on/off 與量測框架技術白皮書（2026-09-26）</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb;
+    --blue:#2563eb; --blue-bg:#eff6ff; --red:#dc2626; --red-bg:#fef2f2;
+    --green:#059669; --green-bg:#ecfdf5; --amber:#d97706; --amber-bg:#fffbeb;
+    --code-bg:#f6f8fa; --purple:#7c3aed; --purple-bg:#f5f3ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 80px;background:var(--bg);color:var(--fg);
+       font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang TC","Helvetica Neue",Arial,sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:27px;margin:0 0 6px;letter-spacing:-.2px}
+  h2{font-size:21px;margin:44px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--blue)}
+  h3{font-size:16px;margin:26px 0 8px;color:#1f2937}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:26px}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+  code{background:var(--code-bg);padding:1px 5px;border-radius:4px;color:#b91c1c}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;
+      padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.6}
+  pre code{background:none;padding:0;color:#111827}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#f9fafb;font-weight:600}
+  td.num,th.num{font-family:ui-monospace,Menlo,monospace;white-space:nowrap;text-align:right}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:18px 0}
+  .card{border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card .k{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .card .v{font-size:21px;font-weight:700;margin-top:2px}
+  .card .n{font-size:12px;color:var(--muted);margin-top:4px}
+  .ok{color:var(--green)} .bad{color:var(--red)} .warn{color:var(--amber)}
+  .box{border-radius:8px;padding:12px 16px;margin:16px 0;border:1px solid}
+  .box p{margin:6px 0}
+  .b-red{background:var(--red-bg);border-color:#fecaca}
+  .b-green{background:var(--green-bg);border-color:#a7f3d0}
+  .b-amber{background:var(--amber-bg);border-color:#fde68a}
+  .b-blue{background:var(--blue-bg);border-color:#bfdbfe}
+  .b-purple{background:var(--purple-bg);border-color:#ddd6fe}
+  ul{margin:8px 0 8px 22px} li{margin:5px 0}
+  .lay{border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin:10px 0}
+  .lay .t{font-weight:600;margin-bottom:6px}
+  .lay .d{font-size:13px;color:#374151}
+  .fl{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+  .fl span{border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12.5px}
+  .small{font-size:12.5px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>prod-new 的 MTP on/off 與量測框架技術白皮書</h1>
+<div class="sub">
+  2026-09-26 · engine digest <code>1ca685490</code> · carrier Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X ·
+  cell <code>-p 2048 -n 128 -d 512 -r 3 --warm-skip 64</code> · 本頁所有數字都帶 box 標籤（thermal / swap / 壓縮機）
+</div>
+
+<div class="cards">
+  <div class="card"><div class="k">prod-new · MTP off（今天）</div><div class="v">11.46 <span class="small">t/s</span></div>
+    <div class="n">pp 277.98 · 起跑 swap 7862 MiB（壓縮機安靜）· 臂中 thermal HEAVY</div></div>
+  <div class="card"><div class="k">prod-new · MTP off（歷史乾淨窗）</div><div class="v">12.20 <span class="small">t/s</span></div>
+    <div class="n">pp 260.41 ± 3.70 · 這是「乾淨窗口」的參考值</div></div>
+  <div class="card"><div class="k">MTP on（正確武裝）</div><div class="v bad">S = 0.79–0.92</div>
+    <div class="n">accept 0.47–0.60 ⇒ k* = 1：今天 MTP on 比 off 慢</div></div>
+  <div class="card"><div class="k">窗口閘</div><div class="v">流量 <span class="small">不是存量</span></div>
+    <div class="n">閒置 0.00 MiB/s ↔ 一臂 245–540 MiB/s（四個數量級）</div></div>
+</div>
+
+<h2>0. 一頁摘要</h2>
+
+<div class="box b-green">
+<p><b>能引用的一句話：</b>prod-new 的 MTP <b>off</b> 在今天這種超訂盒況（swap 存量 7.9 GB、壓縮機安靜）下量到
+<b>tg 11.46</b>；MTP <b>on</b> 只有在「正確武裝」時才存在讀數，而它目前的經濟學是 <b>S = 0.79–0.92 ⇒ k* = 1</b>，
+即比 off 慢。要讓 on 划算，缺的是 accept（k 的攤薄來源），不是把 k 開大。</p>
+</div>
+
+<div class="box b-red">
+<p><b>三個不能忘的陷阱：</b></p>
+<p>① <code>CGC_SERVER_MTP=1</code> <b>不是投機</b>——它只是一個 env 區塊；spec 要用 <code>--spec-type draft-mtp</code>
+才武裝。09-26 的三筆「MTP on」讀數（10.45 / 11.21 / 275.28）因此全部作廢。</p>
+<p>② <code>swap 存量</code> <b>不是</b>「盒子髒」的判準；決定者是壓縮機<b>流量</b>。舊閘在 09-26 拒跑了乾淨盒
+（存量 7833 > 1024），卻放行了壓縮機忙的盒（存量 4.5 GB、量到 8.31 t/s）。</p>
+<p>③ <code>12.57</code> 是<b>已武裝</b>的交付 cell（MTP on），不是 MTP off 的基準；off 的生產讀數是 11.03 / 11.79 / 12.20。</p>
+</div>
+
+<h2>1. prod-new 是什麼</h2>
+
+<h3>1.1 profile 的 env（量測前必須逐項在場）</h3>
+<table>
+<tr><th>類別</th><th>env</th><th>值</th><th>它在做什麼</th></tr>
+<tr><td>池</td><td class="mono">CGC_EXPERT_CACHE_BYTES</td><td class="num">8589934592</td><td>8 GiB expert pool（cell 的一部分，不得為通過閘門而縮）</td></tr>
+<tr><td>池</td><td class="mono">LLAMA_EXPERT_CACHE_ALLOW_NGL</td><td class="num">1</td><td><code>-ngl 99</code> 下允許池的硬前置</td></tr>
+<tr><td>池</td><td class="mono">LLAMA_EXPERT_CACHE_WORKERS</td><td class="num">8</td><td>fill 的 pread 執行緒</td></tr>
+<tr><td>P0</td><td class="mono">CGC_EXPERT_SKIP_READRAW</td><td class="num">1</td><td>skip-load 的 expert 不再全量讀進 CPU RAM（省 ~10.9 GiB 匿名駐留 = swap 的根源）</td></tr>
+<tr><td>P1/P2</td><td class="mono">CGC_POOL_MADVISE</td><td class="num">2</td><td>fill 前丟頁 + evict 時丟頁</td></tr>
+<tr><td>B</td><td class="mono">CGC_B_SCHEME</td><td class="num">1</td><td>讓 miss 收斂</td></tr>
+<tr><td>bit-exact</td><td class="mono">CGC_MM_BITIDENT</td><td class="num">1</td><td>把 M≤8 的 matmul 釘在 M-invariant 路徑（兩臂都必須是 1，否則不可歸因）</td></tr>
+<tr><td>池幾何</td><td class="mono">CGC_SPAC / ALPHA</td><td class="num">1 / 0.75</td><td>slot 預指派</td></tr>
+<tr><td>其他</td><td class="mono">CGC_N_CB / OA_ASYNC / DBUF / PREFILL_STREAM / GATHER_SLAB_CAP / GLU_FUSED_DOWN / WATCHDOG / LOOP_GUARD</td>
+  <td class="num">8 / 1 / 1 / 1 / 256 / 1 / 1 / 1</td><td>主機側批次、非同步、雙緩衝、prefill 串流、slab 容量</td></tr>
+</table>
+<p class="small">前三項由 <code>harness.py</code> 的 <code>_swap_arm_gate</code> 以 fail-closed 檢查：prod-new 的臂若沒開
+P0/P1/P2/B_SCHEME，除非用 <code>!KEY=0</code> 顯式宣告成對照臂，否則拒跑——因為關著跑出來的數字會被讀成 prod-new 的效能。</p>
+
+<h3>1.2 權威 cell（llama-bench 側）</h3>
+<pre><code>llama-bench -m models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
+  -ngl 99 --load-mode none -t 8 -expert-cache 8589934592 \
+  --cache-type-k q8_0 --cache-type-v q8_0 \
+  -b 5632 -ub 5632 -p 2048 -n 128 -d 512 -r 3 -o json --warm-skip 64</code></pre>
+<ul>
+  <li><code>--warm-skip 64</code>：時鐘在池預熱 64 個 token 之後才起算。<b>沒有它，n_gen 會等於 128</b>（冷啟動含在內），
+      那就是兩個不同的口徑——這一輪之前有多筆讀數踩過。<code>warm_skip_applied</code> 會進產物。</li>
+  <li><code>-expert-cache</code> 的 8 GiB、<code>-ngl 99</code>、<code>--load-mode none</code> 都是 cell 維度，
+      由 matrix 的 cell 口徑校驗逐項比對（14 項嚴格維度）。</li>
+</ul>
+
+<h2>2. MTP on/off：狀態、陷阱與正確指令</h2>
+
+<h3>2.1 陷阱：env ≠ 投機（09-26 最新落地的一條閘）</h3>
+<p>09-26 有三筆讀數被當成「MTP on」引用，實際上<b>零投機</b>：產物 <code>spec_type: null</code>、印出的 cmd 沒有
+<code>--spec-type</code>、<code>SPECDBG round:</code> 0 行，而 <code>CGC-WARM verify</code> 在 on/off 兩臂都印 24 行
+（所以它從來不是投機的證據）。現在 <code>llama_bench_matrix</code> 在任何一臂啟動前就會拒跑這種組合。</p>
+<pre><code>$ python3 scripts/check/llama_bench_matrix.py --arms "prod-new:CGC_SERVER_MTP=1" --dry-run
+REFUSED: arm env CGC_SERVER_MTP=1 but no --spec-type ⇒ this arm would measure an
+unarmed cell and be read as "MTP on". Add --spec-type draft-mtp.</code></pre>
+
+<h3>2.2 正確的 on/off 指令</h3>
+<pre><code># MTP off（prod-new 原樣）
+python3 scripts/check/harness.py bench --arm prod-new \
+  --prompt 2048 --gen 128 --depths 512 --reps 3 --ctx-size 0 --warm-skip 64 \
+  --workdir /tmp/pn_off --json /tmp/pn_off/result.json
+
+# MTP on（k=3；同一 cell，只增 spec 兩個旗標）
+python3 scripts/check/harness.py bench --arm "prod-new:CGC_SERVER_MTP=1" \
+  --spec-type draft-mtp --spec-draft-n-max 3 \
+  --prompt 2048 --gen 128 --depths 512 --reps 3 --ctx-size 0 --warm-skip 64 \
+  --workdir /tmp/pn_on --json /tmp/pn_on/result.json</code></pre>
+<p>驗收（跑前寫死）：產物 <code>spec_type == "draft-mtp"</code>、<code>spec_draft_n_max == k</code>、stderr 出現
+<code>SPECDBG round:</code>（k 的見證）且 <code>warm_skip_applied == True</code>。任一項不成立，該讀數作廢。</p>
+
+<h3>2.3 為什麼 on 現在比 off 慢</h3>
+<p>spec 的損益是 <code>S = E / (1 + m·k_eff)</code>：每個 draft token 都要把主模型的 expert 位元<b>再讀一次</b>，
+而 MoE gather 家族在本機形狀下結構性攤不薄（T=2 就是 T=1 的兩倍）。已測得 <code>S = 0.79–0.92</code>、
+<code>k* = 1</code>（accept 0.47–0.60）⇒ 開 k=3 只是花錢買不到 token。</p>
+<table>
+<tr><th>量</th><th class="num">今天的值</th><th>來源／口徑</th></tr>
+<tr><td>verify 每 token 邊際</td><td class="num">51 ms/token（回合內）</td><td>k-sweep，回合固定成本 vs 邊際</td></tr>
+<tr><td>MoE gather 的每 token 邊際</td><td class="num">+7.91 ms/token（extra_over_first 0.977）</td><td>形狀隔離探針（256 experts × top-8 × 40 層）</td></tr>
+<tr><td>k 的最優值</td><td class="num">1</td><td>S = 0.79–0.92 ⇒ S&gt;1 才值得加寬</td></tr>
+<tr><td>要划算所需的 accept</td><td class="num">≥ 0.80</td><td>同上前提下的敏感度</td></tr>
+</table>
+
+<h2>3. 今天的實測（全部帶 box 標籤）</h2>
+<table>
+<tr><th>臂</th><th class="num">pp</th><th class="num">tg</th><th>起跑盒況</th><th>臂中</th><th>產物</th></tr>
+<tr><td>prod-new（off）</td><td class="num">270.33 ± 8.62</td><td class="num">11.28 ± 0.34</td><td>swap 5468 MiB</td><td>thermal HEAVY、swap 漲到 8919</td><td><code>/tmp/attrib1</code></td></tr>
+<tr><td>prod-new（off，歸屬臂）</td><td class="num">277.98</td><td class="num">11.46</td><td>swap 7862 MiB、<b>壓縮機 quiet</b></td><td>thermal HEAVY、wired 最高 12.3 GB</td><td><code>/tmp/attrib3</code></td></tr>
+<tr><td>prod-new（off，歷史）</td><td class="num">260.41 ± 3.70</td><td class="num">12.20 ± 0.27</td><td>乾淨窗口</td><td>—</td><td><code>Backup/mw_ab/mw_ctrl.json</code></td></tr>
+</table>
+<p class="small">比對紀律：這三列不可以直接相減。第二列的起跑存量是舊契約線的 3.8 倍卻是乾淨盒（壓縮機 0.00 MiB/s），
+它與第三列的差距（−6%）才是「盒況」的價格；第一列與第三列的差距裡混著「存量 + 壓縮機忙」兩個變數，不可歸因。</p>
+
+<h2>4. harness 量測框架</h2>
+
+<div class="lay"><div class="t">① 入口（一個前門）</div>
+<div class="d"><code>harness.py</code>：<code>bench</code>（量測）/ <code>show</code>（盒況看板）/ <code>verify</code>（雙輪驗證 + HTML）/
+<code>selftest</code>。所有 wrapper（<code>prod_matrix.py</code>、<code>commit_bench.py</code>、<code>arm_two_pass.py</code>…）
+都 delegate 到同一條路徑，量測邏輯不複製。</div></div>
+
+<div class="lay"><div class="t">② 解析與 cell 契約</div>
+<div class="d"><code>llama_bench_matrix.py</code>：把 profile 名解析成完整 env（<code>resolve()</code>）；
+用 <code>_base_gate</code> 比對 base 是否被改動、用 <code>_swap_arm_gate</code> 檢查 P0/P1/P2/B_SCHEME 是否在場；
+用 <code>mtp_without_spec</code> 拒絕「MTP=1 但沒 spec」的臂；逐項驗 cell 維度（14 項）；印出 profile/env/counters，
+把每臂的 stderr 存成 <code>&lt;stem&gt;.stderr.log</code>（<code>CGC-MTP-PERF</code>、<code>SPECDBG</code> 等見證都在那裡）。</div></div>
+
+<div class="lay"><div class="t">③ 窗口（同一個探針，所有啟動器共用）</div>
+<div class="d"><code>server_window.py</code>：<code>quiet()/require()/record()/require_first()/provenance()</code> +
+<code>audit</code>（誰是啟動器、有沒有 gated）+ <code>audit-products</code>（產物有沒有窗口區塊與側車）。
+四個 term：port／外來 llama 行程／可回收記憶體／<b>壓縮機安靜度</b>（<code>compressor_pressure.py</code>）。
+<code>thermal_pressure.py</code> 提供 <code>wait_nominal()</code>；<code>memory_pressure.py</code> 提供下面的標籤。</div></div>
+
+<div class="lay"><div class="t">④ 產物與出處</div>
+<div class="d">每臂的 JSON 帶：<code>build_commit</code>、cell 區塊、<code>cache</code>（hit/miss/reads）、
+<code>thermal</code>（逐 0.5 s 取樣）、<code>memory</code>（逐 1 s：swap/free/wired）、<code>attribution</code>
+（thermal 最壞 + swap growth + wired growth）。報告類產物需有對應 JSON 側車，否則 commit 閘擋下。</div></div>
+
+<div class="lay"><div class="t">⑤ 閘與回歸（commit 前必跑）</div>
+<div class="d">
+<div class="fl">
+  <span><code>commit_gates.py</code>：commit 必須有 Gates 區塊</span>
+  <span><code>gate_consistency.py</code>：規格 vs 實作的漂移</span>
+  <span><code>window_gate.py</code>：ungated 啟動器只能減少</span>
+  <span><code>m123_oracle_gate.py</code>：M1/M2/M3 + DIAGNOSTIC_KEYS</span>
+  <span><code>mtp_ctx_repro_certify.py</code>：MTP 列的可重現性憑證</span>
+  <span>各工具 <code>--selftest</code>（含「必須紅」fixture）</span>
+</div></div></div>
+
+<h3>4.1 一次量測的生命週期</h3>
+<ol>
+  <li><b>窗口</b>：<code>_box_gate</code> → thermal 冷卻到 NOMINAL → <code>[compressor]</code>（決定者，busy ⇒ 拒跑，除非 <code>CGC_WINDOW_OVERRIDE=1</code>）→ <code>[swap-stock]</code>（標籤）。</li>
+  <li><b>臂閘</b>：base 沒被偷改 + P0/P1/P2/B_SCHEME 在場 + MTP 有 spec（或試圖武裝）。</li>
+  <li><b>解析</b>：profile → env；cell 維度逐項比對。</li>
+  <li><b>啟動</b>：llama-bench（<code>--warm-skip 64</code>），stderr 全存。</li>
+  <li><b>取樣</b>：thermal 0.5 s、memory 1 s、必要時 <code>CGC-DECPROF</code> 逐層。</li>
+  <li><b>產物</b>：JSON + 側車 + 窗口 provenance（<code>class</code>: clean / busy-then-cleared / busy-overridden / unknown）。</li>
+  <li><b>判定</b>：散度、thermal、swap growth 三者寫進 <code>attribution</code>；不是判決的欄位不得長得像判決。</li>
+  <li><b>commit 閘</b>：Gates 區塊 + 漂移檢查 + ungated 只能下降。</li>
+</ol>
+
+<h2>5. 窗口閘：存量 → 流量</h2>
+<table>
+<tr><th>盒況</th><th class="num">swap 存量</th><th class="num">Compressions</th><th class="num">Pageouts</th></tr>
+<tr><td>閒置（12.6 s 取樣）</td><td class="num">7993 MiB</td><td class="num ok">0.00 MiB/s</td><td class="num ok">0.00 MiB/s</td></tr>
+<tr><td>同一臂（prod-new，r=3）</td><td class="num">~7862 MiB</td><td class="num bad">245–540 MiB/s</td><td class="num">21–61 MiB/s</td></tr>
+</table>
+<p>四個數量級分離，而<b>存量分不出這兩種盒況</b>。新閘 <code>compressor_pressure.py</code> 的門檻是 1.0 MiB/s
+（對忙碌側 ~150–540），「unknown」（取樣 &lt; 2、計數器缺席、dt=0）自成一種判決、fail-closed。
+最關鍵的 fixture 是「<b>存量 7993 + 流量 0 ⇒ QUIET</b>」——這條在舊閘下必紅。</p>
+<div class="box b-blue">
+<p>真實輸出（本日 13:0x）：<code>PREFLIGHT PASS thermal=NOMINAL free=6086 compressor=quiet (0.00, 0.00 MiB/s)
+[swap stock 7833 MiB is a label, --max-swap-mb 1024 no longer decides]</code>。</p>
+<p class="small">同一個盒子在舊閘下（7833 &gt; 1024）是<b>拒跑</b>的——這正是「swap 一直長也要能跑」的落地點。</p>
+</div>
+
+<h2>6. 18–28 GB/臂的壓縮是誰的（<code>arm_pressure_attrib.py</code>）</h2>
+<p>方法：跑一臂，臂中對<b>真正在做事的行程</b>（RSS 最大者，不是 python 父行程）取 4 次
+<code>footprint --swapped</code>，並在同一瞬間對最大的外來行程取一次作對照。</p>
+<table>
+<tr><th>capture</th><th>我方 llama-bench</th><th>鄰居 Freebuff</th></tr>
+<tr><td>0</td><td>footprint 6,644 MiB dirty，<b>(Swapped) 495 MiB</b></td><td>1,319 MiB，<b>(Swapped) 666 MiB</b> @250 MB RSS</td></tr>
+<tr><td>1</td><td>17,818 MiB，<b>(Swapped) 1,319 MiB</b>（VM_ALLOCATE 426 + MALLOC_LARGE 161）</td><td>1,794 MiB，<b>(Swapped) 1,026 MiB</b> @256 MB RSS</td></tr>
+<tr><td>2</td><td>16,284 MiB，<b>(Swapped) 1,013 MiB</b>（VM_ALLOCATE 393）</td><td>1,786 MiB，<b>(Swapped) 271 MiB</b> @806 MB RSS</td></tr>
+</table>
+<pre><code>compressions      245–540 MiB/s
+decompressions    238–483 MiB/s      &lt;- 與 compressions 幾乎相等
+Pages stored in compressor ≈ 0       &lt;- 庫存不漲 ⇒ CHURN，不是累積</code></pre>
+<ul>
+  <li><b>流量是這一臂造成的</b>：閒置 0.00 MiB/s，臂中才 245–540。</li>
+  <li><b>兩邊都背壓縮頁</b>，而鄰居「被壓的比它的 RSS 還多」＝被我們推去壓縮的形狀。</li>
+  <li>⇒ 讀取路徑不是槓桿（與 F_NOCACHE 的結果一致：pageins 腰斬、compressions 不動）；槓桿是<b>我們自己的足跡</b>
+      （8–9 GiB dirty 匿名 + 最高 12.3 GB wired）。</li>
+</ul>
+
+<h2>7. 儀器說謊家族（本輪修掉的那幾個）</h2>
+<table>
+<tr><th>症狀</th><th>根因</th><th>修法／fixture</th></tr>
+<tr><td><code>swap: launch=None end=None worst=None growth=+0 MiB</code>（14 支臂都印）</td>
+    <td>讀 <code>launch_swap/end_swap/worst_swap</code>，實際是 <code>memory.launch.swap_used_mb</code> / <code>end.swap_used_mb</code> / <code>worst.max_swap_mb</code> ⇒ 三個 None ⇒ 0−0</td>
+    <td><code>_swap_line()</code>：讀真實鍵；缺席印 <code>n/a (unpopulated — use attribution.swap_growth_mb)</code>，<b>永不印 +0</b>；3 個必須紅 fixture</td></tr>
+<tr><td><code>[swap] verdict=advise … &gt; 2048 MiB</code> 讀起來像判決</td>
+    <td>把 stock 當 gate 的措辭</td>
+    <td>改為 <code>[swap-stock] 標籤（不是起跑閘）</code>，並接上 <code>[compressor]</code> 作為真閘（busy ⇒ 拒跑）</td></tr>
+<tr><td><code>fill_job</code> 的 read shape 每 job 只有 0.04 MiB、us/job 不可引用</td>
+    <td><code>n_read_bytes</code> 只在部分分支累加，分母卻含所有 job</td>
+    <td>已記錄為不可引用；欄位修法屬引擎側</td></tr>
+<tr><td>MTP on 的讀數其實沒武裝</td><td>env ≠ spec</td><td><code>mtp_without_spec</code> 拒跑 + 8 個 fixture（含必須紅）</td></tr>
+<tr><td>「MTP off 是純對照臂」少了 env</td><td>7 個 env 綁在 MTP=1 區塊裡</td><td>用 <code>--dry-run</code> 對差列出 8 項；要等化得顯式補 4 個</td></tr>
+<tr><td>「12.57 = MTP off 基準」</td><td>交付 cell 自帶 <code>--spec-type draft-mtp</code></td><td>標籤更正：off = 11.03 / 11.79 / 12.20</td></tr>
+<tr><td>量測口徑「熱 cache」對不上</td><td>沒有 <code>--warm-skip</code> 時 n_gen=128（冷啟動含在內）</td><td><code>warm_skip_applied</code> 進產物；沒生效的讀數拒收</td></tr>
+</table>
+
+<h2>8. 怎麼跑（複製即可）</h2>
+<pre><code># 1) 盒況：壓縮機安靜？（12 s，印出殘餘存量當標籤）
+python3 scripts/check/compressor_pressure.py --seconds 12
+
+# 2) MTP off 的交付讀數（權威 cell）
+python3 scripts/check/harness.py bench --arm prod-new \
+  --prompt 2048 --gen 128 --depths 512 --reps 3 --ctx-size 0 --warm-skip 64 \
+  --workdir /tmp/pn_off --json /tmp/pn_off/result.json
+
+# 3) MTP on（真武裝）
+python3 scripts/check/harness.py bench --arm "prod-new:CGC_SERVER_MTP=1" \
+  --spec-type draft-mtp --spec-draft-n-max 3 \
+  --prompt 2048 --gen 128 --depths 512 --reps 3 --ctx-size 0 --warm-skip 64 \
+  --workdir /tmp/pn_on --json /tmp/pn_on/result.json
+
+# 4) 壓縮流量歸屬（一臂 + footprint --swapped，含鄰居對照）
+python3 scripts/check/arm_pressure_attrib.py --out /tmp/attrib
+
+# 5) commit 前三件套
+python3 scripts/check/commit_gates.py --message-file /tmp/msg.txt
+python3 scripts/check/gate_consistency.py
+python3 scripts/check/window_gate.py</code></pre>
+
+<h2>9. 界線與未決</h2>
+<ul>
+  <li><b>未 commit</b>：引擎側 <code>CGC_FILL_NOCACHE</code>（llama-expert-cache.cpp + run_server.sh 的 allowlist 混著他線 ρ 區塊）、
+      <code>llama-bench.cpp</code> 的 accept/mean_len 見證、<code>m123_oracle_gate.py</code> 的 DIAGNOSTIC_KEYS 註冊，
+      以及兩顆已重建的 dylib。這些要與 source 成對提交，屬另一個決定。</li>
+  <li><b>未達</b>：MTP on 的 accept（0.47–0.60）離 k 需要的 0.80 還遠；<code>S</code> 是計數比，不受盒況污染，但
+      「on 比 off 快」今天在任何 k 都不成立。</li>
+  <li><b>盒況</b>：本頁的絕對值都來自超訂 regime（swap 存量高、臂中 thermal HEAVY、wired 12.3 GB）。
+      要取得可與歷史乾淨窗口併排的數字，必須在<b>起跑時壓縮機安靜</b>的窗口重跑——這正是新閘允許的條件。</li>
+  <li><b>同族未動</b>：<code>spec_cost_curve.py</code> 仍以 <code>SWAP_START_LIMIT_MB</code> 做警告語（他線檔案）。</li>
+</ul>
+
+<div class="sub">產物指紋：引擎 <code>1ca685490</code> · build 578 · MTL · <code>Apple M4</code> ·
+窗口 provenance <code>class=clean</code>（壓縮機 0.00 MiB/s、reclaimable 9316 MB）·
+本頁所有命令都可重跑，任何一個數字若在安靜窗口複現不出來，就把它丟到廢棄。</div>
+
+</div>
+</body>
+</html>

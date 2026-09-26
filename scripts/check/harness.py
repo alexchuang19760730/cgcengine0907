@@ -137,6 +137,21 @@ REGISTRY: dict[str, dict] = {
     # selftest` fails if a launcher has no stance at all, which is how this entry came to exist.
     "target25_report.py": dict(needs_window=True,
                                purpose="one-shot driver: measure -> decompose -> HTML report"),
+    # Re-runs the two families that a reboot invalidates (P0/P1/P2 four arms, S1 E-series). It reads
+    # its own window before EVERY step, which is why it is a launcher and not a wrapper: the gate has
+    # to hold per step, because a run inside a family is what dirties the slot for the next row.
+    "restart_rerun.py": dict(needs_window=True, owner="lineA",
+                             purpose="reboot-gated re-run: P0/P1/P2 arms + S1 E-series, session-stamped"),
+    # Runs one production arm and points `footprint --swapped` at the worker mid-arm. It is its own
+    # gate (compressor quiet + no rival llama) and it records the other box numbers as labels; it is
+    # listed here because a launcher with no stance is what `harness.py selftest` refuses.
+    "arm_pressure_attrib.py": dict(needs_window=True, owner="lineA",
+                                   purpose="per-process attribution of one arm's compressor traffic"),
+    # Two launchers that arrived inside the 2026-09-25 multi-line commit and were never registered.
+    # They are the reason `selftest` was red before this entry existed; the stance is declared, the
+    # gating is not (that is the owning line's job, and `window_gate.py` tracks it separately).
+    "cap_oomsweep.py": dict(needs_window=True, purpose="OOM sweep (owner's line not recorded here)"),
+    "s1_ksweep.py": dict(needs_window=True, purpose="S1 k-sweep (owner's line not recorded here)"),
 }
 
 
@@ -568,6 +583,24 @@ def selftest() -> int:
             "--prompt-file" in _bench_cmd(argparse.Namespace(**{**vars(ba), "prompt_file": "/p.txt"}),
                                           ["prod-new"])), (False, True))
 
+    print("\nthe arm's swap line reads where the matrix actually puts the numbers")
+    real = {"launch": {"swap_used_mb": 7862.44}, "end": {"swap_used_mb": 10000.19},
+            "worst": {"max_swap_mb": 9060.81}}
+    line = _swap_line(real)
+    expect("growth is computed from launch/end", "growth=+2138 MiB" in line, True)
+    expect("and worst is the real one, not None", "worst=9060.81" in line, True)
+    empty = _swap_line({})
+    expect("absent memory prints n/a", "growth=n/a" in empty, True)
+    expect("and names the field that does have it",
+           "attribution.swap_growth_mb" in empty, True)
+    expect("absence is NEVER rendered as a zero (the 14-arm bug)", "+0" in empty, False)
+    expect("and neither is a half-read memory — one end missing is not a zero either",
+           "growth=n/a" in _swap_line({"launch": {"swap_used_mb": 1.0}}), True)
+    stock = _swap_stock_line({"verdict": "advise", "why": "swap 存量 8037 MiB > 舊起跑線"})
+    expect("the stock line says it is a label", "標籤" in stock and "起跑閘" in stock, True)
+    expect("and it is not spelled as a verdict (the old `[swap] verdict=advise`)",
+           "verdict=" in stock, False)
+
     print()
     if fails:
         print("SELFTEST FAIL (%d): %s" % (len(fails), fails))
@@ -756,12 +789,39 @@ def _cell(args) -> dict:
             "spec_draft_n_max": args.spec_draft_n_max}
 
 
-def _box_gate(args) -> dict:
-    """Launch 前的盒況閘：thermal 先冷卻到 NOMINAL，再看 swap（改名具的佔用者）。
+def _swap_line(memory: dict) -> str:
+    """The arm's swap numbers, read from where the matrix actually puts them.
 
-    thermal 的失敗是**軟的**（冷卻 bounded，逾時只大聲警告：一台熱機上永遠拒跑等於鎖死
-    使用者的桌面），而 swap 的處置是**提醒**而不是拒跑：那上面的頁不是我們的（P0/P1/P2
-    管不到別人的匿名頁），所以訊息要指名程序，不然使用者拿不到可行的動作。
+    The keys are `memory.launch.swap_used_mb` / `memory.end.swap_used_mb` / `memory.worst.max_swap_mb`.
+    Until 2026-09-26 this reader asked for `launch_swap`/`end_swap`/`worst_swap`, got None three
+    times, and printed `growth=+0` on all 14 arms -- a judgement-shaped number ("growth=+0 ⇒ no
+    paging problem") for a field it never read, while `attribution.swap_growth_mb` in the same arm
+    said 2137.75 MiB. Absence now prints as itself, and names the field that does have the value.
+    """
+    launch = (memory.get("launch") or {}).get("swap_used_mb")
+    end = (memory.get("end") or {}).get("swap_used_mb")
+    worst = (memory.get("worst") or {}).get("max_swap_mb")
+    growth = (end - launch) if (launch is not None and end is not None) else None
+    g = "n/a" if growth is None else f"{growth:+.0f} MiB"
+    tail = "" if growth is not None else "  (unpopulated — use attribution.swap_growth_mb)"
+    return f"  swap: launch={launch} end={end} worst={worst} growth={g}{tail}"
+
+
+def _swap_stock_line(advice: dict) -> str:
+    """The stock is RENDERED as a label. The old form read `[swap] verdict=advise ... > 2048 MiB`,
+    which is the same shape as the 14-arm `growth=+0`: a stock number wearing a verdict's clothes.
+    The deciding gate for this launch is the compressor line printed right after it.
+    """
+    return f"[swap-stock] 標籤（不是起跑閘）：{advice['verdict']} {advice['why']}"
+
+
+def _box_gate(args) -> dict:
+    """Launch 前的盒況閘：thermal 冷卻 → **壓縮機安靜度**（決定者）→ swap 存量（標籤）。
+
+    2026-09-26 的替換：swap 存量分不出「8 GB 陳年 swap + 壓縮機安靜」（實測 0.00 MiB/s，而舊
+    閘會拒跑）與「小 swap + 壓縮機忙」（同一臂 245–540 MiB/s），而後者才是喫 t/s 的那個。
+    存量的處置仍是**提醒**（那上面的頁不是我們的，P0/P1/P2 管不到別人的匿名頁），但它的措辭
+    必須是標籤、不能長得像 verdict —— 「讀起來像判決」正是這一輪在修的儀器缺陷。
     """
     tp = _load("tp_gate", "thermal_pressure.py")
     mp = _load("mp_gate", "memory_pressure.py")
@@ -772,10 +832,23 @@ def _box_gate(args) -> dict:
     else:
         gate["thermal"] = tp.wait_nominal(timeout_s=args.cool_max_s)
     advice = mp.swap_advice()
-    gate["swap"] = advice
-    print(f"[swap] verdict={advice['verdict']} {advice['why']}")
+    gate["swap_stock_label"] = advice
+    print(_swap_stock_line(advice))
     for row in advice["top"]:
         print(f"       {row['rss_mb']:8.1f} MiB  {row['proc']}")
+    try:
+        cpt = _load("cp_gate", "compressor_pressure.py")
+        cq_ok, cq_why = cpt.require(where="harness bench")
+    except Exception as e:  # noqa: BLE001  fail-closed: 讀不到不是通關
+        cq_ok, cq_why = False, f"unknown: compressor probe unavailable: {e}"
+    gate["compressor"] = {"quiet": cq_ok, "reason": cq_why}
+    print(f"[compressor] {cq_why}   <- 起跑閘")
+    if not cq_ok:
+        override = os.environ.get("CGC_WINDOW_OVERRIDE") == "1"
+        gate["refused"] = not override
+        print("[compressor] BUSY：這輪會被歸因給壓縮機流量"
+              + ("（已 override，狀態照記進產物）" if override else
+                 " —— 拒跑（CGC_WINDOW_OVERRIDE=1 可改為照跑但記錄）"))
     return gate
 
 
@@ -811,8 +884,11 @@ def cmd_bench(args) -> int:
         print("gate 未過 — 拒跑。用 !KEY=VAL 顯式宣告覆蓋（A/B 對照臂正當），或補上缺的開關。")
         return 2
 
-    # launch 前的盒況閘（thermal 冷卻 + swap 提醒），產物會帶上它自己的讀數
+    # launch 前的盒況閘（thermal 冷卻 → 壓縮機閘 → swap 標籤），產物會帶上它自己的讀數
     box_gate = _box_gate(args)
+    if box_gate.get("refused"):
+        print("拒跑：壓縮機忙（流量問題，不是 swap 存量問題）。見 [compressor]。")
+        return 2
 
     # 測試前系統快照（thermal / swap / pageins / memory_pressure / iostat）
     t_bench0 = time.time()
@@ -865,9 +941,7 @@ def cmd_bench(args) -> int:
             print(f"  {kind:2s}: {ts:.2f} t/s" if ts is not None else f"  {kind:2s}: (no avg_ts)")
         th = arm.get("thermal", {})
         print(f"  thermal: launch={th.get('launch')} worst={th.get('worst')}")
-        m = arm.get("memory", {})
-        ls, es, ws = m.get("launch_swap"), m.get("end_swap"), m.get("worst_swap")
-        print(f"  swap: launch={ls} end={es} worst={ws} growth={((es or 0)-(ls or 0)):+.0f} MiB")
+        print(_swap_line(arm.get("memory", {})))
         print(f"  attribution: {arm.get('attribution')}")
     return 0
 
