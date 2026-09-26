@@ -1699,6 +1699,51 @@ fi
 if [ -n "${CGC_EB_TIMER:-}" ]; then
     SERVER_ENV+=(CGC_EB_TIMER="$CGC_EB_TIMER")
 fi
+# [CGC 2026-09-26 rho landing] CGC_RHO_PROBE / CGC_RHO_FILL, forwarded for the first time. Same
+# allowlist trap as every block above: the engine has read both since 2026-09-23/24, but no entry
+# here ever forwarded them -- so the only A/B that ever measured rho
+# (docs/GAP_FIX_WHITEPAPER_2026-09-24.md: insert = 10.4%/step) had to bypass this launcher
+# entirely, and arming them from an --arms spec printed nothing and looked inert.
+# NOTE: the third rho knob, CGC_RHO_PREFETCH_MAXQ, is deliberately NOT repeated here -- it was
+# already forwarded on 2026-09-23 (the `rho fuse` block further down, ~:2453). A second copy would
+# be dead weight and would make the next reader think this is the only place to look.
+#   CGC_RHO_PROBE=1   builds the per-layer shadow router (qwen35moe.cpp, at `inpSA = inpL`).
+#                     WARNING: it costs a SYNCHRONOUS READBACK per layer (cgc_rho_capture,
+#                     ggml_backend_tensor_get of n_expert*n_tokens floats x 40 layers/step) and is
+#                     documented as a PROBE -- never quote throughput from an arm that has it on alone.
+#   CGC_RHO_FILL=1    turns the prediction into a real non-blocking batch prefetch
+#                     (cgc_rho_prefetch). Inert without PROBE TODAY, because the prediction is
+#                     computed on the HOST from the captured logits.
+if [ -n "${CGC_RHO_PROBE:-}" ]; then
+    SERVER_ENV+=(CGC_RHO_PROBE="$CGC_RHO_PROBE")
+fi
+if [ -n "${CGC_RHO_FILL:-}" ]; then
+    SERVER_ENV+=(CGC_RHO_FILL="$CGC_RHO_FILL")
+fi
+# [CGC 2026-09-26 gates] Two knobs for the G1b / G3 gates. Same allowlist trap as above: the engine
+# already reads both, but nothing ever forwarded them, so arming either one from an `--arms` spec
+# printed nothing and the gate would have been judged on an arm that silently did not have it.
+#   CGC_MISS_MASK_COST=1  (G1b) prints one `CGC-MISSMASK-COST: step=.. total_usec=.. sync_usec=..
+#                         gets=..` line per decode step plus an `avg_usec total/sync/gets` running
+#                         mean. The split matters: sync_usec is the `ggml_backend_sched_synchronize`
+#                         drain, gets is the 39x2 `ggml_backend_tensor_get`, and the two have
+#                         different fixes. Needed because the gate's budget is 0.2 ms / 157.8 ms
+#                         == 0.13%, which is 20-30x below the same-arm drift -- a t/s A/B cannot
+#                         price it.
+#   CGC_ZERO_SLOT=1       (G3) reserves + zeroes the last slot of every layer (usable_slots becomes
+#                         ns-1, zero_slot() == slots-1) WITHOUT arming the MTP fast path.
+#                         Deliberately NOT CGC_VERIFY_DECODE: that one also flips `verify_fast` in
+#                         llama-context.cpp (~:7084) and changes which ensure_batch path runs, so it
+#                         cannot isolate "non-resident expert contributes 0" from the fast path.
+#                         Prints `CGC-G3-ZEROSLOT` (first 8 layers: ns / zero_slot / armed) and
+#                         `CGC-G3-ZEROSLOT-TOTAL: zero_slot=N placeholder=M`, so "used the zero slot"
+#                         and "used the e % ns placeholder" can never be confused.
+if [ -n "${CGC_MISS_MASK_COST:-}" ]; then
+    SERVER_ENV+=(CGC_MISS_MASK_COST="$CGC_MISS_MASK_COST")
+fi
+if [ -n "${CGC_ZERO_SLOT:-}" ]; then
+    SERVER_ENV+=(CGC_ZERO_SLOT="$CGC_ZERO_SLOT")
+fi
 # [CGC 2026-09-19 thrash attribution] LLAMA_EXPERT_CACHE_MISS_DUMP=<path> writes one
 # "<layer> <expert>" line per DEMAND-ORDERED miss (llama-expert-cache.cpp:1061, flushed per line so a
 # kill -9 still leaves a usable file). It exists to answer a question the cumulative compulsory/

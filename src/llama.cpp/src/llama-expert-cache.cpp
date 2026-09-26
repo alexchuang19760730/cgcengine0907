@@ -301,8 +301,16 @@ static inline const uint8_t * pool_region(const llama_expert_cache * cache, uint
 // [CGC MTP fast path] ZERO-slot. Only enabled when a decode fast-path env is set (MTP
 // verify/draft). Base/non-MTP runs never set them, so zero_slot_enabled() == false there and
 // every helper below degrades to the exact original behavior (byte-identical).
+//
+// [CGC G3 2026-09-26] CGC_ZERO_SLOT=<any> reserves the slot WITHOUT arming the MTP fast path.
+// Why a separate knob: the two paths want the same *pool* state (last slot reserved + zeroed,
+// usable_slots == ns-1) but not the same *dispatch* state. CGC_VERIFY_DECODE also flips
+// verify_fast in llama-context.cpp (~:7084) and changes which ensure_batch path runs, so it
+// cannot be used to isolate G3. This clause only reaches the three helpers below; unset => the
+// expression is 1:1 the original, byte-for-byte.
 static bool zero_slot_enabled() {
-    return getenv("CGC_VERIFY_DECODE") != nullptr || getenv("CGC_DRAFT_DECODE") != nullptr;
+    return getenv("CGC_VERIFY_DECODE") != nullptr || getenv("CGC_DRAFT_DECODE") != nullptr ||
+           getenv("CGC_ZERO_SLOT") != nullptr;
 }
 
 bool llama_expert_cache_zero_slot_enabled(const llama_expert_cache * cache) {

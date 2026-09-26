@@ -288,9 +288,16 @@ def main():
         print("refused: usable %.2f GiB < %.2f GiB -- the sentinel would certify a degraded box"
               % (usable_gib, args.usable_min_gib))
         return 2
-    mem_gate = "pass" if args.min_usable_gib is None else "overridden"
+    # [2026-09-26 fix] This local used to be named `mem_gate`, which SHADOWED the module-level
+    # `mem_gate()` function defined at :169 for the whole of `main()` -> any call to the function
+    # inside main() raised `UnboundLocalError: cannot access local variable 'mem_gate'`, so
+    # `--mem-gate` (documented as "exit 0 ok, 2 refused") never ran: it died with a traceback and
+    # exit code 1. A launcher written against the documented contract (`if rc == 2: refuse`) reads
+    # 1 as "not refused" -- i.e. the fail-closed gate silently failed OPEN. Renamed the label; the
+    # printed text is deliberately unchanged so any consumer parsing `mem_gate=` still matches.
+    mem_gate_label = "pass" if args.min_usable_gib is None else "overridden"
     ts, rc = measure()
-    print("measured %.2f t/s (rc=%s, mem_gate=%s)" % (ts or -1.0, rc, mem_gate))
+    print("measured %.2f t/s (rc=%s, mem_gate=%s)" % (ts or -1.0, rc, mem_gate_label))
 
     if args.record:
         if not args.this_box_is_healthy:

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CGC decode 非 compute 時間的桶拆解（n_main 實驗）2026-09-26 23:30</title>
+<style>
+  :root {
+    --bg: #0f1420; --card: #171e2e; --ink: #e8ecf4; --sub: #9aa5b8;
+    --line: #2a3350;
+    --accent: #ffd479; --good: #8fe3a0; --warn: #f08a8a; --neutral: #7fb8f0;
+    --cpu-r: #f0c25c; --cpu-g: #b8d95c; --cpu-s: #7fd4c0; --cpu-o: #8a97ad;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: -apple-system, "PingFang TC", "Noto Sans TC", sans-serif; padding: 32px 20px 60px; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .sub { color: var(--sub); font-size: 14px; margin-bottom: 28px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; margin-bottom: 22px; }
+  .card h2 { font-size: 18px; margin: 0 0 4px; }
+  .card .desc { color: var(--sub); font-size: 13px; margin: 0 0 16px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 10px 0 18px; font-size: 12.5px; color: var(--sub); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .barwrap { margin-bottom: 10px; }
+  .barrow { display: flex; align-items: center; gap: 10px; }
+  .barlabel { width: 300px; font-size: 12.5px; color: var(--ink); flex-shrink: 0; line-height: 1.35; }
+  .barlabel small { display: block; color: var(--sub); font-size: 11px; }
+  .bar { flex: 1; height: 34px; border-radius: 8px; overflow: hidden; display: flex; background: #0c1019; border: 1px solid var(--line); }
+  .seg { height: 100%; display: flex; align-items: center; justify-content: center; font-size: 10.5px; color: #10141f; font-weight: 700; white-space: nowrap; overflow: hidden; min-width: 0; border-right: 1px solid rgba(15,20,32,.35); }
+  .note { font-size: 12.5px; color: var(--sub); margin-top: 12px; line-height: 1.6; }
+  .note b { color: var(--ink); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--sub); font-weight: 600; font-size: 12px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .hl { color: var(--accent); font-weight: 700; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 11px; margin-left: 6px; }
+  .tag.g { background: #1c3a24; color: #8fe3a0; }
+  .tag.r { background: #3a1c1c; color: #f08a8a; }
+  .tag.y { background: #3a321c; color: #e3cf8f; }
+  code { background: #0c1019; padding: 1px 6px; border-radius: 5px; font-size: 12px; color: #cde3a0; }
+  pre { background: #0c1019; border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; font-size: 12px; line-height: 1.55; overflow-x: auto; color: #cde3a0; }
+  pre b { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>CGC · decode 非 compute 時間的桶拆解（<code>CGC_CB_N_MAIN</code> 實驗）</h1>
+<div class="sub">llama.cpp fork · M4 16GB · 2026-09-26 22:16–22:56 · branch <b>demo/sweet-spot-windows-fix</b> · tree <code>dc397fb2f</code> ·
+四臂 ABBA（<code>off1 → on1</code> ／ <code>on2 → off2</code>）· cell = prod-new, MTP off, ctx 0, <code>-p 2048 -n 128 -d 512 -r 3</code></div>
+
+<!-- ============ 1. 目標與判準 ============ -->
+<div class="card">
+  <h2>① 目標函數與判準（operator 權威表述）</h2>
+  <p class="desc">「把除 compute time 以外的時間（<b>gap／wait／cb／fill</b>）最大程度地消除，同時 M1/M2/M3 保持 bit-identical。」M1/M2/M3 是<b>護欄不是獎勵</b>。</p>
+
+  <div class="legend">
+    <span><i class="sw" style="background:var(--cpu-r)"></i> wait — CPU 自旋等該段完成</span>
+    <span><i class="sw" style="background:var(--cpu-g)"></i> cb — expert cache 填池 IO（<b>不是</b> command buffer）</span>
+    <span><i class="sw" style="background:var(--cpu-s)"></i> submit — 下一段的提交</span>
+    <span><i class="sw" style="background:var(--neutral)"></i> gap — 段與段之間的 GPU 空窗</span>
+    <span><i class="sw" style="background:var(--cpu-o)"></i> fill — ensure_batch 阻塞填池</span>
+  </div>
+
+  <p class="note"><b>★ 判準是「控制臂漂移」，不是固定門檻。</b> 兩個同 build、同配置的<code>off</code>臂（頭尾各一）之差就是本次的噪聲底；<b>任何 Δ 沒有超過它就不能宣稱是訊號</b>。本次實測噪聲底：<code>wait ±7.0%</code>／<code>union ±10.6%</code>／<code>gap ±6.5%</code>／<code>busy ±19.2%</code>／<code>tg ±11.3%</code>。</p>
+</div>
+
+<!-- ============ 2. 儀器 ============ -->
+<div class="card">
+  <h2>② 三支儀器與一個可信度閘</h2>
+  <p class="desc">全程開 <code>CGC_DECODE_PROFILE=1;CGC_HOOK_SPLIT=1;CGC_GPU_TIMING=1</code>。<code>GPU_TIMING</code> 零擾動 —— 只讀 Metal 自己記的 GPUStartTime/GPUEndTime，不插 barrier。</p>
+
+  <table>
+    <tr><th>儀器</th><th>欄位</th><th>語意</th><th>來源</th></tr>
+    <tr><td><code>CGC-GPUTIME</code></td><td>union / gap / busy / skipped</td><td>buffer 的 GPU 執行聯集／段間空窗／各 buffer 時長之和</td><td><code>ggml-backend.cpp:2141-2172</code></td></tr>
+    <tr><td><code>CGC-DECPROF</code>（ntok=1）</td><td>total / wait / cb / submit</td><td>步總時間（= tpot）與 CPU 三桶</td><td>同檔 <code>:3024-3050</code></td></tr>
+    <tr><td><code>CGC-HOOKSPLIT</code></td><td>pre / <b>ensure</b> / drain / tail</td><td><b>ensure = 阻塞填池 ⇒ 就是 fill</b></td><td><code>llama-context.cpp:7746-7761</code></td></tr>
+  </table>
+
+  <p class="note"><b>★ <code>skipped%</code> 要做「整臂」閘，不是逐行閘。</b> 儀器自帶 <code>skipped=</code>，說明書要求它為 0 —— <b>但必要不充分</b>：<code>n_main=128</code> 那次連 <code>skipped==0</code> 的行都報 <code>busy=2872 ms</code>／<code>wait=94.7 ms</code>（3034%，物理不可能）。⇒ 門檻 <b>20%</b>，超過則該臂的 <code>union/gap/busy</code> <b>整臂不可讀</b>；而 <code>tpot/cb/submit/fill</code> 仍有效（它們來自 DECPROF／HOOKSPLIT，不依賴 Metal 時間戳）。<br>
+  <b>機制</b>（<code>ggml-metal-context.m:1140-1175</code>）：<code>n_main</code> 變大 ⇒ <code>n_nodes_1</code> 變小 ⇒ 平行執行緒分不到節點 ⇒ 空 command buffer ⇒ 無時間戳。這解釋了為何 <code>n_main=16/32</code>（比預設 64 小）幾乎 0%，而 <code>128</code> 是 68%。</p>
+
+  <p class="note"><b>⚠ <code>fill</code> 的口徑陷阱</b>：<code>HOOKSPLIT</code> 的 <code>n</code> 是<b>累計</b>調用數、四欄都是<b>累計平均</b>、每 160 次打一行 ⇒ <b>取最後兩個窗口的增量</b>才是穩態；直接讀最後一行會被 prefill 拉高。</p>
+</div>
+
+<!-- ============ 3. 四臂結果 ============ -->
+<div class="card">
+  <h2>③ 四臂 ABBA 結果（median，單位 ms；fill = µs/call）</h2>
+  <p class="desc"><code>off</code> = 預設 <code>n_main = MAX(64, 0.1·n_nodes)</code>；<code>on</code> = <code>CGC_CB_N_MAIN=32</code>。兩段方向相反，用來抵銷臂序漂移。</p>
+
+  <table>
+    <tr><th>臂</th><th class="num">clean/全部</th><th class="num">skip%</th><th class="num">tpot</th><th class="num">wait</th><th class="num">cb</th><th class="num">submit</th><th class="num">union</th><th class="num">gap</th><th class="num">busy</th><th class="num">fill</th><th class="num">tg</th><th class="num">pp</th></tr>
+    <tr><td>off1</td><td class="num">64/97</td><td class="num">33.0%</td><td class="num">85.38</td><td class="num">72.39</td><td class="num">7.01</td><td class="num">4.60</td><td class="num"><span class="tag r">不可讀</span></td><td class="num">—</td><td class="num">—</td><td class="num">140.3</td><td class="num">10.41</td><td class="num">271.18</td></tr>
+    <tr><td><b>on1</b></td><td class="num">95/97</td><td class="num">0.0%</td><td class="num">67.94</td><td class="num">60.34</td><td class="num">3.68</td><td class="num">3.69</td><td class="num">52.65</td><td class="num">14.88</td><td class="num">52.44</td><td class="num">71.1</td><td class="num">12.42</td><td class="num">271.11</td></tr>
+    <tr><td><b>on2</b></td><td class="num">95/97</td><td class="num">0.0%</td><td class="num">73.88</td><td class="num">66.56</td><td class="num">4.14</td><td class="num">3.27</td><td class="num">59.52</td><td class="num">14.25</td><td class="num">59.36</td><td class="num">202.2</td><td class="num">11.64</td><td class="num">284.93</td></tr>
+    <tr><td>off2</td><td class="num">88/97</td><td class="num">8.2%</td><td class="num">74.62</td><td class="num">65.79</td><td class="num">4.13</td><td class="num">3.41</td><td class="num">68.38</td><td class="num">14.82</td><td class="num">96.75</td><td class="num">149.4</td><td class="num">11.59</td><td class="num">283.01</td></tr>
+  </table>
+
+  <p class="note">處理臂兩次獨立復現極好：<code>union</code> 散佈 0.7%（52.65／59.52 段間不同條件下）、<code>gap</code> 1.4%、<code>busy</code> 0.6%。</p>
+
+  <table>
+    <tr><th>量</th><th class="num">off 均</th><th class="num">on 均</th><th class="num">Δ</th><th class="num">門檻（噪聲底）</th><th>判定</th></tr>
+    <tr><td><b>union</b></td><td class="num">72.44</td><td class="num">56.09</td><td class="num"><b class="hl">−22.6%</b></td><td class="num">10.6%</td><td><span class="tag g">過檻</span> GPU 忙窗縮小</td></tr>
+    <tr><td><b>busy</b></td><td class="num">108.27</td><td class="num">55.90</td><td class="num"><b class="hl">−48.4%</b></td><td class="num">19.2%</td><td><span class="tag g">過檻</span> 見 ④</td></tr>
+    <tr><td>wait</td><td class="num">68.72</td><td class="num">63.67</td><td class="num">−7.4%</td><td class="num">7.0%</td><td><span class="tag y">剛過檻</span></td></tr>
+    <tr><td>gap</td><td class="num">15.33</td><td class="num">14.57</td><td class="num">−5.0%</td><td class="num">6.5%</td><td><span class="tag y">噪聲底內</span></td></tr>
+    <tr><td><b>tg</b></td><td class="num">11.00</td><td class="num">12.03</td><td class="num">+9.4%</td><td class="num">11.3%</td><td><span class="tag r">噪聲底內 ⇒ 不能宣稱</span></td></tr>
+  </table>
+
+  <div class="barwrap">
+    <div class="barrow">
+      <div class="barlabel">tg（t/s）<small>off 11.00 → on 12.03；但噪聲底 ±11.3%</small></div>
+      <div class="bar">
+        <div class="seg" style="width:91.5%;background:var(--good)" title="off 均 11.00 t/s">11.00</div>
+        <div class="seg" style="width:8.5%;background:var(--neutral)" title="+9.4%，未過 ±11.3% 的門檻">+9.4%</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 4. busy/union ============ -->
+<div class="card">
+  <h2>④ ★ 新發現：<code>busy/union</code> 比 1.49 → 1.00</h2>
+  <p class="desc"><code>busy</code> = Σ 每個 buffer 的 (GPUEnd−GPUStart)；<code>union</code> = 這些 buffer 的<b>聯集 span</b>。兩者之比量的是「同一步內 GPU 上的<b>並行重疊</b>程度」。</p>
+
+  <div class="barwrap">
+    <div class="barrow">
+      <div class="barlabel">off（n_main=64）<small>busy 108.27 / union 72.44</small></div>
+      <div class="bar">
+        <div class="seg" style="width:67%;background:var(--cpu-r)" title="union = 72.44 ms">union 72.44</div>
+        <div class="seg" style="width:33%;background:var(--warn)" title="超出的 33% 就是 buffer 間的重疊">重疊 +49%</div>
+      </div>
+    </div>
+  </div>
+  <div class="barwrap">
+    <div class="barrow">
+      <div class="barlabel">on（n_main=32）<small>busy 55.90 / union 56.09</small></div>
+      <div class="bar">
+        <div class="seg" style="width:99.7%;background:var(--cpu-s)" title="busy ≈ union ⇒ 重疊消失">union 56.09 · 重疊 ≈ 0</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="note"><b>⇒ <code>n_main</code> 不只改「誰來編碼」，它改變了 GPU 端的並行結構。</b> 這解釋了為何 <code>busy</code> 掉 48% 而 <code>union</code> 只掉 23% —— 中間那 25 個百分點就是<b>被消掉的重疊本身</b>。</p>
+  <p class="note"><b>⚠ 但這對目標函數是壞消息</b>：<code>union</code> 少掉的約 16 ms 並沒有變成 <code>tg</code> 的收益（④ 的 +9.4% 未過檻）⇒ <code>n_main=32</code> 是<b>用「段內並行」換「段間空窗」，總時間守恆</b>。</p>
+</div>
+
+<!-- ============ 5. 方法 ============ -->
+<div class="card">
+  <h2>⑤ 環境與方法（本輪最貴的三個教訓）</h2>
+
+  <table>
+    <tr><th>教訓</th><th>現象</th><th>處置</th></tr>
+    <tr><td><b>「無 llama 進程」≠ 空窗</b></td><td>14:58 單次窗口門通過，卻正好落在另一個 session（<code>/tmp/armed_fc.sh</code>，paired MTP）<b>兩臂之間的間隙</b> ⇒ 擠進別人實驗中段，thermal 1→2</td><td>改成<b>連續 3 次</b>（間隔 20s）都乾淨，且乾淨的定義含 <code>thermal == NOMINAL</code>（別人跑 GPU 一定發熱，這是<b>不需要知道對方腳本名</b>的第三方信號）</td></tr>
+    <tr><td><b>16 GB 上不能一支腳本跑四臂</b></td><td>每臂 swap +8~9 GB，第 3~4 臂必 OOM（<code>min_free</code> 14.09／14.14 MiB，是 macOS 硬底）</td><td>拆成<b>相鄰一對</b> × 2 段；<code>run_pair.sh</code> 在<b>每臂起跑前</b>等 swap 回落（門檻 6000、上限 600s）</td></tr>
+    <tr><td><b>swap 會自然回落（與 purge 無關）</b></td><td><code>off1</code> 結束時 11562 MiB，<b>6 分鐘後 3188 MiB</b> —— 引擎退出後 macOS 回收它的匿名頁</td><td>這糾正了我第一版「看到高就停手」的錯誤閘。⚠ <code>purge</code> 對此<b>無效</b>（它不減 <code>swap_used</code>，實測 free 0.07→7.3 GB 而 swap 6490–6770 不動）</td></tr>
+  </table>
+
+  <p class="note"><b>可複製</b>：<code>Backup/phase_decomp/cbnmain_pair/run_pair.sh</code>（相鄰一對 ＋ 臂間等 swap 回落）、<code>cbnmain_nm32/gate.py</code>（fail-closed thermal）、<code>cbnmain_nm32/analyze.py</code>（完整拆解表，支援 <code>ctl*/nm*</code> 與 <code>off*/on*</code> 兩種臂名）。</p>
+</div>
+
+<!-- ============ 6. 誠實邊界 ============ -->
+<div class="card">
+  <h2>⑥ 誠實邊界（明確不宣稱什麼）</h2>
+
+  <table>
+    <tr><th>項目</th><th>狀態</th></tr>
+    <tr><td><b>tg 收益</b></td><td><span class="tag r">不宣稱</span> +9.4% 未過 ±11.3% 的噪聲底。單看段 1（<code>off1 10.41 → on1 12.42</code>）是 +19.3%，但段 2 只有 +0.4% ⇒ <b>效應不穩定</b>。</td></tr>
+    <tr><td><b>gap</b></td><td><span class="tag y">方向不穩定</span> 本輪 −5.0%（噪聲底內）；而 09-26 另一輪同槓桿是 <b>+16.3%</b>（過檻）。兩次方向相反 ⇒ 目前<b>不能說</b> <code>n_main</code> 影響 gap。</td></tr>
+    <tr><td><b>off1 的 GPU 三桶</b></td><td><span class="tag r">不可讀</span> 33.0% skip ⇒ 它的 <code>union/gap/busy</code> 不進比較。控制臂漂移界因此只用 <code>off2</code> 與（不可讀的）<code>off1</code> 平均 —— 這是本輪的<b>已知瑕疵</b>。</td></tr>
+    <tr><td><b>D5（M1/M2/M3）</b></td><td><span class="tag r">FAIL</span> 但<b>不歸本輪</b>，見 ⑦。</td></tr>
+  </table>
+
+  <p class="note"><b>結論一句話</b>：<code>n_main=32</code> 確實讓 GPU 工作更有效率（<code>union −22.6%</code>、<code>busy −48.4%</code>，兩項都過檻且處理臂復現極好），<b>但它不是一個能交付 t/s 的槓桿</b> —— 換掉的並行沒有變成時間。</p>
+</div>
+
+<!-- ============ 7. D5 ============ -->
+<div class="card">
+  <h2>⑦ D5 數值閘：FAIL，但歸屬明確（不重校準）</h2>
+  <p class="desc">本輪有動 <code>src/</code> ⇒ D5 必跑（<code>m123_oracle_gate.py --tag cbnmain-nm32-0926</code>）。結果 <code>M1 6/9 · M2 9/9 · M3 6/9</code>，<code>comparable=true</code>、<code>config_diffs=[]</code>。</p>
+
+  <table>
+    <tr><th>when</th><th>tag</th><th class="num">probe_md5</th><th class="num">cov</th><th class="num">M1</th><th class="num">M2</th><th>cmp</th><th class="num">ref_md5</th></tr>
+    <tr><td>09-26 04:57</td><td>g2-missmask-fix1</td><td class="num">50f8c5ae12</td><td class="num">100.0</td><td class="num">6/9</td><td class="num">9/9</td><td>True</td><td class="num">72d82a33ad</td></tr>
+    <tr><td>09-26 11:40</td><td>rho-prefill-gate</td><td class="num">50f8c5ae12</td><td class="num">100.0</td><td class="num">6/9</td><td class="num">9/9</td><td>True</td><td class="num">72d82a33ad</td></tr>
+    <tr><td><b>09-26 23:02</b></td><td><b>本輪</b></td><td class="num">50f8c5ae12</td><td class="num">100.0</td><td class="num">6/9</td><td class="num">9/9</td><td>True</td><td class="num">72d82a33ad</td></tr>
+  </table>
+
+  <p class="note"><b>判讀（三問，順序不能顛倒）</b>：① <code>comparable=true</code> ⇒ 不是跨配置比較，<b>不能丟棄</b>；② 不同的行是 <code>key=[3,0,'MTP']</code>／<code>[4,0,'MTP']</code> ⇒ <b>只有 MTP 桶動、DEF 桶全同</b> ⇒ 參考檔沒有全域過期；③ 量級是語意級（<code>[4,0,MTP]</code> 的 <code>sum</code> 差 <b>12.5%</b>）。<br>
+  <b>歸屬</b>：本輪簽名與 04:57 起<b>逐項相同</b>（probe_md5／cov／M1／M2／n／ref_md5），而我的 <code>src/</code> 改動在 <b>13:38／13:54</b> ⇒ <b>FAIL 早於本輪約 9 小時</b>。且 12:29 的 <code>fn_on</code> 用<b>新</b> ref（<code>e1663cc10d</code>）得 9/9 ⇒ 這是<b>參考檔過時</b>，與本輪無關。</p>
+
+  <p class="note"><b>⚠ 不自行重校準</b>：<code>--write-ref</code> 會重新定義「bit-identical 是對什麼量的」，那是 operator 的決定。本線 09-26 已定案為「基準的語義基準移動了」，證據見 <code>docs/MTP_CTX_REPRODUCIBLE_2026-09-26.md</code> 與 <code>docs/S1_CORRECTNESS_SPEC_2026-09-26.md</code> §8。</p>
+</div>
+
+<!-- ============ 8. 下一步 ============ -->
+<div class="card">
+  <h2>⑧ 下一步</h2>
+  <table>
+    <tr><th>項目</th><th>現況</th><th>為何值得做</th></tr>
+    <tr><td>重跑以縮小噪聲底</td><td>控制臂 <code>tg</code> 漂移 ±11.3% ≳ 效應 9.4%</td><td>需要噪聲底 &lt; 效應才能判 <code>tg</code>；做法是更多段（每段一對、段間等 swap 回落）</td></tr>
+    <tr><td>查 <code>cgc_gpu_take</code> 的 skip 成因</td><td>同為 <code>n_main=64</code>，<code>ctl64b</code> 3.1% 與 <code>off1</code> 33.0% 差十倍</td><td>若 skip 可控，<code>off</code> 側的 GPU 三桶就能讀 ⇒ 缺口補上</td></tr>
+    <tr><td>換槓桿</td><td><code>n_main</code> 是「用並行換空窗」，總時間守恆</td><td>目標函數要的是<b>淨減少</b>，需找同時降 <code>wait</code> 與 <code>gap</code> 的機制</td></tr>
+  </table>
+</div>
+
+<p class="sub" style="margin-top:24px">數據：本文件所有數字為 2026-09-26 22:16–22:56 實測（<code>Backup/phase_decomp/cbnmain_pair/</code>，四臂 ABBA，每段相鄰一對）。儀器口徑見 ②；噪聲底為兩個 <code>off</code> 臂之差。D5 為 <code>Backup/m123_oracle_gate/summary_cbnmain-nm32-0926.json</code>。本輪未宣稱任何 t/s 收益。</p>
+
+</div>
+</body>
+</html>

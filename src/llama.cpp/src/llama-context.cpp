@@ -3652,6 +3652,43 @@ ggml_status llama_context::graph_compute(
         // placeholder (e % slots) so kernel_mul_mv_id never indexes OOB. Combined with
         // CGC_SEG_BATCH=1 this is the single-submit + GPU-lookup arm; layers whose routing touched
         // a placeholder need recompute (miss layers), which is the next step's work.
+        //
+        // [CGC 2026-09-26 G3 zero-slot] THE PLACEHOLDER IS NOW A REAL ZERO SLOT WHEN ONE EXISTS.
+        //
+        // The pool ALREADY owns the mechanism (llama-expert-cache.{h,cpp}): with a decode fast-path
+        // env set, `llama_expert_cache_usable_slots()` reserves the layer's LAST slot, and
+        // `llama_expert_cache_zero_reserved_slot()` zeroes its region for all 4 kinds. Read this
+        // carefully, because the obvious reading of "implement a zero slot" is wrong -- it exists:
+        //   * `llama_expert_cache_zero_slot(ec, il)`  -> `slots_l-1`, or -1 when not armed
+        //   * `llama_expert_cache_zero_reserved_slot` -> idempotent (guarded by zero_slot_done)
+        //   * every claim site honours `usable_slots` (10+ sites) so the reserved slot is never
+        //     filled -> the reservation is already an invariant of the claim policy
+        //
+        // What was missing is REACHABILITY, for two independent reasons, and both are handled here:
+        //   (1) `zero_slot_enabled()` is `CGC_VERIFY_DECODE || CGC_DRAFT_DECODE || CGC_ZERO_SLOT`,
+        //       and `prod-new` carries none of the three (verified: resolved env has 0 such keys)
+        //       -> zero_slot() returns -1. ARMING IS NOW REACHABLE from an --arm spec:
+        //       `CGC_ZERO_SLOT=1` was added to scripts/run_server.sh's allowlist on 2026-09-26 as a
+        //       DEDICATED knob, precisely because CGC_VERIFY_DECODE would also flip `verify_fast`
+        //       (~:7084) and change which ensure_batch path runs -- so it could not isolate this.
+        //       When unarmed, zero_slot() == -1 and the fallback below fires, loudly.
+        //   (2) `llama_expert_cache_zero_reserved_slot` is only ever CALLED from the MTP fast path
+        //       (`if ((verify_fast || draft_fast) && cgc_fast_eligible)`). A B-scheme arm never
+        //       takes that path, so even with the env set the reserved slot would still hold
+        //       whatever the arena held -> pointing non-resident experts at it would read
+        //       UNINITIALISED memory, not zeros. So we zero it here.
+        //
+        // Why this is worth doing at all: `e % ns` maps a non-resident expert onto ANOTHER real
+        // expert's weights -- an unbounded, arbitrary error. The reserved slot makes the same case
+        // contribute exactly 0 (the expert is dropped). That is NOT bit-identical to the segmented
+        // arm, and it is not meant to be: it turns "wrong expert" into "bounded, deterministic,
+        // interpretable" (== 0), which is the precondition the recompute step (G4) needs. A zero
+        // slot does NOT make G1 pass.
+        //
+        // The two counters exist so that "used the zero slot" can never be confused with "used the
+        // placeholder" -- the same reason the publisher provenance print was added.
+        static uint64_t s_g3_zero = 0, s_g3_ph = 0;
+        static int s_g3_shots = 0;
         for (const auto & kv : cache_slot_table_tensors) {
             ggml_tensor * tbl = kv.second;
             if (tbl == nullptr || tbl->data == nullptr) {
@@ -3664,12 +3701,35 @@ ggml_status llama_context::graph_compute(
             if (ns == 0) {
                 continue;
             }
+            const int32_t zs = ec != nullptr ? llama_expert_cache_zero_slot(ec, il) : -1;
+            if (ec != nullptr && zs >= 0) {
+                llama_expert_cache_zero_reserved_slot(ec, il);  // (2): the MTP fast path will not
+            }
+            if (s_g3_shots < 8) {
+                s_g3_shots++;
+                fprintf(stderr, "CGC-G3-ZEROSLOT: il=%u ns=%u zero_slot=%d%s\n", il, ns, zs,
+                        zs >= 0 ? " (reserved slot exists and is now zeroed)" : " (NOT ARMED -> placeholder)");
+            }
             int32_t * td = (int32_t *) tbl->data;
             const int64_t n = tbl->ne[0] * tbl->ne[1];
             for (int64_t e = 0; e < n; ++e) {
-                int32_t v = (st != nullptr && (int64_t) e < (int64_t) model.hparams.n_expert && st[e] >= 0)
-                                ? st[e] : (int32_t) ((uint32_t) e % ns);
+                int32_t v;
+                if (st != nullptr && (int64_t) e < (int64_t) model.hparams.n_expert && st[e] >= 0) {
+                    v = st[e];                                    // resident: its real slot
+                } else if (zs >= 0) {
+                    v = zs; ++s_g3_zero;                          // dropped: exactly zero weights
+                } else {
+                    v = (int32_t) ((uint32_t) e % ns); ++s_g3_ph; // legal-but-wrong, and counted
+                }
                 td[e] = v;
+            }
+        }
+        {
+            static int s_g3_total_shots = 0;
+            if (s_g3_total_shots < 6) {
+                s_g3_total_shots++;
+                fprintf(stderr, "CGC-G3-ZEROSLOT-TOTAL: zero_slot=%llu placeholder=%llu\n",
+                        (unsigned long long) s_g3_zero, (unsigned long long) s_g3_ph);
             }
         }
         // also write the remap leaves (host-leaf arm) to the same mapping so CGC_SLOT_TABLE_GPU
@@ -3686,12 +3746,26 @@ ggml_status llama_context::graph_compute(
             if (ns == 0) {
                 continue;
             }
+            // NOTE the host-leaf arm is the one with FAKE ids (`e = k % 8`, above): whatever the
+            // zero slot buys here, the *expert* is still fabricated, so this leaf stays wrong on
+            // both counts. Kept in step with the table writer only so the two can be toggled
+            // independently, exactly as before -- G3 changes the miss fallback, not the ids.
+            const int32_t zs = ec != nullptr ? llama_expert_cache_zero_slot(ec, il) : -1;
+            if (ec != nullptr && zs >= 0) {
+                llama_expert_cache_zero_reserved_slot(ec, il);
+            }
             int32_t * rd = (int32_t *) remap->data;
             const int64_t n = remap->ne[0] * remap->ne[1];
             for (int64_t k = 0; k < n; ++k) {
                 const int32_t e = (int32_t) (k % 8);
-                int32_t v = (st != nullptr && (int64_t) e < (int64_t) model.hparams.n_expert && st[e] >= 0)
-                                ? st[e] : (int32_t) ((uint32_t) e % ns);
+                int32_t v;
+                if (st != nullptr && (int64_t) e < (int64_t) model.hparams.n_expert && st[e] >= 0) {
+                    v = st[e];
+                } else if (zs >= 0) {
+                    v = zs; ++s_g3_zero;
+                } else {
+                    v = (int32_t) ((uint32_t) e % ns); ++s_g3_ph;
+                }
                 rd[k] = v;
             }
         }
@@ -3812,17 +3886,41 @@ ggml_status llama_context::graph_compute(
     // throughput from an arm with this on -- the extra synchronize is precisely what the priced arm
     // is argued not to have.
     static const bool cgc_miss_mask_dbg = getenv("CGC_MISS_MASK_DBG") != nullptr;
+    // [CGC 2026-09-26 G1b] THE MASK-COST INSTRUMENT (there was none).
+    //
+    // G1b's criterion is "mask cost <= 0.2 ms/step". That is 0.13% of a 157.8 ms decode step, i.e.
+    // 20-30x BELOW this box's same-arm drift (measured today: cb1 vs cb2 on one cell = -3.85%;
+    // the afternoon sweep's control pair = -1.86%). So the criterion CANNOT be read off a t/s A/B
+    // -- an A/B would report the window, not the mask. It needs an in-process timer, and this is it.
+    //
+    // Split in two on purpose: `ggml_backend_sched_synchronize` is a DRAIN (it waits for the whole
+    // graph to finish), while the 2 x 39 `ggml_backend_tensor_get` calls are cross-backend reads of
+    // 128 B each. Reporting one number would hide which of the two is actually paid -- and the two
+    // have different fixes (drop the drain vs. read the ids on the device).
+    //
+    // Gated behind CGC_MISS_MASK_COST so that when it is unset nothing changes: the
+    // `MISSMASK ...` / `CGC-MISSMASK-STEP:` log shape is depended on by
+    // scripts/check/miss_rate_summary.py and by the BATCHDBG pairing (llama-expert-cache.cpp), so it
+    // must not grow a field. This adds a SEPARATE line instead.
+    static const bool cgc_mm_cost = getenv("CGC_MISS_MASK_COST") != nullptr;
     if (cgc_miss_mask_dbg) {
         static int cgc_mm_step = 0;
         static int cgc_mm_warn = 0;
+        const int64_t mm_t0 = cgc_mm_cost ? ggml_time_us() : 0;
+        int mm_gets = 0;
         if (!cgc_miss_mask && cgc_mm_warn++ == 0) {
             fprintf(stderr, "CGC-MISSMASK: CGC_MISS_MASK_DBG=1 without CGC_MISS_MASK=1 -- no mask "
                             "node is built, so this readback has nothing to read. Ignoring.\n");
         }
         cgc_mm_step++;
         ggml_backend_sched_synchronize(sched.get());
+        const int64_t mm_sync = cgc_mm_cost ? ggml_time_us() - mm_t0 : 0;
         int mm_tot = 0;
         int mm_layers = 0;
+        // `graph_compute(ggml_cgraph*, bool batched)` has no n_tokens/ubatch in scope, so the step
+        // shape is reported as the first captured layer's element count, which is
+        // `n_expert_used * n_tokens` (the same quantity the `nsel=` field of MISSMASK prints).
+        int64_t mm_nsel0 = -1;
         for (const auto & kv : cache_missmask_tensors) {
             const int il = kv.first;
             ggml_tensor * mk  = kv.second;
@@ -3846,6 +3944,8 @@ ggml_status llama_context::graph_compute(
             std::vector<int32_t> ibuf((size_t) ntot);
             ggml_backend_tensor_get(mk,  mbuf.data(), 0, (size_t) ntot * sizeof(int32_t));
             ggml_backend_tensor_get(idc, ibuf.data(), 0, (size_t) ntot * sizeof(int32_t));
+            if (cgc_mm_cost) { mm_gets += 2; }
+            if (mm_nsel0 < 0) { mm_nsel0 = ntot; }   // == n_expert_used * n_tokens for this step
             int misses = 0;
             std::string exps;
             for (int64_t i = 0; i < ntot; ++i) {
@@ -3868,6 +3968,33 @@ ggml_status llama_context::graph_compute(
             mm_layers++;
         }
         fprintf(stderr, "CGC-MISSMASK-STEP: step=%d misses=%d layers=%d\n", cgc_mm_step, mm_tot, mm_layers);
+        if (cgc_mm_cost) {
+            // G1b's reading. `total_usec` is what G1b prices (the whole readback block, drain
+            // included). It is split so the two halves can be attacked separately:
+            //   `sync_usec` = the `ggml_backend_sched_synchronize` drain;
+            //   `read_usec` = `total - sync` = the 39x2 cross-backend `ggml_backend_tensor_get`.
+            // !!! `ngets` is a COUNT (how many tensor_get calls), NOT a duration -- reading it as
+            // microseconds is exactly the kind of label lie this repo keeps getting bitten by.
+            // `nsel0` is the step shape (n_expert_used * n_tokens), so a decode step can be told
+            // from a prefill step without cross-referencing the MISSMASK lines.
+            // A separate line, not new fields on the line above.
+            static uint64_t s_cost_steps = 0, s_cost_total = 0, s_cost_sync = 0, s_cost_gets = 0;
+            const int64_t mm_total = ggml_time_us() - mm_t0;
+            s_cost_steps += 1;
+            s_cost_total += (uint64_t) mm_total;
+            s_cost_sync  += (uint64_t) mm_sync;
+            s_cost_gets  += (uint64_t) mm_gets;
+            fprintf(stderr, "CGC-MISSMASK-COST: step=%d total_usec=%lld sync_usec=%lld ngets=%d "
+                            "nsel0=%lld | avg_usec total=%.1f sync=%.1f read=%.1f (ngets/step=%.1f)"
+                            " steps=%llu\n",
+                    cgc_mm_step, (long long) mm_total, (long long) mm_sync, mm_gets,
+                    (long long) mm_nsel0,
+                    (double) s_cost_total / (double) s_cost_steps,
+                    (double) s_cost_sync  / (double) s_cost_steps,
+                    (double) (s_cost_total - s_cost_sync) / (double) s_cost_steps,
+                    (double) s_cost_gets  / (double) s_cost_steps,
+                    (unsigned long long) s_cost_steps);
+        }
     }
 
     // [CGC remap post-compute bisect 2026-09-09] AFTER the graph ran, read back what mul_mat_id
@@ -4341,6 +4468,24 @@ void llama_context::cgc_rho_prefetch(int il) {
             if (seen.insert(tmp[j].second).second) { uni.push_back(tmp[j].second); }
         }
     }
+    // [CGC 2026-09-26 rho capacity gate] 第二道防線，而且它**有原理，不是魔術數字**：
+    // 這一層只有 `n_slots_l[il]` 個槽（本 cell 實測 143/256）。要預填的專家數一旦**裝不進**
+    // 那一層，這就不是「預取」，是「把整層讀進來、再把整層 LRU 掃掉」—— 賠掉的是下一步的熱集，
+    // 而熱集正是這個池存在的理由。相位閘（呼叫端）擋的是 prefill；這道擋的是它擋不到的區間：
+    // decode 但 token 數偏大（decode_width 可到 ~17 ⇒ union 可到 ~130），或未來換 predictor
+    // 導致 union 膨脹。判準取「**裝不下**」這個無歧義的界（`>`），不是某個憑感覺的比例。
+    static uint64_t s_skip_cap = 0;
+    const uint32_t layer_cap = llama_expert_cache_slots_per_layer_l(cache, (uint32_t) il);
+    if (layer_cap > 0 && uni.size() > (size_t) layer_cap) {
+        s_skip_cap += 1;
+        if (il == 0) {
+            fprintf(stderr, "CGC-RHO-FILL-SKIP: il=%d uni=%zu > layer_cap=%u -- a union that does not "
+                            "fit the layer is a full-layer read, not a prefetch (cum_skipped=%llu)\n",
+                    il, uni.size(), layer_cap, (unsigned long long) s_skip_cap);
+        }
+        return;
+    }
+
     // [CGC 2026-09-24 rho layer-batch] ONE batch queue entry per layer instead of N
     // single-slot entries: collapses 80k lock+queue+pread requests per run to ~40 and lets
     // bg_loop merge file-contiguous runs across the layer's experts. Claim policy identical
@@ -4352,13 +4497,17 @@ void llama_context::cgc_rho_prefetch(int il) {
     // 只報「發起了多少」。**命中與否不在此處自評**：要讓 ensure 那一側既有的
     // n_map_hits / n_map_misses 來說 —— 那才是決定 t/s 的數，另立一套命中率只會在
     // 複核時對不上。
+    // ⚠ `per_layer` 只在**通過閘門的呼叫**上平均（被閘擋掉的呼叫在上面就 return 了）。
+    //   這是有意的：以前 prefill 的 255 會被混進這個平均，把 decode 的真實值（~19）稀釋成
+    //   一個沒有意義的數；現在它只描述機制真的在工作的那些層。被擋掉多少看 cum_skipped。
     static uint64_t s_layers = 0, s_queued = 0;
     s_layers += 1;
     s_queued += uni.size();
     if (il == 0) {
-        fprintf(stderr, "CGC-RHO-FILL: layers=%llu queued=%llu per_layer=%.2f\n",
+        fprintf(stderr, "CGC-RHO-FILL: layers=%llu queued=%llu per_layer=%.2f (cum_skipped=%llu)\n",
                 (unsigned long long) s_layers, (unsigned long long) s_queued,
-                s_layers ? (double) s_queued / (double) s_layers : 0.0);
+                s_layers ? (double) s_queued / (double) s_layers : 0.0,
+                (unsigned long long) s_skip_cap);
     }
 }
 
@@ -4366,14 +4515,50 @@ bool llama_context::expert_cache_eval_cb(ggml_tensor * t, bool ask, void * user_
     llama_context * ctx = static_cast<llama_context *>(user_data);
     static const bool cgc_rho_probe = getenv("CGC_RHO_PROBE") != nullptr;
     if (cgc_rho_probe && !ask && strncmp(t->name, "cgc_rho_logits", 14) == 0) {
-        cgc_rho_capture(t);
-        // [CGC ρ-fill] 影子 logits 一落地就發起 IO —— 這是整個機制唯一「做正事」的一行。
-        // 位置就是一切：影子節點建在 layer L 的第一個算子（見 qwen35moe.cpp），所以這一
-        // 行比真實 `ffn_moe_topk-L` 早一個 submodule。它若被搬到 attn 之後，提前量歸零，
-        // 機制就退化成「多付一次 matmul 換不到任何東西」。
-        const char * rho_dash = strrchr(t->name, '-');
-        if (rho_dash != nullptr) {
-            ctx->cgc_rho_prefetch(atoi(rho_dash + 1));
+        // [CGC 2026-09-26 rho decode-only] ρ 是 **decode 的**機制，不是 prefill 的。這道閘用本
+        // repo 唯一的相位判據 `cgc_is_decode_graph`（llama-cgc-phase.h:141），**不自己另立門檻** ——
+        // llama-context.h:522-526 明文要求四個站點對「哪一步算 decode」必須一致（n_batch clamp／
+        // prewarm／hook 的 prefill 分支／圖的 decode block），再多一種定義就是第五種，而
+        // 「兩邊不一致」的兩種後果都是靜默的。要調門檻就調 `CGC_PREFILL_THRESHOLD`（它已經被
+        // `cgc_decode_width` 折進這個判據裡了），不要在 ρ 這裡開第二個旋鈕。
+        //
+        // 為什麼必須有這道閘（實測，2026-09-26 11:29 的 ρ ABBA，B 臂 stderr 實錄）：
+        //   prefill 下影子節點是 `ne = [n_expert, ubatch]` = [256, 2048] ⇒ 逐 token top-8 的
+        //   **聯集趨近全部 256 個專家**，log 上就是 `CGC-RHO-FILL: layers=1 queued=255
+        //   per_layer=255.00`。那不是預測，是「把整層讀進來」；而一層只有 143 個槽 ⇒ 必然把
+        //   整層 LRU 掃掉，連下一步的熱集一起賠掉。
+        //   `CGC_RHO_PREFETCH_MAXQ` 對它無效：MAXQ 封的是**佇列深度（幾筆 batch）**，不封
+        //   **單筆 batch 的大小**（llama-expert-cache.cpp:1750 只比 pool_batch_queue.size()），
+        //   所以一筆 255 專家的 batch 是直接穿過 MAXQ 的。這也解釋了為什麼 MAXQ=16 那次
+        //   （+4.7%）沒有、也不可能修掉這個 prefill 端的暴衝。
+        //
+        // 順帶砍掉一個純浪費（不是我的判斷，是代碼的事實）：prefill 的 capture 是每層一次
+        // **同步 blit**（`ggml_backend_tensor_get`，256*2048*4 = 2 MiB/層 × 41 層 ≈ 84 MB/次
+        // prefill，外加等量的常駐 buffer），而它的產物**從來沒有被消費過** —— 消費端 :6262 早就
+        // 用同一個 `cgc_probe_is_decode` 把 prefill 整段排除，既不進 `s_rho_layers` 也不進
+        // `s_rho_skip`。⇒ 跳過它不改變任何既有測量（cov / rho_tok / h 全部照舊）。
+        if (!cgc_is_decode_graph((int64_t) t->ne[1], ctx->cgc_decode_max_tokens)) {
+            // 印一次就好：讓「閘真的擋了」是可觀測的，而不是「靜默沒跑」。
+            // （本 repo 的老教訓：不要把「沒量到」和「量到很低」混在一起。）
+            static bool s_rho_phase_skip_printed = false;
+            if (!s_rho_phase_skip_printed) {
+                s_rho_phase_skip_printed = true;
+                fprintf(stderr, "CGC-RHO-PHASE-SKIP: ntok=%lld > decode_width=%u -- shadow capture and "
+                                "rho fill are decode-only (a prefill top-8 union spans ~all %d experts, "
+                                "which is a whole-layer read, not a prediction)\n",
+                        (long long) t->ne[1], ctx->cgc_decode_max_tokens,
+                        (int) ctx->model.hparams.n_expert);
+            }
+        } else {
+            cgc_rho_capture(t);
+            // [CGC ρ-fill] 影子 logits 一落地就發起 IO —— 這是整個機制唯一「做正事」的一行。
+            // 位置就是一切：影子節點建在 layer L 的第一個算子（見 qwen35moe.cpp），所以這一
+            // 行比真實 `ffn_moe_topk-L` 早一個 submodule。它若被搬到 attn 之後，提前量歸零，
+            // 機制就退化成「多付一次 matmul 換不到任何東西」。
+            const char * rho_dash = strrchr(t->name, '-');
+            if (rho_dash != nullptr) {
+                ctx->cgc_rho_prefetch(atoi(rho_dash + 1));
+            }
         }
     }
     const bool cgc_verify_op_timing = getenv("CGC_VERIFY_OP_TIMING") != nullptr;
