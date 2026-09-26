@@ -23,17 +23,17 @@
 
 `ref 72d82a33ad`（v6）在本 repo 共被比過 **54 次**，其中**多次得 9/9**：
 
-| when | tag | M1 |
-|---|---|---|
-| 09-23 06:54 | en-k3pair-cert | 9/9 ✅ |
-| 09-23 10:51 | pfxref-part | 9/9 ✅ |
-| **09-23 10:56** | pfx-meta | **1/9** ❌ ← 首次 FAIL |
-| 09-23 11:32 | pfx-ckpt2 | 9/9 ✅ ← **最後一次 PASS** |
-| 09-25 17:09 | en-mindmap-250925 | 2/3（coverage 60%，不完全可比） |
-| **09-26 02:03** | keff_fix_20260926 | **6/9** ❌ ← 從此穩定 |
-| 09-26 23:02 | cbnmain-nm32-0926 | 6/9 ❌（本次） |
+| when | tag | M1 | comparable |
+|---|---|---|---|
+| 09-23 06:54 | en-k3pair-cert | 9/9 ✅ | **True**（唯一一次乾淨 PASS） |
+| 09-23 10:51 | pfxref-part | 9/9 ✅ | False（SEQ_RM env 差異） |
+| **09-23 10:56** | pfx-meta | **1/9** ❌ ← 首次 FAIL | False |
+| 09-23 11:32 | pfx-ckpt2 | 9/9 ✅ ← 字面 PASS | **False**（CKPT env 差異；gate 未背書） |
+| 09-25 17:09 | en-mindmap-250925 | 2/3（coverage 60%，不完全可比） | — |
+| **09-26 02:03** | keff_fix_20260926 | **6/9** ❌ ← 從此穩定 | True |
 
-⇒ **v6 是好的基準，是引擎後來漂移了**。漂移發生在 **09-23 11:32 → 09-25 17:09** 之間。
+⇈ 舊判讀「v6 是好基準、引擎後來漂移」**已被 09-27 的 bisect 再修正**（見下一節）：
+字面 9/9 都出現在 dirty 工作樹形態；**版控內的乾淨狀態從 `cd6d57d92`（09-23 07:02）起就是 6/9**。
 
 ## 漂移的性質：只有 MTP 桶動，DEF 桶全同
 
@@ -43,10 +43,59 @@
 `comparable=true`、`config_diffs=[]` ⇒ 不是配置漂移（batch/ubatch 已被 `ORACLE_PINNED_ENV`
 釘在 6144），是**代碼行為**變了。
 
-**嫌疑窗口的第一個 commit**：`ea8703a2c`（2026-09-23 11:48）「prefix 重用與**投機回滾**分離
-—— checkpoint 改在自然邊界上建」—— 緊接最後一次 PASS（11:32），且正碰 MTP 的投機路徑。
-⚠ **未做 bisect 證實**，只是時間與語義上都指向它；若要證實需要對 09-23 11:32 → 09-25 17:09
-之間的 commit 逐個重建 ＋ 跑 D5，那是 4~6 次 13 GB 載入，本輪未做（已登記）。
+### ★ 2026-09-27 更正：`ea8703a2c` 已被**排除**（讀它的 commit message，0 GPU）
+
+上一版把 `ea8703a2c`（09-23 11:48「prefix 重用與投機回滾分離」）列為首嫌疑，**那是錯的**。
+它的 commit message 自己記了 gate 結果：
+
+```
+m123_oracle_gate（MTP=1；參考 = 先前強制 PART 的 dump）
+  M1 numeric identity 9/9   M2 decision agreement 9/9   M3 top-k 9/9
+  dump md5 72d82a33ad79e0e69bc935acd24228f2 == 參考 == v6 預註冊參考（逐位元）
+  對照組（代價的形狀）：型別改 RS 的 M1 1/9、只開 checkpoint 的也是 1/9，兩者 dump 相同
+```
+
+⇒ **它 PASS（9/9），而且它產的 dump 就是 v6 本身** ⇒ **不是回歸點**。
+（作者還因此定位到「真正的因是 checkpoint 建立時的尾巴切分」，並已在同一 commit 修掉。）
+
+### ★★ 2026-09-27 bisect 定案：**引擎無回歸 —— v6 的「乾淨 PASS」綁定於一個從未進版控的 dirty 工作樹形態**
+
+用 git worktree（`/tmp/cgc_bisect`，用**當時的 gate/run_server.sh + tracked dylib**，模型經
+`CGC_SERVER_MODEL_ROOT` 指向主 repo）實測三個歷史點，全部 vs v6：
+
+| commit（乾淨 tree） | binary digest（libllama/libggml-base） | M1 |
+|---|---|---|
+| `1ca685490`（= `cd6d57d92^`） | `0080393e`／`9d33b03e`（版控舊 dylib） | 6/9 |
+| `079f2fe46`（09-23 21:52） | `0cd5a628`／`7099cb53` | 6/9 |
+| `d10a6406d`（09-24 03:21） | `0cd5a628`／`7099cb53`（與上行同 binary） | 6/9 |
+
+再比對歷史 summary 的 `engine_digest`：
+
+- **`en-k3pair-cert`（09-23 06:54，唯一一次 `comparable=True` 的 9/9）的 binary 就是
+  `0cd5a628`／`7099cb53`** —— 與上表 FAIL 的 `079f2fe46`/`d10a6406d` **完全同一組 dylib**。
+- 它的 tree 是 **`1ca685490` + dirty 22 檔**（含 `scripts/check/decode_sweep.py` 等）——
+  那組 dylib 是 09-22 晚上在工作樹裡重編的，**直到 `cd6d57d92`（09-23 07:02）才提交**；
+  版控裡 `1ca685490` 自帶的 dylib 是更老的 `0080393e`。
+- 補測：`079f2fe46` + `--env CGC_PREFIX_REUSE_CKPT=1`（重現 09-23 11:32 `pfx-ckpt2` 的 9/9 形態）
+  仍是 **6/9** ⇒ CKPT env 假說**證偽**。
+
+**⇒ 同一組 binary、同一 ref、同一 profile、9/9 與 6/9 都出現過 ⇒ 回歸載體不是引擎 dylib。**
+差異只能在 09-23 06:54 那個 **dirty 工作樹的 scripts/env 形態**（`run_server.sh`／gate 當時
+是未提交版本，launch 序列可能不同）—— 該形態**從未完整進版控，原則上不可復現**。
+也因此「v6 是好基準、引擎後來漂移」的舊判讀**再修正**：v6 的乾淨 PASS 只存在於那個
+不可復現的形態；自從它進版控（`cd6d57d92` 07:02）起，**版控內的任何乾淨狀態都是 6/9**。
+
+**⇒ v7 重新基線是唯一正解**（引擎自身可重現性已有雙重證明，見上節）。
+
+**方法論筆記（bisect 怎麼做的）**：
+- 不用主樹 checkout（有別線未提交改動）⇒ `git worktree add /tmp/cgc_bisect <commit>`。
+- worktree 缺 gitignored 的 `src/llama.cpp/vendor/`（5.9M）⇒ 從主 repo `cp -R`；
+  缺 `models/gguf` ⇒ `CGC_SERVER_MODEL_ROOT=<主repo>/models/gguf`。
+- **build/bin 的 dylib 是 tracked** ⇒ worktree checkout 自帶「當時的完整 binary」，
+  **不需要 rebuild**（且 `d10a6406d` 的源碼本身編不過——`cgc_rho_prefetch` 聲明不匹配，
+  它提交的 dylib 也不是它源碼編的 ⇒ 更必須用 tracked dylib）。
+- worktree 的 gate 報 `INVALID COMPARISON`（1 diff = BIN 路徑）——路徑不是數值決定配置，
+  M1 字面值有效；digest 對比才是本節的證據主體。
 
 ## 明確不宣稱什麼
 
@@ -73,6 +122,49 @@ python3 scripts/check/m123_oracle_gate.py --ref Backup/knifeedge_matrix/ref_iq3_
   `Backup/knifeedge_matrix/ref_iq3_pool8gb_M2_6144_bitident_v7_20260926.jsonl{,.cap}`
   ⚠ **ref 是 untracked 資產 ⇒ 換機器／clone 後不會自動存在**，需要時用
   `python3 scripts/check/m123_oracle_gate.py --write-ref <path>` 重新產生（見 `.cap` sidecar 的可比性戳記）。
+
+## ★ 2026-09-27 修復：`engine_digest` 的盲區（bisect 的推論缺了一環）
+
+**問題。** 09-27 的 bisect 據「兩次跑的 `engine_digest` 完全相同 ⇒ 引擎沒回歸」下了結論。
+這個推論**是錯的**，因為 `engine_digest()` 只 hash `build/bin` 裡的 **linked artifacts**
+（`libllama`／`libggml-*`／`llama-server`）：
+
+- 一個在 **dirty 工作樹**下編出來的 binary，會被記錄成與「乾淨 HEAD 編出來的同一個 binary」
+  **完全相同的 digest** —— tracked 的部分在 dylib 裡，**未提交的源碼在任何 artifact digest 中都不存在**。
+- 而 `tree_dirty()` 當時只記 dirty 的**路徑**（前 20 個），不記**內容** ⇒ 「哪裡髒了」說得出，
+  「髒的是什麼位元組」說不出來。
+
+⇒ `pfx-ckpt2`（09-23 11:32，唯一乾淨的 9/9）與之後每一次 6/9 跑在**同一組 dylib**上
+（`0cd5a628`／`128b6048`／`7099cb53`），差別就在那些未提交的源碼 —— 而 digest 看不見它。
+
+**實驗（同期）。** 假說「v6 是 `CGC_PREFIX_REUSE_CKPT=1` 專用 baseline」被實測證偽：
+
+```
+--ref v6 --env CGC_PREFIX_REUSE_CKPT=1 --allow-incomparable  →  M1 6/9  M2 9/9  M3 6/9
+```
+
+⇒ v6 **不是** CKPT 專用 ref；CKPT 這個鍵也**不在** gate 的 numerics-determining subset 裡
+（v6 與 v7 的 `.cap` 各 28 個 ENV 鍵逐項相同，含 `CGC_PREFIX_REUSE_CKPT=<absent>`）。
+⇒ **v6 的成因至今未解**，本檔案不對它做任何主張，只看作歷史檔案。
+
+**修復。** `scripts/check/m123_oracle_gate.py`：
+
+1. `tree_dirty()` 增加 **`dirty_src_hashes`** —— 對 dirty 的**引擎源碼**（`src/llama.cpp/src/`、
+   `ggml/src/`、`tools/server/`、`scripts/run_server.sh`）記錄**內容 md5**
+   （上限 40 個、單檔 8 MiB）。這樣「同 artifact digest」才成為一個可檢驗的身分主張，
+   而不是一個假設。
+2. 抽出純函數 **`dirty_source_hashes(porcelain, root=None)`** —— `root` 可傳，便能對臨時目錄自測，
+   不必污染真實工作樹。
+3. 新增 **`selftest_tree_dirty_hashes()`**（9 項，含「非引擎檔不入」「untracked 不入」
+   「超過大小上限則跳過而非半hash」），並掛進 `--selftest`。
+   實測：全 selftest `rc=0`（pool-counter 14/14、engine-digest 8/8、tree-dirty 9/9）。
+
+**验证。** 修改後重跑：**D5 PASS，M1 9/9 · M2 9/9 · M3 9/9**（`--tag fix-treehash-0927`，`rc=0`），
+且 `tree.dirty_src_hashes` 如實入檔。
+
+**這不能回答過去。** 09-23 那次的 summary 只留有路徑（而且 `dirty_paths` 實際是空的
+—— 舊版 gate 有截斷 bug），內容 hash 無從回溯。**它能防止的是下一次**：日後任何
+「binary 相同 ⇒ 行為相同」的推論都必須同時比對 `dirty_src_hashes`。
 
 ## 相關
 

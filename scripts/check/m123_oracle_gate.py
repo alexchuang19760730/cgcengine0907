@@ -378,10 +378,39 @@ def engine_digest(bin_dir: Path | None = None) -> dict:
     return out
 
 
+# [CGC 2026-09-27] "same dylib" does NOT imply "same behaviour" -- recording the gap explicitly.
+# `engine_digest()` hashes only the linked artifacts, so a binary linked under a dirty tree is
+# recorded exactly like the same binary linked from clean HEAD: the tracked part is in the dylib
+# and the uncommitted part is nowhere. A 2026-09-27 bisect trusted that identity and concluded
+# "the engine never regressed", while the one clean 9/9 and every later 6/9 ran on the SAME
+# dylibs -- the difference was the uncommitted sources, which the digest could not see. Paths alone
+# were not enough either (they say *what* is dirty, not with what bytes), so we hash the content.
+SRC_DIR_PREFIXES = ("src/llama.cpp/src/", "src/llama.cpp/ggml/src/", "src/llama.cpp/tools/server/",
+                    "scripts/run_server.sh", "scripts/check/m123_oracle_gate.py")
+MAX_DIRTY_HASHED = 40
+DIRTY_HASH_MAX_BYTES = 8 << 20
+
+
+def _content_md5(path: Path) -> str:
+    h = hashlib.md5()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError:
+        return "<unreadable>"
+    return h.hexdigest()[:16]
+
+
 def tree_dirty() -> dict:
     """Tracked-file diff state at verdict time. A gate PASS that does not say whether the tree
     matched HEAD cannot be reproduced later -- and this box runs parallel sessions that edit the
-    same tree."""
+    same tree.
+
+    `dirty_src_hashes` is the part that makes a dylib digest usable as an identity claim: it
+    records the *bytes* of the uncommitted engine sources, which is exactly the part of a dirty-tree
+    build that no artifact digest can ever cover.
+    """
     info = {}
     try:
         head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(ROOT),
@@ -391,9 +420,38 @@ def tree_dirty() -> dict:
         tracked = [l for l in st.splitlines() if l and not l.startswith("??")]
         info = {"head": head, "dirty_tracked": len(tracked),
                 "dirty_paths": sorted(l[3:].strip() for l in tracked)[:20]}
+        info["dirty_src_hashes"] = dirty_source_hashes("\n".join(tracked))
     except Exception:  # noqa: BLE001 - provenance must never fail the run it describes
         pass
     return info
+
+
+def dirty_source_hashes(porcelain: str, root: Path | None = None) -> dict:
+    """Content md5 of the uncommitted ENGINE sources listed in a `git status --porcelain` output.
+
+    `root` is a parameter so the self-test can point it at a scratch tree; it defaults to the repo.
+    Untracked lines (`??`) are skipped -- an untracked file is not part of the build at all. Files
+    over DIRTY_HASH_MAX_BYTES are skipped rather than hashed whole: the cap exists so this stays
+    cheap next to a 13 GB model load, and a source that big is already flagged by `dirty_tracked`.
+    """
+    base = ROOT if root is None else Path(root)
+    out = {}
+    for line in porcelain.splitlines():
+        if not line or line.startswith("??"):
+            continue
+        rel = line[3:].strip()
+        if not rel.startswith(SRC_DIR_PREFIXES):
+            continue
+        if len(out) >= MAX_DIRTY_HASHED:
+            break
+        fp = base / rel
+        try:
+            if fp.stat().st_size > DIRTY_HASH_MAX_BYTES:
+                continue
+            out[rel] = _content_md5(fp)
+        except OSError:
+            continue
+    return out
 
 
 def tee(name, text):
@@ -731,6 +789,69 @@ def selftest_engine_digest() -> int:
     return 0 if bad == 0 else 1
 
 
+def selftest_tree_dirty_hashes() -> int:
+    """The other half of "which build produced this verdict".
+
+    `engine_digest` covers the linked artifacts; this covers the bytes that are in the working tree
+    but in no artifact. A 2026-09-27 bisect read "identical dylib digests" as "the engine never
+    regressed" and was wrong, because both verdicts ran on the same dylibs from different trees.
+    """
+    import tempfile
+    cases = []
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        (d / "src").mkdir()
+        (d / "src" / "llama.cpp").mkdir()
+        (d / "src" / "llama.cpp" / "src").mkdir()
+        (d / "src" / "llama.cpp" / "src" / "llama-context.cpp").write_bytes(b"engine bytes")
+        (d / "src" / "llama.cpp" / "ggml").mkdir()
+        (d / "src" / "llama.cpp" / "ggml" / "src").mkdir()
+        (d / "src" / "llama.cpp" / "ggml" / "src" / "ggml-backend.cpp").write_bytes(b"ggml bytes")
+        (d / "scripts").mkdir()
+        (d / "scripts" / "run_server.sh").write_bytes(b"launcher bytes")
+        (d / "scripts" / "unrelated.py").write_bytes(b"NOT engine, must stay out")
+        # porcelain format: XY<path>
+        por = (" M src/llama.cpp/src/llama-context.cpp\n"
+               " M src/llama.cpp/ggml/src/ggml-backend.cpp\n"
+               " M scripts/run_server.sh\n"
+               " M scripts/unrelated.py\n"
+               "?? src/llama.cpp/src/new-file.c\n")
+        got = dirty_source_hashes(por, root=d)
+        cases += [
+            ("an engine source under src/llama.cpp/src is hashed",
+             got.get("src/llama.cpp/src/llama-context.cpp")
+             == hashlib.md5(b"engine bytes").hexdigest()[:16]),
+            ("ggml sources are hashed too",
+             got.get("src/llama.cpp/ggml/src/ggml-backend.cpp")
+             == hashlib.md5(b"ggml bytes").hexdigest()[:16]),
+            ("run_server.sh is hashed (it decides which env the engine sees)",
+             got.get("scripts/run_server.sh")
+             == hashlib.md5(b"launcher bytes").hexdigest()[:16]),
+            ("a non-engine script is left out", "scripts/unrelated.py" not in got),
+            ("an untracked engine file is left out (it is not in any build)",
+             "src/llama.cpp/src/new-file.c" not in got),
+            ("a path outside the repo's own tree is not fabricated",
+             "src/llama.cpp/llama.h" not in got),
+        ]
+        # size cap
+        (d / "src" / "llama.cpp" / "src" / "huge.c").write_bytes(b"x" * (DIRTY_HASH_MAX_BYTES + 1))
+        got2 = dirty_source_hashes(" M src/llama.cpp/src/huge.c\n", root=d)
+        cases += [("a source over the size cap is skipped, not half-hashed", got2 == {})]
+    real = tree_dirty().get("dirty_src_hashes") or {}
+    cases += [
+        ("the real tree records at least the gate script itself",
+         "scripts/check/m123_oracle_gate.py" in real),
+        ("... and every entry is 16 hex chars",
+         all(len(v) == 16 and all(c in "0123456789abcdef" for c in v) for v in real.values())),
+    ]
+    bad = 0
+    for name, ok in cases:
+        print(f"  [{'ok' if ok else 'FAIL'}] {name}")
+        bad += 0 if ok else 1
+    print(f"tree-dirty-hashes selftest: {len(cases) - bad}/{len(cases)} passed")
+    return 0 if bad == 0 else 1
+
+
 def selftest_pool_counters() -> int:
     """Positive cases and, more importantly, negatives: a parser that returned zeros for a missing
     line would make "no pressure" and "no reading" identical."""
@@ -874,7 +995,8 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.selftest:
-        return selftest_pool_counters() | selftest_engine_digest()
+        return (selftest_pool_counters() | selftest_engine_digest()
+                | selftest_tree_dirty_hashes())
 
     tag = args.tag or time.strftime("%Y%m%d_%H%M")
     ref = Path(args.ref)
