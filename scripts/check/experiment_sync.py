@@ -72,6 +72,23 @@ def build_entry(charter: dict, sub: str, name: str | None = None) -> dict:
     cp = charter.get("_path")
     if cp and _is_relative_to(Path(cp), ROOT):
         charter_rel = os.path.relpath(cp, ROOT)
+    subtasks = [
+        {"id": "st-charter", "text": "跑前立項（現狀/目標/假設/驗收）", "status": "done",
+         **({"log": charter_rel} if charter_rel else {})},
+        {"id": "st-run", "text": "用生產級腳本 prod-new ＋ 自己 option 跑實驗臂，留存 log",
+         "status": "doing"},
+        {"id": "st-accept", "text": f'驗收：{str(acc.get("success", "—"))}', "status": "todo"},
+        {"id": "st-falsify", "text": f'否證條件：{str(acc.get("falsify", "—"))}', "status": "todo"},
+    ]
+    for sg in charter.get("subgoals") or []:
+        sid = str(sg.get("id", "")).strip()
+        if not sid:
+            continue
+        subtasks.append({
+            "id": sid, "text": str(sg.get("text", sid)), "status": "todo",
+            "expect": sg.get("expect"), "how": sg.get("how"),
+            "contrib": None, "contribs": [],
+        })
     return {
         "id": cid,
         "name": name or short_name(charter.get("question", ""), cid),
@@ -87,14 +104,7 @@ def build_entry(charter: dict, sub: str, name: str | None = None) -> dict:
         "targets": targets,
         "best": None,
         "target_gap": target_gap(targets, None),
-        "subtasks": [
-            {"id": "st-charter", "text": "跑前立項（現狀/目標/假設/驗收）", "status": "done",
-             **({"log": charter_rel} if charter_rel else {})},
-            {"id": "st-run", "text": "用生產級腳本 prod-new ＋ 自己 option 跑實驗臂，留存 log",
-             "status": "doing"},
-            {"id": "st-accept", "text": f'驗收：{str(acc.get("success", "—"))}', "status": "todo"},
-            {"id": "st-falsify", "text": f'否證條件：{str(acc.get("falsify", "—"))}', "status": "todo"},
-        ],
+        "subtasks": subtasks,
     }
 
 
@@ -152,6 +162,7 @@ def build_run(arm: dict, log_rel: str, when: str) -> dict:
         "thermal": thermal,
         "swap": {"before": _mb(sb.get("swap_used_mb")), "after": _mb(sa.get("swap_used_mb"))},
         "verdict": f'{att.get("verdict", "?")}：{att.get("why", "")}'.rstrip("："),
+        "subgoal_contrib": arm.get("subgoal_contrib"),
     }
 
 
@@ -168,6 +179,14 @@ def merge_run(entry: dict, run: dict) -> bool:
     for t in entry.setdefault("subtasks", []):
         if t.get("id") == "st-run" and run.get("result"):
             t["status"] = "done"
+    for sid, val in (run.get("subgoal_contrib") or {}).items():
+        st = next((t for t in entry["subtasks"] if t.get("id") == sid), None)
+        if st is None:
+            continue
+        st.setdefault("contribs", []).append(val)
+        nums = [x for x in st["contribs"] if isinstance(x, (int, float))]
+        st["contrib"] = round(sum(nums), 4) if nums else st["contribs"][-1]
+        st["status"] = "doing"
     entry["best"] = compute_best(entry["runs"])
     entry["target_gap"] = target_gap(entry.get("targets") or {}, entry["best"])
     return True
@@ -295,40 +314,56 @@ def cmd_init(args) -> int:
     return 0
 
 
-def cmd_sync(args) -> int:
+def sync_artifact_file(path, cid_default=None, do_rebuild=True, stamp=None, when=None):
+    """把一支產物檔（dict 或 arm list）回寫到對應節點：build_run＋merge_run、save、選擇性 rebuild。
+    獨立成函式，讓 harness bench 跑完可直接調用（D 自動回寫），cmd_sync 與 harness 走同一條路徑。"""
+    p = Path(path)
+    if not p.exists():
+        print(f"  跳過：產物不存在 {path}")
+        return []
+    now = dt.datetime.now()
+    stamp = stamp or now.strftime("%Y%m%d_%H%M%S")
+    when = when or now.strftime("%Y-%m-%d %H:%M")
     data = load_mm()
     byid = {e["id"]: e for e in data["entries"]}
-    now = dt.datetime.now()
-    stamp, when = now.strftime("%Y%m%d_%H%M%S"), now.strftime("%Y-%m-%d %H:%M")
-    touched: list[str] = []
-    for artifact in args.artifact:
-        p = Path(artifact)
-        if not p.exists():
-            print(f"  跳過：產物不存在 {artifact}")
+    arms = json.loads(p.read_text(encoding="utf-8"))
+    if isinstance(arms, dict):
+        arms = [arms]
+    touched = []
+    for arm in arms:
+        cid = charter_id(arm) or cid_default
+        if not cid:
+            print(f"  跳過：{p.name} 的 arm '{arm.get('tag')}' 無 charter（用 --entry 指定）")
             continue
-        arms = json.loads(p.read_text(encoding="utf-8"))
-        if isinstance(arms, dict):
-            arms = [arms]
-        for arm in arms:
-            cid = charter_id(arm) or args.entry
-            if not cid:
-                print(f"  跳過：{p.name} 的 arm '{arm.get('tag')}' 無 charter（用 --entry 指定）")
-                continue
-            entry = byid.get(cid)
-            if not entry:
-                print(f"  跳過：找不到節點 {cid}（先 init）")
-                continue
-            log_rel = ensure_log_in_repo(p, cid, stamp)
-            run = build_run(arm, log_rel, when)
-            if merge_run(entry, run):
-                touched.append(cid)
-                print(f"  {cid}：追加 run（{run.get('result') or '無結果'}）")
+        entry = byid.get(cid)
+        if not entry:
+            print(f"  跳過：找不到節點 {cid}（先 init）")
+            continue
+        log_rel = ensure_log_in_repo(p, cid, stamp)
+        run = build_run(arm, log_rel, when)
+        if merge_run(entry, run):
+            touched.append(cid)
+            print(f"  {cid}：追加 run（{run.get('result') or '無結果'}）")
+    if touched:
+        save_mm(data)
+        if do_rebuild:
+            rebuild()
+    return sorted(set(touched))
+
+
+def cmd_sync(args) -> int:
+    arts = [a for a in args.artifact if Path(a).exists()]
+    for m in args.artifact:
+        if not Path(m).exists():
+            print(f"  跳過：產物不存在 {m}")
+    touched = []
+    for i, a in enumerate(arts):
+        touched += sync_artifact_file(a, cid_default=args.entry,
+                                      do_rebuild=(i == len(arts) - 1))
     if not touched:
         print("沒有任何節點被更新")
         return 1
-    save_mm(data)
-    rebuild()
-    print("已更新節點：", sorted(set(touched)))
+    print("已更新節點：", touched)
     return 0
 
 
@@ -434,6 +469,39 @@ def selftest() -> bool:
     chk("merge_run：best 取最高 12.8、target_gap 同步 pct=85.3",
         e2["best"]["tg"] == 12.8 and e2["best"]["arm"] == "a2"
         and e2["target_gap"]["decode_tps"]["pct"] == 85.3)
+
+    # ── C：技術子目標 subgoals 生成 / 實測貢獻回填與累加 ───────────────
+    ch_sg = {**charter, "subgoals": [
+        {"id": "sg-gap", "text": "gap 42→<15", "expect": "-27 ms", "how": "GPU_TIMING"},
+        {"id": "sg-cb", "text": "cb 重疊", "expect": "+1.5 t/s", "how": "DECPROF"},
+    ]}
+    e_sg = build_entry(ch_sg, "S")
+    sg_ids = [t["id"] for t in e_sg["subtasks"]]
+    chk("C：追加 2 技術子目標（4 流程 → 6 subtasks）",
+        len(e_sg["subtasks"]) == 6 and "sg-gap" in sg_ids and "sg-cb" in sg_ids)
+    sg_gap0 = next(t for t in e_sg["subtasks"] if t["id"] == "sg-gap")
+    chk("C：子目標帶 expect/how、contrib None、status todo",
+        sg_gap0["expect"] == "-27 ms" and sg_gap0["how"] == "GPU_TIMING"
+        and sg_gap0["contrib"] is None and sg_gap0["status"] == "todo")
+
+    merge_run(e_sg, {"result": {"tg": 12.3}, "arm": "a", "log": "sg-l1", "when": "t",
+                     "thermal": "NOMINAL", "swap": {}, "verdict": "",
+                     "subgoal_contrib": {"sg-gap": -24, "sg-cb": 1.2}})
+    sg_gap1 = next(t for t in e_sg["subtasks"] if t["id"] == "sg-gap")
+    sg_cb1 = next(t for t in e_sg["subtasks"] if t["id"] == "sg-cb")
+    chk("C：貢獻回填、status 轉 doing",
+        sg_gap1["contrib"] == -24 and sg_gap1["status"] == "doing"
+        and sg_cb1["contrib"] == 1.2 and sg_cb1["status"] == "doing")
+    merge_run(e_sg, {"result": {"tg": 12.4}, "arm": "a", "log": "sg-l2", "when": "t",
+                     "thermal": "NOMINAL", "swap": {}, "verdict": "",
+                     "subgoal_contrib": {"sg-gap": -3}})
+    sg_gap2 = next(t for t in e_sg["subtasks"] if t["id"] == "sg-gap")
+    chk("C：同子目標數值貢獻累加（-24 + -3 = -27）", sg_gap2["contrib"] == -27)
+
+    # build_run 透傳 subgoal_contrib（產物 arm 帶 → run 帶）
+    arm_sg = {**arm, "subgoal_contrib": {"sg-gap": -24}}
+    chk("C：build_run 透傳 subgoal_contrib",
+        build_run(arm_sg, "Backup/sg.json", "t")["subgoal_contrib"] == {"sg-gap": -24})
     return ok
 
 

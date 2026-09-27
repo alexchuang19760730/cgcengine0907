@@ -223,12 +223,18 @@ def subtasks_html(items: list, depth: int = 0) -> str:
         log = t.get("log")
         logbit = (f' <a href="{repo_href(log)}" target="_blank" rel="noopener" '
                   f'style="font-size:11px;color:#1d4ed8;">證 ↗</a>' if log else "")
-        note = (f'<span style="color:#94a3b8;font-size:11px;">— {esc(str(t["note"]))}</span>'
-                if t.get("note") else "")
+        expect = (f' <span style="color:#64748b;font-size:11px;">預期 {esc(str(t.get("expect")))}</span>'
+                  if t.get("expect") is not None else "")
+        contrib = (f' <span style="color:#16a34a;font-size:11px;font-weight:600;">'
+                   f'實測 {esc(str(t.get("contrib")))}</span>'
+                   if t.get("contrib") is not None else "")
+        note_txt = t.get("note") or (f'量法：{t.get("how")}' if t.get("how") else None)
+        note = (f'<span style="color:#94a3b8;font-size:11px;">— {esc(str(note_txt))}</span>'
+                if note_txt else "")
         out.append(
             f'<div style="margin:{3 if depth else 4}px 0 0 {depth * 18}px;font-size:12.5px;line-height:1.5;">'
             f'<span style="color:{color};font-weight:700;">{icon}</span> '
-            f'{esc(str(t.get("text", "")))}{logbit} {note}</div>'
+            f'{esc(str(t.get("text", "")))}{logbit}{expect}{contrib} {note}</div>'
             + (subtasks_html(t.get("children") or [], depth + 1) if t.get("children") else ""))
     return "".join(out)
 

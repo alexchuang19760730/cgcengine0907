@@ -47,6 +47,23 @@ targets:
   decode_tps: 15.0     # decode 目標（例；交付現況約 12，終極 25）
   prefill_tps: 250.0   # prefill 目標（例；現況約 290，已達標）
 
+# ── 【技術子目標】把大假設拆成「可量化、可驗收、貢獻可分」的小塊（C）────────
+#   init 自動為每條生成一個子任務；brief 子目標分解顯示 預期／實測／量法。
+#   跑後在產物 arm 加 subgoal_contrib（見下）回填實測、數值可累加，子任務轉 doing，
+#   最終驗收才轉 done。子目標彼此要能量出各自貢獻，不要寫「整體變快」這種不可拆的。
+subgoals:
+  - id: sg-example-gap
+    text:   "<例：段間 gap 42 → <15 ms>"
+    expect: "<例：-27 ms/step（預期量化貢獻）>"
+    how:    "<例：CGC_GPU_TIMING gap_sum 對比（怎麼量這一條）>"
+  - id: sg-example-cb
+    text:   "<例：cb 填池與 GPU 工作重疊>"
+    expect: "<例：+1.5 t/s>"
+    how:    "<例：DECPROF wait/cb 配對>"
+# 回填實測範例（跑的工具在 arm 輸出）：
+#   subgoal_contrib: {sg-example-gap: -24, sg-example-cb: 1.2}
+# harness bench 跑完已自動 sync；手動則 python3 scripts/check/experiment_sync.py sync <json>
+
 # ── 臂：預設一律基於 prod-new。若必須用非 prod-new profile，要給理由 ────────
 arms:
   - prod-new

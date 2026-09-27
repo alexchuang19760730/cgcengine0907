@@ -1273,6 +1273,16 @@ def cmd_bench(args) -> int:
     Path(args.json_path).write_text(json.dumps(data, indent=2, ensure_ascii=False))
     print(f"\n產物已寫入 {args.json_path}（每臂含 base_check + sys_before/after + 系統指標）\n", flush=True)
 
+    # D 自動回寫：產物完整後直接 sync 到 mindmap（免手動 experiment_sync sync），best／目標進度即時更新。
+    # 只在有真立項（非 waive）時做；回寫失敗不影響本次產物與成績。
+    auto_cid = charter.get("id") if isinstance(charter, dict) and not charter.get("waived") else None
+    if auto_cid:
+        try:
+            esync = _load("esync", "experiment_sync.py")
+            esync.sync_artifact_file(args.json_path, cid_default=auto_cid, do_rebuild=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[auto-sync] mindmap 回寫失敗（不影響本次產物）：{e}", flush=True)
+
     # 量測紀律輸出：pp + tg + thermal + swap（取自產物欄位）
     for arm in data:
         print(f"=== {arm.get('tag')} (base_check: {'PASS' if arm['base_check']['pass'] else 'FAIL'}) ===")
