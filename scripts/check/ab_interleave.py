@@ -228,29 +228,33 @@ def main():
         fp = build_fingerprint()
         print(f"build fingerprint: {fp}\narms={arms} reps={args.reps} profile={args.profile} "
               f"rounds={args.rounds} warmup={args.warmup} n_predict={args.n_predict}", flush=True)
-        for rep in range(1, args.reps + 1):
-            for arm in arms:
-                key = f"{arm}#r{rep}"
-                if key in have and not args.force:
-                    print(f"[skip] {key} already recorded", flush=True)
-                    continue
-                if not args.report_only and not args.no_window_check and others_measuring():
-                    print(f"[WINDOW] foreign llama process running; refusing to launch {key} "
-                          f"(use --no-window-check only for scripted single-session runs)",
-                          file=sys.stderr, flush=True)
-                    return 2
-                ensure_idle(args.json, args.min_idle_s)
-                print(f"\n===== [{key}] arm={arm} env={ds.ARMS[arm]} =====", flush=True)
-                row = run_arm(arm, key, args.profile, args.rounds, args.warmup, args.n_predict)
-                if row is None:
-                    continue
-                row["build"] = fp
-                row["rep"] = rep
-                rows.append(row)
-                json.dump(rows, open(args.json, "w"), ensure_ascii=False, indent=2)
-                print(f"  -> decode {row.get('decode_tps_median')} t/s  "
-                      f"hit {row.get('hit_rate_pct')}%  miss {row.get('misses')}  "
-                      f"loop {row.get('loopiness')}  md5 {row.get('answer_md5_set')}", flush=True)
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import harness
+        # 整個配對過程持同一把 GPU 原子鎖（與 harness bench / commit_bench 互斥）
+        with harness.gpu_window_lock(held_by="ab_interleave " + args.arms, timeout_s=None):
+            for rep in range(1, args.reps + 1):
+                for arm in arms:
+                    key = f"{arm}#r{rep}"
+                    if key in have and not args.force:
+                        print(f"[skip] {key} already recorded", flush=True)
+                        continue
+                    if not args.report_only and not args.no_window_check and others_measuring():
+                        print(f"[WINDOW] foreign llama process running; refusing to launch {key} "
+                              f"(use --no-window-check only for scripted single-session runs)",
+                              file=sys.stderr, flush=True)
+                        return 2
+                    ensure_idle(args.json, args.min_idle_s)
+                    print(f"\n===== [{key}] arm={arm} env={ds.ARMS[arm]} =====", flush=True)
+                    row = run_arm(arm, key, args.profile, args.rounds, args.warmup, args.n_predict)
+                    if row is None:
+                        continue
+                    row["build"] = fp
+                    row["rep"] = rep
+                    rows.append(row)
+                    json.dump(rows, open(args.json, "w"), ensure_ascii=False, indent=2)
+                    print(f"  -> decode {row.get('decode_tps_median')} t/s  "
+                          f"hit {row.get('hit_rate_pct')}%  miss {row.get('misses')}  "
+                          f"loop {row.get('loopiness')}  md5 {row.get('answer_md5_set')}", flush=True)
 
     report(rows)
     json.dump(rows, open(args.json, "w"), ensure_ascii=False, indent=2)

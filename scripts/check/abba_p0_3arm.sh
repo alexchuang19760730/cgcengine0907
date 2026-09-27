@@ -13,6 +13,27 @@ NP=160
 OUT=/tmp/abba_p0_3arm
 mkdir -p "$OUT"
 
+# ── GPU 原子鎖（與 harness bench / commit_bench / ab_interleave 共用同一把）──
+# 後台 python 非阻塞取 flock；拿不到＝別的實驗在跑、立即退出。trap EXIT 殺守護→內核自動釋鎖。
+/opt/homebrew/bin/python3 - <<'PYLOCK' &
+import fcntl, os, sys, time
+_f = open("/tmp/flashkv_gpu_window.lock", "w")
+try:
+    fcntl.flock(_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.exit(1)
+_f.write("%d\tabba_p0_3arm\n" % os.getpid()); _f.flush()
+while True:
+    time.sleep(3600)
+PYLOCK
+LOCK_PID=$!
+sleep 1
+if ! kill -0 "$LOCK_PID" 2>/dev/null; then
+  echo "GPU 窗口正被其他實驗（harness/commit_bench/ab_interleave）持有，本腳本退出；等它跑完再跑。"
+  exit 1
+fi
+trap 'kill "$LOCK_PID" 2>/dev/null' EXIT
+
 log() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$OUT/abba.log"; }
 
 window_free() {

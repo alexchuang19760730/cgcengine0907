@@ -54,7 +54,15 @@ def run_matrix(profile, prompt, gen, depths, reps, workdir, json_out, dry_run):
     if dry_run:
         return None
     os.makedirs(workdir, exist_ok=True)
-    r = subprocess.run(cmd, cwd=ROOT)
+    # 與 harness 共用同一把 GPU 原子鎖：commit 測量也不能和其他實驗並發
+    sys.path.insert(0, str(HERE))
+    import harness
+    try:
+        with harness.gpu_window_lock(held_by="commit_bench " + profile, timeout_s=1800):
+            r = subprocess.run(cmd, cwd=ROOT, env={**os.environ, "CGC_INTERNAL_CALL": "1"})
+    except TimeoutError as e:
+        print(f"[commit_bench] {e}", file=sys.stderr)
+        return None
     if r.returncode != 0:
         print(f"[commit_bench] llama_bench_matrix rc={r.returncode}", file=sys.stderr)
         return None

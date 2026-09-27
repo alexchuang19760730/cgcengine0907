@@ -61,12 +61,14 @@ BENCH (統一量測入口)
 from __future__ import annotations
 
 import argparse
+import fcntl
 import importlib.util
 import json
 import os
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -81,6 +83,45 @@ def _load(name: str, filename: str):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+# --------------------------------------------------------------------------- GPU 窗口原子鎖
+# 窗口協調裡唯一原子的一道。wait_for_window 的 ps 快照是「開跑前看一眼」：兩個 harness 可在
+# 對方 llama-bench 尚未 fork 的間隙都拿到連續 quiet、同時放行（TOCTOU），兩個 GPU 實驗於是並發、
+# 互搶記憶體（2026-09-27 off_dense 被並發的 null_series 擠到 pp47/tg3.6）。flock 由內核持有、
+# 綁定 open file description：第二個進程在第一個全程結束前阻塞；進程退出（含 kill/崩潰）內核自動
+# 關 fd 釋鎖——沒有協作哨兵失效、殘留註冊的問題。
+GPU_LOCK_PATH = "/tmp/flashkv_gpu_window.lock"
+
+
+@contextmanager
+def gpu_window_lock(held_by: str = "", timeout_s: float = None, poll_s: float = 3.0):
+    """排他持有 GPU 窗口鎖，包住「實際跑 GPU 子進程」的那段；崩潰也由內核自動釋放。"""
+    lf = open(GPU_LOCK_PATH, "a+")
+    lf.seek(0)
+    holder = lf.read().strip()
+    acquired = False
+    t0 = time.time()
+    try:
+        while True:
+            try:
+                fcntl.flock(lf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except BlockingIOError:
+                if timeout_s is not None and time.time() - t0 > timeout_s:
+                    raise TimeoutError(
+                        "GPU 窗口鎖等待逾時（%.0fs）；當前持有者：%s" % (timeout_s, holder))
+                time.sleep(poll_s)
+        lf.seek(0); lf.truncate()
+        lf.write("%d\t%s\t%s\n" % (os.getpid(), time.strftime("%H:%M:%S"), held_by))
+        lf.flush()
+        yield lf
+    finally:
+        if acquired:
+            lf.seek(0); lf.truncate(); lf.flush()
+            fcntl.flock(lf, fcntl.LOCK_UN)
+        lf.close()
 
 
 # --------------------------------------------------------------------------- registry
@@ -152,6 +193,17 @@ REGISTRY: dict[str, dict] = {
     # gating is not (that is the owning line's job, and `window_gate.py` tracks it separately).
     "cap_oomsweep.py": dict(needs_window=True, purpose="OOM sweep (owner's line not recorded here)"),
     "s1_ksweep.py": dict(needs_window=True, purpose="S1 k-sweep (owner's line not recorded here)"),
+    # Promotion prerequisite for MTP-on: the candidate must carry its own same-shape off control
+    # measured in one session against the frozen baseline (scripts/check/mtp_off_baseline.json).
+    # It launches nothing -- it evaluates artifact JSONs, so no window stance is needed.
+    "mtp_promotion_gate.py": dict(needs_window=False, owner="shared",
+                                  purpose="MTP-on promotion prerequisite: paired off control vs frozen tg baseline"),
+    # The corridor builder: matrix-direct bench products get the gate's product contract injected
+    # (base_check/cell recomputed by harness's own predicates), and everything the harness gate
+    # would have READ but this run did not (box_gate/charter/sys_*) is marked synthesized or null.
+    # Reads files, shapes JSON -- proves no window of its own.
+    "bench_ingest.py": dict(needs_window=False, owner="shared",
+                            purpose="reshape bench products into the gate contract + corridor stats"),
 }
 
 
@@ -378,6 +430,37 @@ def cmd_run(args) -> int:
         print("[harness] %s is not in the registry: assuming it needs a window. Label it in "
               "REGISTRY if that is wrong." % tool, file=sys.stderr)
 
+    # 跑前立項閘：需要窗口的速度實驗必須帶 charter（現狀/目標/驗收）；純分析工具（needs=False）
+    # 不強制。run 不直接對應 arm profile，故不檢查 profile 維度（傳 []）。
+    charter_rec = None
+    cv = getattr(args, "charter", None)
+    if needs:
+        if cv is None:
+            print("[harness] 速度實驗需 --charter（現狀/目標/驗收）；純分析工具才可不帶。",
+                  file=sys.stderr)
+            return 2
+        if cv == "waive":
+            reason = getattr(args, "waive_reason", None)
+            if not reason:
+                print("[harness] --charter waive 必須帶 --waive-reason。", file=sys.stderr)
+                return 2
+            charter_rec = {"waived": True, "reason": reason}
+            print(f"[harness][charter] 急件豁免（waive）：{reason}")
+        elif cv == "none":
+            print("[harness] --charter none 後門已關閉：給路徑立項或 --charter waive "
+                  "--waive-reason。", file=sys.stderr)
+            return 2
+        else:
+            ch = _load_charter(cv)
+            cok, cerr = _charter_gate(ch, [])
+            if not cok:
+                print("[harness] charter gate FAIL — 拒跑：", file=sys.stderr)
+                for e in cerr:
+                    print("    " + e, file=sys.stderr)
+                return 2
+            charter_rec = {"id": ch.get("id"), "owner": ch.get("owner")}
+            print("[harness][charter] 立項通過：%s" % ch.get("id"))
+
     if needs:
         ok, why, waited = wait_for_window(sw, args.port, args.need_mb, args.window_timeout_s,
                                           args.poll_s)
@@ -415,7 +498,12 @@ def cmd_run(args) -> int:
     cmd = [PY, str(path)] + list(getattr(args, "rest", []) or [])
     print("[harness] $ %s" % " ".join(cmd))
     t0 = time.time()
-    p = subprocess.run(cmd, cwd=str(ROOT))
+    if needs:
+        # 實際 GPU 運行全程持原子鎖，避免與其他 harness 並發
+        with gpu_window_lock(held_by="run " + tool, timeout_s=args.window_timeout_s):
+            p = subprocess.run(cmd, cwd=str(ROOT))
+    else:
+        p = subprocess.run(cmd, cwd=str(ROOT))
     dur = time.time() - t0
 
     prov = sw.provenance(args.port, args.need_mb)
@@ -423,7 +511,8 @@ def cmd_run(args) -> int:
            "exit": p.returncode, "duration_s": round(dur, 1),
            "needs_window": needs, "child_gated": bool(meta.get("gated")),
            "certified": cert, "window_class": prov["class"], "window_why": prov["why"],
-           "decision_now": prov["now"], "owner": meta.get("owner", "")}
+           "decision_now": prov["now"], "owner": meta.get("owner", ""),
+           "charter": charter_rec}
     try:
         RUNS_LOG.parent.mkdir(parents=True, exist_ok=True)
         with RUNS_LOG.open("a") as fh:
@@ -601,6 +690,97 @@ def selftest() -> int:
     expect("and it is not spelled as a verdict (the old `[swap] verdict=advise`)",
            "verdict=" in stock, False)
 
+    print("\ncharter gate: 跑前立項（現狀/目標/假設/驗收），缺欄或出處不存在就拒跑")
+    import tempfile
+    tmpd = Path(tempfile.mkdtemp())
+    base_src = tmpd / "baseline.json"
+    base_src.write_text(json.dumps([{"warm_skip_applied": True}]))
+
+    def good_charter(**over):
+        c = {
+            "id": "e-x", "owner": "lineA",
+            "question": "ρ 批次化能否把 decode 從 13.99 提到 ≥15 t/s？",
+            "baseline": {"metric": "decode 13.99 t/s",
+                         "cell": "prod-new 穩態 warm-skip 64",
+                         "source": str(base_src)},
+            "hypothesis": {"mechanism": "cb 藏進 GPU busy",
+                           "expected": "+14% ~ +19%",
+                           "basis": "docs/CB_DELIVERY_SETTLED_2026-09-23.md"},
+            "acceptance": {"success": "配對增益 ≥3%",
+                           "falsify": "增益 <3% → 判死",
+                           "on_fail": "revert、登記"},
+        }
+        c.update(over)
+        return c
+
+    expect("完整合法 charter -> pass",
+           _charter_gate(good_charter(), ["prod-new"], root=tmpd)[0], True)
+    expect("缺頂層欄位 -> fail",
+           _charter_gate(good_charter(id=""), ["prod-new"], root=tmpd)[0], False)
+    expect("question「測一下」-> fail",
+           _charter_gate(good_charter(question="測一下速度"), ["prod-new"], root=tmpd)[0], False)
+    expect("baseline 缺 metric -> fail",
+           _charter_gate(good_charter(baseline={"cell": "x", "source": str(base_src)}),
+                         ["prod-new"], root=tmpd)[0], False)
+    expect("baseline.source 不存在 -> fail",
+           _charter_gate(good_charter(baseline={"metric": "x", "cell": "x",
+                                               "source": str(tmpd / "nope.json")}),
+                         ["prod-new"], root=tmpd)[0], False)
+    expect("hypothesis 缺 basis -> fail",
+           _charter_gate(good_charter(hypothesis={"mechanism": "x", "expected": "+5%"}),
+                         ["prod-new"], root=tmpd)[0], False)
+    expect("acceptance 缺 falsify -> fail",
+           _charter_gate(good_charter(acceptance={"success": "x", "on_fail": "y"}),
+                         ["prod-new"], root=tmpd)[0], False)
+    expect("非 prod-new 無理由 -> fail",
+           _charter_gate(good_charter(), ["prefill250"], root=tmpd)[0], False)
+    expect("非 prod-new 有 non_prod_reason -> pass",
+           _charter_gate(good_charter(non_prod_reason="只能在 prefill250 回答"),
+                         ["prefill250"], root=tmpd)[0], True)
+    cold = tmpd / "cold.json"
+    cold.write_text(json.dumps([{"warm_skip_applied": False}]))
+    expect("宣稱穩態但 warm_skip_applied 全 False -> fail",
+           _charter_gate(good_charter(baseline={"metric": "x", "cell": "穩態",
+                                               "source": str(cold)}),
+                         ["prod-new"], root=tmpd)[0], False)
+    warm = tmpd / "warm.json"
+    warm.write_text(json.dumps([{"cell": {"warm_skip_applied": True}}]))
+    expect("穩態且 warm_skip_applied True -> pass",
+           _charter_gate(good_charter(baseline={"metric": "x", "cell": "穩態",
+                                               "source": str(warm)}),
+                         ["prod-new"], root=tmpd)[0], True)
+
+    print("GPU 窗口原子鎖：flock 互斥、釋放可獲取、逾時報錯（崩潰由內核自動釋放）")
+    global GPU_LOCK_PATH
+    import tempfile
+    _orig_lock = GPU_LOCK_PATH
+    with tempfile.TemporaryDirectory() as _lkd:
+        GPU_LOCK_PATH = str(Path(_lkd) / "w.lock")
+        try:
+            with gpu_window_lock(held_by="selftestA"):
+                _f2 = open(GPU_LOCK_PATH); _blocked = False
+                try:
+                    fcntl.flock(_f2, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    _blocked = True
+                _f2.close()
+                expect("持有期間第二個獲取被擋", _blocked, True)
+            _f3 = open(GPU_LOCK_PATH)
+            fcntl.flock(_f3, fcntl.LOCK_EX | fcntl.LOCK_NB); _f3.close()
+            expect("釋放後可重新獲取", True, True)
+            _f4 = open(GPU_LOCK_PATH)
+            fcntl.flock(_f4, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _timed_out = False
+            try:
+                with gpu_window_lock(held_by="selftestB", timeout_s=0.5, poll_s=0.2):
+                    pass
+            except TimeoutError:
+                _timed_out = True
+            fcntl.flock(_f4, fcntl.LOCK_UN); _f4.close()
+            expect("拿不到鎖時逾時報錯", _timed_out, True)
+        finally:
+            GPU_LOCK_PATH = _orig_lock
+
     print()
     if fails:
         print("SELFTEST FAIL (%d): %s" % (len(fails), fails))
@@ -709,6 +889,129 @@ def _base_gate(profile: str, arm: dict, overrides: set) -> tuple[bool, list[str]
         else:
             diffs.append(f"{k}: base={bv!r} arm={av!r} (NOT declared, use !)")
     return (len(diffs) == 0), diffs, ovr
+
+
+# --------------------------------------------------------------------------- charter gate
+# 跑前「立項」閘。契約 §4 的目標/判準要求「跑之前定好」，舊流程只在事後登記表檢查，agent
+# 可以不聲明現狀/目標/驗收就開跑——甚至直跑冷 server 的第一請求、把冷啟動數字當穩態 decode
+# 引用（2026-09-27 的 13.69：decode 僅 50 token、池全冷）。這個閘在 launch 前強制四件事：
+# 現狀有出處、目標可判定、預期有依據、驗收有判據。缺欄或出處不存在 → fail-closed 拒跑。
+_CHARTER_TOP_FIELDS = ("id", "owner", "question", "baseline", "hypothesis", "acceptance")
+_CHARTER_VAGUE_PREFIX = ("測一下", "测一下", "測個", "测个", "看看", "試試", "试试", "跑一下")
+
+
+def _load_charter(path: str) -> dict:
+    p = Path(path)
+    if not p.is_absolute():
+        p = ROOT / p
+    if not p.exists():
+        raise SystemExit(f"charter 不存在: {path}（相對於 repo root 解析）")
+    try:
+        import yaml
+    except ImportError:
+        raise SystemExit("需要 PyYAML 讀 charter（pip install pyyaml）")
+    data = yaml.safe_load(p.read_text())
+    if not isinstance(data, dict):
+        raise SystemExit(f"charter 格式錯誤: {path}（頂層必須是 mapping）")
+    data["_path"] = str(p)
+    return data
+
+
+def _charter_source_path(source, root):
+    s = str(source).split("#", 1)[0].strip()
+    p = Path(s)
+    return p if p.is_absolute() else root / p
+
+
+def _json_safe(o):
+    """Charter 由 YAML 載入，`created: 2026-09-27` 會被解析成 datetime.date，json.dumps 無法
+    序列化（2026-09-27 實測 TypeError: Object of type date is not JSON serializable）。遞迴把
+    date/datetime 轉成 ISO 字串；其餘型別原樣返回。"""
+    import datetime as _dt
+    if isinstance(o, (_dt.datetime, _dt.date)):
+        return o.isoformat()
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v) for v in o]
+    return o
+
+
+def _charter_gate(charter: dict, profiles: list[str], root=ROOT) -> tuple[bool, list[str]]:
+    errors: list[str] = []
+    for f in _CHARTER_TOP_FIELDS:
+        if not charter.get(f):
+            errors.append(f"缺頂層欄位 {f}")
+
+    q = " ".join(str(charter.get("question", "")).split())
+    if q:
+        if len(q) < 10:
+            errors.append("question 太短（要一個可判定的問題，不是「測一下 X」）")
+        if q.startswith(_CHARTER_VAGUE_PREFIX):
+            errors.append("question 不可用「測一下／看看」開頭（必須可判定）")
+
+    bl = charter.get("baseline")
+    if not isinstance(bl, dict):
+        errors.append("baseline 必須是 mapping（metric/cell/source）")
+        bl = {}
+    for f in ("metric", "cell", "source"):
+        if not str(bl.get(f, "")).strip():
+            errors.append(f"baseline.{f} 為空（現狀必須有數字、口徑、出處）")
+    src = bl.get("source")
+    srcp = _charter_source_path(src, root) if src else None
+    if src and not srcp.exists():
+        errors.append(f"baseline.source 不存在: {src}（基線數字必須可追溯）")
+
+    hp = charter.get("hypothesis")
+    if not isinstance(hp, dict):
+        errors.append("hypothesis 必須是 mapping（mechanism/expected/basis）")
+        hp = {}
+    for f in ("mechanism", "expected", "basis"):
+        if not str(hp.get(f, "")).strip():
+            errors.append(f"hypothesis.{f} 為空（預期收益須有機制、區間、依據）")
+    exp = str(hp.get("expected", ""))
+    if exp and not any(c.isdigit() for c in exp):
+        errors.append("hypothesis.expected 要給含數字的收益（優先給區間）")
+
+    ac = charter.get("acceptance")
+    if not isinstance(ac, dict):
+        errors.append("acceptance 必須是 mapping（success/falsify/on_fail）")
+        ac = {}
+    for f in ("success", "falsify", "on_fail"):
+        if not str(ac.get(f, "")).strip():
+            errors.append(f"acceptance.{f} 為空（跑前要定成功／否證／失敗處置）")
+
+    # 臂一律基於 prod-new；非 prod-new 須在 charter 補 non_prod_reason
+    non_prod = [p for p in profiles if p != _BASE_PROFILE_DEFAULT]
+    if non_prod and not str(charter.get("non_prod_reason", "")).strip():
+        errors.append(f"非 prod-new 臂 {non_prod} 需在 charter 補 non_prod_reason")
+
+    # 宣稱「穩態」的 baseline，json 產物必須能證明走了熱口徑；全為 False ⇒ 冷口徑不可當穩態。
+    cell = str(bl.get("cell", ""))
+    claims_steady = ("穩" in cell or "暖" in cell or "steady" in cell.lower()
+                     or "warm" in cell.lower())
+    if claims_steady and srcp is not None and srcp.suffix == ".json" and srcp.exists():
+        try:
+            arr = json.loads(srcp.read_text())
+            rows = arr if isinstance(arr, list) else [arr]
+
+            def _ws_flag(r):
+                # 顯式檢查，不可用 `or`：warm_skip_applied=False 是 falsy，會被 or 跳過讀成 None。
+                if not isinstance(r, dict):
+                    return None
+                if "warm_skip_applied" in r:
+                    return r.get("warm_skip_applied")
+                c = r.get("cell")
+                return c.get("warm_skip_applied") if isinstance(c, dict) else None
+
+            flags = [_ws_flag(r) for r in rows]
+            if flags and all(f is False for f in flags):
+                errors.append("baseline 宣稱穩態，但產物 warm_skip_applied 全為 False"
+                              "（冷口徑不能當穩態 decode）")
+        except Exception:
+            pass
+
+    return (len(errors) == 0), errors
 
 
 def _sys_snapshot() -> dict:
@@ -855,6 +1158,36 @@ def _box_gate(args) -> dict:
 def cmd_bench(args) -> int:
     matrix = _load("matrix", "llama_bench_matrix.py")
     specs = list(args.arm)
+
+    # 跑前立項閘：速度實驗必須帶一張 charter（現狀/目標/假設/驗收）；--charter none 可豁免但標記。
+    profiles = [_parse_arm(s)[0] for s in specs]
+    charter = None
+    cv = getattr(args, "charter", None)
+    if cv is None:
+        print("!! 缺 --charter：速度實驗跑前必須立項（現狀/目標/驗收）。")
+        print("   用 scripts/check/charters/_TEMPLATE.yaml 建一張；純分析/急件可 --charter none。")
+        return 2
+    if cv == "waive":
+        reason = getattr(args, "waive_reason", None)
+        if not reason:
+            print("!! --charter waive 必須帶 --waive-reason \"為何急件不立項\"；否則正常立項。")
+            return 2
+        charter = {"waived": True, "reason": reason, "when": time.strftime("%F %T")}
+        print(f"[charter] 急件豁免（waive）：{reason} ——已記進產物")
+    elif cv == "none":
+        print("!! --charter none 後門已關閉：要嘛給 charter 路徑立項，要嘛 --charter waive "
+              "--waive-reason \"...\"。")
+        return 2
+    else:
+        charter = _load_charter(cv)
+        cok, cerr = _charter_gate(charter, profiles)
+        if not cok:
+            print("!! charter gate FAIL — 拒跑：")
+            for e in cerr:
+                print(f"    {e}")
+            return 2
+        print(f"[charter] 立項通過：{charter.get('id')} — owner={charter.get('owner')}")
+
     ok_all = True
     gate_report = []
     for spec in specs:
@@ -901,7 +1234,14 @@ def cmd_bench(args) -> int:
     Path(args.workdir).mkdir(parents=True, exist_ok=True)
     cmd = _bench_cmd(args, specs)
     print("$ " + " ".join(cmd), flush=True)
-    rc = subprocess.call(cmd, cwd=str(ROOT))
+    # 實際 GPU 運行全程持內核原子鎖：第二個 harness 在這段結束前阻塞、無法並發
+    try:
+        with gpu_window_lock(held_by="bench " + " ".join(specs), timeout_s=args.window_timeout_s):
+            # matrix 的 internal 守衛認這個變數：harness 是唯一正門、內部調用自帶、繞過守衛。
+            rc = subprocess.call(cmd, cwd=str(ROOT), env={**os.environ, "CGC_INTERNAL_CALL": "1"})
+    except TimeoutError as e:
+        print(f"拒跑：{e}")
+        return 3
     if rc != 0:
         return rc
 
@@ -926,6 +1266,7 @@ def cmd_bench(args) -> int:
                              "overrides": report["overrides"], "diffs": report["diffs"],
                              "swap_arms": report["swap_arms"]}
         arm["cell"], arm["box_gate"] = _cell(args), box_gate
+        arm["charter"] = _json_safe(charter)
         arm["sys_before"], arm["sys_after"] = before, after
         if rate:
             arm["sys_rate"] = rate
@@ -969,7 +1310,14 @@ def cmd_verify(args) -> int:
         cmd.append("--allow-dirty")
 
     print("「verify」雙輪驗證（每 arm：clean 無儀器 + instrumented 有儀器）", flush=True)
-    rc = subprocess.call(cmd, cwd=str(ROOT))
+    # 雙輪 GPU 運行全程持原子鎖（arm_two_pass 內部跑兩輪 bench），避免並發
+    try:
+        with gpu_window_lock(held_by="verify " + " ".join(args.arm),
+                             timeout_s=args.window_timeout_s):
+            rc = subprocess.call(cmd, cwd=str(ROOT))
+    except TimeoutError as e:
+        print(f"拒跑：{e}")
+        rc = 3
 
     if result_json.exists():
         hcmd = [PY, str(HERE / "arm_report_html.py"),
@@ -1005,6 +1353,10 @@ def main(argv=None) -> int:
                    help="measure throughput against the sentinel reference first (refuses a "
                         "degraded window that looks quiet)")
     p.add_argument("--certify-frac", type=float, default=0.85)
+    p.add_argument("--charter", default=None,
+                   help="跑前立項卡（charters/*.yaml）；速度實驗必填，純分析工具可不帶")
+    p.add_argument("--waive-reason", default=None,
+                   help='--charter waive 時必填：急件不立項的理由（記進產物）')
     # NOT argparse.REMAINDER: a REMAINDER positional placed after `tool` swallows the harness's own
     # options too (it is greedy from the first token it cannot name), so `--window-timeout-s 4`
     # was handed to the child and the run waited at the default 900 s instead. The split is done
@@ -1050,6 +1402,11 @@ def main(argv=None) -> int:
                    help="llama-bench --spec-draft-n-max（1..16）；需配合 --spec-type")
     p.add_argument("--workdir", default="/tmp/harness_bench")
     p.add_argument("--json", dest="json_path", required=True, help="產物 json 路徑（含 base_check）")
+    p.add_argument("--charter", default=None,
+                   help="跑前立項卡路徑（scripts/check/charters/*.yaml）；速度實驗必填，"
+                        "急件用 --charter waive --waive-reason")
+    p.add_argument("--waive-reason", default=None,
+                   help='--charter waive 時必填：急件不立項的理由（記進產物）')
     p.set_defaults(func=cmd_bench)
 
     p = sub.add_parser("verify",

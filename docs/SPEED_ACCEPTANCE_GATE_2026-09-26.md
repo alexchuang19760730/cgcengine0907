@@ -4,6 +4,18 @@
 狀態：**判準在跑之前寫死。本文不改任何已量到的數字，只規定「什麼時候可以按哪個鍵」。**
 關聯：`docs/S1_LINE_VERDICT_2026-09-25.md`（×1.83）、`docs/STEP23_BLOCKER_AND_RECOVERY_2026-09-26.md`（§8 第 2 步重建）
 
+> ### 【2026-09-27 強制更新，所有 agent 適用，優先於下文】
+> 1. **GPU 實驗內核級互斥**：所有速度入口（`harness bench/run/verify`、`commit_bench`、
+>    `ab_interleave.py`、`abba_p0_3arm.sh`）在**實際跑 GPU 子進程**期間持有同一把 flock
+>    （鎖檔 `/tmp/flashkv_gpu_window.lock`）。第二個實驗在第一個全程結束前阻塞等待；進程退出
+>    （含 kill／崩潰）內核自動關 fd 釋鎖。舊的 ps 快照窗口門有 TOCTOU（兩個 harness 可在對方
+>    llama-bench 尚未 fork 的間隙同時看到 quiet、一起放行而並發），已由 flock 取代。
+> 2. **`--charter none` 無聲後門已關閉**：速度實驗跑前必須立項；急件改 `--charter waive
+>    --waive-reason "為何不立項"`，理由記進產物。無 charter 且無顯式 waive 一律拒跑（return 2）。
+>
+> 觸發：09-27 兩個 harness（off_dense 與 Freebuff null_series）並發，off_dense 被擠到 pp47/tg3.6。
+> 詳見 `docs/NEXT_ACTIONS_2026-09-27.md`。
+
 ---
 
 ## 0. 一句話答案
@@ -254,3 +266,92 @@ read_mib=0.0 pread_us=0 fill_wait_us=0     pool_cap_slots=143 slots_layer=143 un
 2. **`harness bench` 的 cell contract 是 fail-closed**：`expert_cache_bytes` 偏離權威值
    8589934592 ⇒ `⛔ cell 口徑與測試卡權威 block 不一致 — 拒跑`。⇒ **池大小掃描不能走生產入口**
    （是設計好的；要掃就得走別的入口並標非生產口徑）。
+
+### 9.8 更正（2026-09-26 09:0x–09:17）：§9.2 的 100% 是**儀器產物**，真值是 **42.93%**
+
+§9.2–§9.6 依 repo 慣例（dated 產物不回改）保留原樣；本節是它們之後的真值與作廢宣告。
+
+#### 9.8.1 §9.5 那個洞封起來了 —— 答案是「publisher 從來沒寫」
+
+`CGC-MM-PUB` 自證印（`n_wrote>0` 才推進的 v1 版）**一行都沒印**。把閘門改成前 8 次呼叫無條件自報
+（provenance v2）後，第一次就說清楚了：
+
+```
+# run3（03:18 build，publisher v2 自報版）
+CGC-MM-PUB n_leaf=39 wrote=0 skip_null=35 skip_not_in_graph=4  ...  # 前 5 次 compute（prefill/暖機）
+CGC-MM-PUB n_leaf=39 wrote=0 skip_null=0  skip_not_in_graph=39 ...  # 第 6 次起（decode），每次都這樣
+```
+
+⇒ 表**有** 39 張 leaf（`n_leaf=39`），而 `skip_null=0` 表示 39 張**全都有被分配到 data**（即真的在圖裡），
+但沒有一張通過成員測試。**publisher 從未寫入任何一個位元組** ⇒ §9.2 的 100% 讀的是競技場殘留值，
+**不是駐留狀態的量測**。§9.4「落在 >20% 分支」的判決因此**失去依據**（後來證實結論方向相同，
+那是運氣，不是證據）。
+
+#### 9.8.2 根因：`cgc_node_in_graph` 只認 op 節點，不認 leaf
+
+`cgc_node_in_graph`（`llama-context.cpp:3405`）只走 `ggml_graph_n_nodes`（**op 節點**）。而
+`ggml_new_tensor_2d` 造出來的 tensor 沒有 producer op，`ggml_visit_parents` 把它歸到
+`cgraph->leafs`（`ggml-impl.h:337` 註解「tensors with constant data」），**永遠不會出現在 `nodes`**；
+ggml 當時也沒有 leaf 的公開訪問器（正是原作者那段「Public accessors on purpose」註解的由來）。
+
+修法：補 `ggml_graph_leaf`／`ggml_graph_n_leafs` 兩個 `GGML_API` 訪問器（`ggml.h`／`ggml.c`），
+並新增 **`cgc_tensor_in_graph`**（nodes＋leafs 都查，`where` 回報命中哪一邊）。**只有 miss-mask
+publisher 改用新函式**；既有呼叫點（`:3901` S1 POST、`:3919` rn_mask、`:3923` slot table）
+一個都沒動 —— 縮小爆炸半徑。
+
+修後（run4，09:16）：
+
+```
+CGC-MM-PUB n_leaf=39 wrote=39 as_leaf=39 skip_null=0 skip_not_in_graph=0 skip_shape=0 st_null=0
+            | first_leaf: nn=256 nexp=256 slots=143 had_st=1 nres=143 | resident 5577/9984
+```
+
+`as_leaf=39` 直接證實：39 張全在 `leafs` ⇒ 它們本來就在圖裡，只是舊測試看不見。
+
+#### 9.8.3 真值：42.93%
+
+| 項 | 值 |
+|---|---|
+| `MISSMASK` 行數／compute 次數／層數 | 14926 ／ 385 ／ 39（il=1..39） |
+| nsel | 一律 8 |
+| miss 率 MICRO ／ MACRO | **0.4293 ／ 0.4293** |
+| drift head(128) vs tail(128) | 0.4300 vs 0.4291，Δ=**−0.0010** |
+| publisher | wrote=39/39，resident 5577/9984（每層 `nres=143 / slots=143`） |
+
+14926 < 15015 是因為**有 89 個「層×步」真的 0 miss**（0-miss 不印行，是 `miss_mask_check.py` §2
+記下的陷阱）⇒ 與「全 miss」互斥，反過來佐證儀器修好了。
+
+#### 9.8.4 判決：仍落 §3 的 **>20%**，但現在是量測而非產物
+
+42.93% ≈ 每步每層 8 個選中專家裡約 **3.4 個**走 `e % ns` 佔位。與 §3 表格裡「當年診斷臂量到 k=8 裡
+5 個是佔位 ≈62%」同量級 ⇒ **補算不划算，路線要換：先做 async／後台 fill**。
+
+⛔ 兩個「不可以」：
+1. **不可拿 100% 定價**（§9.2／§9.4 已被本節作廢）。
+2. **也不可直接拿 42.93% 定價交付 cell** —— 本臂仍是「單段提交＋hook 不跑」的配置，fill 不會發生；
+   它量的是「駐留表靜態停在 143/256」下的路由缺口。交付系統穩態是另一個數。
+
+#### 9.8.5 順手挖出來的橫向缺陷（未修，先掛號）
+
+同一個 `cgc_node_in_graph` 被另外兩處用在**同類 leaf** 上，因此**長期靜默**：
+- `llama-context.cpp:3919` `rm`（`ffn_moe_rn_mask`，`ggml_new_tensor_2d` leaf）⇒ 永遠 `rm = nullptr`
+- `llama-context.cpp:3923` `tb`（slot table，同為 leaf）⇒ 永遠 `tb = nullptr`
+
+凡是「靠這兩個指標為 null 推出來的結論」都要重跑。這兩條不是本線本輪的格子 ⇒ **未修**，等 owner 確認。
+
+#### 9.8.6 另一個坑：free% 的口徑（本輪自己踩的）
+
+權威數字是 `memory_pressure` 的 **`System-wide memory free percentage`**（`harness._sys_snapshot()`
+存的就是這個）。**不要用 `vm_stat` 的 free+speculative 自己算** —— 那會漏掉 inactive／purgeable，
+本輪算出 8% 而權威值是 **84%**。實測門檻：成功的臂起跑 **78~86%**，被 watchdog 擋下那次 **14%**。
+
+#### 9.8.7 本輪（09:0x）的速度數字：同樣不可引用
+
+| 臂 | pp | tg | 註 |
+|---|---|---|---|
+| run2（09:01，publisher v1，儀器餓死） | 349.71 ± 2.68 | 25.82 ± 0.38 | 100% 為偽 |
+| run3（09:06，publisher v2 自報） | 352.56 ± 9.12 | 26.02 ± 0.17 | 同上 |
+| run4（09:16，publisher 修好） | 267.85 ± 28.03 | 21.38 ± 0.40 | 真值臂 |
+
+三支都開著 `CGC_MISS_MASK_DBG`（每步一次額外 synchronize；程式碼註解明寫 “never quote throughput
+from an arm with this on”）⇒ **只能證明儀器有跑**。
