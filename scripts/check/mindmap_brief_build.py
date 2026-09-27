@@ -97,6 +97,150 @@ def big_number(res: str) -> str:
     return ""
 
 
+# ───── runs（實際運行：生產腳本＋option＋log）／subtasks（子目標分解，持續更新）────
+
+def repo_href(repo_rel: str, start: Path = BRIEF_DIR) -> str:
+    """repo 相對路徑 → 從 brief 目錄出發的相對 href（brief 在 docs/mindmap/briefs，深 3）。"""
+    depth = len(start.relative_to(ROOT).parts)
+    return "/".join([".."] * depth) + "/" + str(repo_rel).lstrip("/")
+
+
+_STATUS = {
+    "done": ("☑", "#16a34a"),
+    "doing": ("◔", "#d97706"),
+    "todo": ("☐", "#94a3b8"),
+    "blocked": ("⚠", "#dc2626"),
+}
+
+
+def best_panel_html(e: dict) -> str:
+    """🏆 目前成績最高配置 + 🎯 量化目標差距／進度條（資料來自 mindmap.json 的 best/target_gap）。"""
+    best = e.get("best")
+    gap = e.get("target_gap") or {}
+    if not best and not gap:
+        return ""
+    if best:
+        log = best.get("log")
+        logbit = (f' · <a href="{repo_href(log)}" target="_blank" rel="noopener" '
+                  f'style="color:#1d4ed8;font-weight:600;">Log ↗</a>' if log else "")
+        tg, pp = best.get("tg"), best.get("pp")
+        scorebits = []
+        if isinstance(tg, (int, float)):
+            scorebits.append(f'decode <b style="font-size:15px;">{tg:g}</b> t/s')
+        if isinstance(pp, (int, float)):
+            scorebits.append(f'prefill <b style="font-size:15px;">{pp:g}</b> t/s')
+        best_card = (
+            f'<div style="flex:1;min-width:258px;background:#ecfdf5;border:1px solid #6ee7b7;'
+            f'border-radius:8px;padding:11px 13px;">'
+            f'<div style="font-size:12.5px;font-weight:700;color:#047857;margin-bottom:6px;">'
+            f'🏆 目前成績最高的配置</div>'
+            f'<div style="font-size:12.5px;color:#065f46;white-space:nowrap;">{"　·　".join(scorebits)}</div>'
+            f'<div style="font-size:11px;color:#047857;margin-top:6px;word-break:break-all;">'
+            f'配置 <code>{esc(str(best.get("arm", "")))}</code>'
+            f' · {esc(str(best.get("when", "")))}{logbit}</div></div>')
+    else:
+        best_card = (
+            f'<div style="flex:1;min-width:210px;background:#f8fafc;border:1px solid #e2e8f0;'
+            f'border-radius:8px;padding:11px 13px;font-size:12px;color:#64748b;">'
+            f'🏆 尚無讀數（跑完第一臂後自動出現最佳配置）</div>')
+    labels = {"decode_tps": "Decode 目標", "prefill_tps": "Prefill 目標"}
+    rows = []
+    for key in ("decode_tps", "prefill_tps"):
+        g = gap.get(key)
+        if not g:
+            continue
+        tgt, cur = g["target"], g["current"]
+        if cur is None:
+            stat = '<span style="color:#94a3b8;">尚無讀數</span>'
+            bar_w, bar_bg = 0, "#cbd5e1"
+        else:
+            pct, d = g["pct"], g["gap"]
+            reach = d >= 0
+            color = "#16a34a" if reach else "#d97706"
+            sign = "+" if d > 0 else ""
+            stat = (f'<b>{cur:g}</b> / {tgt:g} t/s　'
+                    f'<span style="color:{color};font-weight:600;">{sign}{d:g}</span>　'
+                    f'<span style="color:#64748b;">{pct:g}%</span>')
+            bar_w, bar_bg = min(pct, 100), color
+        bar = (f'<div style="background:#e2e8f0;border-radius:5px;height:8px;width:104px;'
+               f'overflow:hidden;display:inline-block;vertical-align:middle;">'
+               f'<div style="background:{bar_bg};height:100%;width:{bar_w}%;"></div></div>')
+        rows.append(
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'gap:10px;padding:5px 0;flex-wrap:wrap;font-size:12px;">'
+            f'<span style="font-weight:600;color:#334155;min-width:96px;">{labels[key]}</span>'
+            f'<span style="flex:1;">{stat}</span>{bar}</div>')
+    target_card = ""
+    if rows:
+        target_card = (
+            f'<div style="flex:2;min-width:270px;background:#f8fafc;border:1px solid #e2e8f0;'
+            f'border-radius:8px;padding:11px 13px;">'
+            f'<div style="font-size:12.5px;font-weight:700;color:#334155;margin-bottom:4px;">'
+            f'🎯 要達成的目標與差距</div>{"".join(rows)}</div>')
+    return section_title("目前最佳配置 vs 目標（每跑一臂自動更新）") +         f'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">'         f'{best_card}{target_card}</div>'
+
+
+def runs_html(e: dict) -> str:
+    runs = e.get("runs") or []
+    if not runs:
+        return ""
+    blocks = []
+    for i, r in enumerate(runs, 1):
+        res = r.get("result") or {}
+        resbits = "　".join(
+            f'<span style="font-size:11.5px;"><b>{esc(str(k))}</b> {esc(str(v))}</span>'
+            for k, v in res.items())
+        swap = r.get("swap") or {}
+        swapbits = (f'swap {esc(str(swap.get("before", "?")))}→{esc(str(swap.get("after", "?")))}'
+                    if swap else "")
+        log = r.get("log")
+        logbit = (f'<a href="{repo_href(log)}" target="_blank" rel="noopener" '
+                  f'style="color:#1d4ed8;font-weight:600;">Log／產物 ↗</a>' if log else "")
+        blocks.append(
+            f'<div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;'
+            f'margin-bottom:8px;background:#f8fafc;">'
+            f'<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;'
+            f'font-size:12px;margin-bottom:5px;align-items:center;">'
+            f'<span><b>Run {i}</b>　<span style="color:#64748b;">{esc(str(r.get("when", "")))}</span></span>'
+            f'<span style="display:flex;gap:8px;align-items:center;">'
+            f'<span class="pill" style="background:#64748b;">{esc(str(r.get("thermal", "?")))}</span>'
+            f'<span style="color:#64748b;font-size:11px;">{swapbits}</span>{logbit}</span></div>'
+            f'<div style="font-size:11.5px;margin-bottom:4px;">arm：<code>{esc(str(r.get("arm", "")))}</code></div>'
+            f'<div style="font-size:11px;color:#334155;word-break:break-all;line-height:1.6;">'
+            f'<code>{esc(str(r.get("cmd", "")))}</code></div>'
+            + (f'<div style="margin-top:6px;">{resbits}</div>' if resbits else "")
+            + (f'<div style="margin-top:5px;font-size:11.5px;color:#475569;">{esc(str(r.get("verdict", "")))}</div>'
+               if r.get("verdict") else "")
+            + '</div>')
+    return section_title("運行設置與 Log（生產級腳本 prod-new ＋ 自己 option；點 Log 查原始數據）") \
+        + "".join(blocks)
+
+
+def subtasks_html(items: list, depth: int = 0) -> str:
+    out = []
+    for t in items:
+        icon, color = _STATUS.get(str(t.get("status", "todo")), _STATUS["todo"])
+        log = t.get("log")
+        logbit = (f' <a href="{repo_href(log)}" target="_blank" rel="noopener" '
+                  f'style="font-size:11px;color:#1d4ed8;">證 ↗</a>' if log else "")
+        note = (f'<span style="color:#94a3b8;font-size:11px;">— {esc(str(t["note"]))}</span>'
+                if t.get("note") else "")
+        out.append(
+            f'<div style="margin:{3 if depth else 4}px 0 0 {depth * 18}px;font-size:12.5px;line-height:1.5;">'
+            f'<span style="color:{color};font-weight:700;">{icon}</span> '
+            f'{esc(str(t.get("text", "")))}{logbit} {note}</div>'
+            + (subtasks_html(t.get("children") or [], depth + 1) if t.get("children") else ""))
+    return "".join(out)
+
+
+def subtasks_section_html(e: dict) -> str:
+    st = e.get("subtasks") or []
+    if not st:
+        return ""
+    n_done = sum(1 for x in st if x.get("status") == "done")
+    return section_title(f"子目標分解（持續更新；{n_done}/{len(st)} 完成）") + subtasks_html(st)
+
+
 # ───────────────────── HTML（inline style，對齊 S1_ASYNC_GATHER 樣例）────
 
 def card(title: str, body: str, big: str = "", bg: str = "#f8fafc",
@@ -225,6 +369,11 @@ def render_brief_html(e: dict, data: dict, mapping: dict[str, str],
               t.get("result") or '<span style="color:#94a3b8;">未跑</span>']
              for t in e["tests"]])
 
+    # 表 3d/3e（可選）：實際運行設置＋log、子目標分解（持續更新）
+    best_panel = best_panel_html(e)
+    runs_tbl = runs_html(e)
+    subtasks_tbl = subtasks_section_html(e)
+
     # 表 4：依據 · 備註 · 軸性質 · 報告
     doclist = sorted(d for d, eid in mapping.items() if eid == e["id"])
     meta_rows = [
@@ -297,6 +446,9 @@ def render_brief_html(e: dict, data: dict, mapping: dict[str, str],
   {risk_tbl}
   {prod_tbl}
   {test_tbl}
+  {best_panel}
+  {runs_tbl}
+  {subtasks_tbl}
   {meta_tbl}
   {docs_html}
 
@@ -314,6 +466,61 @@ def render_brief_html(e: dict, data: dict, mapping: dict[str, str],
 
 
 # ───────────────────── MD（對齊 S1_ASYNC_GATHER_PIPELINE md 樣例）────
+
+def _repo_relpath(repo_rel: str) -> str:
+    return os.path.relpath(ROOT / repo_rel, start=BRIEF_DIR)
+
+
+def runs_md_lines(e: dict, sec: int) -> tuple[list, int]:
+    runs = e.get("runs") or []
+    if not runs:
+        return [], sec
+    out = [f"## {sec}. 運行設置與 Log（生產級腳本 prod-new ＋ 自己 option）", ""]
+    for i, r in enumerate(runs, 1):
+        swap = r.get("swap") or {}
+        swapbits = (f'　·　swap {swap.get("before", "?")}→{swap.get("after", "?")}' if swap else "")
+        out.append(f'**Run {i}** · {plain(str(r.get("when", "")))}　·　'
+                   f'thermal {plain(str(r.get("thermal", "?")))}{swapbits}')
+        out.append(f'- arm：`{plain(str(r.get("arm", "")))}`')
+        out.append(f'- 命令：`{plain(str(r.get("cmd", "")))}`')
+        if r.get("log"):
+            out.append(f'- Log／產物：[{Path(str(r["log"])).name}]({_repo_relpath(str(r["log"]))})')
+        res = r.get("result") or {}
+        if res:
+            out.append("- 結果：" + "　".join(
+                f'{plain(str(k))}={plain(str(v))}' for k, v in res.items()))
+        if r.get("verdict"):
+            out.append(f'- 判定：{plain(str(r["verdict"]))}')
+        out.append("")
+    return out, sec + 1
+
+
+def _subtask_md(items: list, depth: int) -> list:
+    out = []
+    mark = {"done": "[x]", "doing": "[~]", "todo": "[ ]", "blocked": "[!]"}
+    for t in items:
+        m = mark.get(str(t.get("status", "todo")), "[ ]")
+        extra = ""
+        if t.get("log"):
+            extra += f' [證]({_repo_relpath(str(t["log"]))})'
+        if t.get("note"):
+            extra += f' — {plain(str(t["note"]))}'
+        out.append(f'{"  " * depth}- {m} {plain(str(t.get("text", "")))}{extra}')
+        if t.get("children"):
+            out += _subtask_md(t["children"], depth + 1)
+    return out
+
+
+def subtasks_md_lines(e: dict, sec: int) -> tuple[list, int]:
+    st = e.get("subtasks") or []
+    if not st:
+        return [], sec
+    n_done = sum(1 for x in st if x.get("status") == "done")
+    out = [f"## {sec}. 子目標分解（持續更新；{n_done}/{len(st)} 完成）", ""]
+    out += _subtask_md(st, 0)
+    out.append("")
+    return out, sec + 1
+
 
 def render_brief_md(e: dict, data: dict, mapping: dict[str, str],
                     order: list[str], idx: int) -> str:
@@ -389,6 +596,11 @@ def render_brief_md(e: dict, data: dict, mapping: dict[str, str],
                 + f" | {plain(t.get('result') or '未跑')} |" for t in e["tests"]]
         out.append("")
         sec += 1
+
+    run_lines, sec = runs_md_lines(e, sec)
+    out += run_lines
+    sub_lines, sec = subtasks_md_lines(e, sec)
+    out += sub_lines
 
     doclist = sorted(d for d, eid in mapping.items() if eid == e["id"])
     out += [f"## {sec}. 依據 · 備註 · 對應報告", "",

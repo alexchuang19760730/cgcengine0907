@@ -1,0 +1,54 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）— TEMPLATE
+# ───────────────────────────────────────────────────────────────────────
+# 規則：每一個「會動 GPU / 會產出速度數字」的實驗，harness 啟動前必須帶一張
+#       填好的 charter。缺欄、基線無出處、驗收沒判據 → harness fail-closed 拒跑。
+#       這張卡回答三件事：【現狀】【目標】【驗收】，禁止「測一下、看看再說」。
+#
+# 用法：
+#   cp scripts/check/charters/_TEMPLATE.yaml scripts/check/charters/<id>.yaml
+#   # 編輯填寫後：
+#   python3 scripts/check/harness.py bench --arm "prod-new" \
+#       --charter scripts/check/charters/<id>.yaml --json /tmp/out.json
+#   豁免（純分析 / 急件，會在產物標 waived）：--charter waive --waive-reason "理由"
+# ═══════════════════════════════════════════════════════════════════════
+
+id: <kebab-case-唯一id>          # 例：e-rho-layer-batch
+owner: <lineA|lineI|freebuff|shared>   # 負責的線 / agent
+created: 2026-09-27
+
+# ── 【目標】這一臂要回答的「可判定」問題（一句話；禁止「測一下 X」）────────
+question: |
+  <例：ρ 按層批次化能否把 decode 從 13.99 提到 ≥15 t/s，且數值 bit-identical？>
+
+# ── 【現狀】權威基線：數字 + 口徑 + 出處（出處檔案必須存在）──────────────
+baseline:
+  metric: "<例：decode 13.99 t/s>"
+  cell:   "<例：prod-new, MTP off, warm-skip 64, fixed-fill-seed, reps 3>"
+  source: "<例：/tmp/clean_baseline.json   # 相對於 repo root 或絕對路徑，必須存在>"
+
+# ── 【假設】機制 + 預期收益（給區間、須有依據；禁止無出處絕對數）──────────
+hypothesis:
+  mechanism: |
+    <為什麼這個改動會有效；命中哪個通道（union/cb/gap/wait/submit）。
+     例：cb 42ms 若完全藏在 GPU busy(181ms) 底下，步時由 max(gpu,cpu) 決定。>
+  expected: "<例：+14.5% ~ +19%（14.4 ~ 15.0 t/s）；給區間不給單一絕對數>"
+  basis:    "<例：first-principles + docs/CB_DELIVERY_SETTLED_2026-09-23.md>"
+
+# ── 【驗收】跑「之前」就定好，跑完照表判定，不許跑完才挑指標 ──────────────
+acceptance:
+  success: "<例：3 對配對中位增益 ≥3%，且 D5 長探針 bit-identical>"
+  falsify: "<例：3 對配對增益 <3%（落在 cv 4.6% 噪聲內）→ 假設否證>"
+  on_fail: "<例：revert 源碼、NEXT_ACTIONS 登記判死、轉下一優先方向>"
+
+# ── 【量化目標】機器可讀的標竿；brief 自動顯示「目前成績最高配置 vs 目標差距」──
+#   每跑一臂，mindmap 節點自動重算 best（成績最高的那組配置）與差距／進度%，跑中即可見。
+targets:
+  decode_tps: 15.0     # decode 目標（例；交付現況約 12，終極 25）
+  prefill_tps: 250.0   # prefill 目標（例；現況約 290，已達標）
+
+# ── 臂：預設一律基於 prod-new。若必須用非 prod-new profile，要給理由 ────────
+arms:
+  - prod-new
+# 非 prod-new 對照（罕見）需補：
+# non_prod_reason: "<為什麼這個問題只能在該 profile 回答>"
