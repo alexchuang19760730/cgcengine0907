@@ -159,10 +159,14 @@ acceptance:
 # ── 【階段（Q1 沒過不得進下一階段）】────────────────────────────────────
 phases:
   - id: P0
-    status: "✅ 已裁決（2026-09-28 00:1x，0 build、0 GPU，讀源碼）"
+    status: "⚠️ 結論方向對、**論證作廢**（2026-09-29 查證：裁的 kernel 不參與 combine）—— 見 `p2_adjudication.J1_m1_life_or_death.evidence.j1-a`"
     text: |
       **裁決 09-19 的判死前提**。讀 `ggml-metal.metal:1721-1778`
       `kernel_sum_rows_impl` 全本。
+      ⛔ **2026-09-29 更正**：`ggml_sum_rows` 在 MoE 裡只服務 `norm_w` 的權重
+      歸一化（`llama-graph.cpp:2589`），**不是 expert 聚合** ⇒ P0 的 verdict (a)(b)(c)
+      針對的是一個不參與 combine 的 kernel，整段作廢。真正的判定見 `p2_adjudication`。
+      （P0 的**結論**「D1 不判死」仍成立，但理由完全不同。）
     verdict: |
       **(a) 09-19 對機制的描述是錯的。** 實際是三層，不是「依序相加」：
         ① `:1748-1750` 每執行緒**跨步**累加 `for(i0=tpitg.x; i0<ne00; i0+=ntg.x)`；
@@ -240,6 +244,119 @@ phases:
     text: |
       **測速**：交付 cell、MTP off、與 11.61 錨點配對。
     exit: "tg ≥ 13.6 才算 success；< 13.0 退回"
+
+# ═══════════════════════════════════════════════════════════════════════
+# 【P2 預註冊判定】（2026-09-29 00:5x，線 A）
+#   判準寫在讀源碼**之前**；讀完只填 verdict，不改判準。
+#   0 build、0 GPU、純靜態源碼判定。
+# ═══════════════════════════════════════════════════════════════════════
+p2_adjudication:
+  registered_at: "2026-09-29 00:5x（線 A）"
+  method_culpa: |
+    方法論坦白：判準的**字面**原本寫在 `sum_rows` 的蝴蝶樹上（「C 與誰配對」）。
+    讀源碼後發現 combine 不是 sum_rows ⇒ 對**正確的那個 op（add 鏈）**重述同一條判準
+    「C 在 combine 執行前寫回原位 ＋ 只跑一次 combine ⇒ 逐位元相同」。
+    **判準的方向沒有移動**（兩者都指向「D1 不判死」），但見證的 op 換了，
+    且新機制浮現一條舊論證看不到的實作約束（見 J2-b）。
+
+  J1_m1_life_or_death:
+    question: "D1（matmul 分段、combine 單一次、C 寫回 routed order 原位）能不能 bit-identical？"
+    criterion_pre: |
+      逐位元相同 **iff** 下列三條同時成立，任一不成立 ⇒ 判死：
+        (i)   combine 的每一項 c_i 與「同批帶了哪些 expert」無關（**列獨立**）；
+        (ii)  C 的值能在 combine 執行前寫回它在原張量裡的**原始偏移**；
+        (iii) 該寫入精確（不是「把真值加到一個不為 0 的殘值上」）。
+    verdict: "✅ **M1 原理上成立（D1 不判死）** —— 三條全過。"
+    evidence:
+      - id: j1-a
+        claim: "真正的 combine 是左結合 add 鏈，不是 sum_rows ⇒ P0 論證作廢"
+        where: "llama-graph.cpp:2589 vs :2863-2941"
+        detail: |
+          `ggml_sum_rows` 在 MoE 裡唯一一處是 :2589 的 `weights_sum`（`norm_w` 歸一化），
+          **不參與 expert 聚合**。聚合在 :2863-2941：
+            `cur_experts[i] = ggml_view_2d(experts, n_embd, n_tokens, experts->nb[2], i*experts->nb[1])`
+            （偏移 = `i*nb[1]`，i 是 **ids 陣列裡的位置**）
+            ⇒ :2919-2941 `moe_out = ((((c0+c1)+c2)+…)+c_{k-1})`，k = `hparams.n_expert_used`。
+      - id: j1-b
+        claim: "每個 c_i 與批次組成無關（列獨立）⇒ C 遲到不改動 H 任何一列"
+        where: "ggml-metal.metal:10716-10754；llama-graph.cpp:2623,2637-2640,2838,2852"
+        detail: |
+          `kernel_mul_mm_id`：`im = tgpig.z`（:10723，註釋原話「// expert」）、
+          `id = ids_i32[im*args.ne21 + r1 + lr1]`（:10748）、`neh1 = tpe_u32[im]`（:10730）；
+          tile 尺寸 NR0=64／NR1=32／NK=32 是**編譯期常量**（:10716-10721）。
+          ⇒ 單一 expert 的算術只由 (ne0, neh1[im], id, tile 座標) 決定，
+             **與這次呼叫帶了幾個 id 無關** ⇒ 拆成兩次呼叫，逐 expert 值不變。
+          swiglu 與 `ggml_mul(experts, weights)`（:2852）逐元素、逐列 ⇒ 也不跨界。
+      - id: j1-c
+        claim: "原位寫回機制存在，Metal 有 kernel，限制滿足"
+        where: "ggml.h:935-943、:1630-1670；ggml-metal-ops.cpp:343；ggml-metal-device.m:1194"
+        detail: |
+          `ggml_acc` 註釋原話「dst = a; view(dst, nb1..nb3, offset) += b」
+          ⇒ **byte offset ＋ 累加**，正是「把 C 那一列加回它在 experts 的原始偏移」。
+          Metal 有實作，限制 `contiguous_rows` 且 `src0->type == F32`；
+          本路徑 `experts` 是 F32、decode 時 n_tokens=1 ⇒ 單列連續 ⇒ **限制滿足**。
+          ⚠ `grep ggml_acc(` 在 `src/llama.cpp/src/` **0 命中** ⇒ 新路徑，無既有範例可抄。
+      - id: j1-d
+        claim: "寫入精確性：遲到列必須先是精確 0"
+        detail: |
+          `ggml_acc` 是 `+=` ⇒ 列裡有殘值就不等價。精確 0 的兩條來源：
+            (a) 顯式 zero-fill；(b) zero slot（G3，`llama-context.cpp:3745-3815`）
+            讓缺席 expert 的 down 輸出 = 0，再 `ggml_mul(weights)` 仍 = 0。
+          IEEE：`+0 + c = c` 對所有有限 c 精確。
+          ⚠ 唯一邊界 `+0 + (-0) = +0`：若 c_i 恰為 `-0`，符號位與原式不同
+            （數值相等，且 add 鏈下游 `x+(-0) == x+(+0)`）⇒ **已知邊界，非 blocker**。
+    precondition: |
+      ⛔ **以上只在未融合路徑成立**。`CGC_DOWN_COMBINE=1` 時 combine 被折進
+      `kernel_mul_mv_id_down_combine_q3_K_f32`（`ggml-metal.metal:11886`）內部，
+      該 kernel 自己累加 k 個 expert ⇒ 拆它就**退回 09-19 的論證 ⇒ 判死**。
+      ✅ resolve-only 實測：prod-new 的 `CGC_DOWN_COMBINE` = **<unset>**（未設）
+      ⇒ 交付臂走未融合路徑（:2838-2941）⇒ **J1 適用於交付臂**。
+
+  J2_cost_ceiling:
+    question: "寫回的成本上限量級？"
+    criterion_pre: |
+      拆成「頻寬項」與「派發項」兩半，各給上界，**都標推算**。
+      預期主導項是派發（每 op 的 encode＋submit），不是頻寬。
+    verdict: |
+      ⛔ **全是推算，不得當收益引用**。頻寬項可忽略；**主導項是「靜態圖 ⇒ 每層常備
+      k 個 acc 節點」的固定成本，與 miss 率無關**。
+    findings:
+      - id: j2-a
+        claim: "頻寬項可忽略"
+        detail: |
+          流量 ≈ (acc 數) × 2 × n_embd × 4 B。以 k=8、39 層、n_embd≈2048 計
+          ⇒ 312 × 2 × 8 KB ≈ 5 MB/step ⇒ ~0.7 ms @7 GB/s。不是主導項。
+      - id: j2-b
+        claim: "★ 真成本＝靜態圖約束（本輪新發現，比 J1 更決定可行性）"
+        detail: |
+          decode 的圖**建一次、重複用**；miss 集合**逐 step 變**
+          ⇒ 不可能「這 step 2 個 miss 就建 2 個 acc 節點」。
+          ⇒ 唯一靜態可行的形狀：**每層常備 k 個 acc 節點（每列一個）**，
+             缺席那幾列的 b 填真值、其餘填 0（`+=0` 精確、無副作用）。
+          ⇒ **成本由固定的 k×n_layer 主導，與 miss 率無關**：k=8、39 層 ⇒ **312 op/step**。
+          ⚠ 每 op encode＋submit 若 ~5–10 µs ⇒ **1.6–3.1 ms/step**；
+             step ≈ 86 ms（11.61 t/s）⇒ **約 1.8%–3.6%**。
+          ⛔ 推算；未計 ggml-alloc 為 C 子圖新增的 buffer 與 zero-fill。
+      - id: j2-c
+        claim: "卡上既有的『~12 op/step（0.3 miss/層）』與 J2-b 矛盾 ⇒ 停用"
+        detail: |
+          `targets.miss_rate_measured` = [0.047, 0.430] ⇒ 每層 0.38–3.44 個 miss
+          ⇒ 每 step 15–134；而靜態圖要求的是**固定 312**。
+          「0.3 miss/層」**沒有來源**，且方向錯（把成本說成隨 miss 縮放）
+          ⇒ ⛔ 停止引用，以 J2-b 的固定值取代。
+    k_unresolved: |
+      ⚠ `hparams.n_expert_used` 未實測：源碼兩處註釋互相矛盾
+      （:2746「8 down GEMVs + 7 adds」⇒ k=8；:2929「n_expert_used-1 = 6」⇒ k=7）。
+      **J1 不依賴 k**；J2 成本與 k 線性相關。下次有 log 時補實測值。
+
+  consequences:
+    - "★ 關卡從「圖建構（能否寫回原位）」改判為「**靜態圖 vs 逐 step 變化的 miss 集合**」；
+       後者把成本從「隨 miss 縮放」變成「固定 k×n_layer」，是新的實作約束。"
+    - "`designs.D1.risk` 的「scatter 成本從沒估過」由 J2 回答：機制存在（ggml_acc），
+       成本上界 1.8%–3.6%（推算）。"
+    - "⛔ 本項**未判活**：J1 只證明原理可行。P2 的 exit（M1 9/9）仍需動 `src/`。"
+    - "owner 仍未明文 ⇒ 可開給 owner 的工單（要動的檔、成本上界、M1 判據），
+       但**本線不實作**。"
 
 # ── 【凍結判準（沿用 09-26 §EN-150 四條，不改）】────────────────────────
 frozen_criteria:

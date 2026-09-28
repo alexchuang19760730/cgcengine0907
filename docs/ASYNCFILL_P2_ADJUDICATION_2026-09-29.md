@@ -1,0 +1,161 @@
+# async fill ＋ per-expert 重算 —— P2 判定（M1 可行性 ＋ 成本上界）
+
+- 日期：2026-09-29 00:5x
+- 線別：線 A（S1／段邊界）
+- 成本：**0 build、0 GPU、0 `src/`**。純靜態源碼判定。
+- 卡：`scripts/check/charters/e-asyncfill-recompute-2026-09-28.yaml`（新增 `p2_adjudication` 節）
+- 關聯：`ASYNCFILL_RECOMPUTE_CHARTER_2026-09-28.md`、`docs/ASYNCFILL_P1_G3_NOOP_20260929_0035.html`
+
+---
+
+## 0. 一句話結論
+
+**D1 在原理上可以 bit-identical（不判死），但「能不能做」的關卡不是 IEEE、也不是寫回機制，
+而是「decode 的圖只建一次，而 miss 集合逐 step 變」—— 這把成本從「隨 miss 縮放」
+變成「每層常備 k 個 acc 節點的固定成本」。**
+
+同時：**上一顆 commit（P0）的整段論證作廢** —— 它裁的 `sum_rows` 根本不參與 expert 聚合。
+
+---
+
+## 1. P0 論證作廢（本輪第一個發現）
+
+| | P0 的記載（09-28） | 2026-09-29 查證 |
+|---|---|---|
+| combine 是哪個 op | `sum_rows`（`sum_rows(weights * experts)`） | ❌ **不是** |
+| `ggml_sum_rows` 在 MoE 的實際用途 | — | 只有 `llama-graph.cpp:2589` 的 `weights_sum`（`norm_w` 權重歸一化），**不參與聚合** |
+| 真正的聚合 | — | `llama-graph.cpp:2863-2941` 的**左結合 add 鏈** |
+
+全 repo 的 `ggml_sum_rows` 使用點（確認沒有別處做 expert 聚合）：
+
+```
+llama-graph.cpp:2086  group_scores（專家分組打分）
+llama-graph.cpp:2589  weights_sum（norm_w 歸一化）   ← MoE 裡唯一一處
+models/delta-net-base.cpp:348,369 / deepseek32.cpp:345 / deepseek4.cpp:328,335
+models/rwkv7-base.cpp:127 / gemma3n.cpp:314,389
+```
+
+⇒ P0 verdict 的 (a)(b)(c)（蝴蝶樹、樹形由 `(ne00, ntg.x)` 決定、09-19 反證不適用）
+針對的是一個**不參與 combine 的 kernel**，整段作廢。所幸 P0 的**結論方向**（D1 不判死）
+仍然成立，但理由完全不同 —— 真正的理由見 §2。
+
+---
+
+## 2. J1 —— M1 生／死
+
+### 2.1 預註冊判準（讀源碼之前寫死）
+
+逐位元相同 **iff** 三條同時成立，任一不成立 ⇒ 判死：
+
+- **(i)** combine 的每一項 `c_i` 與「同批帶了哪些 expert」無關（**列獨立**）；
+- **(ii)** C 的值能在 combine 執行前寫回它在原張量裡的**原始偏移**；
+- **(iii)** 該寫入精確（不是「把真值加到一個不為 0 的殘值上」）。
+
+### 2.2 判定：**✅ M1 原理上成立（D1 不判死）**，三條全過
+
+**(i) 列獨立 —— 過**
+
+`kernel_mul_mm_id`（`ggml-metal.metal:10697`）：
+
+```metal
+const int   im  = tgpig.z;                        // :10723 註釋原話 "// expert"
+const int32_t neh1 = tpe_u32[im];                 // :10730
+const int   id = ids_i32[im*args.ne21 + r1 + lr1]; // :10748
+// NR0 = 64; NR1 = 32; NK = 32 —— :10716-10721 皆為編譯期常量
+```
+
+單一 expert 的算術只由 `(ne0, neh1[im], id, tile 座標)` 決定，
+**與這次呼叫帶了幾個 id 無關** ⇒ 拆成兩次呼叫，逐 expert 值不變。
+`swiglu` 與 `ggml_mul(experts, weights)`（`:2852`）逐元素、逐列 ⇒ 也不跨界。
+⇒ **C 組遲到不改動 H 組任何一列的值。**
+
+**(ii) 原位寫回機制存在 —— 過**
+
+- `ggml.h:935-943` `ggml_acc` 註釋原話：`dst = a; view(dst, nb1..nb3, offset) += b`
+  ⇒ **byte offset ＋ 累加**，正是「把 C 那一列加回它在 `experts` 的原始偏移」要的東西。
+- `ggml_view_2d/3d/4d` 末參是 byte `offset`。
+- Metal 有 kernel：`ggml-metal-ops.cpp:343` ＋ `ggml-metal-device.m:1194` supports 表。
+  限制 `contiguous_rows` 且 `src0->type == F32`；本路徑 `experts` 為 F32、
+  decode 時 `n_tokens=1` ⇒ 單列連續 ⇒ **限制滿足**。
+- ⚠ `grep ggml_acc(` 在 `src/llama.cpp/src/` **0 命中** ⇒ 是新路徑，無既有範例可抄。
+
+**(iii) 寫入精確 —— 過**
+
+`ggml_acc` 是 `+=` ⇒ 遲到列必須先是**精確 0**。兩條來源：
+(a) 顯式 zero-fill；(b) zero slot（G3，`llama-context.cpp:3745-3815`）讓缺席 expert 的
+down 輸出 = 0，`ggml_mul(weights)` 後仍 = 0。IEEE：`+0 + c = c` 對所有有限 c 精確。
+
+⚠ 已知邊界：`+0 + (-0) = +0` ⇒ 若 `c_i` 恰為 `-0`，符號位與原式不同
+（數值相等，且 add 鏈下游 `x+(-0) == x+(+0)`）⇒ **非 blocker**。
+
+### 2.3 ⛔ 前提：只在未融合路徑成立
+
+`CGC_DOWN_COMBINE=1` 時 combine 被折進 `kernel_mul_mv_id_down_combine_q3_K_f32`
+（`ggml-metal.metal:11886`）內部，該 kernel 自己累加 k 個 expert
+⇒ 拆它就**退回 09-19 的論證 ⇒ 判死**。
+
+✅ **resolve-only 實測**：prod-new 的 `CGC_DOWN_COMBINE` = **`<unset>`**（未設）
+⇒ 交付臂走未融合路徑（`:2838-2941`）⇒ **J1 適用於交付臂**。
+
+---
+
+## 3. J2 —— 成本上界
+
+### 3.1 預註冊判準
+
+拆成「頻寬項」與「派發項」各給上界，**都標推算**；預期主導項是派發，不是頻寬。
+
+### 3.2 判定
+
+| 項 | 量級 | 結論 |
+|---|---|---|
+| 頻寬項（j2-a） | ≈ 5 MB/step ⇒ ~0.7 ms @7 GB/s | 可忽略 |
+| **派發／靜態圖項（j2-b）** | **312 op/step × 5–10 µs ⇒ 1.6–3.1 ms/step** | **主導，約 1.8%–3.6%**（step ≈ 86 ms @ 11.61 t/s） |
+
+**j2-b 是本輪第二個發現，也比 J1 更決定可行性：**
+
+decode 的圖**建一次、重複用**，而 miss 集合**逐 step 變**
+⇒ 不可能「這 step 2 個 miss 就建 2 個 acc 節點」。
+唯一靜態可行的形狀：**每層常備 k 個 acc 節點（每列一個）**，
+缺席那幾列的 `b` 填真值、其餘填 0（`+=0` 精確、無副作用）。
+
+⇒ **成本由固定的 `k × n_layer` 主導，與 miss 率無關**（k=8、39 層 ⇒ 312 op/step）。
+
+**j2-c：卡上既有的「~12 op/step（0.3 miss/層）」停用。**
+`targets.miss_rate_measured` = [0.047, 0.430] ⇒ 每 step 15–134 個 miss；
+而靜態圖要求的是**固定 312**。原數字沒有來源，且方向錯（把成本說成隨 miss 縮放）。
+
+⚠ **k 未實測**：源碼兩處註釋互相矛盾 ——
+`:2746`「8 down GEMVs + 7 adds」⇒ k=8；`:2929`「n_expert_used-1 = 6」⇒ k=7。
+J1 不依賴 k；J2 成本與 k 線性相關。
+
+⛔ 全部是推算：未計 `ggml-alloc` 為 C 子圖新增的 buffer，也未計 zero-fill。
+
+---
+
+## 4. 結論對卡的改動
+
+- **關卡改判**：從「圖建構（能否寫回原位）」→「**靜態圖 vs 逐 step 變化的 miss 集合**」。
+- `designs.D1.risk` 的「scatter 成本從沒估過」由 J2 回答：機制存在（`ggml_acc`），上界 1.8%–3.6%（推算）。
+- ⛔ **本項未判活**：J1 只證明原理可行。P2 的 exit（`M1 9/9 M2 9/9`）仍需動 `src/`。
+- P0 status 改為「結論方向對、論證作廢」。
+
+## 5. 給 owner 的工單（本線不實作）
+
+owner 仍未明文（`owner:` 欄自開卡起未決）。工單內容已齊：
+
+1. 要動的檔：`llama-graph.cpp`（`:2623` gate_up、`:2838` down、`:2863-2941` add 鏈）
+   ＋ 新增 acc 節點；`ggml-metal-ops.cpp` 只需既有 `GGML_OP_ACC`（已有 kernel）。
+2. 成本上界：固定 `k × n_layer` 個 op/step（推算 1.8%–3.6%）。
+3. M1 判據：`scripts/check/m123_oracle_gate.py`，ref v7，`config_diffs == []`，
+   ok = (M1 rate == 1.0 AND M2 rate == 1.0)。
+4. ⛔ 前提：`CGC_DOWN_COMBINE` 必須關閉；`experts` 必須是 F32／單列連續。
+
+## 6. 本輪沒做的五件事（避免下次重踩）
+
+1. 沒跑任何 cell（0 GPU）—— J1/J2 是靜態判定。
+2. 沒動 `src/`。
+3. 沒解決 owner。
+4. 沒實測 k。
+5. 沒把「每 op 派發 5–10 µs」坐實 —— 那是推算，要用既有 `CGC_HOOK_PROFILE`
+   或 graph 節點計數量過才算數。

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>async fill 立項卡 P2 判定白皮書：D1 不判死，但關卡換成「靜態圖 vs 逐 step 的 miss 集合」（2026-09-29）</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1c1c1a; --muted:#5f5e5a;
+    --line:#d3d1c7; --panel:#f7f6f2;
+    --red:#a32d2d; --redbg:#fcebeb;
+    --green:#3b6d11; --greenbg:#eaf3de;
+    --amber:#854f0b; --amberbg:#faeeda;
+    --blue:#185fa5; --bluebg:#e6f1fb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--fg);
+       font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;}
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:24px;font-weight:600;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:28px}
+  h2{font-size:17px;font-weight:600;margin:32px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;font-weight:600;margin:20px 0 8px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel);font-weight:600}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+  .card{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:14px 0;background:var(--panel)}
+  .r{background:var(--redbg);border-left:3px solid var(--red)}
+  .g{background:var(--greenbg);border-left:3px solid var(--green)}
+  .a{background:var(--amberbg);border-left:3px solid var(--amber)}
+  .b{background:var(--bluebg);border-left:3px solid var(--blue)}
+  code{font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--panel);
+       padding:1px 4px;border-radius:4px}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+      padding:12px 14px;overflow-x:auto;font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+  ul,ol{padding-left:22px;margin:10px 0}
+  li{margin:5px 0}
+  .k{font-weight:600}
+  footer{margin-top:40px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>async fill ＋ per-expert 重算 —— P2 判定</h1>
+<div class="sub">
+  2026-09-29 01:02 ｜ 線 A（S1／段邊界）｜ <span class="k">0 build、0 GPU、0 src/</span> ｜
+  純靜態源碼判定 ｜ 卡 <code>e-asyncfill-recompute</code> 新增 <code>p2_adjudication</code> 節
+</div>
+
+<div class="card b">
+<div class="k">一句話結論</div>
+D1（matmul 分段、只跑一次 combine、C 寫回原位）<span class="k">在原理上可以 bit-identical，不判死</span>。
+但<span class="k">「能不能做」的關卡換了</span>：不是 IEEE 浮點、也不是寫回機制，
+而是「<span class="k">decode 的圖只建一次，而 miss 集合逐 step 變</span>」——
+這把成本從「隨 miss 縮放」變成「每層常備 k 個 acc 節點的固定成本」。
+</div>
+
+<div class="card r">
+<div class="k">同時：上一顆 commit（P0）的整段論證作廢</div>
+P0 裁的 <code>sum_rows</code> <span class="k">根本不參與 expert 聚合</span>。
+它在 MoE 裡唯一一處是 <code>llama-graph.cpp:2589</code> 的 <code>weights_sum</code>（<code>norm_w</code> 權重歸一化）。
+真正的聚合是 <code>:2863-2941</code> 的<span class="k">左結合 add 鏈</span>。
+所幸 P0 的結論方向（D1 不判死）仍然成立，但理由完全不同。
+</div>
+
+<h2>1. P0 論證作廢</h2>
+
+<table>
+<tr><th>項目</th><th>P0 的記載（09-28）</th><th>2026-09-29 查證</th></tr>
+<tr><td>combine 是哪個 op</td><td><code>sum_rows(weights * experts)</code></td><td><span class="k">❌ 不是</span></td></tr>
+<tr><td><code>ggml_sum_rows</code> 在 MoE 的用途</td><td>—</td><td>只有 <code>:2589</code> 的 <code>weights_sum</code>（<code>norm_w</code> 歸一化），<span class="k">不參與聚合</span></td></tr>
+<tr><td>真正的聚合</td><td>—</td><td><code>:2863-2941</code> 的左結合 add 鏈</td></tr>
+</table>
+
+<h3>全 repo 的 <code>ggml_sum_rows</code> 使用點（確認沒有別處做 expert 聚合）</h3>
+<pre>llama-graph.cpp:2086  group_scores（專家分組打分）
+llama-graph.cpp:2589  weights_sum（norm_w 歸一化）   ← MoE 裡唯一一處
+models/delta-net-base.cpp:348,369 / deepseek32.cpp:345 / deepseek4.cpp:328,335
+models/rwkv7-base.cpp:127 / gemma3n.cpp:314,389</pre>
+
+<h2>2. J1 —— M1 生／死</h2>
+
+<h3>2.1 預註冊判準（讀源碼之前寫死）</h3>
+<p>逐位元相同 <span class="k">iff</span> 三條同時成立，任一不成立 ⇒ 判死：</p>
+<ol>
+<li><span class="k">(i)</span> combine 的每一項 <code>c_i</code> 與「同批帶了哪些 expert」無關（<span class="k">列獨立</span>）；</li>
+<li><span class="k">(ii)</span> C 的值能在 combine 執行前寫回它在原張量裡的<span class="k">原始偏移</span>；</li>
+<li><span class="k">(iii)</span> 該寫入精確（不是「把真值加到一個不為 0 的殘值上」）。</li>
+</ol>
+
+<div class="card g">
+<div class="k">2.2 判定：✅ M1 原理上成立（D1 不判死）—— 三條全過</div>
+</div>
+
+<h3>(i) 列獨立 —— 過</h3>
+<p><code>kernel_mul_mm_id</code>（<code>ggml-metal.metal:10697</code>）：</p>
+<pre>const int     im   = tgpig.z;                          // :10723 註釋原話 "// expert"
+const int32_t neh1 = tpe_u32[im];                      // :10730
+const int     id   = ids_i32[im*args.ne21 + r1 + lr1]; // :10748
+// NR0 = 64; NR1 = 32; NK = 32 —— :10716-10721 皆為編譯期常量</pre>
+<p>單一 expert 的算術只由 <code>(ne0, neh1[im], id, tile 座標)</code> 決定，
+<span class="k">與這次呼叫帶了幾個 id 無關</span> ⇒ 拆成兩次呼叫，逐 expert 值不變。
+<code>swiglu</code> 與 <code>ggml_mul(experts, weights)</code>（<code>:2852</code>）逐元素、逐列 ⇒ 也不跨界。</p>
+<div class="card g">⇒ <span class="k">C 組遲到不改動 H 組任何一列的值。</span></div>
+
+<h3>(ii) 原位寫回機制存在 —— 過</h3>
+<ul>
+<li><code>ggml.h:935-943</code> <code>ggml_acc</code> 註釋原話：<code>dst = a; view(dst, nb1..nb3, offset) += b</code>
+⇒ <span class="k">byte offset ＋ 累加</span>，正是「把 C 那一列加回它在 <code>experts</code> 的原始偏移」要的東西。</li>
+<li><code>ggml_view_2d/3d/4d</code> 末參是 byte <code>offset</code>。</li>
+<li>Metal 有 kernel：<code>ggml-metal-ops.cpp:343</code> ＋ <code>ggml-metal-device.m:1194</code> supports 表。
+限制 <code>contiguous_rows</code> 且 <code>src0-&gt;type == F32</code>；本路徑 <code>experts</code> 為 F32、
+decode 時 <code>n_tokens=1</code> ⇒ 單列連續 ⇒ <span class="k">限制滿足</span>。</li>
+</ul>
+<div class="card a">⚠ <code>grep ggml_acc(</code> 在 <code>src/llama.cpp/src/</code> <span class="k">0 命中</span>
+⇒ 是新路徑，無既有範例可抄。</div>
+
+<h3>(iii) 寫入精確 —— 過</h3>
+<p><code>ggml_acc</code> 是 <code>+=</code> ⇒ 遲到列必須先是<span class="k">精確 0</span>。兩條來源：
+(a) 顯式 zero-fill；(b) zero slot（G3，<code>llama-context.cpp:3745-3815</code>）讓缺席 expert 的
+down 輸出 = 0，<code>ggml_mul(weights)</code> 後仍 = 0。IEEE：<code>+0 + c = c</code> 對所有有限 c 精確。</p>
+<div class="card a">⚠ 已知邊界：<code>+0 + (-0) = +0</code> ⇒ 若 <code>c_i</code> 恰為 <code>-0</code>，符號位與原式不同
+（數值相等，且 add 鏈下游 <code>x+(-0) == x+(+0)</code>）⇒ <span class="k">非 blocker</span>。</div>
+
+<div class="card r">
+<div class="k">⛔ 前提：只在未融合路徑成立</div>
+<code>CGC_DOWN_COMBINE=1</code> 時 combine 被折進 <code>kernel_mul_mv_id_down_combine_q3_K_f32</code>
+（<code>ggml-metal.metal:11886</code>）內部，該 kernel 自己累加 k 個 expert
+⇒ 拆它就<span class="k">退回 09-19 的論證 ⇒ 判死</span>。<br><br>
+✅ <span class="k">resolve-only 實測</span>：prod-new 的 <code>CGC_DOWN_COMBINE</code> = <code>&lt;unset&gt;</code>（未設）
+⇒ 交付臂走未融合路徑（<code>:2838-2941</code>）⇒ <span class="k">J1 適用於交付臂</span>。
+</div>
+
+<h2>3. J2 —— 成本上界</h2>
+
+<h3>3.1 預註冊判準</h3>
+<p>拆成「頻寬項」與「派發項」各給上界，<span class="k">都標推算</span>；預期主導項是派發，不是頻寬。</p>
+
+<h3>3.2 判定</h3>
+<table>
+<tr><th>項</th><th>量級</th><th>結論</th></tr>
+<tr><td>頻寬項（j2-a）</td><td>≈ 5 MB/step ⇒ ~0.7 ms @7 GB/s</td><td>可忽略</td></tr>
+<tr><td><span class="k">派發／靜態圖項（j2-b）</span></td><td><span class="k">312 op/step × 5–10 µs ⇒ 1.6–3.1 ms/step</span></td><td><span class="k">主導，約 1.8%–3.6%</span>（step ≈ 86 ms @ 11.61 t/s）</td></tr>
+</table>
+
+<div class="card b">
+<div class="k">j2-b 是本輪第二個發現，也比 J1 更決定可行性</div>
+decode 的圖<span class="k">建一次、重複用</span>，而 miss 集合<span class="k">逐 step 變</span>
+⇒ 不可能「這 step 2 個 miss 就建 2 個 acc 節點」。<br>
+唯一靜態可行的形狀：<span class="k">每層常備 k 個 acc 節點（每列一個）</span>，
+缺席那幾列的 <code>b</code> 填真值、其餘填 0（<code>+=0</code> 精確、無副作用）。<br><br>
+⇒ <span class="k">成本由固定的 <code>k × n_layer</code> 主導，與 miss 率無關</span>（k=8、39 層 ⇒ 312 op/step）。
+</div>
+
+<div class="card r">
+<div class="k">j2-c：卡上既有的「~12 op/step（0.3 miss/層）」停用</div>
+<code>targets.miss_rate_measured</code> = [0.047, 0.430] ⇒ 每 step 15–134 個 miss；
+而靜態圖要求的是<span class="k">固定 312</span>。原數字沒有來源，且方向錯（把成本說成隨 miss 縮放）。
+</div>
+
+<div class="card a">⚠ <span class="k">k 未實測</span>：源碼兩處註釋互相矛盾 ——
+<code>:2746</code>「8 down GEMVs + 7 adds」⇒ k=8；<code>:2929</code>「n_expert_used-1 = 6」⇒ k=7。
+J1 不依賴 k；J2 成本與 k 線性相關。<br>
+⛔ 全部是推算：未計 <code>ggml-alloc</code> 為 C 子圖新增的 buffer，也未計 zero-fill。</div>
+
+<h2>4. 結論對卡的改動</h2>
+<ul>
+<li><span class="k">關卡改判</span>：從「圖建構（能否寫回原位）」→「<span class="k">靜態圖 vs 逐 step 變化的 miss 集合</span>」。</li>
+<li><code>designs.D1.risk</code> 的「scatter 成本從沒估過」由 J2 回答：機制存在（<code>ggml_acc</code>），上界 1.8%–3.6%（推算）。</li>
+<li>⛔ <span class="k">本項未判活</span>：J1 只證明原理可行。P2 的 exit（<code>M1 9/9 M2 9/9</code>）仍需動 <code>src/</code>。</li>
+<li>P0 status 改為「結論方向對、論證作廢」。</li>
+</ul>
+
+<h2>5. 給 owner 的工單（本線不實作）</h2>
+<p>owner 仍未明文（<code>owner:</code> 欄自開卡起未決）。工單內容已齊：</p>
+<ol>
+<li>要動的檔：<code>llama-graph.cpp</code>（<code>:2623</code> gate_up、<code>:2838</code> down、<code>:2863-2941</code> add 鏈）＋ 新增 acc 節點；
+<code>ggml-metal-ops.cpp</code> 只需既有 <code>GGML_OP_ACC</code>（已有 kernel）。</li>
+<li>成本上界：固定 <code>k × n_layer</code> 個 op/step（推算 1.8%–3.6%）。</li>
+<li>M1 判據：<code>scripts/check/m123_oracle_gate.py</code>，ref v7，<code>config_diffs == []</code>，
+ok = (M1 rate == 1.0 AND M2 rate == 1.0)。</li>
+<li>⛔ 前提：<code>CGC_DOWN_COMBINE</code> 必須關閉；<code>experts</code> 必須是 F32／單列連續。</li>
+</ol>
+
+<h2>6. 本輪沒做的五件事（避免下次重踩）</h2>
+<ol>
+<li>沒跑任何 cell（0 GPU）—— J1/J2 是靜態判定。</li>
+<li>沒動 <code>src/</code>。</li>
+<li>沒解決 owner。</li>
+<li>沒實測 k。</li>
+<li>沒把「每 op 派發 5–10 µs」坐實 —— 那是推算，要用既有 <code>CGC_HOOK_PROFILE</code>
+或 graph 節點計數量過才算數。</li>
+</ol>
+
+<footer>
+產生：2026-09-29 01:02 ｜ 線 A ｜ 0 build、0 GPU、0 src/ ｜
+卡 <code>scripts/check/charters/e-asyncfill-recompute-2026-09-28.yaml</code>（<code>_charter_gate</code> PASS）｜
+同文 markdown：<code>docs/ASYNCFILL_P2_ADJUDICATION_2026-09-29.md</code>
+</footer>
+
+</div>
+</body>
+</html>
