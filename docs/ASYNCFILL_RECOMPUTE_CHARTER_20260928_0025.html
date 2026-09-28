@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>async fill ＋ 重算 kernel 立項卡 — 判死前提已被推翻（2026-09-28）</title>
+<style>
+  :root{ --bg:#0f1115; --panel:#161a21; --line:#262c36; --tx:#e6e9ef; --dim:#98a2b3;
+         --ok:#3fb950; --bad:#f85149; --warn:#d29922; --acc:#58a6ff; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+       font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang TC","Helvetica Neue",sans-serif}
+  .wrap{max-width:920px;margin:0 auto;padding:40px 28px 80px}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:.3px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:28px}
+  h2{font-size:19px;margin:38px 0 14px;padding-left:11px;border-left:3px solid var(--acc)}
+  h3{font-size:15px;margin:22px 0 8px;color:var(--acc)}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+  .lead{background:linear-gradient(90deg,rgba(88,166,255,.10),transparent);
+        border-left:3px solid var(--acc);padding:14px 18px;border-radius:8px;margin:18px 0}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:#1b2028;color:var(--dim);font-weight:600;font-size:13px}
+  code{background:#1b2028;padding:1px 5px;border-radius:4px;font-size:13px}
+  pre{background:#10131a;border:1px solid var(--line);border-radius:8px;
+      padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.65}
+  .ok{color:var(--ok);font-weight:600} .bad{color:var(--bad);font-weight:600}
+  .warn{color:var(--warn);font-weight:600} .dim{color:var(--dim)}
+  .tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;
+       border:1px solid var(--line);background:#1b2028;color:var(--dim)}
+  .tag.ok{color:var(--ok);border-color:#255c32} .tag.bad{color:var(--bad);border-color:#5c2626}
+  .tag.warn{color:var(--warn);border-color:#5c4a1e}
+  ul{margin:8px 0;padding-left:22px} li{margin:5px 0}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:720px){.grid{grid-template-columns:1fr}}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;text-align:center}
+  .kpi .v{font-size:23px;font-weight:700;margin:4px 0}
+  .kpi .l{font-size:12px;color:var(--dim)}
+  blockquote{margin:12px 0;padding:10px 16px;border-left:3px solid #3a4150;
+             background:#141821;border-radius:0 8px 8px 0;color:#c9d1d9;font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>async fill ＋ per-expert 重算 kernel：立項卡</h1>
+<div class="sub">2026-09-28 00:2x · 0 build · 0 GPU · 授權跨線處理線 I 的記憶體／填充議題 · 產物＝立項卡 ＋ 本頁</div>
+
+<div class="lead">
+<b>開卡的理由不是「這項還沒做」，而是「判死它的證明前提已經失效」。</b><br>
+09-19 以「<code>sum_rows</code> 依序相加 ⇒ 加法順序變 ⇒ IEEE 下不同數」把它判死；
+09-20 發現 Metal 上其實是 <code>simd_sum</code> 蝴蝶樹；本輪讀源碼確認了這一點。
+⇒ 那條反證證的是「combine 也拆」的設計，<b>不是</b>「保留單一 combine」的設計。
+</div>
+
+<h2>一、兩個設計被混為一談</h2>
+
+<table>
+<tr><th style="width:34%"></th>
+    <th>D1：matmul 分段、<b>combine 保留單一次</b></th>
+    <th>D2：combine 也拆（帶 0 歸約、事後增量）</th></tr>
+<tr><td>歸約樹</td><td><code>ne00 = k</code> 不變 ⇒ <span class="ok">同形</span></td>
+    <td>寬度／序變 ⇒ <span class="bad">不同形</span></td></tr>
+<tr><td>M1（逐位元）</td><td><span class="tag ok">可能</span></td><td><span class="tag bad">不可能</span></td></tr>
+<tr><td>依據</td><td>樹形由 <code>(ne00, ntg.x)</code> 決定；09-19 自認 matmul 逐 expert 位置獨立</td>
+    <td>09-19:263-267 已證（真值被移到後面加）</td></tr>
+<tr><td>本卡</td><td><span class="tag ok">範圍內</span></td><td><span class="tag bad">排除</span></td></tr>
+</table>
+
+<h2>二、讀源碼：<code>sum_rows</code> 其實是三層，不是「依序相加」</h2>
+
+<p class="dim"><code>src/llama.cpp/ggml/src/ggml-metal/ggml-metal.metal:1721-1778</code></p>
+
+<table>
+<tr><th>層</th><th>行號</th><th>行為</th></tr>
+<tr><td>① 執行緒內</td><td>:1748-1750</td><td><b>跨步</b>累加 <code>for(i0=tpitg.x; i0&lt;ne00; i0+=ntg.x)</code></td></tr>
+<tr><td>② simdgroup 內</td><td>:1752</td><td><code>simd_sum(sumf)</code>（蝴蝶，32 lane）</td></tr>
+<tr><td>③ 跨 simdgroup</td><td>:1756-1763</td><td>lane0 寫 <code>shmem_t[sgitg]</code> → barrier → <code>simd_sum</code></td></tr>
+</table>
+
+<blockquote>
+「依序相加」這個描述<b>沒有一層對得上</b>。樹形由 <code>(ne00, ntg.x)</code> 決定
+⇒ <b>寬度 k 不變時整棵樹與原本同形</b>。
+</blockquote>
+
+<h2>三、真正的關卡被換掉了</h2>
+
+<div class="grid">
+  <div class="kpi"><div class="l">原本以為的關卡</div><div class="v bad">IEEE</div>
+     <div class="l">浮點非結合律 ⇒ 不可能</div></div>
+  <div class="kpi"><div class="l">實際的關卡</div><div class="v warn">圖建構</div>
+     <div class="l">C 組輸出能否寫回原偏移</div></div>
+</div>
+
+<div class="panel">
+<h3>只差一件事</h3>
+<ul>
+<li><span class="ok">若能</span>：C 組寫回它在 routed order 的<b>原始偏移</b> ⇒
+    <code>src0</code> 逐位元相同 ⇒ combine 逐位元相同 ⇒ <b>M1 可達成</b>。</li>
+<li><span class="bad">若只能 <code>concat</code> 成 <code>[H | C]</code></span>：
+    routing 是<b>交錯</b>的不是分組的 ⇒ 位置序變 ⇒ <b>退回 D2 ⇒ 判死</b>。</li>
+</ul>
+<p class="dim">⛔ ggml 的 op 自備 dst，寫進既有 tensor 的偏移需要 view／scatter，
+<b>這份成本從來沒估過</b> —— 它是 D1 的第一個未知數。</p>
+</div>
+
+<h2>四、位元一致性怎麼驗</h2>
+
+<table>
+<tr><th style="width:30%">項</th><th>值</th></tr>
+<tr><td>閘門</td><td><code>scripts/check/m123_oracle_gate.py</code></td></tr>
+<tr><td>參考基線</td><td><code>ref_iq3_pool8gb_M2_6144_bitident_v7_20260926.jsonl</code></td></tr>
+<tr><td>M1 / M2 / M3</td><td><code>row_fnv1a64</code> 相同 / <code>argmax_token</code> 相同 / topk 集合相同（<b>永不合併</b>）</td></tr>
+<tr><td>通過規則</td><td><code>ok == (M1 rate == 1.0 AND M2 rate == 1.0)</code></td></tr>
+<tr><td>可比性</td><td><code>config_diffs == []</code> 才判；≠ [] ⇒ <b>exit 2（INVALID COMPARISON）</b></td></tr>
+</table>
+
+<h3>三條會把人帶錯的坑</h3>
+<ul>
+<li><b>exit 2 ≠ M1 不過。</b> 本項勢必新增 env；若進了 numerics-determining 子集，
+    每次都 exit 2，那不是回歸。</li>
+<li><b>基準是「移動」來的不是修好的。</b> 09-27 v6→v7（<code>825ec07d5</code>），
+    默認 M1 9/9 M2 9/9 M3 9/9；判據是引擎可重現。若要 <code>--write-ref</code>
+    ⇒ 基準移動，須經 operator。</li>
+<li><b>鍵碰撞時 M1 不是判決。</b> gate 用 <code>(step, token_idx, ctx_type)</code> 當鍵；
+    09-28 已踩過「M1 1/14、coverage 8%」其實是鍵碰撞。</li>
+</ul>
+
+<h2>五、階段</h2>
+
+<table>
+<tr><th>階段</th><th>內容</th><th>出口</th></tr>
+<tr><td><b>P0</b></td><td>裁決 09-19 前提</td><td><span class="tag ok">✅ 已裁（本輪）</span> 進 P1</td></tr>
+<tr><td><b>P1</b></td><td><b>第一個 commit 不是 kernel</b>：缺席 expert 從 <code>e % ns</code>（別人的權重）換成 0</td><td>M1 9/9 M2 9/9</td></tr>
+<tr><td><b>P2</b></td><td>D1 kernel：matmul 分段 ＋ 單一 combine ＋ C 寫回原偏移</td><td>M1 9/9 M2 9/9</td></tr>
+<tr><td><b>P3</b></td><td>測速（交付 cell、MTP off、配對 11.61）</td><td>tg ≥ 13.6</td></tr>
+</table>
+
+<div class="panel">
+<b>P1 為什麼不能跳：</b><code>CGC_B_SCHEME</code>（<code>llama-context.cpp:3607-3634</code>）
+把缺席 expert 指到 <code>e % ns</code> ＝<b>另一個 expert 的權重</b>，不是 0
+⇒ 「缺席那一項 ≈ 0」這個補算前提<b>現在不成立</b>。<br><br>
+<b>P2 兩個必踩的坑：</b><code>ids</code> 要用 <b>slot index</b> 不是 expert id；
+有 <code>CGC_DOWN_COMBINE</code> 融合快路徑（<code>llama-graph.cpp:2678-2765</code>，
+:2764 直接 return）⇒ 補算必須考慮它。
+</div>
+
+<h2>六、on_fail：判死的話不准放寬護欄</h2>
+
+<div class="lead">
+若 P2 證明只能 <code>concat</code> ⇒ D1 退回 D2 ⇒ <b>判死</b>。
+然後：<span class="bad">不得放寬 M1/M2/M3 護欄</span> —— 那是口徑移動不是修好。<br><br>
+判據：MTP 那次能走「口徑重定義」，是因為 <code>n_rs_seq</code> 讓<b>計算份數本身改變</b>
+（<code>gdn</code> 30→60、<code>conv_input</code> 30→150）＝不同的輸出函數。
+本項若只是<b>加法順序不同</b>，純屬實作選擇，<b>不構成放寬理由</b>。
+</div>
+
+<h2>七、數字邊界</h2>
+
+<div class="grid">
+  <div class="kpi"><div class="v">11.61</div><div class="l">錨點 t/s（MTP off，09-27 凍結）</div></div>
+  <div class="kpi"><div class="v">8.5%</div><div class="l">最小可辨差 MDD</div></div>
+  <div class="kpi"><div class="v warn">14.1–19.9</div><div class="l">落點推算 ⛔ 非實測</div></div>
+  <div class="kpi"><div class="v">4.7–43.0%</div><div class="l">實測 miss 率（平衡點 66.1–114.3%）</div></div>
+</div>
+
+<p class="dim">★ <b>fill 是「正確性」前提不是「速度」前提</b>：不 fill，缺席 expert 的權重永遠不出現
+⇒ 輸出永遠是 garbage。背景 fill 決定拿 14.1 還是 19.9，<b>不決定正負</b>。</p>
+
+<h2>八、未決</h2>
+<ul>
+<li><b>kernel 的 owner 未明文</b>（09-26 已記，至今未決）。本線只出卡。</li>
+<li><b>P2 的 scatter 成本完全沒估過</b> —— 它才是決定 D1 值不值做的第一個數字。</li>
+<li>已知「位元一致又安全」的子集仍只有同層獨立工作（shared expert <code>ffn_*_shexp</code>，
+    約該層 FFN 20–25%）⇒ 只蓋 <b>~1/4 的 cb</b>。</li>
+</ul>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,221 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— async fill ＋ per-expert 重算 kernel
+#   ★ 本卡的第一個產物不是 kernel，是「判死證明的前提還成不成立」的裁決
+# ═══════════════════════════════════════════════════════════════════════
+id: e-asyncfill-recompute
+owner: |
+  未明文。09-26 §EN-150 記「第 3 步 kernel 的 owner 未明文」至今未決。
+  本線（線 A＝S1／段邊界／wait·gap）出卡；kernel 實作需先定 owner。
+  前置第 2 步 miss mask 已由 commit `553424ec1` 重建進版控（本卡開卡前已查證：
+  `grep -rl CGC_MISS_MASK --include=*.cpp --include=*.h src/` 回 3 檔、binary 計數 4）。
+created: 2026-09-28
+
+# ── 【目標】─────────────────────────────────────────────────────────────
+question: |
+  在交付 cell 上做「不等 fill」：把缺席 expert 的填池 IO 挪出臨界路徑，
+  未命中的 expert 事後補算（per-expert recompute）。
+  問兩件事，且**順序不可顛倒**：
+    (Q1) 這樣做在 M1/M2/M3 下**有沒有可能逐位元一致**？（能不能做）
+    (Q2) 若 Q1 為是，落在 13.6~19.9 t/s 的哪一點？（值多少）
+  ⛔ Q1 沒裁決前，Q2 的任何數字（含既有的 14.1~19.9）**都是推算，不得當收益引用**。
+
+# ── 【為什麼現在要開這張卡：判死的「證明」被後來的發現推翻了】───────────
+rationale: |
+  ★★ **本項不是「尚未判死」，是「判死的證明前提已失效」——這才是開卡的理由。**
+
+  (1) 09-19 §EN-226(b) 把「把 miss 移出臨界路徑」判死，理由是位元一致性：
+      `DECODE_25TPS_TWO_ALGORITHMS_2026-09-19.md:259-272` 原文——
+      「拆成 H/C 兩段再 concat，gate/up 的輸出**可以**與單一次 MMID 逐位元相同。
+      **但歸約發生在 combine**：今天 `sum_rows(weights * experts)` 對 k 個位置
+      **依序**相加；同項不同加法順序 ⇒ IEEE 下不同數。**填 0.0 也救不了**
+      （把真值移到後面加）。⇒ 在 M1/M2/M3 的約束下，沒有位元一致且量級足夠的實作。」
+
+  (2) ⛔ **但那個證明建在「sum_rows 是序列相加」上，而 09-20 已把它推翻**：
+      09-20 §(1)「★ 計畫改變的發現」：`ggml-metal.metal:1751-1756` 實為
+      `sumf += src_row[i0]`（跨步）→ **`simd_sum(sumf)`（蝴蝶樹）** → threadgroup
+      shmem → 再一次 `simd_sum`。**Metal 上是樹，不是序列。**
+      同段並明寫：「M1 oracle 比的是 GPU-vs-GPU，所以這是**可達成的**，只是設計約束」。
+
+  (3) ⇒ **蝴蝶樹的形狀由寬度決定**。若**保留單一次 combine、寬度仍為 k**，
+      則歸約樹與原本逐位元同形 ⇒ 09-19 那條「依序相加 ⇒ 順序變」的反證**不適用**。
+      ⇒ 「填 0.0 也救不了」只在**把 combine 也拆開**時成立。
+      ⇒ 09-19 判死的是 D2（見下），**不是 D1**。兩者長期被混為一談。
+
+# ── 【兩個設計，位元一致性狀態相反 —— 本卡只做 D1】──────────────────────
+designs:
+  D1:
+    name: "matmul 分段、combine 保留單一次（寬度 k 不變、位置序不變）"
+    mechanism: |
+      ① 缺席 expert 的填池 IO 與 H 組（resident）的 matmul **同時**進行；
+      ② C 組（cold）的 IO 落地後才算它的 matmul；
+      ③ **只跑一次 combine**，且 C 的值寫回它在 routed order 裡的**原始位置**
+         （不是 concat 成 [H|C]）。
+    m1_status: "**可能**逐位元一致 —— matmul 逐 expert 位置獨立（09-19:262 自認可），
+                combine 寬度與序不變 ⇒ 蝴蝶樹同形。"
+    gain: "min(fill_time, H_matmul_time)：省下的是被 H 的 matmul 蓋住的那段 IO。"
+    risk: "需要把 C 的輸出 scatter 回原始位置（多一次拷貝／permute），
+           這份成本尚未估過，是 D1 的第一個未知數。"
+    verdict: "✅ 本卡的範圍"
+  D2:
+    name: "combine 也拆（先帶 0 歸約、事後增量補算）"
+    m1_status: "**不可能**逐位元一致 —— 09-19:263-267 已證（真值被移到後面加）。"
+    verdict: "⛔ 不在本卡範圍。除非護欄改口徑（那是另一張卡，見 on_fail）。"
+
+# ── 【位元一致性的合約（怎麼驗）】───────────────────────────────────────
+bit_identical_contract:
+  gate: "scripts/check/m123_oracle_gate.py"
+  ref:  "Backup/knifeedge_matrix/ref_iq3_pool8gb_M2_6144_bitident_v7_20260926.jsonl"
+  metrics: |
+    M1 數值一致 = row_fnv1a64 相同（逐位元）；
+    M2 決策一致 = argmax_token 相同；
+    M3 topk 集合一致。
+    三者**永不合併**。通過規則：ok == (M1 rate == 1.0 AND M2 rate == 1.0)。
+    M1 不同／M2 相同 是「陷阱格」：greedy 是混沌的，尚未翻轉的漂移下一步就會翻。
+  comparability: |
+    兩側都用 `run_server.sh CGC_DUMP_ENV=1` 解 env 後比對 numerics-determining 子集：
+      config_diffs == []  ⇒ 正常判決；
+      config_diffs != []  ⇒ **exit 2（INVALID COMPARISON）**，絕不得報成回歸。
+    ⇒ 本項會新增 env，開跑前必須確認新 env 不進 numerics-determining 子集，
+      否則每一次都會 exit 2，而那**不是**「M1 不過」。
+  baseline_state: |
+    ✅ 可用：09-27 D5 重新基線 v6→v7（commit `825ec07d5`），默認跑
+    **M1 9/9 M2 9/9 M3 9/9**。⚠ 那是**基準移動不是修好 bug**（引擎可重現即判據）。
+    ⇒ 本卡用 v7 當 ref；**若需 `--write-ref`，那是基準移動，須經 operator 並登記**。
+  per_backend_rule: |
+    Metal 的 sum_rows 是蝴蝶樹（`ggml-metal.metal:1751-1756`）；CPU 的是序列。
+    新 op 必須**複刻它所取代的那條鏈的同一棵樹**（照寫 `simd_sum` 即可），
+    兩邊各自與被取代者逐位元相同。M1 比的是 GPU-vs-GPU ⇒ 這約束可達成。
+  quote_guard: |
+    ⚠ gate 用 (step, token_idx, ctx_type) 當鍵；鍵碰撞時它印的
+    「M1 1/14、coverage 8%」**不是判決**（09-28 已踩）。引 M1 前必先看
+    coverage 與鍵碰撞警告，否則會把「量不到」讀成「不一致」。
+
+# ── 【現狀】─────────────────────────────────────────────────────────────
+baseline:
+  metric: "交付錨點 11.61 t/s（MTP off，09-27 凍結），走廊 10.97–12.02，MDD 8.5%"
+  cell:   "prod-new, MTP off, -b/-ub 5632, --warm-skip 64, reps 3"
+  known:  |
+    - 第 3 步閘門 **OPEN**（MISS_GATE_STEP3_2026-09-24.md）：平衡點 66.1%（悲觀）
+      ~114.3%（樂觀），實測 miss 率 4.7%~43.0% **全在平衡點以下**
+      ⇒ 0~66% 皆淨正，落點推算 **14.1~19.9 t/s**。
+    - ⛔ 14.1~19.9 是**推算**，三條推算互相印證只增加量級信心，不是實測。
+    - ★ **fill 是「正確性」前提不是「速度」前提**：不 fill，缺席 expert 的權重
+      永遠不出現 ⇒ 輸出永遠是 garbage（`MISS_GATE_STEP3` §0 明寫）。
+      ⇒ 「背景 fill」必做，它決定拿 14.1 還是 19.9，**不決定正負**。
+    - ⛔ **第一個 commit 不是 kernel**：`CGC_B_SCHEME`（`llama-context.cpp:3607-3634`）
+      把缺席 expert 指到 `e % ns` ＝**別的 expert 的權重**，不是 0
+      ⇒ 「缺席那一項 ≈ 0」這個補算前提**現在不成立**。
+    - 可複用最小單位：`build_lora_mm_id`（`llama-graph.cpp:1567`）。
+      ⚠ `ids` 要是 **slot index** 不是 expert id；⚠ 有 `CGC_DOWN_COMBINE` 融合快路徑
+      （`:2678-2765`，:2764 直接 return）⇒ 補算必須考慮它，否則只在沒開融合時正確。
+      ⚠ 「單獨建一個 expert FFN」的現成函式：**沒有**（已查 recomp/repair/fixup/
+      deferred/lazy）。
+
+# ── 【預註冊判決規則（寫死，看到資料後不得改）】─────────────────────────
+acceptance:
+  window_valid: |
+    同時成立才算該趟可裁判：
+      (a) 起跑 thermal = NOMINAL；
+      (b) 見證行生效（缺 ⇒ 旋鈕被 allowlist 丟掉 ⇒ 無效，不結論）；
+      (c) 趟完成（rc=0、3 個 tg rep）；
+      (d) M1 判決前先確認 coverage 與鍵碰撞（`quote_guard`）。
+  success: |
+    Q1 為是（M1 9/9 且 M2 9/9、config_diffs=[]）**且** tg ≥ 13.6。
+  falsify: |
+    Q1 為否：D1 在「保留單一 combine、寬度 k、位置序不變」的條件下，
+    M1 仍 < 1.0 ⇒ **判死**。理由要寫明是拆不出「位元一致的 scatter」
+    （例如 C 的輸出無法無成本地寫回原始位置），而不是「做得不夠好」。
+  undecidable: |
+    M1 因 config_diffs ≠ [] 而 exit 2，或 coverage < 100% 且鍵碰撞警告在
+    ⇒ 登記 UNRESOLVED，先解可比性，不得把 exit 2 唸成 M1 FAIL。
+  on_fail: |
+    若 falsify：**不得放寬 M1/M2/M3 護欄**——那是「口徑移動」不是「修好」，
+    需另開一張卡並經 operator 明講（參照 MTP B 卡的前例：那次是因為
+    `n_rs_seq` 導致計算份數本身改變，才走口徑重定義；本項若只是加法順序不同，
+    **不構成放寬理由**）。
+    ⇒ 判死後寫 deadend 結案，改回主線 gap/wait 桶，不再往「把 miss 移出臨界
+    路徑」投入。
+
+# ── 【階段（Q1 沒過不得進下一階段）】────────────────────────────────────
+phases:
+  - id: P0
+    status: "✅ 已裁決（2026-09-28 00:1x，0 build、0 GPU，讀源碼）"
+    text: |
+      **裁決 09-19 的判死前提**。讀 `ggml-metal.metal:1721-1778`
+      `kernel_sum_rows_impl` 全本。
+    verdict: |
+      **(a) 09-19 對機制的描述是錯的。** 實際是三層，不是「依序相加」：
+        ① `:1748-1750` 每執行緒**跨步**累加 `for(i0=tpitg.x; i0<ne00; i0+=ntg.x)`；
+        ② `:1752` `simd_sum`（蝴蝶，32 lane）；
+        ③ `:1756-1763` 各 simdgroup 的 lane0 寫 shmem → barrier → `simd_sum` 跨 simdgroup。
+      **(b) 樹形由 `(ne00, ntg.x)` 決定**：`ne00`（＝k 寬度）與 dispatch 的 `ntg.x`
+        不變 ⇒ **整棵樹與原本同形**，與 09-20 §(1) 的記載一致。
+      **(c) ⇒ 09-19:263-267 的反證對 D1 不適用**：D1 保留單一次 combine、
+        ne00=k 不變 ⇒ 歸約樹逐位元同形。它被證的是 D2（combine 也拆）。
+      **(d) ⇒ 瓶頸不是 IEEE，是圖建構**：剩下唯一問題是「C 組的 matmul 輸出能否
+        寫回它在 routed order 的**原始偏移**」——ggml 的 op 自備 dst，
+        要寫進既有 tensor 的偏移需要 view／scatter，**這份成本從沒估過**。
+        ⛔ 若只能 `concat` 成 [H|C]，位置序就變了 ⇒ 退回 D2 ⇒ 判死。
+      **(e) ⇒ 「位元一致性擋死」對 D1 是過強的結論，應改寫**；本項**不是死的**。
+        但已知「位元一致又安全」的子集仍只有同層獨立工作（shared expert
+        `ffn_*_shexp`，約該層 FFN 20–25% ⇒ 只蓋 ~1/4 的 cb）。
+    exit: "已裁決：進 P1。⛔ 若 P2 證明只能 concat ⇒ 立即判死，不進 P3。"
+  - id: P1
+    text: |
+      **第一個 commit 不是 kernel**：把缺席 expert 的貢獻從「`e % ns` 別人的權重」
+      換成 0（`llama-expert-cache.cpp:277-282`／memset `:292-316`／publish `:371-408`，
+      或 `llama-graph.cpp:2718` 的 `CGC_ZERO_MISS` 塊）。
+      ⚠ `zero_slot_enabled()`（`:302-316`）只在 `CGC_VERIFY_DECODE`／
+      `CGC_DRAFT_DECODE`／`CGC_ZERO_SLOT` 為真 ⇒ gate 要放寬。
+    exit: "M1 9/9 M2 9/9（零貢獻版本本身必須先位元一致）"
+  - id: P2
+    text: |
+      **D1 kernel**：matmul 分段 ＋ 單一 combine ＋ C 寫回原始位置。
+      處理 `CGC_DOWN_COMBINE` 融合快路徑，ids 用 slot index。
+    exit: "M1 9/9 M2 9/9"
+  - id: P3
+    text: |
+      **測速**：交付 cell、MTP off、與 11.61 錨點配對。
+    exit: "tg ≥ 13.6 才算 success；< 13.0 退回"
+
+# ── 【凍結判準（沿用 09-26 §EN-150 四條，不改）】────────────────────────
+frozen_criteria:
+  - "① 同 prompt greedy 逐 rep 相同 ＋ `answer_md5` 等於分段臂（不過就退回）"
+  - "② 落點 13.6~14.2 t/s，**<13.0 退回**"
+  - "③ 穩態 miss 率閘門（平衡點 66.1%~114.3%）"
+  - "④ mask 成本用**結構判據**：segs=41 不變、生產路徑無新增 synchronize；
+      不是 ±0.2 ms 的數字（那在噪音底內）"
+
+# ── 【量化目標】───────────────────────────────────────────────────────
+targets:
+  anchor_tg: 11.61
+  corridor: [10.97, 12.02]
+  mdd_pct: 8.5
+  landing_band_estimate: [14.1, 19.9]   # ⛔ 推算，Q1 通過前不得當收益
+  miss_rate_measured: [0.047, 0.430]
+  balance_point: [0.661, 1.143]
+  recompute_cost_ms: [0.126, 0.169]
+  saving_ms: [34.5, 44.5]
+
+# ── 【技術子目標】───────────────────────────────────────────────────────
+subgoals:
+  - id: sg-p0-adjudicate
+    text:   "裁決 09-19 判死前提是否仍適用於 D1"
+    expect: "是／否分明的一頁"
+    how:    "P0"
+  - id: sg-zero-miss
+    text:   "缺席 expert 貢獻 = 0（不是 e % ns 別人的權重）"
+    expect: "M1 9/9 M2 9/9"
+    how:    "P1"
+  - id: sg-d1-kernel
+    text:   "matmul 分段 ＋ 單一 combine ＋ 位置序不變，M1 9/9"
+    expect: "M1 9/9 M2 9/9，且 segs=41 不變、無新增 synchronize"
+    how:    "P2"
+  - id: sg-speed
+    text:   "tg ≥ 13.6"
+    expect: "配對後落在推算帶下緣以上"
+    how:    "P3"
+
+arms:
+  - prod-new（控制／錨點 11.61）
+  - prod-new + 本項新 env（D1；env 名於 P2 定，須先確認不進 numerics-determining 子集）
