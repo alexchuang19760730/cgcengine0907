@@ -1280,6 +1280,17 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
     bool    is_mem_shared = false;   // gemma4
     bool    chain_heads   = false;   // derived in the ctor: n_mtp_layers > 1 && !is_mem_shared
 
+    // [CGC 2026-09-26] `is_mem_shared` answers "does the draft context share the target KV", which is
+    // NOT the same question as "do all draft tokens carry ONE position". Only the assistant dialect
+    // (gemma4) wants the second; an MTP context that merely shares the KV still drafts as a
+    // SEQUENTIAL chain, and re-adding position dp.n_past on its second step trips llama_decode's
+    // M-RoPE check (the shared memory already holds X at that position, and X < Y is required)
+    // -> the loop breaks with ONE draft token, silently turning `--spec-draft-n-max k` into k_eff=1.
+    // Measured 2026-09-26 on qwen35moe (nextn_predict_layers=1, so chain_heads is false either way):
+    // 64x `llama_decode[1] returned -1` per arm and draft_hist {1: 90} at k=3; the same binary run
+    // through llama-server prints `mean len = 1.47` for accept 0.46667 = 1 + a, i.e. 1 draft/round.
+    bool    one_position_drafts = false;
+
     // [CGC MTP sampler parity 2026-09-13] CGC_MTP_SAMPLER_PARITY=1 makes the draft chain the
     // target's chain (see common_params_speculative_draft::sampling) instead of the hard-coded
     // {TOP_K=10}, and makes the drafted token the chain's SAMPLE rather than its argmax. Both
@@ -1412,6 +1423,15 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
         is_mem_shared = llama_get_ctx_other(ctx_dft) == ctx_tgt;
         chain_heads   = n_mtp_layers > 1 && !is_mem_shared;
+
+        // The one-position layout is the assistant dialect's, not "whatever shares the KV".
+        one_position_drafts = is_mem_shared && llama_model_is_assistant_block(llama_get_model(ctx_dft));
+        if (is_mem_shared && !one_position_drafts && this->params.n_max > 1) {
+            // Say it once at construction: a shared-KV sequential chain means the flag above is a
+            // request, not a promise, and k_eff has to be read back from the round lines.
+            SPC_INF("%s", "shared-KV SEQUENTIAL draft chain: draft tokens advance the position "
+                          "(k_eff is read back from the round lines, not assumed from n_max)\n");
+        }
 
         if (chain_heads) {
             this->params.n_max = std::min(this->params.n_max, n_mtp_layers);
@@ -1834,7 +1854,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                         std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd,
                                     chain_h[seq_id].data() + (size_t) t * n_embd, row_bytes);
                     }
-                } else if (is_mem_shared) {
+                } else if (one_position_drafts) {
                     // note: with shared memory (e.g. Gemma4 assistants) we use the same position for all draft tokens
                     // ref: https://github.com/huggingface/transformers/blob/effde20942e3f82a1b97449f60b3a48c5ff96145/docs/source/en/model_doc/gemma4_assistant.md?plain=1#L36-L37
                     common_batch_add(batch, id, dp.n_past, { seq_id }, true);
@@ -2535,6 +2555,78 @@ common_speculative_init_result::common_speculative_init_result(
     //       the extra memory for small models is likely negligible?
     cparams.n_rs_seq  = 0;
     cparams.ctx_other = ctx_tgt;
+
+    // [CGC §11] draft-context n_ctx alignment, gated by CGC_DRAFT_CTX_ALIGN=1 (default off).
+    //
+    // The draft context is built from the target's common_params, so a cell that runs with
+    // --ctx-size 0 leaves cparams.n_ctx == 0, which llama_init_from_model expands to the model's
+    // n_ctx_train (262144 for the MTP cell). That reserves a draft KV of 512 MiB (262144 cells,
+    // 1 layer, f16) plus a matching draft graph on top of the target's own allocations, which is
+    // what pushed the 2048-token prefill graph over recommendedMaxWorkingSetSize.
+    //
+    // Aligning the draft to the target's *allocated* n_ctx sizes the draft for the traffic the cell
+    // actually runs (~5 MiB instead of 512 MiB) without changing any decoded value: the draft only
+    // ever holds positions that the target context already holds.
+    //
+    // Named gap + measurements: docs/ACCEPT_LEVERS_AND_DIRTY_BOX_PAIR_2026-09-26.md §11
+    //
+    const bool ctx_align = getenv("CGC_DRAFT_CTX_ALIGN") != nullptr;
+
+    if (ctx_align) {
+        const uint32_t n_ctx_tgt = ctx_tgt != NULL ? llama_n_ctx(ctx_tgt) : 0;
+        const uint32_t n_ctx_req = cparams.n_ctx;
+
+        if (n_ctx_tgt > 0) {
+            cparams.n_ctx = n_ctx_tgt;
+
+            // witness line: must be greppable in both the run log and the built dylib
+            fprintf(stderr,
+                    "CGC-DRAFT-CTX-ALIGN: applied path=%s n_ctx_req=%u -> n_ctx_draft=%u (target ctx=%u)\n",
+                    spec_mtp ? "mtp" : "draft", n_ctx_req, cparams.n_ctx, n_ctx_tgt);
+            fflush(stderr);
+        } else {
+            fprintf(stderr,
+                    "CGC-DRAFT-CTX-ALIGN: skipped (no target context, ctx_tgt=%p), draft keeps n_ctx_req=%u\n",
+                    (const void *) ctx_tgt, n_ctx_req);
+            fflush(stderr);
+        }
+    }
+
+    // [CGC §11b] draft-context small batch, gated by CGC_DRAFT_SMALL_BATCH=1 (default off).
+    //
+    // The draft context inherits the target's cparams, so n_batch/n_ubatch are the target's
+    // large prefill batch (5632). But the MTP draft impl only ever submits single-token (or a
+    // growing prefix of <= n_max+1) decodes -- speculative.cpp draft_mtp: "MTP draft single-token
+    // decode: the only draft-context fast-path-allowed phase" -- and test_prompt never runs on the
+    // draft context. The backend sched nevertheless reserves the draft graph compute buffer for
+    // the big n_batch (~493 MiB at n_batch=2048): pure allocation shape, not work. Sizing the
+    // draft batch to its real width shrinks that buffer to a few MiB without changing any
+    // draft/verify value.
+    //
+    // Named gap + measurements: docs/ACCEPT_LEVERS_AND_DIRTY_BOX_PAIR_2026-09-26.md §11
+    //
+    const bool small_batch = getenv("CGC_DRAFT_SMALL_BATCH") != nullptr;
+    if (small_batch && spec_mtp) {
+        const int32_t n_batch_req  = cparams.n_batch;
+        const int32_t n_ubatch_req = cparams.n_ubatch;
+        // The draft chain holds at most n_max+1 rows (the chain_heads growing prefix). Size the
+        // batch to exactly that: the old floor of 32 made the context-construction pp reserve
+        // (n_tokens = min(n_ctx, n_ubatch)) allocate a compute buffer ~8x wider than the draft
+        // ever submits. CGC_DRAFT_BATCH_MIN can raise the floor back for A/B.
+        int batch_min_floor = 4;
+        if (const char * e = getenv("CGC_DRAFT_BATCH_MIN")) {
+            const int v = std::atoi(e);
+            if (v >= 1) batch_min_floor = v;
+        }
+        const int32_t n_batch_dft = std::max((int32_t) batch_min_floor,
+                                            (int32_t) params.speculative.draft.n_max + 1);
+        cparams.n_batch  = std::min(n_batch_req,  n_batch_dft);
+        cparams.n_ubatch = std::min(n_ubatch_req, n_batch_dft);
+        fprintf(stderr,
+                "CGC-DRAFT-SMALL-BATCH: applied path=mtp n_batch_req=%d/%d -> n_batch_draft=%d (n_max=%d)\n",
+                n_batch_req, n_ubatch_req, cparams.n_batch, (int) params.speculative.draft.n_max);
+        fflush(stderr);
+    }
 
     std::string model_path;
     if (has_draft) {

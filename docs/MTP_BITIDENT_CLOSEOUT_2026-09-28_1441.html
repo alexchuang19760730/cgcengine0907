@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MTP ON bit-identical 立項收尾 · 口徑重定義（2026-09-28）</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1f2328; --mut:#57606a; --line:#e5e7eb;
+    --blue:#0969da; --green:#1a7f37; --red:#cf222e; --amber:#9a6700; --pur:#8250df; --gray:#6e7781;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Helvetica Neue",Arial,sans-serif;
+       font-size:15px;line-height:1.75}
+  .wrap{max-width:1040px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:26px;margin:.2em 0 .4em}
+  h2{font-size:20px;margin:2em 0 .6em;padding-bottom:.3em;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:1.4em 0 .4em}
+  p,li{color:var(--fg)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+       font-size:.92em;background:#f6f8fa;padding:.12em .38em;border-radius:4px}
+  pre{background:#f6f8fa;border:1px solid var(--line);border-radius:6px;padding:12px 14px;overflow:auto}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;margin:.6em 0 1em;font-size:14px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f9fafb;font-weight:600}
+  td.num,th.num{white-space:nowrap;font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;font-size:12px;line-height:1.6;padding:1px 8px;border-radius:10px;
+       border:1px solid var(--line);color:#fff;font-weight:600}
+  .t-blue{background:var(--blue)} .t-green{background:var(--green)} .t-red{background:var(--red)}
+  .t-amber{background:var(--amber)} .t-pur{background:var(--pur)} .t-gray{background:var(--gray)}
+  .box{border-left:4px solid var(--line);background:#f6f8fa;padding:10px 14px;margin:1em 0;border-radius:0 6px 6px 0}
+  .box.warn{border-left-color:var(--amber);background:#fff8e5}
+  .box.ok{border-left-color:var(--green);background:#eaf6ec}
+  .box.bad{border-left-color:var(--red);background:#fdeeee}
+  .box.pur{border-left-color:var(--pur);background:#f5f0ff}
+  .mut{color:var(--mut);font-size:13px}
+  figure{margin:1.2em 0} figcaption{color:var(--mut);font-size:13px;margin-top:.4em}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>MTP ON bit-identical 立項收尾 · 口徑重定義</h1>
+<p class="mut">2026-09-28 14:41 · 本線（線A / ace）· 權威文件
+<code>docs/MTP_BITIDENT_CLOSEOUT_2026-09-28.md</code>、
+<code>docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md</code>、
+<code>docs/MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md</code></p>
+
+<p>
+<span class="tag t-red">立項已關閉</span>
+<span class="tag t-amber">目標未達成（H8）</span>
+<span class="tag t-green">後繼立項已開立</span>
+<span class="tag t-gray">0 個新的 t/s 主張</span>
+</p>
+
+<div class="box bad">
+<strong>一句話</strong>：MTP on 與 MTP off 是<strong>兩個不同的輸出函數</strong>，不是同一個模型的加速版。
+差異由 <code>cparams.n_rs_seq</code> 決定，而它由 spec 型別<strong>硬編碼推導</strong>，
+沒有任何 config／env 旋鈕能繞開 ⇒ bit-identical <strong>原理上不可達</strong> ⇒ 立項關閉，
+改開「MTP 口徑重定義」（0 build，純標註）。
+</div>
+
+<h2>1. 根因：<code>n_rs_seq</code> 是一條沒有第三條路的推導鏈</h2>
+
+<figure>
+<svg viewBox="0 0 1000 250" width="100%" role="img" aria-label="n_rs_seq 推导链">
+  <defs><marker id="ar" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+    <polygon points="0 0,10 3.5,0 7" fill="#57606a"/></marker></defs>
+  <rect x="20" y="30" width="230" height="56" rx="8" fill="#f6f8fa" stroke="#e5e7eb"/>
+  <text x="135" y="56" text-anchor="middle" font-size="14" fill="#1f2328">--spec-type draft-mtp</text>
+  <text x="135" y="74" text-anchor="middle" font-size="12" fill="#57606a">（MTP on）</text>
+  <line x1="250" y1="58" x2="330" y2="58" stroke="#57606a" marker-end="url(#ar)"/>
+  <rect x="335" y="24" width="250" height="68" rx="8" fill="#f5f0ff" stroke="#8250df"/>
+  <text x="460" y="48" text-anchor="middle" font-size="13" fill="#1f2328">common.h:395 need_n_rs_seq()</text>
+  <text x="460" y="68" text-anchor="middle" font-size="12" fill="#57606a">硬編碼 return draft.n_max</text>
+  <text x="460" y="86" text-anchor="middle" font-size="12" fill="#57606a">（n_max=0 非法 → assert）</text>
+  <line x1="585" y1="58" x2="665" y2="58" stroke="#57606a" marker-end="url(#ar)"/>
+  <rect x="670" y="30" width="160" height="56" rx="8" fill="#f6f8fa" stroke="#e5e7eb"/>
+  <text x="750" y="56" text-anchor="middle" font-size="13" fill="#1f2328">n_rs_seq &gt; 0</text>
+  <text x="750" y="74" text-anchor="middle" font-size="12" fill="#57606a">（實測 = 4）</text>
+  <line x1="750" y1="86" x2="750" y2="120" stroke="#57606a" marker-end="url(#ar)"/>
+  <rect x="600" y="124" width="300" height="60" rx="8" fill="#fdeeee" stroke="#cf222e"/>
+  <text x="750" y="148" text-anchor="middle" font-size="13" fill="#1f2328">delta-net-base.cpp:494</text>
+  <text x="750" y="168" text-anchor="middle" font-size="12" fill="#57606a">if (n_rs_seq == 0) 兩條路徑分岔</text>
+  <line x1="600" y1="154" x2="430" y2="154" stroke="#1a7f37" marker-end="url(#ar)"/>
+  <line x1="900" y1="154" x2="900" y2="196" stroke="#cf222e" marker-end="url(#ar)"/>
+  <rect x="120" y="128" width="300" height="52" rx="8" fill="#eaf6ec" stroke="#1a7f37"/>
+  <text x="270" y="150" text-anchor="middle" font-size="13" fill="#1f2328">OFF：單槽位原地寫回</text>
+  <text x="270" y="168" text-anchor="middle" font-size="12" fill="#57606a">conv_input 30 · gdn 30</text>
+  <rect x="640" y="200" width="320" height="52" rx="8" fill="#fdeeee" stroke="#cf222e"/>
+  <text x="800" y="222" text-anchor="middle" font-size="13" fill="#1f2328">ON：K 槽位回滾（K = n_rs_seq+1）</text>
+  <text x="800" y="240" text-anchor="middle" font-size="12" fill="#57606a">conv_input 150 · gdn 60</text>
+</svg>
+<figcaption>圖：<code>n_rs_seq</code> 由 spec 型別直接推導，沒有 config 旋鈕介入；兩個分支的<strong>計算份數</strong>不同（不只寫回位置）。</figcaption>
+</figure>
+
+<h3>1.1 兩個分支的差別是「歸約寬度」，不是舍入</h3>
+<p><code>delta-net-base.cpp:494-537</code>：else 分支在 <code>t=K</code> 時 <code>s_slot=0</code>、
+<code>s_idx</code> 與原地分支<strong>逐字相同</strong> ⇒ 差別只能來自 <code>conv_input</code> 這張圖本身：
+實測每層 30→150（= K 倍）、<code>cache_r_l</code> +240、<code>gdn</code> +30 ⇒ conv/GDN 是在 K 槽位寬度下
+<strong>一起算</strong>的 ⇒ 0.16% 數值差 ⇒ greedy 換詞。</p>
+
+<h2>2. 證據鏈</h2>
+<table>
+<thead><tr><th>項目</th><th>OFF</th><th>ON</th><th>含義</th></tr></thead>
+<tbody>
+<tr><td>target graph 節點數</td><td class="num">3847</td><td class="num">4117（+270）</td><td>連圖都不一樣</td></tr>
+<tr><td>第一個 target forward</td><td>ntok=1（純 decode）</td><td>ntok=4（verify 批）</td><td>pass 結構不同</td></tr>
+<tr><td>prefill 尾 <code>pos=1</code> logit</td><td class="num">27.578886</td><td class="num">27.578886</td><td><span class="tag t-green">identical</span> prefill／KV 精確</td></tr>
+<tr><td>第一個 decode <code>pos=209</code> logit</td><td class="num">19.227451</td><td class="num">19.258354</td><td><span class="tag t-red">分岔點</span></td></tr>
+<tr><td>ON 自身可重現</td><td colspan="2" class="num">176 / 176</td><td>確定性，非亂數</td></tr>
+<tr><td>跨臂 M1/M2</td><td colspan="2">不可讀（鍵塌縮）</td><td>判據改用 <code>probe_answer</code>／定位 logit</td></tr>
+</tbody>
+</table>
+
+<div class="box warn">
+<strong>⛔ 與這些全部無關（實測排除）</strong>：<code>n_tokens</code>、pool 8→4 GiB、<code>--spec-draft-ngl 0</code>、
+<code>--spec-draft-n-max 1</code>、<code>CGC_SERVER_LAYER_CAPS</code>、8 個 env 鍵逐鍵 ablation、
+<code>CGC_MM_BITIDENT</code>（只管 mul_mat，管不到 gdn／conv）。
+pool 加大方向（12／10 GiB）在 16 GB 機器上 <code>CGC-METAL-FAIL status 5</code> OOM，不可行。
+</div>
+
+<h2>3. 為什麼判定「關閉」而不是「繼續修」</h2>
+<ol>
+<li><strong>P2-a（只改設定）原理上不存在</strong>：<code>n_rs_seq=0</code> 唯一來源是 <code>n_max=0</code>，
+而那觸發 <code>GGML_ASSERT</code>（<code>llama-context.cpp:3057</code>，P0-5 實跑）⇒ 配置非法。</li>
+<li><strong>P2-b（動 recurrent kernel）負收益</strong>：要改的是 compute 核心，且修成也比 OFF 慢
+（同場方向性：OFF 中位 11.92 vs ON 7.34 t/s）。</li>
+<li><strong>ON 的輸出不是品質缺陷</strong>：兩側 greedy 答案皆通順、語義等價 ⇒ 是<strong>自洽的另一個輸出函數</strong>，
+不是 garbage ⇒ 「口徑重定義」不是拿品質換速度。</li>
+<li>repo 既有註解（<code>server-context.cpp:1405-1410</code>）早已記載「MTP-on regime … M1 1/9，同 build 對自己 9/9」
+⇒ <strong>已知現象，不是本輪引入的 regression</strong>。</li>
+</ol>
+
+<h2>4. 必備節 A / B / C：本輪<strong>不適用</strong>（明寫）</h2>
+<table>
+<thead><tr><th>必備節</th><th>狀態</th><th>理由</th></tr></thead>
+<tbody>
+<tr><td><strong>A. TPOT 分解</strong></td><td><span class="tag t-gray">不適用</span></td>
+    <td>本輪<strong>沒有產生任何新的 t/s 主張</strong>；相反的，本輪的結論是 ON 與 OFF 的 t/s
+    <strong>不可互比</strong>。沒有 t/s 就沒有可拆的 ms/token。</td></tr>
+<tr><td><strong>B. decode 分段拆解</strong></td><td><span class="tag t-gray">不適用</span></td>
+    <td>本輪未跑 decode 分段量測（<code>wait</code>/<code>cb</code>/<code>gap</code>/submit/fill）。
+    既有分段的權威數字在 <code>MEMORY_PERF.md</code>，本輪未改動、不重報。</td></tr>
+<tr><td><strong>C. prefill + decode 同報</strong></td><td><span class="tag t-gray">不適用</span></td>
+    <td>同上：本輪無效能主張。唯一的新量測是<strong>數值身分</strong>（logit 比對），不是速度。</td></tr>
+</tbody>
+</table>
+<div class="box">
+本輪的對等交付物是<strong>判定文件</strong>：<code>docs/MTP_BITIDENT_CLOSEOUT_2026-09-28.md</code>
+（A1–A5 結算）＋ <code>docs/MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md</code>（B1–B4）。
+A1–A5 結算：A1–A3 ❌／A4 ✅（176/176）／A5 ❌。
+</div>
+
+<h2>5. 現場閘門輸出（原文，產出當時實跑）</h2>
+<pre><code>$ BIN_DIR='src/llama.cpp/build/bin' RUN_REPLAY_BENCH=0 bash scripts/check_build_tracked.sh --repo "$PWD"
+  PASS  symlink 目標已追蹤: libllama-common.0.dylib -&gt; .../libllama-common.0.0.630.dylib
+  PASS  symlink 目標已追蹤: libllama.0.dylib        -&gt; .../libllama.0.0.630.dylib
+  PASS  symlink 目標已追蹤: libmtmd.0.dylib         -&gt; .../libmtmd.0.0.630.dylib
+  PASS  8 build 產物隨原始碼 staged (libggml-base.0.19.0.dylib)
+  PASS  8 binary 比 staged 原始碼新（已重建）
+  PASS  12 本次 commit 的量測產物都帶出處（engine digest + window block）且報告與 sidecar 成對
+OK: 沒有 FAIL —但本次有 4 個區段被 SKIP（@rpath／生產 MTP 驗收／deploy 驗收／replay benchmark）
+
+$ python3 agent_harness/engine_loop/traces/validate.py
+  lessons.jsonl: 193 records {'lesson': 193}
+    WARN  eng-mh-0048: applies_to path does not exist: .../libllama.0.0.279.dylib
+  -&gt; OK, 1 warning(s)
+
+$ python3 agent_harness/engine_loop/traces/selftest.py
+  10/10 injected violations rejected
+</code></pre>
+
+<div class="box warn">
+<strong>已知且未消的索引漂移（如實記錄，未重生的理由見下）</strong>：
+<pre><code>$ python3 agent_harness/engine_loop/memory/build_memory_index.py --check
+    .workbuddy/memory/MEMORY_HYGIENE.md :: ... fields differ [body_bytes, line_end, ...]
+    regenerate with: python3 memory/build_memory_index.py
+
+$ python3 agent_harness/engine_loop/index_assets.py --check
+    .workbuddy/memory/2026-09-28.md: on disk but not in the manifest
+    regenerate with: python3 index_assets.py</code></pre>
+<strong>不重生的理由</strong>：<code>agent_harness/</code> 目前有 <strong>41 個未提交改動</strong>（非本線）。
+commit 閘門 skill §4 明令：有 foreign writer 時<strong>不要重生索引</strong>——重生會把對方尚未定稿的
+位元組寫進 <code>MANIFEST.jsonl</code>。⇒ 索引重生留到 <code>agent_harness/</code> 的 owner 提交之後。
+</div>
+
+<h2>6. 本 commit 的引擎改動是惰性的（可證）</h2>
+<ul>
+<li>新增 <code>CGC_GRAPH_NAMES=&lt;n&gt;</code>：<strong>預設 0（關閉）</strong>，不讀張量、不釘 buffer、
+不改變既有行為（不同於擾動型的 <code>CGC_TENSOR_CAPTURE</code>）。</li>
+<li>新 build 下重跑既有判據：ON <code>pos=209</code> 仍 19.258354、OFF 仍 19.227451、
+OFF 對 OFF 參考 <strong>M1/M2 50/50 PASS</strong> ⇒ 儀器沒有改變既有行為。</li>
+<li>D5 時間序：<code>cap.created = 2026-09-28T13:56:35</code> <strong>晚於</strong>產物 mtime
+<code>2026-09-28 13:55:04</code> ✅（skill §2.6）。</li>
+</ul>
+
+<h2>7. 後繼：MTP 口徑重定義（B1–B4，0 build）</h2>
+<table>
+<thead><tr><th>#</th><th>判據</th><th>落地點</th><th>現況</th></tr></thead>
+<tbody>
+<tr><td>B1</td><td>ON 的 t/s 不可與 OFF 互比，跨臂比較拒絕</td>
+    <td><code>scripts/check/mtp_promotion_gate.py</code> 語義層</td><td><span class="tag t-amber">補一層</span></td></tr>
+<tr><td>B2</td><td>引用 ON 數字須標「輸出函數 = MTP-on」</td><td>8 份 <code>docs/*.md</code></td><td><span class="tag t-red">未做</span></td></tr>
+<tr><td>B3</td><td>交付口徑維持 MTP off</td><td><code>harness.py</code> profile</td><td><span class="tag t-green">已是現狀</span></td></tr>
+<tr><td>B4</td><td>再追加速的先決條件＝paired 快過 OFF</td><td>既有 gate（09-27 v2/v3）</td><td><span class="tag t-green">已有機制</span></td></tr>
+</tbody>
+</table>
+<div class="box pur">
+<strong>B1 的精確增量</strong>：既有 <code>mtp_promotion_gate.py</code> 的 <code>ELIGIBLE</code> 只證明
+「盒況可比」（paired ＋ 3% 重現性 ＋ 凍結 OFF 錨點），<strong>不能</strong>證明兩者算的是同一個東西
+⇒ <strong>ELIGIBLE（可比性）≠ 同一輸出函數（可互比性）</strong>。少了這一層，下次 ON 一旦變快，
+那套 gate 會自動放行一個語義錯誤的結論。
+</div>
+
+<h2>8. 資產清單（後人可直接用）</h2>
+<ul>
+<li>判據提取器：<code>Backup/m123_oracle_gate/p0_pos209.py</code>（以 <code>pmax+token_idx</code> 對齊）</li>
+<li>graph 解析器：<code>Backup/m123_oracle_gate/p1_graph_names.py</code></li>
+<li>dump 與 <code>.cap</code>：<code>Backup/m123_oracle_gate/</code>（<code>dump_p0*</code>、<code>dump_p1names-*</code>、<code>summary_*</code>）</li>
+<li>server log：<code>Backup/cgc_logs/llama_server_20260928_*.log</code></li>
+<li>⚠ <code>Backup/</code> 與 <code>.workbuddy/</code> 被 <code>.gitignore</code> 排除 ⇒ 不進版控，只在本機</li>
+</ul>
+
+<p class="mut">版式照抄 <code>docs/PREFILL250_CONDITIONAL_DELIVERY_20260916.html</code>；
+閘門輸出為產出當時實跑原文；索引漂移如實記錄，未按 skill §4 重生。</p>
+
+</div>
+</body>
+</html>

@@ -1,6 +1,13 @@
 #include "llama-context.h"
 
 #include "ggml.h"
+#include <atomic>
+#include <chrono>
+#include <thread>
+#if defined(__APPLE__)
+#include <sys/resource.h>
+#include <mach/mach.h>
+#endif
 #include "llama-arch.h"
 #include "llama-graph.h"
 #include "llama-impl.h"
@@ -565,6 +572,11 @@ llama_context::llama_context(
         };
 
         memory.reset(model.create_memory(params_mem, cparams));
+#if defined(__APPLE__)
+        { task_basic_info_data_t cgc_sti; mach_msg_type_number_t cgc_sc = TASK_BASIC_INFO_COUNT;
+          if (task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t) &cgc_sti, &cgc_sc) == KERN_SUCCESS)
+          fprintf(stderr, "CGC-STAGE: after-memory-create rss=%.1f\n", "after-memory-create", cgc_sti.resident_size/1048576.0); fflush(stderr); }
+#endif
     }
 
     // init backends
@@ -592,6 +604,11 @@ llama_context::llama_context(
             backend_ptrs.push_back(backend.get());
             backend_buf_exp_size.push_back(0);
         }
+#if defined(__APPLE__)
+        { task_basic_info_data_t cgc_sti; mach_msg_type_number_t cgc_sc = TASK_BASIC_INFO_COUNT;
+          if (task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t) &cgc_sti, &cgc_sc) == KERN_SUCCESS)
+          fprintf(stderr, "CGC-STAGE: after-backend-init rss=%.1f\n", "after-backend-init", cgc_sti.resident_size/1048576.0); fflush(stderr); }
+#endif
 
         LLAMA_LOG_DEBUG("%s: backend_ptrs.size() = %zu\n", __func__, backend_ptrs.size());
 
@@ -1102,6 +1119,18 @@ void llama_context::sched_reserve() {
 
     const uint32_t n_outputs_pp = std::min(n_tokens, cparams.n_outputs_max);
 
+    // [CGC diagnostic] label each constructed context (target ctx#1, MTP draft ctx#2) and report
+    // the scheduler's total compute-buffer footprint after each reserve; logging only.
+    static int s_cgc_res_seq = 0;
+    const int cgc_res_seq = ++s_cgc_res_seq;
+    auto cgc_sched_total_mib = [&]() -> double {
+        size_t tot = 0;
+        for (size_t i = 0; i < backend_ptrs.size(); ++i) {
+            tot += ggml_backend_sched_get_buffer_size(sched.get(), backend_ptrs[i]);
+        }
+        return (double) tot / 1024.0 / 1024.0;
+    };
+
     // reserve pp (prompt processing) graph first so that buffers are only allocated once
     {
         auto * gf = graph_reserve(n_tokens, n_seqs, n_outputs_pp, mctx.get(),
@@ -1132,6 +1161,7 @@ void llama_context::sched_reserve() {
         n_splits_tg = ggml_backend_sched_get_n_splits(sched.get());
         n_nodes_tg  = ggml_graph_n_nodes(gf);
     }
+    fprintf(stderr, "CGC-RESERVE-SIZE: ctx#%d after-TG %.2f MiB\n", cgc_res_seq, cgc_sched_total_mib()); fflush(stderr);
 
     // reserve again with pp graph to avoid ggml-alloc reallocations during inference
     {
@@ -1144,6 +1174,33 @@ void llama_context::sched_reserve() {
             throw std::runtime_error("failed to allocate compute pp buffers");
         }
     }
+    { struct rusage cgc_ru; getrusage(RUSAGE_SELF, &cgc_ru);
+      fprintf(stderr, "CGC-RESERVE-SIZE: ctx#%d after-PP sched=%.2f MiB rss=%.1f MiB\n", cgc_res_seq, cgc_sched_total_mib(), cgc_ru.ru_maxrss/1048576.0); fflush(stderr); }
+#if defined(__APPLE__)
+    {
+        static std::atomic<bool> cgc_rss_started{false};
+        bool cgc_exp = false;
+        if (cgc_rss_started.compare_exchange_strong(cgc_exp, true)) {
+            std::thread([]() {
+                const auto t0 = std::chrono::steady_clock::now();
+                for (;;) {
+                    task_basic_info_data_t cgc_ti;
+                    mach_msg_type_number_t cgc_cnt = TASK_BASIC_INFO_COUNT;
+                    kern_return_t kr = task_info(mach_task_self(), TASK_BASIC_INFO,
+                                                (task_info_t) &cgc_ti, &cgc_cnt);
+                    const double dt = std::chrono::duration<double>(
+                        std::chrono::steady_clock::now() - t0).count();
+                    if (kr == KERN_SUCCESS) {
+                        fprintf(stderr, "CGC-RSS: t=%.2f rss=%.1f\n",
+                                dt, cgc_ti.resident_size / 1048576.0);
+                    }
+                    fflush(stderr);
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+            }).detach();
+        }
+    }
+#endif
 
     for (size_t i = 0; i < backend_ptrs.size(); ++i) {
         ggml_backend_t             backend = backend_ptrs[i];
@@ -1951,6 +2008,30 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             LLAMA_LOG_ERROR("%s: failed to initialize graph\n", __func__);
             ret = GGML_STATUS_FAILED;
             return nullptr;
+        }
+
+        // [CGC 2026-09-28 P1 bit-identical] CGC_GRAPH_NAMES=<n>: print the node names of the first
+        // <n> graphs built in this process. WHY THIS EXISTS: CGC_TENSOR_CAPTURE takes EXACT node
+        // names (or `*`, which OOMs -- 41 layers x ~50 nodes), and there was no way to learn them
+        // without a build, so per-layer localisation was blocked on a guess. Diagnostics only:
+        // NO tensor is read and NO buffer is pinned, so unlike CGC_TENSOR_CAPTURE it cannot
+        // perturb the scheduler. Default 0 = off, so no arm changes behaviour unless it asks.
+        {
+            static const char * cgc_gn_e   = getenv("CGC_GRAPH_NAMES");
+            static const int    cgc_gn_max = cgc_gn_e ? atoi(cgc_gn_e) : 0;
+            static int          cgc_gn_n   = 0;
+            if (cgc_gn_n < cgc_gn_max) {
+                cgc_gn_n++;
+                // ggml_cgraph is an INCOMPLETE type on this side of the fence, so the members are
+                // not reachable -- use the ggml accessors (same as llama-context.cpp:3491).
+                const int cgc_gn_nn = ggml_graph_n_nodes(gf);
+                fprintf(stderr, "CGC-GRAPH-NAMES: pass=%d ctx_type=%d ntok=%d n_nodes=%d\n",
+                        cgc_gn_n, (int) cparams.ctx_type, (int) ubatch.n_tokens, cgc_gn_nn);
+                for (int i = 0; i < cgc_gn_nn; ++i) {
+                    fprintf(stderr, "CGC-GRAPH-NODE: %d %s\n", i, ggml_graph_node(gf, i)->name);
+                }
+                fflush(stderr);
+            }
         }
 
         if (!ggml_backend_sched_alloc_graph(sched.get(), gf)) {

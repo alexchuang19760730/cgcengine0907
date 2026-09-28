@@ -248,6 +248,68 @@ def resolve(profile: str, extra_env: dict[str, str]) -> dict:
     return {"scalars": scalars, "env": bench_env, "server_argv": argv}
 
 
+def parse_arm_env(envs: str) -> dict[str, str]:
+    """`!A=1;B=2` -> `{'A': '1', 'B': '2'}`.
+
+    The `!` is harness's "declared base override" marker (harness.py:_parse_arm strips it and
+    records the key for the base gate). It MUST be stripped here too, and for a harder reason
+    than cosmetics: run_server.sh forwards env through `env "${SERVER_ENV[@]}"`, an ALLOWLIST,
+    so a key literally named `!A` matches nothing and is dropped in silence -- 2026-09-28 the
+    whole MTP fix arm (`!LLAMA_EXPERT_CACHE_LAYER_CAPS=...`) ran on profile defaults while the
+    gate reported PASS. Same shape as the allowlist trap at run_server.sh:2477.
+    """
+    out: dict[str, str] = {}
+    for piece in envs.split(";"):
+        piece = piece.strip()
+        if not piece:
+            continue
+        if piece.startswith("!"):
+            piece = piece[1:]
+        if "=" not in piece:
+            raise SystemExit(f"bad arm env piece {piece!r} (want KEY=VAL or !KEY=VAL)")
+        k, v = piece.split("=", 1)
+        out[k.strip()] = v.strip()
+    return out
+
+
+# These scalars are per-invocation noise (a log path with a timestamp, a port), not something an
+# arm env can influence -- comparing them would make every surface look "changed".
+_VOLATILE_SCALARS = frozenset({"LOG", "PORT"})
+
+
+def _surface(res: dict) -> tuple:
+    return (tuple(sorted(res["env"].items())),
+            tuple(sorted((k, v) for k, v in res["scalars"].items() if k not in _VOLATILE_SCALARS)),
+            tuple(res["server_argv"]))
+
+
+def arm_env_dropped(profile: str, extra_env: dict[str, str], res_full: dict) -> list[str]:
+    """Which `KEY=VAL` never reached the engine (fail-closed against the silent drop).
+
+    Two ways a knob looks set but is not: (a) the `!` prefix above, (b) a name that is absent
+    from run_server.sh's allowlist (e.g. `LLAMA_EXPERT_CACHE_LAYER_CAPS` -- the real knob is
+    `CGC_SERVER_LAYER_CAPS`, which run_server.sh:2470 translates). Both are invisible in the
+    resolved surface, so the only general test is: does asking for it change anything?
+
+    A key counts as landed if it is echoed verbatim (same name + value) in the resolved env /
+    scalars -- which also covers "set to the value it already had" -- or if resolving with that
+    one key produces a surface different from the bare profile.
+    """
+    if not extra_env:
+        return []
+    dropped: list[str] = []
+    base: dict | None = None
+    for k, v in extra_env.items():
+        if res_full["env"].get(k) == v or res_full["scalars"].get(k) == v:
+            continue
+        if base is None:
+            base = resolve(profile, {})
+        if _surface(resolve(profile, {k: v})) != _surface(base):
+            continue
+        dropped.append(f"{k}={v}")
+    return dropped
+
+
 def forward_argv(server_argv: list[str]) -> list[str]:
     """Keep only the llama-bench-compatible subset of the resolved server argv."""
     out: list[str] = []
@@ -584,6 +646,102 @@ def report(results: list[dict], args) -> None:
         print(f"\nmd -> {args.md}")
 
 
+# --- self-test: the spec gate's own cases ------------------------------------------------------
+# (name, arm env, resolved env, --spec-type, must the gate refuse?)
+SELFTEST_CASES: list[tuple[str, dict, dict, str, bool]] = [
+    ("MTP=1 without --spec-type (the trap)", {"CGC_SERVER_MTP": "1"}, {}, "", True),
+    ("MTP=1 with --spec-type", {"CGC_SERVER_MTP": "1"}, {}, "draft-mtp", False),
+    ("MTP=0 is an honest off arm", {"CGC_SERVER_MTP": "0"}, {}, "", False),
+    ("plain cell, no MTP at all", {}, {}, "", False),
+    ("MTP=1 only in the resolved env", {}, {"CGC_SERVER_MTP": "1"}, "", True),
+    ("non-1 value is still armed", {"CGC_SERVER_MTP": "yes"}, {}, "", True),
+]
+
+
+def selftest() -> int:
+    bad = 0
+    for name, extra, res_env, spec_type, must in SELFTEST_CASES:
+        got = bool(mtp_without_spec(extra, res_env, spec_type))
+        if got != must:
+            bad += 1
+            print(f"  FAIL [{name}]: refused={got}, expected {must}")
+        else:
+            print(f"  ok   [{name}]: {'refused' if got else 'allowed'}")
+    print(f"spec-armed gate selftest: {len(SELFTEST_CASES) - bad}/{len(SELFTEST_CASES)} unit cases passed")
+
+    # [CGC fix] sampling_env 必須把 resolved server argv 的採樣翻成 llama-bench env，且 last
+    # occurrence wins（argv 先 --temp 0 後 --temp 0.4，取後者；否則會在標榜 parity 時釘成 greedy）。
+    scases = [
+        ("basic translate", ["--temp","0.4","--top-p","0.8","--top-k","0"],
+         {"CGC_SERVER_TEMP":"0.4","CGC_SERVER_TOP_P":"0.8","CGC_SERVER_TOP_K":"0"}),
+        ("last occurrence wins", ["--temp","0","x","--temp","0.4"],
+         {"CGC_SERVER_TEMP":"0.4"}),
+        ("underscore aliases", ["--top_p","0.8","--min_p","0.0"],
+         {"CGC_SERVER_TOP_P":"0.8","CGC_SERVER_MIN_P":"0.0"}),
+    ]
+    sbad = 0
+    for name, sav, must in scases:
+        got = sampling_env(sav)
+        if any(got.get(k) != v for k,v in must.items()):
+            sbad += 1; print(f"  FAIL [{name}]: {got}")
+        else:
+            print(f"  ok   [{name}]: {got}")
+    print(f"sampling-env selftest: {len(scases)-sbad}/{len(scases)} cases passed")
+
+    # End-to-end, because the unit cases cannot catch a gate that is never reached: the real CLI
+    # must refuse the real trap and still allow the same arm once --spec-type is given. --dry-run
+    # stops both before any launch (only the arm resolver actually runs).
+    e2e = [("trap via the real CLI", ["--arms", "prod-new:CGC_SERVER_MTP=1", "--dry-run"], True),
+           ("same arm with --spec-type", ["--arms", "prod-new:CGC_SERVER_MTP=1",
+                                          "--spec-type", "draft-mtp", "--dry-run"], False)]
+    ebad = 0
+    for name, argv, must in e2e:
+        p = subprocess.run([sys.executable, str(Path(__file__).resolve()), *argv],
+                           cwd=str(ROOT), capture_output=True, text=True)
+        refused = p.returncode != 0
+        msg_ok = (not must) or "--spec-type" in (p.stdout + p.stderr)
+        if refused != must or not msg_ok:
+            ebad += 1
+            print(f"  FAIL [{name}]: rc={p.returncode} (expected refuse={must})\n"
+                  f"{(p.stdout + p.stderr)[-800:]}")
+        else:
+            print(f"  ok   [{name}]: rc={p.returncode}")
+    print(f"spec-armed gate selftest: {len(e2e) - ebad}/{len(e2e)} end-to-end cases passed")
+
+    # [CGC fix 2026-09-28] arm env 靜默丟失防線。`!` 前綴與 allowlist 外的鍵都必須被抓到，
+    # 而真正會生效的鍵不能被誤傷（誤傷 = 把仍在用的臂擋在門外）。
+    acases = [
+        ("`!` 必須被剝掉", "!CGC_GATHER_SLAB_CAP=64;CGC_SERVER_MTP=1",
+         {"CGC_GATHER_SLAB_CAP": "64", "CGC_SERVER_MTP": "1"}),
+        ("無 `!` 原樣保留", "CGC_SERVER_LAYER_CAPS=40-40:16", {"CGC_SERVER_LAYER_CAPS": "40-40:16"}),
+    ]
+    abad = 0
+    for name, spec, must in acases:
+        got = parse_arm_env(spec)
+        if got != must:
+            abad += 1; print(f"  FAIL [{name}]: {got} != {must}")
+        else:
+            print(f"  ok   [{name}]: {got}")
+    print(f"arm-env parse selftest: {len(acases) - abad}/{len(acases)} cases passed")
+
+    # 落地檢查（要真的叫 run_server.sh，但不碰 GPU）
+    dcases = [
+        ("生效的鍵不誤傷", {"CGC_GATHER_SLAB_CAP": "64"}, False),
+        ("入口名轉底層名也算送達", {"CGC_SERVER_LAYER_CAPS": "40-40:16"}, False),
+        ("`!` 前綴 → 抓到", {"!CGC_GATHER_SLAB_CAP": "64"}, True),
+        ("allowlist 外的鍵 → 抓到", {"CGC_TOTALLY_BOGUS_KEY": "1"}, True),
+    ]
+    dbad = 0
+    for name, extra_env, must in dcases:
+        got = bool(arm_env_dropped("prod-new", extra_env, resolve("prod-new", extra_env)))
+        if got != must:
+            dbad += 1; print(f"  FAIL [{name}]: dropped={got}, expected {must}")
+        else:
+            print(f"  ok   [{name}]: dropped={got}")
+    print(f"arm-env landed selftest: {len(dcases) - dbad}/{len(dcases)} cases passed")
+    return 0 if bad + ebad + sbad + abad + dbad == 0 else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -626,28 +784,71 @@ def main() -> int:
     ap.add_argument("--spec-draft-n-max", type=int, default=None,
                     help="llama-bench --spec-draft-n-max (1..16). Inert without --spec-type; when "
                          "omitted, llama-bench's own default (3) applies.")
+    ap.add_argument("--cell", default=None,
+                    help="測試卡 §2.5 的 named cell（預設＝權威 prod-new cell）。未宣告的名字是 "
+                         "fail-closed（不退回預設）——拿不到指定的 cell 不該變成另一個 cell 的數字。")
     ap.add_argument("--workdir", default="/tmp")
     ap.add_argument("--json")
     ap.add_argument("--md")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--selftest", action="store_true",
+                    help="run the spec-armed gate's own cases (unit + end-to-end) and exit")
     args = ap.parse_args()
+    if args.selftest:
+        return selftest()
+    # [CGC 唯一入口 2026-09-27] 頂部 docstring 的 INTERNAL DRIVER 宣告現在由運行時強制：直跑
+    # （無跑前立項、口徑可能是冷 cache）產生的數字不可引用。harness/commit_bench 內部調用會
+    # 自帶 CGC_INTERNAL_CALL=1；--dry-run 不產數字、放行。
+    if not args.dry_run and os.environ.get("CGC_INTERNAL_CALL") != "1":
+        print(
+            "!! 這支是 internal 驅動，不是生產級量測入口（見檔頭 2026-09-25 ruling）。\n"
+            "   直跑沒有跑前立項、warm-skip/fixed-fill-seed 也可能不是熱-cache 口徑，數字不可引用。\n"
+            "   請走：python3 scripts/check/harness.py bench --arm \"prod-new\" --charter <charter.yaml>\n"
+            "   （內部自動化會自帶 CGC_INTERNAL_CALL=1；要復刻請顯式 export 後再跑。）",
+            file=sys.stderr)
+        return 2
     if args.batch and not args.ubatch:
         args.ubatch = args.batch
 
-    results = []
+    armed: list[tuple[str, str, dict[str, str], dict]] = []
     for spec in args.arms.split(","):
         spec = spec.strip()
         if not spec:
             continue
         if ":" in spec:
             prof, _, envs = spec.partition(":")
-            extra = dict(kv.split("=", 1) for kv in envs.split(";") if "=" in kv)
-            results.append(run_arm(spec, prof, extra, args))
-        else:
-            if spec not in ARMS:
-                raise SystemExit(f"unknown arm {spec!r}; known: {sorted(ARMS)}")
+            extra = parse_arm_env(envs)
+        elif spec in ARMS:
             prof, extra = ARMS[spec]
-            results.append(run_arm(spec, prof, extra, args))
+        else:
+            raise SystemExit(f"unknown arm {spec!r}; known: {sorted(ARMS)}")
+        res = resolve(prof, extra)
+        # [CGC fix 2026-09-28] 靜默丟失防線。arm 宣告的 env 若既沒出現在 resolved surface、
+        # 也沒讓它產生任何變化，就是被 `!` 前綴或 run_server.sh 的 allowlist 吃掉了 —— 那一臂
+        # 量的是 profile 預設值，而 gate 照樣 PASS（2026-09-28 的 MTP 修復臂就是這樣空轉了一趟）。
+        dropped = arm_env_dropped(prof, extra, res)
+        if dropped:
+            msg = (f"arm {spec!r} 的環境變數沒有送達引擎（量到的會是 profile 預設值）: "
+                   f"{', '.join(dropped)}\n"
+                   f"  常見原因：(a) `!KEY=VAL` 的 `!` 沒剝（run_server.sh 的 allowlist 不認 `!KEY`）；\n"
+                   f"           (b) 用了底層名而非 run_server.sh 的入口名（例：要給 CGC_SERVER_LAYER_CAPS，\n"
+                   f"               不是 LLAMA_EXPERT_CACHE_LAYER_CAPS —— 後者由前者在 :2470 導出）。\n"
+                   f"  確認入口名：grep -n 'SERVER_ENV+=(' scripts/run_server.sh")
+            if os.environ.get("CGC_ARM_ENV_STRICT", "1") == "0":
+                print("!! " + msg, file=sys.stderr)
+            else:
+                raise SystemExit(msg)
+        why = mtp_without_spec(extra, res["env"], args.spec_type)
+        if why:
+            raise SystemExit(
+                f"arm {spec} arms MTP but this cell has no --spec-type ({why}) — 拒跑（fail-closed）。\n"
+                f"  CGC_SERVER_MTP only exports the MTP=1 env block; the spec itself is a llama-bench\n"
+                f"  flag that nothing here adds for you. Without it the arm measures NO_PREFETCH /\n"
+                f"  LAYER_CAPS / PREFIX_REUSE_CKPT / NO_SEQ_RM_PROBE, not MTP. Add:\n"
+                f"      --spec-type draft-mtp [--spec-draft-n-max 3]")
+        armed.append((spec, prof, extra, res))
+
+    results = [run_arm(tag, prof, extra, args, res) for tag, prof, extra, res in armed]
 
     report(results, args)
     if args.json:

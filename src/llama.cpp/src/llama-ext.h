@@ -153,3 +153,14 @@ LLAMA_API uint32_t llama_model_get_tok_embd(const struct llama_model * model, fl
 //
 LLAMA_API void llama_context_set_cgc_phase(struct llama_context * ctx, cgc_phase_t phase);
 LLAMA_API cgc_phase_t llama_context_get_cgc_phase(const struct llama_context * ctx);
+
+//
+// [CGC 2026-09-26] "Assistant block" dialect, needed where a shared-KV draft context has to pick a
+// batch layout. The assistant dialect (gemma4) predicts its whole draft in ONE graph, so all of its
+// draft tokens carry ONE position; a draft context that only SHARES the target KV (ctx_other) and
+// drafts as a SEQUENTIAL chain is not this dialect and must advance the position per token, or
+// llama_decode rejects the second step (M-RoPE requires X < Y; the shared memory already holds X).
+// This is the same allowlist llama-context.cpp uses to retain ctx_other for assistants, kept here so
+// the two cannot drift apart.
+//
+LLAMA_API bool llama_model_is_assistant_block(const struct llama_model * model);

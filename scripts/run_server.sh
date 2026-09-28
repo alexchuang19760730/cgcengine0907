@@ -1641,6 +1641,13 @@ fi
 if [ -n "${CGC_HOOK_SPLIT:-}" ]; then
     SERVER_ENV+=(CGC_HOOK_SPLIT="$CGC_HOOK_SPLIT")
 fi
+# [CGC 2026-09-28 P1 bit-identical] CGC_GRAPH_NAMES=<n>: print the node names of the first <n>
+# graphs (diagnostics only -- reads no tensor, pins no buffer). Needed to feed CGC_TENSOR_CAPTURE,
+# which takes EXACT node names. Same allowlist trap: an unlisted CGC_* is dropped silently and a
+# dropped name looks exactly like "the graph was never built".
+if [ -n "${CGC_GRAPH_NAMES:-}" ]; then
+    SERVER_ENV+=(CGC_GRAPH_NAMES="$CGC_GRAPH_NAMES")
+fi
 # [CGC 2026-09-19 slab→pool handoff] CGC_SLAB_HANDOFF=<cap> experts/layer: at the first decode step
 # after a slab prefill, publish the prefill's hot set into the pool (evicting, capped, synchronous),
 # because the slab path repoints the FFN weights at a per-layer slab and never writes the pool. The

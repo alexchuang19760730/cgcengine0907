@@ -3380,8 +3380,16 @@ int llama_bench(int argc, char ** argv) {
         // prefill definitely does; building the draft context after that is what made every
         // production-shaped run fail on its first verify batch. See bench_spec_state.
         const bool cgc_spec_on = !params.spec_types.empty();
+        // [CGC lazy-draft 2026-09-27] The draft context + speculator built by bench_spec_setup()
+        // are used ONLY by a GENERATE cell (test_gen_spec). A prompt-only cell (pp, t.n_gen==0)
+        // never calls test_gen_spec, so setting the draft context up here reserved ~285 MiB of
+        // Metal for nothing -- and that extra working set is what pushed the 2048-token prefill
+        // past the Metal working-set limit (command buffer status 5 OOM at il=39; the off arm at
+        // the same shape prefilled fine at ~8.2 GB). Build the speculative side only when this
+        // test actually generates. The tg cell still sets it up before its depth prefill + gen.
+        const bool spec_needed = cgc_spec_on && t.n_gen > 0;
         bench_spec_state spec_state;
-        if (cgc_spec_on &&
+        if (spec_needed &&
             !bench_spec_setup(spec_state, lmodel, ctx, params.spec_types, params.spec_draft_n_max)) {
             fprintf(stderr, "%s: error: failed to set up the speculative path\n", __func__);
             llama_free(ctx);

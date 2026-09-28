@@ -3009,3 +3009,9 @@ size_t llama_model_expert_index_size(const llama_model * model) {
 const llama_expert_index_entry * llama_model_expert_index(const llama_model * model) {
     return model && !model->expert_index.empty() ? model->expert_index.data() : nullptr;
 }
+
+// [CGC 2026-09-26] See llama-ext.h. Kept next to the other model accessors so the assistant allowlist
+// has ONE definition; llama-context.cpp's ctx_other retention is the other user of the same set.
+bool llama_model_is_assistant_block(const llama_model * model) {
+    return model != nullptr && model->arch == LLM_ARCH_GEMMA4_ASSISTANT;
+}
