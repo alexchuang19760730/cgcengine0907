@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CGC pool 常住足跡三路全封白皮書（2026-09-28）</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1c1c1a; --muted:#5f5e5a;
+    --line:#d3d1c7; --panel:#f7f6f2;
+    --red:#a32d2d; --redbg:#fcebeb;
+    --green:#3b6d11; --greenbg:#eaf3de;
+    --amber:#854f0b; --amberbg:#faeeda;
+    --blue:#185fa5; --bluebg:#e6f1fb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--fg);
+       font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;}
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:24px;font-weight:600;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:28px}
+  h2{font-size:17px;font-weight:600;margin:32px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;font-weight:600;margin:20px 0 8px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel);font-weight:600}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+  .card{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:14px 0;background:var(--panel)}
+  .r{background:var(--redbg);border-left:3px solid var(--red)}
+  .g{background:var(--greenbg);border-left:3px solid var(--green)}
+  .a{background:var(--amberbg);border-left:3px solid var(--amber)}
+  .b{background:var(--bluebg);border-left:3px solid var(--blue)}
+  code{font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--panel);
+       padding:1px 4px;border-radius:4px}
+  ul{padding-left:22px;margin:10px 0}
+  li{margin:5px 0}
+  .k{font-weight:600}
+  footer{margin-top:40px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>pool 常住足跡：三條路全封 —— 16 GB 上沒有記憶體側槓桿</h1>
+<div class="sub">2026-09-28 · 線 A 受 operator 授權跨線處理線 I（expert cache／<code>cb</code>）· 0 build、0 程式碼改動 · 立項卡 <code>e-softpool-residency</code>（跑前預註冊）</div>
+
+<div class="card r">
+<p class="k">結論先講</p>
+<p>(B) 那條路（pool 改 file-backed）<span class="k">不存在</span> —— <code>CGC_MMAP_POOL_FIX</code>
+<b>不是開關，是 shell 探測變數</b>。替代它的 soft pool 路，實測
+<span class="k">常住足跡完全沒降</span>（wired 12402 MB vs 控制 12364 MB，+0.3%，噪聲內）。
+加上既有的「縮 pool」真曲線，<b>三條記憶體側的路全部封死</b>。</p>
+</div>
+
+<h2>1. 先更正：<code>CGC_MMAP_POOL_FIX</code> 到底是什麼</h2>
+
+<p>上一輪建議「用 <code>strings</code> 確認它在不在，在就開一趟對照」。查完的結果是我的前提錯了：</p>
+
+<table>
+<tr><th>我以為</th><th>其實</th></tr>
+<tr><td>它是 <code>CGC_*</code> env 儀器，<code>strings</code> 找得到</td>
+    <td><b>在任何 dylib／執行檔裡都是 0 命中</b> —— 它是 <code>run_server.sh:1024</code> 的 <b>shell 變數</b></td></tr>
+<tr><td>找到就能當開關開 A/B</td>
+    <td>它是<b>探測變數</b>，由 <code>strings -a libggml-metal*.dylib | grep -c '_Pool'</code> 算出（<code>:1027</code>）</td></tr>
+<tr><td>它跟 pool 換頁行為有關</td>
+    <td>它只服務 <code>load_mode=mmap</code> 那條路（<code>:1146-1158</code>），判「binary 有沒有 <code>_Pool</code> buft 修復」</td></tr>
+</table>
+
+<div class="card b">
+<p class="k">可檢查的事實</p>
+<p><code>strings -a libggml-metal.0.dylib | grep -c '_Pool'</code> ⇒ <b>1</b>（修復存在）。</p>
+<p>但 <code>run_server.sh:1140-1142</code> 白紙黑字：<i>「只在 use_mmap 時選它，所以
+<code>load_mode=none</code> 路徑的 buft 選擇與以前逐位元相同。」</i>
+交付 cell 就是 <code>load_mode=none</code> ⇒ <b>這條路在我們的 cell 上是 no-op</b>。</p>
+</div>
+
+<div class="card a">
+<p class="k">而且它早已被量過、被判「不是槓桿」（<code>run_server.sh:1089</code> 原文）</p>
+<p><i>「mmap（<b>不是</b>槓桿，不要再試）：……修好之後它在 <b>4096/5120/6144 全部不存活（0/3）</b>，
+而且工作集警告只在 mmap 出現 ⇒ 它把 GPU 工作集撐大。」</i></p>
+<p>⇒ 不需要、也不應該為它開一趟。上一輪的建議作廢。</p>
+</div>
+
+<h2>2. 替代路：soft pool 降可駐留槽位（本輪實測）</h2>
+
+<h3>2.1 為什麼值得問</h3>
+<p>上一輪算出：<code>wired 峰值 12.4 GB（模型權重 Metal 駐留）＋ pool 8 GiB ＝ 20.4 GiB vs 實體 16 GiB</code>
+⇒ 必有 ~4.4 GiB pool 頁在 swap 上。那輪說「縮 pool 不行」（真曲線 8G 12.06 → 6G 10.48 → 4G 7.67 t/s）。</p>
+<p>但 <span class="k">soft pool 是另一件事</span>：pool 仍配置 8 GiB、<code>n_slots</code> 仍 143，
+只是槽位 64..142 標為 spare「currently unused」⇒ 若那些頁真的永不觸及，常住足跡應從 8 GiB 降到
+~3.6 GiB，<b>而不改變 pool 的宣告容量</b>。這是第一個「砍掉那 4.4 GiB 卻不縮 pool」的候選。</p>
+
+<h3>2.2 旋鈕真的生效（見證行）</h3>
+<div class="card g">
+<code>CGC Soft Pool init: L0=32 L1=32 (n_slots=143, partition active)</code><br>
+<code>pool_cap_slots=143</code>
+<p>對照：交付 cell 當前被 <code>run_server.sh:2294-2302</code> 強制設為 <code>0/0</code>，
+印 <code>L0=0 L1=0 (partition disabled)</code> ⇒ 本趟確實是「開著」的那一面，不是靜默 no-op。</p>
+</div>
+
+<h3>2.3 結果：常住足跡完全沒降</h3>
+<table>
+<tr><th>趟</th><th class="n">tg reps</th><th class="n">中位</th><th class="n">rep1</th><th class="n">pageins 增量</th><th class="n">max_wired (MB)</th><th class="n">swap 成長</th><th class="n">hit%</th></tr>
+<tr><td>off_a（控制）</td><td class="n">10.87 / 10.91 / 10.22</td><td class="n">10.87</td><td class="n">10.87</td><td class="n">1,621,605</td><td class="n">12,364</td><td class="n">+4418</td><td class="n">96.2</td></tr>
+<tr><td>on_k1（控制）</td><td class="n">10.74 / 9.20 / 15.28</td><td class="n">10.74</td><td class="n">10.74</td><td class="n">1,674,011</td><td class="n">12,423</td><td class="n">+3592</td><td class="n">91.4</td></tr>
+<tr><td>off_b（控制）</td><td class="n">4.09 / 11.82 / 11.53</td><td class="n">11.53</td><td class="n">4.09</td><td class="n">1,416,351</td><td class="n">12,349</td><td class="n">+1832</td><td class="n">96.2</td></tr>
+<tr><td><b>soft32</b></td><td class="n">10.17 / 9.13 / 8.38</td><td class="n"><b>9.13</b></td><td class="n"><b>10.17</b></td><td class="n"><b>1,774,912</b></td><td class="n"><b>12,402</b></td><td class="n"><b>+4846</b></td><td class="n">96.2</td></tr>
+</table>
+
+<div class="card r">
+<p class="k">三條獨立的記憶體指標，沒有一條支持假設</p>
+<ul>
+<li><b><code>max_wired</code> 12402 MB vs 控制 12349–12423</b> ⇒ 差異 <b>+0.3%，在噪聲內</b> ⇒
+    常住足跡一點都沒降。spare 槽位仍然被觸及（與 <code>prewarm_hot</code> 會填滿 143 槽一致）。</li>
+<li><b>pageins 增量 1,774,912 ⇒ 比所有控制都高</b>（off_a 1.62M，<b>+9.5%</b>），方向相反。</li>
+<li><b>swap 成長 +4846 MiB 是四趟最大</b>。</li>
+</ul>
+<p>⇒ 假設「spare 槽位永不觸及 ⇒ 常住足跡降 4.4 GiB」<b>被證偽</b>。</p>
+</div>
+
+<h3>2.4 速度面：UNDECIDED，但已無意義</h3>
+<ul>
+<li>預註冊 falsify 門檻 <code>tg ≤ 9.0</code>：中位 9.13、rep1 10.17 ⇒ 都沒過門檻 ⇒ 字面上 UNDECIDED。</li>
+<li>按 <code>§1.18</code> 規則<b>看 rep1 不看中位</b>：rep1 10.17 vs 控制 10.87／10.74 ⇒
+    <b>−5.5%／−6.4%，落在 MDD 8.5% 內</b> ⇒ 速度差不可判。</li>
+<li>中位 −16% 那部分是 carry-over 簽名（reps 單調遞減 10.17 → 9.13 → 8.38）。</li>
+</ul>
+<p><span class="k">關鍵</span>：不管速度面判不判得出來，記憶體面已經證偽 ⇒
+soft pool 沒有 upside 去平衡任何速度代價 ⇒ 沒有理由再投入。</p>
+
+<h3>2.5 hit% 不變（96.2% = 控制）</h3>
+<p>soft pool 被關掉的原始理由（<code>run_server.sh:2288-2293</code>）是命中率層面：
+「placement 最多值 0.2pp（current 90.3% vs best-possible 90.5%）」。本趟實測 hit%
+<b>96.2%，與 off_a／off_b 完全相同</b> ⇒ 那個理由在本 cell 上再次成立 ⇒
+<b>soft pool 既不省記憶體、也不改命中率</b>。</p>
+
+<h2>3. 三條路全封 —— 線 I 記憶體預算結案</h2>
+<table>
+<tr><th>路</th><th>旋鈕</th><th>結果</th></tr>
+<tr><td>① 縮 pool</td><td><code>CGC_SERVER_EXPERT_CACHE_BYTES</code></td>
+    <td>真曲線 8G <b>12.06</b> → 6G 10.48 → 4G 7.67 ⇒ 8G 最好，縮了就慢</td></tr>
+<tr><td>② 降可駐留槽位</td><td><code>CGC_SOFT_POOL_L0/L1=32/32</code></td>
+    <td><b>本輪實測：wired 不變、pageins 反升、hit 不變</b> ⇒ 證偽</td></tr>
+<tr><td>③ pool 改 file-backed</td><td><code>CGC_MMAP_POOL_FIX</code></td>
+    <td><b>不是開關</b>（shell 探測變數）；只對 <code>load_mode=mmap</code> 生效，交付 cell 是 <code>none</code>；歷史 0/3</td></tr>
+</table>
+
+<div class="card g">
+<p class="k">⇒ 16 GB 上沒有記憶體側槓桿</p>
+<p>對「這應用能不能用」的最終答案維持上一輪，且現在有第三條獨立證據：
+<b>能用，<code>cb</code> 是結構成本不是 bug；不要對使用者說「請升級到 32 GB」。</b></p>
+<p>（wired 12.4 GB 是模型權重的 Metal 駐留、不可換頁，也是所有路上最大的單項；
+要動它得動量化／ngl，而兩者都碰護欄、須先過 bit-identical —— 那是另一張卡的事。）</p>
+</div>
+
+<h2>4. 本輪作廢／更正條目</h2>
+<div class="card a">
+<ul>
+<li>上一輪「下一步走 (B)，確認 <code>CGC_MMAP_POOL_FIX</code> 在不在、在就開一趟對照」⇒ <b>作廢</b>。</li>
+<li><b>假陰性陷阱</b>：<code>strings</code> 查 <code>CGC_MMAP_POOL_FIX</code> 本來就 0 命中（它是 shell 變數）。
+    正確查法是 <code>strings -a libggml-metal.0.dylib | grep -c '_Pool'</code>。</li>
+</ul>
+</div>
+
+<h2>5. 機械坑（本輪新踩）</h2>
+<ul>
+<li><code>harness.py bench</code> <b>沒有 <code>--dry-run</code></b>（那是 <code>llama_bench_matrix.py</code> 的參數）
+    ⇒ 生效性檢查改用 resolve-only 片段，毫秒級、不碰 GPU。</li>
+<li>charter gate 會驗 <code>baseline.source</code> 檔案<b>真的存在</b>：寫花括號展開
+    <code>{off_a,on_k1,off_b}.json</code> 會 fail-closed 拒跑 ⇒ 必須指到單一真實檔案。</li>
+<li>base 已宣告的鍵（<code>CGC_SOFT_POOL_L0</code> base='0'）要覆寫必須加 <code>!</code>，否則 base gate 拒跑。
+    <code>!</code> 由 <code>_parse_arm</code> 剝掉後才餵給 <code>matrix.resolve</code>
+    ⇒ skill <code>§1.12</code> 的「<code>!K</code> 被 allowlist 丟掉」陷阱<b>不適用於這條路徑</b>。</li>
+</ul>
+
+<footer>
+0 build、0 程式碼改動。證據：<code>Backup/phase_decomp/softpool/soft32.json</code>、
+<code>Backup/phase_decomp/mtp_kbracket/{off_a,on_k1,off_b}.json</code>、
+stderr 見證行 <code>/tmp/softpool_32/*.stderr.log</code>。
+立項卡 <code>scripts/check/charters/e-softpool-residency-2026-09-28.yaml</code>（判決規則跑前寫死）。
+</footer>
+
+</div>
+</body>
+</html>

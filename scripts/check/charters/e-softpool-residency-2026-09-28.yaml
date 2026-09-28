@@ -1,0 +1,102 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— Soft Pool 可駐留槽位：換頁能不能免費砍掉
+# ═══════════════════════════════════════════════════════════════════════
+id: e-softpool-residency
+owner: lineA（授權跨線處理線 I 的 pool 記憶體預算）
+created: 2026-09-28
+
+# ── 【目標】─────────────────────────────────────────────────────────────
+question: |
+  在交付 cell 上，把 expert cache pool 的**可駐留槽位**從 143 降到 64
+  （CGC_SOFT_POOL_L0=32 / CGC_SOFT_POOL_L1=32，槽位 64..142 變 spare 永不觸及），
+  趟內 pageins 增量是否顯著下降，且 decode tg 是否仍維持在今晚控制帶內？
+
+# ── 【為什麼值得 1 趟】──────────────────────────────────────────────────
+# 上一輪（docs/CGC_POOL_WIRED_BUDGET_2026-09-28.md）算出：wired 峰值 12.4 GB
+# （模型權重的 Metal 駐留）＋ pool 8 GiB ＝ 20.4 GiB vs 實體 16 GiB
+# ⇒ 必有 ~4.4 GiB pool 頁在 swap 上，並被推定為 cb 桶的物理來源。
+# 那輪的結論是「縮 pool 不行」（真曲線 8G 12.06 → 6G 10.48 → 4G 7.67）。
+# 但 soft pool 是**不同的東西**：pool 仍配置 8 GiB（n_slots 仍 143），
+# 只是槽位 64..142 標為 spare「currently unused」⇒ 那些頁**永遠不被觸及**
+# ⇒ 理論上常住足跡從 8 GiB 降到 ~3.6 GiB，而**不改變 pool 的宣告容量**。
+# 若成立，就是第一個「砍掉那 4.4 GiB 卻不縮 pool」的旋鈕。
+rationale: |
+  判據選 pageins 而非 t/s：pageins 是**趟內計數**，不受 8.5% 最小可辨差
+  （MDD）與趟間漂移（σ 6%）限制 ⇒ 髒窗也可引用。t/s 只當粗粒度佐證
+  （預期效應若存在會遠大於 MDD，故仍可定向判讀）。
+
+# ── 【現狀】─────────────────────────────────────────────────────────────
+baseline:
+  metric: "decode tg 10.7–11.5 t/s（今晚同 cell 三趟：off_a 10.869 / on_k1 10.742 / off_b 11.528）"
+  cell:   "prod-new, MTP off, -b/-ub 5632, --warm-skip 64, reps 3"
+  source: "Backup/phase_decomp/mtp_kbracket/off_a.json   # 同場次控制組（另二趟 on_k1/off_b 在同目錄）"
+  known:  |
+    - 交付 cell 當前 CGC_SOFT_POOL_L0/L1 被 run_server.sh 強制設為 0/0
+      （partition disabled，"legacy uniform n_slots behavior"）。
+    - run_server.sh:2288-2293 關掉它的理由是**命中率**層面：
+      「placement 最多值 0.2pp（current 90.3% vs best-possible 90.5%）」。
+      ⇒ **沒有任何記錄量過它的記憶體側**。本卡問的就是那一側。
+    - 反向證據（09-18 記憶）：某次 env 沒生效而落回預設 32/32 時觀測到
+      「多吃記憶體 ⇒ Metal OOM」。與本卡的預期相反，須由本趟裁決。
+    - 控制帶：pageins 趟內增量正常 ≈ +170 萬；崩潰趟（on_k3）≈ +2360 萬。
+
+# ── 【假設】─────────────────────────────────────────────────────────────
+hypothesis:
+  mechanism: |
+    pool 是 malloc 匿名頁 ⇒ 頁在**首次寫入**才變成常住。若 spare 槽位確實
+    永不觸及，則常住足跡從 143 槽（8 GiB）降到 64 槽（~3.6 GiB）
+    ⇒ 少了 ~4.4 GiB 需要換出 ⇒ pageins 增量應顯著下降。
+    反之若 prewarm_hot 已把全部 143 槽填滿（llama-expert-cache.cpp 的
+    prewarm 路徑），則 soft pool 對常住足跡無效，pageins 不降。
+  expected: "pageins 增量下降 ≥30%，但 tg 同時掉到 ~8（＝變相縮 pool，非免費）"
+  basis:    |
+    pool 曲線（run_server.sh:566）8G 12.06 / 6G 10.48 / 4G 7.67 t/s：
+    64 槽 ≈ 3.6 GiB 有效容量 ⇒ 對照曲線預期落在 4G 與 6G 之間甚至更低。
+
+# ── 【預註冊判決規則（跑之前寫死，看到資料後不得改）】───────────────────
+acceptance:
+  # 單趟設計，且**把它排在本場次第一趟**：趟間劣化（carry-over）只會讓
+  # 第二趟變差 ⇒ 偏差方向是「縮小」本趟與控制帶的差距，不會「製造」差距。
+  # ⇒ 若本趟明顯較差，那不是順序造成的。
+  window_valid: |
+    同時成立才算本趟可裁判：
+      (a) 起跑 thermal = NOMINAL；
+      (b) 見證行 `CGC Soft Pool init: L0=32 L1=32 (partition active)`
+          （缺這行 ⇒ 旋鈕沒生效 ⇒ 本趟無效，不結論）；
+      (c) 趟完成（rc=0、有 3 個 tg rep）。
+  success: "pageins 增量 ≤ +120 萬（較控制帶 −30% 以上）**且** tg ≥ 10.0"
+  falsify: "tg ≤ 9.0 ⇒ 砍常住足跡的代價就是有效容量，soft pool ＝ 變相縮 pool ⇒ 結案"
+  undecidable: |
+    tg 落在 (9.0, 10.0) 或 pageins 未降而 tg 亦未降 ⇒ 登記 UNRESOLVED。
+  on_fail: |
+    三種輸出導向同一個行動：**不再往 pool 常住足跡投入盒子**。
+    理由：若 falsify，則「pool 有效容量＝速度」已被兩條獨立曲線
+    （CGC_SERVER_EXPERT_CACHE_BYTES 與 soft pool）交叉確認 ⇒ 第三條路
+    （mmap/file-backed）也同樣是「降有效容量」的變體，不必再試。
+    ⇒ 線 I 的記憶體預算議題結案，改回主線的 gap/wait 桶。
+
+# ── 【量化目標】───────────────────────────────────────────────────────
+targets:
+  control_tg_band: [10.7, 11.5]
+  control_pageins_delta: 1700000
+  crash_pageins_delta:   23600000
+  mdd_pct: 8.5
+
+# ── 【技術子目標】───────────────────────────────────────────────────────
+subgoals:
+  - id: sg-softpool-armed
+    text:   "見證行證明 partition active（不是被 allowlist 丟掉的靜默 no-op）"
+    expect: "CGC Soft Pool init: L0=32 L1=32"
+    how:    "grep 本趟 stderr"
+  - id: sg-softpool-pageins
+    text:   "量到趟內 pageins 增量並與控制帶比較"
+    expect: "一個數字，可比"
+    how:    "harness json 的 memory 段／vm_stat 差值"
+  - id: sg-softpool-tg
+    text:   "3 個 tg rep，中位與 rep1 都報（單臂 spread 可達 67%）"
+    expect: "兩者皆報"
+    how:    "harness json rows[].samples_ts"
+
+arms:
+  - prod-new:CGC_SOFT_POOL_L0=32;CGC_SOFT_POOL_L1=32    # 本趟唯一新臂
+  - prod-new（既有 off_a / on_k1 / off_b，作為控制帶）
