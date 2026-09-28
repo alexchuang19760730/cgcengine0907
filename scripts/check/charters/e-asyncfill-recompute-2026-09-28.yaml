@@ -344,10 +344,47 @@ p2_adjudication:
           ⇒ 每 step 15–134；而靜態圖要求的是**固定 312**。
           「0.3 miss/層」**沒有來源**，且方向錯（把成本說成隨 miss 縮放）
           ⇒ ⛔ 停止引用，以 J2-b 的固定值取代。
-    k_unresolved: |
-      ⚠ `hparams.n_expert_used` 未實測：源碼兩處註釋互相矛盾
-      （:2746「8 down GEMVs + 7 adds」⇒ k=8；:2929「n_expert_used-1 = 6」⇒ k=7）。
-      **J1 不依賴 k**；J2 成本與 k 線性相關。下次有 log 時補實測值。
+    k_resolved_20260929: |
+      ✅ **已解（單樣本，但算術自洽）**：`CGC_EB_TIMER=1` 的見證行
+      `CGC-EBTIMER: step_usec=.. calls=41 miss=146 n_sum=328`
+      ⇒ `calls = 41`（= `slot_owner.size()` = n_layers）、`n_sum / calls = 328/41 = 8.000`
+      ⇒ **n_layer = 41、k = 8**；且 miss 146/328 = **44.5%**（落在 `miss_rate_measured`
+      上緣 43.0% 附近）。k=8 與 `llama-graph.cpp:2746`「8 down GEMVs + 7 adds」一致，
+      :2929 的「n_expert_used-1 = 6」作廢。
+      ⇒ **J2 成本定死 = 41×8 = 328 op/step**（不是先前用 39 層推的 312）
+      ⇒ 328 × 5–10 µs = **1.64–3.28 ms/step（1.9%–3.8%）**。J1 仍不依賴 k。
+
+    landing_band_audit: |
+      ★★ **落點區間（14.1~19.9）的兩個輸入都不牢 ⇒ 現在不可用來決策**（2026-09-29 查證）。
+      區間 = 現行錨點 step − (省下 − 補算成本) − J2：
+        最壞 net=12.07 ms ⇒ 86.13−12.07+3.28 = 77.34 ms ⇒ **12.93 t/s（+11.4%）**
+        最好 net=32.61 ms ⇒ 86.13−32.61+1.64 = 55.16 ms ⇒ **18.13 t/s（+56.2%）**
+      ⛔ 但「省下 34.5 / 44.5 ms」這個輸入有問題：
+        (a) **上界端是已知異常讀數**。`MISS_GATE_STEP3` §3 的 B 端 20.66 t/s 出自
+            `CACHE_SIZE_AB_2026-09-23.md:135`，而同文 :137 原話：
+            「單支啟動**自己**的三個 rep 就能差 2.7 倍，而 20.66 t/s **超出這台機器
+            歷史上任何同形狀讀數的上緣**」⇒ B 端不是穩態，是離群值。
+            另一個 23.68（⇒ 省下 44.5 ms）更極端。
+        (b) **下界端也無法用實測 A/B 複核**：`Backup/nofill_ab/`（build **578**、
+            `n_batch 512`、**非交付 cell** 的 5632；`n_kept=2`）
+              fill 臂 avg_ts = 10.445 / 7.462 / 10.868
+              nofill 臂 avg_ts = 10.318 / 15.166 / 16.350（**spread 59%**，stddev 最高 **5.29**）
+            ⇒ nofill 臂**自身**就散到量不出差異，更別提 12.05→20.66。
+      ⇒ **結論：14.1~19.9（換錨點後 12.9~18.1）是「推算的推算」，其最大輸入（省下多少）
+         一端是標記過的離群值、一端量不出來 ⇒ 不得拿去做 go/no-go。**
+      ⇒ 收窄它最便宜的一步**不是**坐實 J2 的 5–10 µs（只值 1.6–3.3 ms，
+         不到區間跨度 ~24 ms 的 1/8），而是把「背景 fill 供不供得上」量出來。
+
+    fill_throughput_instrument: |
+      ✅ **儀器已存在**（推翻 `MISS_GATE_STEP3` §4「得新加一個計時器」——那是 09-24 的記載）：
+      `CGC_EB_TIMER=1`（`llama-expert-cache.cpp:1159-1195`，09-25 加，RAII），
+      見證行 `CGC-EBTIMER: step_usec=<us> calls=<n> miss=<m> n_sum=<s>`，
+      已被 `scripts/check/{fill_onpath_ab,pair_ab}.py` 的 `EB_RE` 消費（勿改格式）。
+      binary 有（`strings -a libllama.0.dylib | grep -c CGC-EBTIMER` = 1）。
+      ⛔ **但口徑未坐實**：`Backup/nofill_ab` 每趟只有 **1 條** `n_sum=328`（decode）行，
+      且讀到 fill 臂 **170–199 ms/step** —— 與 decode step 預算 **86 ms**（11.61 t/s）
+      **矛盾** ⇒ 這台儀器的 flush 與「一步」沒對齊，數字現在不能用。
+      ⚠ 修它要動 `llama-expert-cache.cpp` ⇒ **屬線 I，本線不動 src/**。
 
   consequences:
     - "★ 關卡從「圖建構（能否寫回原位）」改判為「**靜態圖 vs 逐 step 變化的 miss 集合**」；
