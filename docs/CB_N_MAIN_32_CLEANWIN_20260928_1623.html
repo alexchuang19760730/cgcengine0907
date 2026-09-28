@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>乾淨窗 ABBA 嘗試：判死未達成（CGC_CB_N_MAIN=32，2026-09-28 16:23）</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1f2328; --mut:#57606a; --line:#e5e7eb;
+    --blue:#0969da; --green:#1a7f37; --red:#cf222e; --amber:#9a6700; --pur:#8250df; --gray:#6e7781;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Helvetica Neue",Arial,sans-serif;
+       font-size:15px;line-height:1.75}
+  .wrap{max-width:1040px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:26px;margin:.2em 0 .4em}
+  h2{font-size:20px;margin:2em 0 .6em;padding-bottom:.3em;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:1.4em 0 .4em}
+  p,li{color:var(--fg)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+       font-size:.92em;background:#f6f8fa;padding:.12em .38em;border-radius:4px}
+  pre{background:#f6f8fa;border:1px solid var(--line);border-radius:6px;padding:12px 14px;overflow:auto}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;margin:.6em 0 1em;font-size:14px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f9fafb;font-weight:600}
+  td.num,th.num{white-space:nowrap;font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;font-size:12px;line-height:1.6;padding:1px 8px;border-radius:10px;
+       border:1px solid var(--line);color:#fff;font-weight:600}
+  .t-blue{background:var(--blue)} .t-green{background:var(--green)} .t-red{background:var(--red)}
+  .t-amber{background:var(--amber)} .t-pur{background:var(--pur)} .t-gray{background:var(--gray)}
+  .box{border-left:4px solid var(--line);background:#f6f8fa;padding:10px 14px;margin:1em 0;border-radius:0 6px 6px 0}
+  .box.warn{border-left-color:var(--amber);background:#fff8e5}
+  .box.ok{border-left-color:var(--green);background:#eaf6ec}
+  .box.bad{border-left-color:var(--red);background:#fdeeee}
+  .box.pur{border-left-color:var(--pur);background:#f5f0ff}
+  .mut{color:var(--mut);font-size:13px}
+  figure{margin:1.2em 0} figcaption{color:var(--mut);font-size:13px;margin-top:.4em}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>乾淨窗 ABBA 嘗試：<b>判死未達成</b>，而且本輪不產出可引用的 t/s</h1>
+<p class="mut">2026-09-28 16:23 · 本線（線A / ace）· 權威判讀
+<code>docs/CB_N_MAIN_32_CLEANWIN_2026-09-28.md</code> · 前一份
+<code>docs/CB_N_MAIN_32_P1BUILD_RESULT_2026-09-28.md</code>（已 commit <code>291925396</code>）·
+產物 <code>Backup/phase_decomp/cbnmain_p1build/clean{1..8}_*</code></p>
+
+<p>
+<span class="tag t-red">判死未達成</span>
+<span class="tag t-amber">3/4 趟 memory gate UNUSABLE</span>
+<span class="tag t-amber">第二區塊起跑前被拒</span>
+<span class="tag t-green">起跑窗四趟皆乾淨</span>
+<span class="tag t-gray">0 個可引用的 t/s</span>
+<span class="tag t-gray">維持不改預設值</span>
+</p>
+
+<div class="box bad">
+<strong>一句話</strong>：把「趟間睡 40 秒」改成「輪詢到起跑 <code>thermal=NOMINAL</code> ＋
+壓縮機安靜」之後，噪音確實掉了一個量級（處理臂兩趟 tg 差 <b>17.2% → 1.18%</b>），
+<b>但 harness 自己的記憶體閘把 3/4 趟判成 <code>UNUSABLE</code></b>（swap 峰值成長 756–1446 MiB
+vs 預算 512 MiB），而補跑的第二區塊（BAAB）<b>在起跑前就被拒</b>（free 4593 MiB &lt; 地板 5000 MiB）。
+⇒ 本輪<b>沒有產出可引用的臂比較</b>，判死未達成。
+</div>
+
+<h2>1. 這一輪實際改了什麼</h2>
+
+<pre><code>上一輪（abba1..4）：run_arm A; sleep 40; run_arm B; sleep 40; run_arm B; sleep 40; run_arm A
+本輪（clean1..4）：每一趟起跑前輪詢到「真乾淨」才跑：
+    thermalpressure == 0  且  compressor_pressure.py --require  且  8080/llama 行程空</code></pre>
+
+<div class="box warn">
+<strong>★ 環境坑（這一次才定位到正確歸因）：背景行程的 <code>sys.path</code> 看不到系統 site-packages。</strong>
+同一支 <code>/opt/homebrew/bin/python3</code>（3.14.6），前景 <code>import yaml</code> 印 6.0.3，
+背景跑同一行噴 <code>ModuleNotFoundError</code> ⇒ 第一版腳本四趟在 <b>36 秒內全廢</b>
+（rc=1，log 只有一行「需要 PyYAML」）。修法：
+<code>PYTHONPATH=/opt/homebrew/lib/python3.14/site-packages; export PYTHONPATH</code>。
+⚠ 之前把這件事記成「managed 3.13 沒裝 PyYAML、要換 interpreter」是<b>錯誤歸因</b> —— 變因是前景／背景。
+</div>
+
+<h2>2. 區塊 1（ABBA）四趟：prefill ＋ decode 同報</h2>
+
+<table>
+<thead><tr>
+<th>趟</th><th class="num">n_main</th><th class="num">pp (t/s)</th><th class="num">tg (t/s)</th>
+<th class="num">reps（3）</th><th class="num">中位</th><th class="num">HEAVY 採樣</th>
+<th class="num">swap 峰值成長</th><th>memory gate</th>
+</tr></thead>
+<tbody>
+<tr><td>clean1_ctl64a</td><td class="num">64</td><td class="num">256.10 ± 12.51</td><td class="num">11.26 ± 0.52</td><td class="num">11.76 / 10.72 / 11.31</td><td class="num">11.31</td><td class="num">85/155（55%）</td><td class="num"><b>1446.0 MiB</b></td><td><span class="tag t-red">UNUSABLE</span></td></tr>
+<tr><td>clean2_nm32a</td><td class="num">32</td><td class="num">268.11 ± 11.48</td><td class="num">11.99 ± 0.64</td><td class="num">12.57 / 11.30 / 12.12</td><td class="num">12.12</td><td class="num">66/149（44%）</td><td class="num">860.6 MiB</td><td><span class="tag t-red">UNUSABLE</span></td></tr>
+<tr><td>clean3_nm32b</td><td class="num">32</td><td class="num">273.23 ± 5.89</td><td class="num">11.85 ± 0.15</td><td class="num">12.03 / 11.73 / 11.80</td><td class="num">11.80</td><td class="num">72/150（48%）</td><td class="num">756.3 MiB</td><td><span class="tag t-red">UNUSABLE</span></td></tr>
+<tr><td>clean4_ctl64b</td><td class="num">64</td><td class="num">275.47 ± 11.88</td><td class="num">11.64 ± 0.21</td><td class="num">11.72 / 11.80 / 11.40</td><td class="num">11.72</td><td class="num">71/152（47%）</td><td class="num">569.6 MiB</td><td><span class="tag t-amber">OK（569.6 &gt; 512，走 residual 側）</span></td></tr>
+</tbody>
+</table>
+
+<p><b>起跑窗確實是乾淨的</b>（四趟 launch thermal = NOMINAL、壓縮機 QUIET），
+<b>穩定性也確實變好</b>：tg 標準差 0.15–0.64（髒窗那輪 0.27–1.52）、水準 11.26–11.99（9.94–11.91）、
+處理臂兩趟 tg 差 <b>1.18%</b>（髒窗那輪 <b>17.2%</b>）。</p>
+
+<div class="box bad">
+⛔ 但 <b>3/4 趟 memory gate = UNUSABLE</b>。按契約，被判 UNUSABLE 的臂<b>不能直接拿來做臂比較</b>
+⇒ 上表的 t/s 是「觀察值」，本輪<b>不進任何結論</b>。
+</div>
+
+<h2>3. 區塊 2（BAAB）：連一趟都沒跑成</h2>
+
+<p>區塊 1 的 pp 逐趟單調上升（256 → 268 → 273 → 275）⇒ 有場次漂移，所以區塊 2 換成 <b>BAAB</b>
+順序讓漂移反向相消。結果 <code>clean5..8</code> 全部在 22–24 秒內結束（rc=4），<b>沒有任何 t/s</b>：</p>
+
+<pre><code>memory gate: UNUSABLE  起跑 free=4592.75 MiB (floor 5000.0)
+  !! 起跑 pages_free 4593 MiB &lt; 地板 5000 MiB -- 盒子太緊：同一組臂在低 free 桶的成長中位數是
+     3372 MiB、高 free 桶只有 342 MiB（校準 n=122，rho(growth,free)=-0.870），而 13.6 GB 模型
+     進 16 GB 盒子時那些被推出去的頁是結構性的。先讓盒子安靜（關掉 6 GB 級的應用程式或重開機）
+     再量，不要用被驅逐污染過的 t/s。
+  （起跑狀態不合格 ⇒ 根本沒有起跑，這一輪沒有量到任何 t/s）</code></pre>
+
+<p>跑完之後盒子更緊：swap 存量 <b>7441/8192 MiB</b>、壓縮機 <b>BUSY（161 MiB/s）</b>。</p>
+
+<h2>4. 兩個比這一次量測更有價值的發現</h2>
+
+<h3>4.1 「全程 <code>thermal=NOMINAL</code>」在這個 cell 上做不到</h3>
+
+<p>即使起跑 NOMINAL、壓縮機安靜，<b>趟內 HEAVY 採樣仍佔 44–55%</b>，四趟 worst 全是 HEAVY：</p>
+
+<table>
+<thead><tr><th>趟</th><th class="num">NOMINAL</th><th class="num">MODERATE</th><th class="num">HEAVY</th><th>launch → worst</th></tr></thead>
+<tbody>
+<tr><td>clean1_ctl64a</td><td class="num">55</td><td class="num">15</td><td class="num">85</td><td>NOMINAL → HEAVY</td></tr>
+<tr><td>clean2_nm32a</td><td class="num">68</td><td class="num">15</td><td class="num">66</td><td>NOMINAL → HEAVY</td></tr>
+<tr><td>clean3_nm32b</td><td class="num">63</td><td class="num">15</td><td class="num">72</td><td>NOMINAL → HEAVY</td></tr>
+<tr><td>clean4_ctl64b</td><td class="num">65</td><td class="num">16</td><td class="num">71</td><td>NOMINAL → HEAVY</td></tr>
+</tbody>
+</table>
+
+<div class="box">
+⇒ 可操作的「乾淨窗」定義要換成四條，而不是「全程 NOMINAL」：<br>
+① 起跑 <code>thermal=NOMINAL</code>；② 起跑 <code>compressor QUIET</code>；
+③ 趟內 tg 標準差小（本輪 ≤ 0.64 vs 髒窗 1.1–1.5）；④ <b>過 harness 的 memory gate</b>（本輪 3/4 沒過）。
+</div>
+
+<h3>4.2 16 GB 盒子上，這個 cell 一個場次大概只能連跑 2–4 趟</h3>
+
+<p>第 1 趟起跑 swap 4066 MiB ⇒ 第 5 趟起跑 free 只剩 4593 MiB（&lt; 5000 地板）⇒ 拒跑。
+每趟 wired 成長約 5.8 GB、swap 峰值成長 570–1446 MiB，<b>不會在趟間歸還</b>
+⇒ <b>8 趟的 ABBA 在單一場次內不可行</b>，除非先關掉 GB 級 app 或重開機。
+（盒子自己點名：WorkBuddy Helper (Renderer) 2105 MiB、Freebuff 562 MiB、Electron×2 763 MiB。）</p>
+
+<div class="box warn">
+⚠ <code>scripts/check/memory_pressure.py</code> 的 mtime 是 <b>16:18</b> ——
+<b>別條線在我跑的同時正在改這個閘</b>（<code>git diff</code> +494 行）⇒ 512／5000 這兩個門檻是
+本輪當下的值，可能再動。上一輪（15:03）的 log 裡<b>完全沒有</b> memory gate 那一節
+⇒ <b>兩輪放行標準不同，不能說「上一輪也 UNUSABLE」</b>。
+</div>
+
+<h2>5. 效應估計：raw +4.7% 是被最髒的那一趟（而且是對照臂）撐出來的</h2>
+
+<table>
+<thead><tr><th>判據</th><th class="num">64</th><th class="num">32</th><th class="num">差</th></tr></thead>
+<tbody>
+<tr><td>rep1 平均</td><td class="num">11.741（11.76 / 11.72）</td><td class="num">12.296（12.57 / 12.03）</td><td class="num"><b>+4.73%</b></td></tr>
+<tr><td>3-rep 中位配對 1（ctl64a → nm32a）</td><td class="num">11.31</td><td class="num">12.12</td><td class="num"><b>+7.11%</b></td></tr>
+<tr><td>3-rep 中位配對 2（nm32b vs ctl64b）</td><td class="num">11.72</td><td class="num">11.80</td><td class="num">+0.70%</td></tr>
+<tr><td>兩趟 tg 均值</td><td class="num">11.45</td><td class="num">11.92</td><td class="num">+4.1%</td></tr>
+</tbody>
+</table>
+
+<p>符號<b>第一次一致</b>（兩對都正）。但配對 1 的對照趟 <code>clean1_ctl64a</code>
+正是 swap 成長最大的一趟（1446 MiB）⇒ 被驅逐懲罰最重 ⇒ +7.11% 是膨脹過的。</p>
+
+<figure>
+<svg viewBox="0 0 1000 280" width="100%" role="img" aria-label="tg 對 swap 峰值成長散點">
+  <line x1="120" y1="220" x2="950" y2="220" stroke="#e5e7eb"/>
+  <line x1="120" y1="40"  x2="120" y2="220" stroke="#e5e7eb"/>
+  <text x="120" y="240" text-anchor="middle" font-size="11" fill="#57606a">500</text>
+  <text x="515" y="240" text-anchor="middle" font-size="11" fill="#57606a">1000</text>
+  <text x="910" y="240" text-anchor="middle" font-size="11" fill="#57606a">1500 MiB（swap 峰值成長）</text>
+  <text x="70" y="224" text-anchor="end" font-size="11" fill="#57606a">11.0</text>
+  <text x="70" y="134" text-anchor="end" font-size="11" fill="#57606a">11.5</text>
+  <text x="70" y="44"  text-anchor="end" font-size="11" fill="#57606a">12.0 t/s</text>
+
+  <line x1="120" y1="119.4" x2="900" y2="184.5" stroke="#0969da" stroke-width="2" stroke-dasharray="7 5"/>
+  <line x1="320" y1="40" x2="320" y2="220" stroke="#cf222e" stroke-width="1" stroke-dasharray="3 3"/>
+  <text x="330" y="56" font-size="11" fill="#cf222e">對齊基準 growth = 756.3</text>
+  <circle cx="320" cy="136" r="5" fill="none" stroke="#cf222e" stroke-width="2"/>
+  <text x="330" y="140" font-size="11" fill="#cf222e">64 對齊值 11.56</text>
+
+  <circle cx="858" cy="181" r="6" fill="#0969da"/>
+  <text x="866" y="185" font-size="11" fill="#0969da">ctl64a（1446 MiB, 11.26）</text>
+  <circle cx="175" cy="124" r="6" fill="#0969da"/>
+  <text x="183" y="128" font-size="11" fill="#0969da">ctl64b（570 MiB, 11.64）</text>
+  <circle cx="402" cy="71.5" r="6" fill="#9a6700"/>
+  <text x="410" y="75" font-size="11" fill="#9a6700">nm32a（861 MiB, 11.99）</text>
+  <circle cx="320" cy="92.5" r="6" fill="#9a6700"/>
+  <text x="328" y="96" font-size="11" fill="#9a6700">nm32b（756 MiB, 11.85）</text>
+  <text x="120" y="270" font-size="12" fill="#57606a">藍＝n_main 64（預設）　橙＝n_main 32　藍虛線＝64 側自己的迴歸（斜率 −0.000434 t/s per MiB）</text>
+</svg>
+<figcaption>圖：<b>tg 與 swap 成長強烈負相關</b>。64 的兩點對齊到同一個成長值後<b>都落在 11.56</b>
+（這是斜率可用的證據）；32 對齊後是 11.85–11.94 ⇒ 增益 <b>+2.5%~+3.3%</b>，
+落在門檻 3% 邊界、遠低於最小可辨差 8.5%。⚠ 4 個點的迴歸、32 側自身斜率還與 64 側反號 ⇒ <b>只是提示</b>。</figcaption>
+</figure>
+
+<h2>6. 必備節 A：TPOT 分解（本輪<b>未</b>量測 —— 如實標記）</h2>
+
+<p>契約要求每個 t/s 都要有 ms/token 的「不可避免／可回收／必須還回去」三段分解並標出處。
+本輪<b>沒有跑 DECPROF／GPU timing</b>，底下只做 <code>ms/token = 1000 / t/s</code> 的<b>換算</b>，
+三段分解一律標「本輪未量測」，既有分解指到 <code>docs/S1_TPOT_DECOMPOSITION_2026-09-25.html</code>
+（錨點那一次，<b>不是</b>本輪 build）。把換算當分解報出來是本 repo 判為錯的做法。</p>
+
+<table>
+<thead><tr><th>趟</th><th class="num">tg (t/s)</th><th class="num">ms/token（算術）</th><th>三段分解</th></tr></thead>
+<tbody>
+<tr><td>clean1_ctl64a</td><td class="num">11.26</td><td class="num">88.81</td><td rowspan="4"><b>本輪未量測</b>（無 DECPROF／GPU timing）</td></tr>
+<tr><td>clean2_nm32a</td><td class="num">11.99</td><td class="num">83.40</td></tr>
+<tr><td>clean3_nm32b</td><td class="num">11.85</td><td class="num">84.39</td></tr>
+<tr><td>clean4_ctl64b</td><td class="num">11.64</td><td class="num">85.91</td></tr>
+</tbody>
+</table>
+
+<h2>7. 必備節 B：decode 分段拆解（本輪未跑，引用 09-26）</h2>
+
+<p>09-26 那一次（舊 binary、<code>segs=41</code>／<code>layers=40</code>、48 個 decode step 中位數，ms），
+<b>僅供說明機制，不代表本輪 build</b>：</p>
+
+<table>
+<thead><tr><th>桶</th><th class="num">ctl（64）</th><th class="num">nm（32）</th><th class="num">Δ%</th><th>性質</th></tr></thead>
+<tbody>
+<tr><td><code>total</code></td><td class="num">87.06</td><td class="num">77.14</td><td class="num">−11.4%</td><td>—</td></tr>
+<tr><td>├ <code>wait</code></td><td class="num">74.40</td><td class="num">67.60</td><td class="num">−9.1%</td><td><b>同步阻塞</b>（CPU 等 GPU；複合量＝ union ＋ gap）</td></tr>
+<tr><td>├ <code>cb</code></td><td class="num">5.57</td><td class="num">5.38</td><td class="num">−3.3%</td><td><b>可 overlap</b>（expert cache 填池 IO，噪音內）</td></tr>
+<tr><td>└ <code>submit</code></td><td class="num">5.38</td><td class="num">4.14</td><td class="num"><b>−23.0%</b></td><td><b>同步阻塞</b>（dispatch；機制預期打這裡）</td></tr>
+</tbody>
+</table>
+
+<div class="box warn">
+<code>wait</code> 是複合量，09-26 那次 GPU 側欄位全 0.00 ⇒
+<b>「−6.80 ms 是 gap 縮了還是 union 縮了」到今天仍未拆</b>（這兩者意義相反）。
+拆它要 <code>CGC_GPU_TIMING</code>，本輪<b>沒做</b>。
+</div>
+
+<h2>8. 判定與處置</h2>
+
+<table>
+<thead><tr><th>項目</th><th>結果</th></tr></thead>
+<tbody>
+<tr><td>起跑乾淨窗（launch NOMINAL ＋ compressor QUIET）</td><td><span class="tag t-green">✅ 四趟都做到</span></td></tr>
+<tr><td>「全程 NOMINAL」</td><td><span class="tag t-red">❌ 做不到</span>（趟內 HEAVY 44–55%）</td></tr>
+<tr><td>memory gate（臂可用性）</td><td><span class="tag t-red">❌ 3/4 UNUSABLE；第二區塊起跑前被拒</span></td></tr>
+<tr><td>配對符號一致</td><td><span class="tag t-green">✅ 首次一致</span>（+7.11% / +0.70%）</td></tr>
+<tr><td>兩對皆 ≥3%</td><td><span class="tag t-red">❌ 只有一對</span></td></tr>
+<tr><td><b>判死</b></td><td><span class="tag t-red">❌ 未達成</span></td></tr>
+</tbody>
+</table>
+
+<div class="box bad">
+<b>09-26 的 +12.8% 仍然未復現</b>（本輪 raw +4.7%、對齊後 +2.5~3.3%，都不到一半）。
+但「完全沒效應」也<b>沒有</b>被證成 —— 本輪是第一次兩對同號。
+真正的結論是：<b>這顆 cell 在目前這個盒子狀態下量不出判死所需的證據</b>。
+</div>
+
+<h3>8.1 處置</h3>
+<ol>
+<li><b>維持不改 <code>scripts/run_server.sh</code> 的預設值</b>（<code>CGC_CB_N_MAIN</code> 維持 unset）。</li>
+<li><b>本輪 t/s 不進任何結論</b>（3/4 UNUSABLE）；§5 的對齊值只當提示。</li>
+<li>要判死：先讓盒子安靜（關掉 GB 級 app 或重開機），再一次跑滿 8 趟（ABBA ＋ BAAB，
+兩個區塊都要過 memory gate）。⚠ 兩個區塊之間要讓盒子回到 <b>free ≥ 5000 MiB</b>，否則第二區塊會被拒跑。</li>
+<li>若仍拿不到 ⇒ 依 <code>on_fail</code> 登記為「<b>本盒子無法判死</b>」，而<b>不是</b>「效應為零」。</li>
+</ol>
+
+<h2>9. 誠實邊界</h2>
+<ul>
+<li><b>不主張</b> <code>n_main=32</code> 有或沒有增益 —— 本輪的臂比較被自己的閘判為不可用。</li>
+<li><b>不主張</b>任何 TPOT 分解或分段拆解（§6、§7 全標「本輪未量測」）。</li>
+<li><b>不主張</b> <code>wait</code> 的縮減來自 <code>gap</code>。</li>
+<li>§5 的 swap 對齊是 <b>4 個點的迴歸假設</b>（32 側自身斜率還與 64 側反號），不是量測。</li>
+<li><b>未跑</b>：DECPROF、GPU timing、<code>{16,64,128}</code> 掃描、8 趟完整 ABBA。</li>
+<li><b>技術子目標</b>：本槓桿既不動 41 段提交的同步（S）、也不動 MTP（M）⇒ <b>不適用</b>。</li>
+</ul>
+
+<h2>10. 現場閘門輸出（原樣貼上）</h2>
+
+<pre><code>$ python3 agent_harness/engine_loop/traces/validate.py
+  lessons.jsonl: 193 records {'lesson': 193}
+    WARN  eng-mh-0048: applies_to path does not exist: src/llama.cpp/build/bin/libllama.0.0.279.dylib
+  -&gt; OK, 1 warning(s)
+
+$ python3 agent_harness/engine_loop/traces/selftest.py
+  10/10 injected violations rejected
+
+$ python3 agent_harness/engine_loop/index_assets.py --check
+  [error] 74 drift(s) between the manifest and disk:
+    scripts/check/cell_drift_audit.py: on disk but not in the manifest
+
+$ BIN_DIR='src/llama.cpp/build/bin' RUN_REPLAY_BENCH=0 bash scripts/check_build_tracked.sh --repo "$PWD"
+  PASS  12 本次 commit 的量測產物都帶出處（engine digest + window block）且報告與 sidecar 成對
+OK: 沒有 FAIL —但本次有 5 個區段被 SKIP</code></pre>
+
+<p><code>index_assets --check</code> 的 74 筆漂移<b>不是本輪造成</b>：來自
+<code>agent_harness/</code> 與 <code>scripts/check/</code> 上別條線未提交的改動
+（<code>scripts/check/charters/</code> 在 manifest 中命中數 0 ⇒ 立項卡不在掃描範圍）。
+依 commit 閘門 §4，<b>不重生索引</b>（重生會把對方的位元組寫進 commit）。</p>
+
+<h2>11. 產物與重現</h2>
+
+<table>
+<thead><tr><th>路徑</th><th>內容</th></tr></thead>
+<tbody>
+<tr><td><code>Backup/phase_decomp/cbnmain_p1build/clean{1..4}_*.json|.log</code></td><td>區塊 1 四趟（含 thermal hist、memory gate 曲線）</td></tr>
+<tr><td><code>Backup/phase_decomp/cbnmain_p1build/clean{5..8}_*.log</code></td><td>區塊 2：起跑前被拒，無 t/s</td></tr>
+<tr><td><code>Backup/phase_decomp/cbnmain_p1build/cleanwin_gate{,2}.log</code></td><td>趟間閘門輪詢紀錄</td></tr>
+<tr><td><code>Backup/phase_decomp/cbnmain_p1build/run_abba_clean{,2}.sh</code></td><td>重現腳本（含 PYTHONPATH 修法）</td></tr>
+<tr><td><code>Backup/phase_decomp/cbnmain_p1build/analyze_clean.py</code></td><td>判讀腳本（rep1／配對中位／臂內散佈）</td></tr>
+<tr><td><code>docs/CB_N_MAIN_32_CLEANWIN_2026-09-28.md</code></td><td>權威判讀（本白皮書的來源）</td></tr>
+</tbody>
+</table>
+
+<p class="mut">對應報告：<a href="CB_N_MAIN_32_CLEANWIN_2026-09-28.md">CB_N_MAIN_32_CLEANWIN_2026-09-28.md</a>
+· 上一輪：<a href="CB_N_MAIN_32_P1BUILD_RESULT_2026-09-28.md">CB_N_MAIN_32_P1BUILD_RESULT_2026-09-28.md</a>
+· 機制來源：<a href="CB_N_MAIN_BUCKETS_2026-09-26.md">CB_N_MAIN_BUCKETS_2026-09-26.md</a></p>
+
+</div>
+</body>
+</html>
