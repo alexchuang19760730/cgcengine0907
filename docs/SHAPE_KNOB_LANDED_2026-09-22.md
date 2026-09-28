@@ -1,5 +1,12 @@
 # 兩個形狀函數落地（不是分析）——2026-09-22
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **12.57／12.62 t/s 屬 MTP-on 輸出**，是**另一個輸出函數**，
+> **不可與 MTP-off 互比**（含「MTP 加速 X%」「MTP-on ≥ MTP-off」「以 12.57 為基線／錨點／要打敗的數字」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**。
+
 本文是「落地」的交付記錄：`src/llama.cpp/src/llama-shape-knob.{h,cpp}` 兩個函數已寫進引擎、
 通過 build、在 `llama-bench` 裡實測印出；`scripts/check/shape_knob_search.py` 是讀它們的搜索器，
 也已實跑。**它沒有把我們帶到 25 t/s**，下面 §4 講為什麼——而且它是自己拒絕給結論的。

@@ -1,5 +1,12 @@
 # 「kernel 優化」的正確題目與施工計畫 —— Occupancy Project（2026-09-21 14:2x）
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **12.57／12.62 t/s 屬 MTP-on 輸出**，是**另一個輸出函數**，
+> **不可與 MTP-off 互比**（含「MTP 加速 X%」「MTP-on ≥ MTP-off」「以 12.57 為基線／錨點／要打敗的數字」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**。
+
 > 使用者問：「能，但它是『在維持逐位元相同的前提下把 Metal 的 quant GEMV 與整條 elementwise 重寫到接近峰值頻寬』的專案級工作 —— 你有方案嗎？」
 > 本篇回答：**有，但題目要先改一個字。** 不做「重寫到接近峰值頻寬」（只剩 3.3×，而且大搬運者已經貼屋頂），
 > 要做「**修正 dispatch 幾何／occupancy**」（獨立探針實測 13.6×，且 G2 相容）。

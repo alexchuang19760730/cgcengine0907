@@ -1,5 +1,12 @@
 # 四個目標 × shape 缺口盤點（2026-09-24 18:2x）
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **12.57／12.62 t/s 屬 MTP-on 輸出**，是**另一個輸出函數**，
+> **不可與 MTP-off 互比**（含「MTP 加速 X%」「MTP-on ≥ MTP-off」「以 12.57 為基線／錨點／要打敗的數字」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**。
+
 > **性質**：靜態核對 —— **0 GPU、0 build**。素材＝今天樹上的原始碼＋既有判決檔。
 > **錨點**：交付 decode **12.57 t/s**（llama-bench `prod_profile.py`，reps=3）；
 > **今天的環境**：ctrl **10.73 ± 0.53**（decode）／**162.5 ± 6.4**（prefill），p0+B **11.13 / 209.5**

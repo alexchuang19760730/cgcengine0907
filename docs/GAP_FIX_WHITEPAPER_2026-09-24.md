@@ -1,5 +1,12 @@
 # gap 修正開發技術白皮書
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **12.57／12.62 t/s 屬 MTP-on 輸出**，是**另一個輸出函數**，
+> **不可與 MTP-off 互比**（含「MTP 加速 X%」「MTP-on ≥ MTP-off」「以 12.57 為基線／錨點／要打敗的數字」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**。
+
 **日期**：2026-09-24　**範圍**：decode 交付 cell（`prod25-stream`，12.57 t/s / round 247.98 ms）
 **性質**：開發白皮書（處方 × 做法 × 預期 × 工程代價 × 狀態）
 **作者線**：WorkBuddy / freebuff（靜態分析側）　**實作歸屬**：線 I（見 §8）

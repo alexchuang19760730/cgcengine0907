@@ -1,5 +1,12 @@
 # 作廢數字的「引用」檔案（2026-09-25）
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **MTP-on** 數字屬**另一個輸出函數**，**不可與 MTP-off 互比**
+> （含任何「MTP 加速 X%」「MTP-on ≥ MTP-off」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**（dated 產物不回改）。
+
 > 本檔是 `docs/MEASUREMENT_CONTRACT_2026-09-25.md` **§7 作廢數字登記表**的配套，回答兩件事：
 > **① 憑什麼廢**（§1，逐字引用原始依據，可自行核對）**② 誰還在引**（§3，全庫盤點）。
 > 機檢：`scripts/check/void_number_check.py`（selftest **12/12**）。

@@ -1,5 +1,12 @@
 # Decode step budget: verify is 2.4x cheaper per position, and 20% of the wall is outside
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **MTP-on** 數字屬**另一個輸出函數**，**不可與 MTP-off 互比**
+> （含任何「MTP 加速 X%」「MTP-on ≥ MTP-off」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**（dated 產物不回改）。
+
 Date: 2026-09-19 14:00. Box: 16 GB M4 Air, production profile `prefill250`, 8 GiB pool
 (143 slots/layer), greedy, `CGC_FORCE_TEMP0=1`, memory-guarded paired launch
 (`CGC_SERVER_MTP=0` then `=1`, back-to-back, same driver, same box).

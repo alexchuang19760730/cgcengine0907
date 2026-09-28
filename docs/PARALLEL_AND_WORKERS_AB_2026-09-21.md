@@ -1,5 +1,12 @@
 # 兩個「並行」旋鈕的配對 A/B — 2026-09-21
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **MTP-on** 數字屬**另一個輸出函數**，**不可與 MTP-off 互比**
+> （含任何「MTP 加速 X%」「MTP-on ≥ MTP-off」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**（dated 產物不回改）。
+
 > 回答兩個問題：① `CGC_SERVER_WORKERS`（池 fill worker，IO 並行）② `-np N`（序列並行）。
 > 兩者在 2026-09-21 之前都是**零實測／無結論**。本文兩個都結案，兩個都**不是槓桿**。
 > 逐日經過：`.workbuddy/memory/2026-09-21.md` §EN-364 / §EN-365；perf 權威在 `MEMORY_PERF.md` 末節。

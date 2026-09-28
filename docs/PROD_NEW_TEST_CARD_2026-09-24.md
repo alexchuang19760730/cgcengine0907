@@ -1,5 +1,12 @@
 # prod-new 標準測試卡（2026-09-24）
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **MTP-on** 數字屬**另一個輸出函數**，**不可與 MTP-off 互比**
+> （含任何「MTP 加速 X%」「MTP-on ≥ MTP-off」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**（dated 產物不回改）。
+
 > **性質**：llama-bench 完整側的統一測試口徑。**所有速度 runner（commit_bench、llama_bench_matrix、A/B）都以此為準**——commit 標題帶的 prefill/decode 成績、以及跨時間比較的數字，都出自這張卡。
 > **為什麼需要**：decode 10-14 之間任何跨時間比較都是環境噪音（launch-to-launch ±20%、swap 只累積不回收、thermal 節流），沒有統一形狀 + 歸因行，數字不可比（§EN-473 / ABBA 協議）。
 

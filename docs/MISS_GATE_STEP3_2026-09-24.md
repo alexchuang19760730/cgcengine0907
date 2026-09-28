@@ -1,5 +1,12 @@
 # 第 3 步开工闸门：稳态 miss 率到底是多少（2026-09-24 22:3x）
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **12.57／12.62 t/s 屬 MTP-on 輸出**，是**另一個輸出函數**，
+> **不可與 MTP-off 互比**（含「MTP 加速 X%」「MTP-on ≥ MTP-off」「以 12.57 為基線／錨點／要打敗的數字」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**。
+
 上游：`docs/NEXT_STEP_MISS_HANDLER_2026-09-24.md`（§0 定价）、`docs/MISS_MASK_STEP2_2026-09-24.md`（第 2 步出口）。
 工具：`scripts/check/miss_rate_series.py`（`--self-test` 15/15）。
 

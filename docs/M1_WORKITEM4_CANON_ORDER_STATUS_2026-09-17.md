@@ -1,5 +1,12 @@
 # M1 工作項 4（canonical gather order）：實作、量測與離開條件重定（2026-09-17）
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **MTP-on** 數字屬**另一個輸出函數**，**不可與 MTP-off 互比**
+> （含任何「MTP 加速 X%」「MTP-on ≥ MTP-off」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**（dated 產物不回改）。
+
 > 本檔是 `docs/M1_M4_M5_DEV_BRIEF_20260917_1525.html` §4.1／§4.3 的交付：
 > 工作項 4 落地 ＋ **測試 A（置換不變性）** 離線通過 ＋ 真機三臂量測 ＋
 > M1／M4 兩條離開條件改寫成可量測形式。

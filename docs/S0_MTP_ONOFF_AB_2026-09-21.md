@@ -1,5 +1,12 @@
 # S0 實測 ／ MTP on-off 同形狀配對 A/B — 2026-09-21
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **MTP-on** 數字屬**另一個輸出函數**，**不可與 MTP-off 互比**
+> （含任何「MTP 加速 X%」「MTP-on ≥ MTP-off」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**（dated 產物不回改）。
+
 承 §EN-366（「25 還有沒有機會」）的下一步。**原本要跑的「關掉 MTP 量 S0」不必跑了：
 那個數字早就躺在 T2 的資料裡。** 本文記錄這個發現，以及補做的同形狀 MTP on/off 配對。
 

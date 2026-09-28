@@ -1,5 +1,12 @@
 # 速度提升的驗收鏈：什麼叫「驗收」、要過哪幾關、最快什麼時候
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **12.57／12.62 t/s 屬 MTP-on 輸出**，是**另一個輸出函數**，
+> **不可與 MTP-off 互比**（含「MTP 加速 X%」「MTP-on ≥ MTP-off」「以 12.57 為基線／錨點／要打敗的數字」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**。
+
 日期：2026-09-26 01:3x　作者：本線（S1／段邊界）
 狀態：**判準在跑之前寫死。本文不改任何已量到的數字，只規定「什麼時候可以按哪個鍵」。**
 關聯：`docs/S1_LINE_VERDICT_2026-09-25.md`（×1.83）、`docs/STEP23_BLOCKER_AND_RECOVERY_2026-09-26.md`（§8 第 2 步重建）

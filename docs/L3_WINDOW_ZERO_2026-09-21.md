@@ -1,5 +1,12 @@
 # L3 —— 可遮窗口实测：**零**。以及唯一還活著的那條路（不是 A/B 段拆分）
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **12.57／12.62 t/s 屬 MTP-on 輸出**，是**另一個輸出函數**，
+> **不可與 MTP-off 互比**（含「MTP 加速 X%」「MTP-on ≥ MTP-off」「以 12.57 為基線／錨點／要打敗的數字」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**。
+
 日期：2026-09-21 19:5x　方法：**0 重建、0 起 server**，全部讀今天既有的 `CGC_GPU_NODES_MATRIX=1`
 raw（`Backup/phase_decomp/K5/raw/nsm.stderr`，47360 行）＋ 既有派送器原始碼。
 分工備註：本輪起 operator 裁定「沒有分工問題，全部我做」，故本線同時動 `ggml-backend.cpp` 與

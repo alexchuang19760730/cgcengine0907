@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>MTP 口徑重定義 B2 第二批重標（12.57／12.62 那一族，56 份）</title>
+<style>
+  body{font-family:-apple-system,"PingFang TC","Helvetica Neue",Arial,sans-serif;
+       background:#ffffff;color:#1a1a1a;line-height:1.75;margin:0;padding:32px 40px;max-width:980px}
+  h1{font-size:22px;font-weight:600;margin:0 0 6px}
+  h2{font-size:17px;font-weight:600;margin:30px 0 10px;border-bottom:1px solid #e3e1da;padding-bottom:6px}
+  h3{font-size:14px;font-weight:600;margin:20px 0 6px}
+  p,li{font-size:14px}
+  .sub{color:#6b6a65;font-size:13px;margin:0 0 18px}
+  code{font-family:"SFMono-Regular",Menlo,Consolas,monospace;font-size:12.5px;
+       background:#f4f2ec;padding:1px 4px;border-radius:3px}
+  pre{background:#f7f5f0;border:1px solid #e3e1da;border-radius:6px;padding:12px 14px;
+      overflow-x:auto;font-family:"SFMono-Regular",Menlo,Consolas,monospace;font-size:12px;line-height:1.55}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
+  th,td{border:1px solid #e3e1da;padding:6px 10px;text-align:left;vertical-align:top}
+  th{background:#f4f2ec;font-weight:600}
+  .note{background:#fbf7ec;border-left:3px solid #d9b64a;padding:10px 14px;margin:14px 0;font-size:13px}
+  .warn{background:#fbedec;border-left:3px solid #c0524e;padding:10px 14px;margin:14px 0;font-size:13px}
+  .ok{background:#eef5e9;border-left:3px solid #5a8a3c;padding:10px 14px;margin:14px 0;font-size:13px}
+  .muted{color:#6b6a65;font-size:12.5px}
+</style>
+</head>
+<body>
+
+<h1>MTP 口徑重定義 · B2 第二批重標</h1>
+<p class="sub">2026-09-28 20:5x　·　立項卡 <code>docs/MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md</code>　·　0 build　·　0 個 <code>src/</code>　·　純插入標籤，既有數字一行未改</p>
+
+<div class="ok">
+<b>一句話</b>：第一批（20 份）的判據漏掉了一整族 —— <code>12.57</code>／<code>12.62</code> 這兩個
+<b>MTP-on 數字</b>並不以字面 <code>MTP-on</code> 出現，而是寫成 <code>--spec-type draft-mtp</code>
+或乾脆只寫數字。本批補上 <b>56 份</b>，兩批合計 <b>76 份</b>。
+</div>
+
+<h2>1. 為什麼會有第二批：第一批的判據有漏網</h2>
+
+<p>第一批的判據是「同一行同時出現 <code>MTP-on</code> 與 <code>t/s</code>／<code>ms/tok</code>」，
+撈到 23 份、實標 20 份。這個判據的問題在於它假設「ON 的數字旁邊會寫 MTP-on」。</p>
+
+<p>但 <code>12.57</code> 那一族的寫法是：</p>
+
+<ul>
+<li><code>PRODUCTION_PROFILE_2026-09-20.md</code> §5 —— 量測條件寫的是
+<code>--spec-type draft-mtp</code>、<code>n_batch 512</code>、<code>ctx 4096</code>，<b>沒寫「MTP-on」四個字</b></li>
+<li>傳播出去的引用更進一步，只剩數字本身：「基線 12.57」「錨點 12.57」「要打敗的數字 12.57」</li>
+</ul>
+
+<div class="warn">
+<b>這正是 B2 要防的那個誤讀本身</b>：把一個 ON 側的數字當成可比基線。漏掉的恰恰是受影響最深的一族 ——
+<code>grep -rl "12\.57" docs/*.md</code> 有 <b>94 份</b>，而第一批只標到其中 <b>10 份</b>。
+</div>
+
+<h2>2. 判據與漏斗（全部現場算，非引用舊檔）</h2>
+
+<pre>docs/*.md 總數                                              : 344
+引用 12.57 或 12.62                                          : 106
+  其中未帶第一批標籤                                         :  93
+  同一行把該數字當「基線／錨點／交付／對照／目標／要打敗」寫  :  58
+  扣除兩份卡自身（BITIDENT_CHARTER／本卡）                   :  56   ← 實標</pre>
+
+<svg viewBox="0 0 900 130" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>第二批重標的篩選漏斗</title>
+<desc>344 份 docs 逐步篩到 56 份實標</desc>
+<g font-family="-apple-system,Helvetica,Arial,sans-serif">
+  <rect x="10" y="20" width="150" height="52" rx="6" fill="#eef1f7" stroke="#5a7ba6" stroke-width="1"/>
+  <text x="85" y="40" text-anchor="middle" font-size="14" font-weight="600" fill="#22405f">344</text>
+  <text x="85" y="58" text-anchor="middle" font-size="11.5" fill="#5a7ba6">docs/*.md</text>
+
+  <rect x="190" y="20" width="150" height="52" rx="6" fill="#eef1f7" stroke="#5a7ba6" stroke-width="1"/>
+  <text x="265" y="40" text-anchor="middle" font-size="14" font-weight="600" fill="#22405f">106</text>
+  <text x="265" y="58" text-anchor="middle" font-size="11.5" fill="#5a7ba6">引用 12.57/12.62</text>
+
+  <rect x="370" y="20" width="150" height="52" rx="6" fill="#f4f2ec" stroke="#8a8778" stroke-width="1"/>
+  <text x="445" y="40" text-anchor="middle" font-size="14" font-weight="600" fill="#3d3b34">93</text>
+  <text x="445" y="58" text-anchor="middle" font-size="11.5" fill="#8a8778">未帶第一批標籤</text>
+
+  <rect x="550" y="20" width="150" height="52" rx="6" fill="#fbf3e4" stroke="#c08a34" stroke-width="1"/>
+  <text x="625" y="40" text-anchor="middle" font-size="14" font-weight="600" fill="#6b4a10">58</text>
+  <text x="625" y="58" text-anchor="middle" font-size="11.5" fill="#a3761f">同一行當基線寫</text>
+
+  <rect x="730" y="20" width="150" height="52" rx="6" fill="#eaf3e4" stroke="#5a8a3c" stroke-width="1"/>
+  <text x="805" y="40" text-anchor="middle" font-size="14" font-weight="600" fill="#2f5218">56</text>
+  <text x="805" y="58" text-anchor="middle" font-size="11.5" fill="#5a8a3c">實標</text>
+
+  <path d="M160 46L188 46" fill="none" stroke="#8a8778" stroke-width="1.5"/>
+  <path d="M340 46L368 46" fill="none" stroke="#8a8778" stroke-width="1.5"/>
+  <path d="M520 46L548 46" fill="none" stroke="#8a8778" stroke-width="1.5"/>
+  <path d="M700 46L728 46" fill="none" stroke="#8a8778" stroke-width="1.5"/>
+  <text x="10" y="100" font-size="11.5" fill="#6b6a65">寬判據（檔內任意處有基線語）會給 86 份 ⇒ 不用：標籤只防「同一行構成的誤讀」，整檔判據會把註冊表類檔案也捲進來。</text>
+</g>
+</svg>
+
+<h3>2.1 標籤內容（每份標題下插入 6 行）</h3>
+
+<pre>&gt; ⚠ 輸出函數標籤（2026-09-28 依 MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md B2 重標）：
+&gt; 本檔引用的 12.57／12.62 t/s 屬 MTP-on 輸出，是另一個輸出函數，
+&gt; 不可與 MTP-off 互比（含「MTP 加速 X%」「MTP-on ≥ MTP-off」「以 12.57 為基線／錨點／
+&gt; 要打敗的數字」這類表述）。
+&gt; 根因：MTP on ⇒ cparams.n_rs_seq &gt; 0 ⇒ delta-net-base.cpp:494 recurrent 走 K 槽位回滾，
+&gt; 計算份數本身不同（gdn 30→60、conv_input 30→150）⇒ 見
+&gt; docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md。本檔既有數字未改動。</pre>
+
+<h2>3. 最該標的四份（12.57 的源頭與傳播鏈）</h2>
+
+<table>
+<tr><th>檔案</th><th>為什麼是它</th></tr>
+<tr><td><code>PRODUCTION_PROFILE_2026-09-20.md</code></td><td>12.57 的<b>出處</b>；明寫「這是另一個 agent 要打敗的數字」。量測條件 <code>draft-mtp</code>／<code>n_batch 512</code>／<code>ctx 4096</code>，與現交付 cell（<code>b/ub 5632</code>、<code>ctx 0</code>）也不同 cell</td></tr>
+<tr><td><code>BITIDENTITY_AND_0907_KNOWHOW_2026-09-22.md</code></td><td>明寫「12.57 那個 cell 本來就開著 MTP」—— 當年已知，但沒有傳到下游引用</td></tr>
+<tr><td><code>ACCEPTMOE_ADAPTATION_2026-09-24.md</code></td><td>把 12.57 當可比基線用的下游檔</td></tr>
+<tr><td><code>ABBA_MEASUREMENT_PROTOCOL_2026-09-23.md</code></td><td>量測協定本身以 12.57 為對照</td></tr>
+</table>
+
+<h2>4. 做法與驗證：只加不改</h2>
+
+<p>用帶 assert 的補丁腳本（先 <code>DRY</code> 再 <code>APPLY</code>），不手寫 Edit。逐檔驗證結果：</p>
+
+<table>
+<tr><th>檢查</th><th>結果</th></tr>
+<tr><td>寫入成功</td><td><b>56 / 56</b>，0 skip、0 fail</td></tr>
+<tr><td>純插入（<code>git diff</code> 刪除行數）</td><td>49 份已追蹤檔全部 <code>del=0</code></td></tr>
+<tr><td>每份新增行數</td><td>49 份全部 <code>add=6</code>（無別條線改動混入）</td></tr>
+<tr><td>標籤覆蓋（全 <code>docs/</code>）</td><td><b>76 份</b>（第一批 20 ＋ 第二批 56）</td></tr>
+<tr><td><code>src/</code> 進 staged</td><td><b>0</b></td></tr>
+</table>
+
+<h2>5. 7 份未追蹤檔：已加標籤，但<b>不</b>併入本線 commit</h2>
+
+<div class="warn">
+第二批有 <b>7 份是未追蹤檔</b>（其中 4 份 mtime 在 09-28 當日）：
+<code>ANCHOR_12_57_REPRODUCIBILITY_2026-09-28.md</code>、<code>CANDIDATE_SPECS_2026-09-27.md</code>、
+<code>K3_PAIR_CERT_V2_EXECUTABILITY_2026-09-28.md</code>、<code>K3_PAIR_CERT_VERDICT_2026-09-28.md</code>、
+<code>MTP_ON_OPTIMIZATION_PLAN_2026-09-25.md</code>、<code>MTP_UNARMED_VOID_2026-09-26.md</code>、
+<code>S2_OVERLAP_EXPERIMENT_2026-09-28.md</code>。<br><br>
+標籤<b>已寫入</b>（7 份全部驗過 <code>標籤=1</code>），但<b>未 stage</b> —— 把它們 <code>git add</code>
+會把別條線尚未提交的檔案整份帶進本線的 commit。這是與「不推 <code>9d72e3751</code>」同一條原則：
+<b>本機動作可收拾，寫給所有人的動作要等人點頭</b>。
+</div>
+
+<h2>6. 門 2（口徑）現在到哪了</h2>
+
+<table>
+<tr><th>項目</th><th>狀態</th></tr>
+<tr><td><b>B2</b> 既有結論重標</td><td>✅ 已完成（76 份，兩批）</td></tr>
+<tr><td><b>B3</b> 交付口徑維持 MTP off</td><td>✅ 本卡即為明文</td></tr>
+<tr><td><b>B4</b> 機制已存在</td><td>✅ <code>mtp_promotion_gate.py</code> v2 ＋ <code>mtp_off_baseline.json</code> v3</td></tr>
+<tr><td><b>B1</b> gate 補「輸出函數不同」層</td><td>❌ <b>未落地</b> —— 既有 gate 只管<b>盒況可比性</b>，缺這一層 ⇒ <b>ELIGIBLE ≠ 可互比</b></td></tr>
+<tr><td>S4（動 <code>scripts/check/</code>）</td><td>⚠ 卡在索引漂移，別條線的 <code>agent_harness/</code>／<code>scripts/check/</code> 未提交</td></tr>
+</table>
+
+<p class="muted">轉正需要<b>兩道串聯門</b>：門 1 速度（<code>mtp_promotion_gate.py</code>，含
+<code>on/off ≥ 1.0</code> 硬門檻）+ 門 2 口徑（B1）。本批只推進門 2 的一半，門 1 未動。</p>
+
+<h2>7. 現場閘門（原文貼錄，非轉述）</h2>
+
+<pre>  PASS  7a pick_slot 用精確 batch_mask（非啟發式近似）
+  PASS  7b batch_owned mask 在位 (14 處 &gt;= 3)
+  PASS  7c 掛死看門狗在位（ensure_batch + ensure_slot FATAL）
+  PASS  7d 裸 bg_cv.wait 2 個 ≤ in_flight 守衛 2 個
+--- 檢查 原始碼↔binary 同步 ---
+  PASS  8 無 llama 原始碼變更（僅 doc/腳本/產物）
+  PASS  12 本次 commit 的量測產物都帶出處（engine digest + window block）且報告與 sidecar 成對
+SKIP  RUN_CGC_PROD_ACCEPT=1 未啟用（重型驗收保留在本 script 內，需手動開）
+SKIP  RUN_DEPLOY_HARMONYOS_ACCEPT=1 未啟用（deploy-harmonyos 驗收保留在本 script 內，需手動開）
+SKIP  RUN_REPLAY_BENCH=0 → 跳過 replay benchmark regression 檢查</pre>
+
+<p>4 個 SKIP 理由均成立；<code>check 8</code> 需有 staged 檔案才會真驗（無 staged 時是 SKIP），本次已在
+<code>git add</code> 之後執行。</p>
+
+<h2>8. 必備章節 A／B／C 的適用聲明</h2>
+
+<div class="note">
+<b>A. TPOT 分解 —— 不適用。</b>本批是純文件重標，<b>沒有任何量測</b>，未產生也未引用任何 t/s 讀數
+（文中出現的 12.57／12.62 皆為<b>被標註的既有數字</b>，不是本輪讀數）。因此無 ms/token 可分解。<br><br>
+<b>B. 作廢數字查表 —— 適用</b>：本批的整個前提就是 <code>docs/VOID_NUMBER_CITATIONS_2026-09-25.md</code>
+§1.3 的裁定（12.57 系列在交付口徑下不可再引用）。<br><br>
+<b>C. prefill + decode 同報 —— 不適用。</b>本輪無 launch、無 thermal／swap 採樣。
+若強要套用，只會產出一張空的窗況表。
+</div>
+
+<h2>9. 產物路徑</h2>
+
+<ul>
+<li>立項卡（已更新 §2 B2、§4 S3、新增 §5.1）：<code>docs/MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md</code></li>
+<li>第一批判讀：<code>docs/MTP_BITIDENT_CLOSEOUT_2026-09-28.md</code></li>
+<li>根因（B2 標籤引用的技術依據）：<code>docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md</code></li>
+<li>作廢數字登記表：<code>docs/VOID_NUMBER_CITATIONS_2026-09-25.md</code></li>
+<li>轉正閘門：<code>scripts/check/mtp_promotion_gate.py</code>（v2）、<code>scripts/check/mtp_off_baseline.json</code>（v3）</li>
+<li>成本曲線判據：skill <code>cgc-mtp-cost-curve</code></li>
+</ul>
+
+<p class="muted">本文為 dated 產物；既有數字一律未改動，僅在標題下插入標籤。</p>
+
+</body>
+</html>

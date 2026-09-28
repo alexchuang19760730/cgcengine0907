@@ -1,5 +1,12 @@
 # 12.62 的重驗證：ABBA 四臂，llama-bench 口徑
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **MTP-on** 數字屬**另一個輸出函數**，**不可與 MTP-off 互比**
+> （含任何「MTP 加速 X%」「MTP-on ≥ MTP-off」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**（dated 產物不回改）。
+
 2026-09-18 18:01–18:06 · 運營層（本線）· 機器狀態：8080 空、無 `llama-server`、無量測驅動
 · 熱壓 launch `NOMINAL`、`Pages free` 0.11 → 3.89 GB、`swap used` 12178／13312 MB
 

@@ -1,5 +1,12 @@
 # 按 gap 白皮書優化 decode：執行順序要改，而且 ρ 已經落地了
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **MTP-on** 數字屬**另一個輸出函數**，**不可與 MTP-off 互比**
+> （含任何「MTP 加速 X%」「MTP-on ≥ MTP-off」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**（dated 產物不回改）。
+
 **日期**：2026-09-24 02:1x　**性質**：決策（結帳，0 GPU / 0 重建）
 **對象**：`docs/GAP_FIX_WHITEPAPER_2026-09-24.md`
 **結論一句話**：白皮書 §8.1 把 ρ 列進「已判死別碰」是**分類錯誤** —— ρ 在 09-23 就已經定讞、

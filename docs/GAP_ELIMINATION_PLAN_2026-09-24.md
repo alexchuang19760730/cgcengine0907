@@ -1,5 +1,12 @@
 # 怎麼消除 gap 44.4 ms
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **12.57／12.62 t/s 屬 MTP-on 輸出**，是**另一個輸出函數**，
+> **不可與 MTP-off 互比**（含「MTP 加速 X%」「MTP-on ≥ MTP-off」「以 12.57 為基線／錨點／要打敗的數字」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**。
+
 > 日期：2026-09-24 · 0 benchmark（純結帳 + 既有實測溯源）
 > 口徑：**交付 cell**（12.57 t/s / step 247.98 ms）；穩態賬用 `STEP_SERIALIZATION_2026-09-23.md`
 > §1（中位數 n=221，`segs=41`）。本篇是 §EN-478 的續篇——那篇解釋 gap 是什麼，這篇講怎麼拿掉。

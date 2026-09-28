@@ -1,5 +1,12 @@
 # h 已量到 ⇒ **方案 A（預指派 slot）判死**（2026-09-24）
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **12.57／12.62 t/s 屬 MTP-on 輸出**，是**另一個輸出函數**，
+> **不可與 MTP-off 互比**（含「MTP 加速 X%」「MTP-on ≥ MTP-off」「以 12.57 為基線／錨點／要打敗的數字」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**。
+
 > **性質**：實測（2 趟獨立交付 cell、GPU、`CGC_IDSEQ_DUMP` 真 ids 序列）　**0 重建**
 > **一句話**：可用的預測源 `prev_union` 實測 **h = 0.032 / 0.022**（交付形狀 ntok=4），
 > 對上門檻 0.65／0.75；而就算預測器完美，**「拓寬到 top-16」這個建議在數學上就不夠**

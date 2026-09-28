@@ -1,5 +1,12 @@
 # ABBA 測量協議（decode A/B 的強制口徑）— 2026-09-23
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **12.57／12.62 t/s 屬 MTP-on 輸出**，是**另一個輸出函數**，
+> **不可與 MTP-off 互比**（含「MTP 加速 X%」「MTP-on ≥ MTP-off」「以 12.57 為基線／錨點／要打敗的數字」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**。
+
 > **為什麼存在**（§EN-473 實測）：同一顆錨點 binary 在「GPU 閒 10 分鐘」後讀 **12.37 t/s**、
 > 在「只冷卻 3 分鐘」後讀 **9.9–10.5 t/s**（samples 11.07/8.96/17.09 的 12.37 是被 17.09
 > outlier 拉高的均值）。**本機單一配置的 launch-to-launch 波動 ±20%，大於多數 A/B 想測的

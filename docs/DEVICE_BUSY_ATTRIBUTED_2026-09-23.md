@@ -1,5 +1,12 @@
 # 那 154 ms 是什麼：裝置忙碌時間，不是 host（2026-09-23）
 
+> ⚠ **輸出函數標籤（2026-09-28 依 `MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md` B2 重標）**：
+> 本檔引用的 **12.57／12.62 t/s 屬 MTP-on 輸出**，是**另一個輸出函數**，
+> **不可與 MTP-off 互比**（含「MTP 加速 X%」「MTP-on ≥ MTP-off」「以 12.57 為基線／錨點／要打敗的數字」這類表述）。
+> 根因：MTP on ⇒ `cparams.n_rs_seq > 0` ⇒ `delta-net-base.cpp:494` recurrent 走 K 槽位回滾，
+> **計算份數本身不同**（`gdn` 30→60、`conv_input` 30→150）⇒ 見
+> `docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md`。本檔既有數字**未改動**。
+
 **工具** `scripts/check/verify_marginal.py --device-split`（selftest 全綠，新增 6 項）
 **載體** Nail IQ3_XXS-denseIQ4X · MTP on k=3 · pool 8 GiB · `prod25` 血統 · llama-bench decode-spec
 **產物** `Backup/phase_decomp/node_attr/nsm_{k1,k2,k3,shard_k1,shard_k3,capture_decode_spec}_20260923.log`
