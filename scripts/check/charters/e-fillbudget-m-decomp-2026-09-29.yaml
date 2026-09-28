@@ -126,6 +126,55 @@ targets:
     verdict: "**UNDECIDABLE** — `m` 需要 eval_ms_per_round，而本趟 tg 0.33 ⇒ eval/輪 ≈ 8.2 s 是 thrash 值，與 draft 真實成本不可分 ⇒ 按預註冊 undecidable **不硬算**；`ms_per_round=35.6 ms` 只能證明儀器會吐值"
     box_fact: "★ 兩趟卡要假設：**第 2 趟只能拿計數器，不能拿 t/s**"
 
+  # ── 【P4 預註冊（2026-09-29 02:5x，寫在發車之前）—— 臂修正：P2/P3 用的是錯的臂】──
+  p4_preregistered:
+    culpa5_wait_criterion_void: |
+      ⛔ **「等 `swapusage` free > 6 GB 再跑」作廢**，兩條獨立理由：
+        (a) **不可達**：`vm.swapusage` 的 total 是動態的，此刻只有 **5120 MiB**
+            ⇒ free > 6 GB 永遠不成立（寫那條時 total 是 8192）。
+        (b) **指標本來就禁用**：09-28 已裁定「swap used 是**歷史累積高水位**，不是佔用量」
+            （`.workbuddy/memory/2026-09-28.md:1016`）⇒ 用它判髒窗是我們自己禁過的。
+      ⇒ 起跑指標改用 harness 自己的 `memory.launch.pages_available_mb`
+        （＝ free＋inactive＋speculative＋purgeable）。
+    launch_metric_dose_response: |
+      122 趟 09-28/09-29 產物的 `pages_available_mb`（起跑）vs 趟內 pageins 增量：
+        MTP-on 成功類：12627→0.74M／11740→0.71M／**7703→1.67M（tg 11.74）**／**6964→1.60M（tg 11.11）**
+        MTP-on thrash： **9460→23.59M（tg 0.39）**／7985→21.12M（0.51）／7317→25.23M（0.33）
+      ⇒ ⛔ **起跑可用記憶體不具鑑別力**：9.46 GB 照崩、6.96 GB 照活。
+      ⇒ 真正分得開兩類的是 **k_eff**（見下一條）。
+    culpa6_arm_was_wrong: |
+      ★★ **P2／P3 崩不是「窗髒」，是臂選錯**（這才是本輪真正的發現）：
+        09-28 唯一存活的 ON 臂是 `on_k1`（`--spec-draft-n-max 1`）
+        ⇒ wall **95.5 s**、hit **91.4%**、tg **11.74**、file_reads **97K**。
+        `on_k3`（n_max=3）在**起跑可用 9460 MB（比 on_k1 更高）**照樣崩
+        ⇒ tg 0.39、wall **1011 s**、file_reads **2.80M（29×）**。
+        P2／P3 **沒帶 `--spec-draft-n-max`** ⇒ 預設深度 k_eff ≈ **2.33**
+        （`gen_tok_per_round=2.333`）⇒ 落在 on_k3 那一類。
+      ⇒ **變因是 k_eff，不是回收**；「等機器回收」是在追錯的變數 ⇒ 不必等，改臂即可。
+    arm_p4: "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1 ＋ --spec-type draft-mtp ＋ --spec-draft-n-max 1（cell 其餘同交付：-p 2048 -n 128 -d 512 -r 3 -b/-ub 5632 --warm-skip 64）"
+    formula: |
+      沿用 `p3_preregistered.formula`，唯一改動是 **k_eff 也要從本趟讀**：
+        E       = emit_tok_per_round     （末行；先按 calls_draft 去重）
+        k_eff   = gen_tok_per_round      （鐵律 6：不要用 --spec-draft-n-max 當 k）
+        T_draft = 差分相鄰行的穩態 ms/輪（⚠ 不是末行累計均，末行高估 20–50%）
+        T_round = E * 1000 / tg
+        T_ver   = T_round - T_draft
+        m = T_draft / 86.13      v = T_ver / 86.13        # T_plain 取錨點 11.61 t/s
+    validity_gate: |
+      p3 那四條照舊：(a) rc=0 且 n_kept ≥ 2；(b) tg ≥ **8.0 t/s**；(c) hit% ≥ **90**；
+      (d) `CGC-MTP-PERF` ≥1 行且 calls_draft > 0。
+      **新增 (e)**：`k_eff = gen_tok_per_round` 必須落在 **1.00 ± 0.15**
+      ⇒ 否則本趟仍屬 on_k3 類，與 P2/P3 同因 ⇒ **判 UNDECIDABLE，不硬算**。
+      五條全過 ⇒ 得到 **v 的第一個可引用點估計（k=1）**。
+    interpretation_preregistered_p4: |
+      - **v > 1.2** ⇒ 一輪的成本主要在 target verify ⇒ 槓桿在 verify 的 batching／KV，
+        **不在 draft head** ⇒ E 軸（拉 accept）的價值下降 ⇒ **MTP 不值得再投**。
+      - **v ≤ 0.6** ⇒ 一輪幾乎只花一個 plain step 的錢就吐 >1 個 token
+        ⇒ 那 09-28 的 S≈0.989 就不是 verify 太貴，而是 **E 不夠**（accept 才是槓桿）。
+      - 0.6 < v ≤ 1.2 ⇒ 兩者都要（draft head 與 verify 各佔一塊）。
+      ⚠ 任何「別的 k 會怎樣」的推論都禁止：**m 是 k=1 單點值，不得外推**（鐵律 9）。
+    forbid: "⛔ 仍不得寫「MTP 加速 X%」（M2 已 FAIL：ON/OFF 是不同輸出函數）。"
+
   # ── 【P3 預註冊（2026-09-29 02:1x，新場次第 1 趟）—— 算式寫在看結果之前】──
   p3_preregistered:
     why: |
@@ -247,3 +296,31 @@ code_change:
     ` seg=decode|prefill|mixed n_pf=<n> n_dec=<n>`（**加在行尾**，舊 `EB_RE` 不受影響）。
   default_unchanged: true       # 只在 CGC_EB_TIMER 存在時計時；不加任何 synchronize
   m1m2m3_impact: "無（純計數／計時，不改數值路徑）"
+
+# ── 【P4 結果（2026-09-29 03:12–03:2x）】──
+result_p4:
+  arm: "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1"
+  cli: "--spec-type draft-mtp --spec-draft-n-max 1"
+  witnessed: "--spec-draft-n-max 1 確實出現在 llama-bench cmd 行 ⇒ 臂沒錯"
+  launch_conditions:
+    swap_total_mib: 0          # 連 swap 檔都沒分配
+    thermal: "NOMINAL lv=0"
+    compressor: "compressions 0.00 / pageouts 0.01 MiB/s"
+    reclaimable_mb: 6376
+  outcome: THRASHED_ABORTED
+  evidence:
+    pageins_delta_in_8min: 11741411     # 426634 -> 12168045（正常趟全程 +170 萬）
+    swap_used_mib: 8334                 # 且還在長
+    elapsed_s: 480                      # 健康趟 wall ≈ 95 s；手動中止
+  dose_response_within_k1:
+    - {run: on_k1_2026-09-28, avail_mb: 7703, k_eff: 1, result: "OK tg 11.74 hit 91.4"}
+    - {run: p4_2026-09-29,    avail_mb: 6376, k_eff: 1, result: THRASH}
+  verdict: |
+    ⛔ 撤回「起跑可用記憶體無鑑別力」—— 舊證據（9460 崩 / 6964 活）是**跨 k 比**，被 k_eff 混擾。
+    k=1 之內 7703 活 / 6376 崩 ⇒ 記憶體是鑑別力，門檻落在 NEED_MB=8000 附近。
+    ⛔ 連帶撤回「不必等機器，改臂就好」：臂對了還要可回收 ≥8 GB。
+    ✅ server_window.NEED_MB=8000 沒設錯；但它只用在 `harness.py run`，擋不到 `harness.py bench`
+       （bench 的盒況閘 = thermal + 壓縮機；壓縮機可用 CGC_WINDOW_OVERRIDE=1 放行）。
+  answers_does_it_speed_up_decode: |
+    不會。P4 是量測（產物 = m、v），不改 kernel／圖／提交路徑。且門 2 已封（M2 FAIL：
+    ON/OFF 是不同輸出函數）⇒ 即使結論是「MTP 值得」，也不得寫「decode 提速 X%」。
