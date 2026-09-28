@@ -156,3 +156,54 @@ Q1 通過前不得當收益引用。
 
 - **kernel 的 owner 未明文**（09-26 §EN-150 已記，至今未決）。本線（線 A）只出卡。
 - P2 的 scatter 成本完全沒估過 —— 它才是決定 D1 值不值做的第一個數字。
+
+---
+
+## 8. 2026-09-29 追加：P1 驗收實測 —— G3 在交付臂上是 no-op
+
+開卡時把 P1 寫成「待做」，且引用的行號有誤。查證後有兩點更正。
+
+### (1) G3 已落地，但不在本路徑上觸發
+
+`CGC_ZERO_SLOT=1`（專用旋鈕，`scripts/run_server.sh:1752-1753`）已於 09-26 進 allowlist，
+`zero_slot_enabled()`（`llama-expert-cache.cpp:311-313`）已含它 ⇒ **不必動線 I 的檔**
+（推翻開卡時「gate 要放寬」的記載）。binary 已含：
+`strings -a libllama.0.dylib | grep -c CGC-G3-ZEROSLOT` = **2**（build 630）⇒ 0 build 即可跑。
+
+實測 `prod-new:CGC_ZERO_SLOT=1`（0 build、交付 cell、`--warm-skip 64 -r 3`、起跑 NOMINAL）：
+
+| 觀察 | 值 |
+|---|---|
+| env 送達 | `CGC_B_SCHEME=1` ✅、`CGC_ZERO_SLOT=1` ✅ |
+| `CGC-G3-ZEROSLOT-TOTAL` | `zero_slot=0 placeholder=0`（印 6 次） |
+| `CGC-G3-ZEROSLOT: il=..` 逐層行 | **0 次** |
+| tg | 10.31（worst=**HEAVY**、swap growth +2059 MiB）⛔ **不可引用** |
+
+逐層行 **0 次**而 TOTAL 印了 6 次 ⇒ **那段 for 迴圈一次都沒進**（TOTAL 在迴圈外）。
+⇒ 不是「沒有 miss」，是 **writer 根本沒運行**。
+
+### (2) 原因（源碼級）
+
+- `cache_slot_table_tensors` 只在 **DECODE graph** 由 `build_moe_ffn` 填
+  （`llama-context.cpp:3448-3450`）；
+- slot table leaf 是 **if/else ⇒ 預設不建**（`llama-graph.cpp:2491` 原話
+  "the leaf is NOT built when the table is"）⇒ prod-new 交付臂**沒有這個 leaf**
+  ⇒ map 為空 ⇒ 每一層都被 `continue` 掉。
+
+### (3) P1 的 exit 原本寫錯
+
+源碼註釋（`llama-context.cpp:3768-3772`）原話：「That is **NOT** bit-identical to the
+segmented arm, and **it is not meant to be**」—— G3 是**故意**不 bit-identical：
+把 unbounded/arbitrary error（別人的權重）換成 bounded/deterministic/interpretable 的 0。
+⇒ 要求它 `M1 9/9` 是**原理上不可能達成**的門檻（原文另寫 "A zero slot does NOT make G1 pass"）。
+已改為見證行判據（`zero_slot>=0` 且 `placeholder==0`）。
+
+### (4) 下一步（未做，且本輪不該做）
+
+G3 只在 slot table leaf 真的被建的路徑上生效 —— 即 S1 那一組開關
+（`MEMORY_S1.md:729`：`CGC_SEG_BATCH;CGC_B_SCHEME;CGC_SLOT_TABLE_GPU;CGC_MISS_MASK*;
+CGC_ZERO_SLOT`，那趟 rc=0）。
+
+⛔ 本輪**沒有再跑第二趟**：跑完 swap 由 6266 → 9111 MiB（盒子不歸還），下一趟必然更髒；
+而正確的下一趟要帶 S1 整組開關，屬 **S1 線的實驗設計**，不應在本卡內臨時起意。
+⇒ 建議由 S1 線在乾淨窗排一次「S1 組 ＋/− `CGC_ZERO_SLOT`」的 A/B。

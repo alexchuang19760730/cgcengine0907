@@ -19,6 +19,24 @@ question: |
     (Q2) 若 Q1 為是，落在 13.6~19.9 t/s 的哪一點？（值多少）
   ⛔ Q1 沒裁決前，Q2 的任何數字（含既有的 14.1~19.9）**都是推算，不得當收益引用**。
 
+# ── 【假說（charter gate 必填：mechanism／expected／basis）】─────────────
+hypothesis:
+  mechanism: |
+    G3 zero slot：缺席 expert 在 slot table 裡被指向「保留槽位」（權重已 memset 為 0），
+    取代原本的 `e % ns`（指向**別的** expert 的真實權重）。
+    ⇒ 把 unbounded／arbitrary error 換成 bounded／deterministic／interpretable 的 0
+    ⇒ 使「缺席那一項 ≈ 0」成立，這是 P2 per-expert 補算（0 ＋ 補算 ＝ 原值）的前提。
+  expected: |
+    (P1 階段，本趟) 見證行 `CGC-G3-ZEROSLOT` 之 zero_slot>=0，且
+    `CGC-G3-ZEROSLOT-TOTAL` 之 placeholder==0。
+    ⛔ t/s 預期**下降**（缺席 expert 被 drop，輸出不再是原本的函式）
+    ⇒ 本趟 t/s **不得**與 11.61 錨點比較，也不得唸成收益或損失。
+  basis: |
+    `llama-context.cpp:3745-3815`（B-scheme slot table writer）＋該段註釋 :3768-3772
+    原話「That is NOT bit-identical ... and it is not meant to be」；
+    `CGC_ZERO_SLOT` 於 09-26 進 `scripts/run_server.sh:1752-1753` allowlist；
+    binary 已含（`strings -a libllama.0.dylib | grep -c CGC-G3-ZEROSLOT` = 2，build 630）。
+
 # ── 【為什麼現在要開這張卡：判死的「證明」被後來的發現推翻了】───────────
 rationale: |
   ★★ **本項不是「尚未判死」，是「判死的證明前提已失效」——這才是開卡的理由。**
@@ -92,6 +110,8 @@ bit_identical_contract:
 
 # ── 【現狀】─────────────────────────────────────────────────────────────
 baseline:
+  source: "scripts/check/mtp_off_baseline.json"
+  source_note: "v4：tg 11.61 t/s、pp 275.74；走廊 10.97–12.02；MDD 8.5%"
   metric: "交付錨點 11.61 t/s（MTP off，09-27 凍結），走廊 10.97–12.02，MDD 8.5%"
   cell:   "prod-new, MTP off, -b/-ub 5632, --warm-skip 64, reps 3"
   known:  |
@@ -104,7 +124,7 @@ baseline:
       ⇒ 「背景 fill」必做，它決定拿 14.1 還是 19.9，**不決定正負**。
     - ⛔ **第一個 commit 不是 kernel**：`CGC_B_SCHEME`（`llama-context.cpp:3607-3634`）
       把缺席 expert 指到 `e % ns` ＝**別的 expert 的權重**，不是 0
-      ⇒ 「缺席那一項 ≈ 0」這個補算前提**現在不成立**。
+      ⇒ 「缺席那一項 ≈ 0」這個補算前提原本不成立；**已由 G3 解決**（CGC_ZERO_SLOT=1，llama-context.cpp:3745-3815，09-29 查證：已落地且在 build 630 binary 內）。
     - 可複用最小單位：`build_lora_mm_id`（`llama-graph.cpp:1567`）。
       ⚠ `ids` 要是 **slot index** 不是 expert id；⚠ 有 `CGC_DOWN_COMBINE` 融合快路徑
       （`:2678-2765`，:2764 直接 return）⇒ 補算必須考慮它，否則只在沒開融合時正確。
@@ -163,11 +183,54 @@ phases:
   - id: P1
     text: |
       **第一個 commit 不是 kernel**：把缺席 expert 的貢獻從「`e % ns` 別人的權重」
-      換成 0（`llama-expert-cache.cpp:277-282`／memset `:292-316`／publish `:371-408`，
-      或 `llama-graph.cpp:2718` 的 `CGC_ZERO_MISS` 塊）。
-      ⚠ `zero_slot_enabled()`（`:302-316`）只在 `CGC_VERIFY_DECODE`／
-      `CGC_DRAFT_DECODE`／`CGC_ZERO_SLOT` 為真 ⇒ gate 要放寬。
-    exit: "M1 9/9 M2 9/9（零貢獻版本本身必須先位元一致）"
+      換成 0。
+
+      ✅ **已落地（2026-09-29 查證更正）＝ G3，不需要再寫**：
+        實作在 `llama-context.cpp:3745-3815`（B-scheme slot table writer）：
+          `zs >= 0` ⇒ `v = zs`（dropped: **exactly zero weights**）；
+          否則 ⇒ `v = e % ns`（placeholder，註釋原話 "legal-but-wrong, and counted"）。
+        專用旋鈕 `CGC_ZERO_SLOT=1` 已於 09-26 加進 `scripts/run_server.sh` allowlist
+        （:1752-1753），`zero_slot_enabled()`（`llama-expert-cache.cpp:311-313`）已含它
+        ⇒ **gate 早已放寬，不必動線 I 的檔**（推翻開卡時「gate 要放寬」的記載）。
+        binary 已含：`strings -a libllama.0.dylib | grep -c CGC-G3-ZEROSLOT` = **2**
+        （build 630，09-28 13:55）⇒ **0 build 即可跑**。
+
+      ⛔ 開卡時引用的行號**是錯的，勿再引用**：`llama-expert-cache.cpp:277-282`
+        是驅逐邏輯、`:292-316` 是 zero-slot 的 MTP fast path、`llama-graph.cpp:2718`
+        是 gelu；**`CGC_ZERO_MISS` 在 `src/` 裡 0 命中（該 env 不存在）**。
+    exit: |
+      ⛔ **原 exit「M1 9/9 M2 9/9」作廢**。源碼註釋（`llama-context.cpp:3768-3772`）
+      原話：「That is **NOT** bit-identical to the segmented arm, and **it is not meant
+      to be**」—— zero slot 是把 unbounded error（別人的權重）換成 bounded／
+      deterministic／interpretable 的 0，**故意不 bit-identical**。
+      要求它 M1 9/9 是**原理上不可能達成**的門檻（且原文已寫 "A zero slot does NOT
+      make G1 pass"）。
+
+      正確 exit（見證行，0 build、1 趟、`--arm 'prod-new:CGC_ZERO_SLOT=1'`）：
+        `CGC-G3-ZEROSLOT: il=.. ns=.. zero_slot=<N>`  ⇒ N>=0 = armed（<0 = 仍 placeholder）
+        `CGC-G3-ZEROSLOT-TOTAL: zero_slot=<N> placeholder=<M>` ⇒ 要求 M == 0
+      ⇒ **bit-identical 只在 P2 補算之後才可能成立**（0 貢獻 ＋ 補算 ＝ 原值），
+        不得拿 P1 單獨的存在門檻去判它。
+    result_20260929: |
+      實測（0 build、build 630、交付 cell、--warm-skip 64 -r 3、起跑 NOMINAL）：
+        arm = `prod-new:CGC_ZERO_SLOT=1`；env 確認 `CGC_B_SCHEME=1` 與 `CGC_ZERO_SLOT=1` 皆送達。
+        見證行：`CGC-G3-ZEROSLOT-TOTAL: zero_slot=0 placeholder=0`（印 6 次）。
+        ⛔ 但逐層行 `CGC-G3-ZEROSLOT: il=..` 出現 **0 次** ⇒ 那個 for 迴圈一次都沒進
+          （TOTAL 在迴圈外，所以仍會印）⇒ **不是「沒有 miss」，是 writer 根本沒運行**。
+        原因（源碼級）：
+          - `cache_slot_table_tensors` 只在 **DECODE graph** 由 `build_moe_ffn` 填
+            （`llama-context.cpp:3448-3450`）；
+          - slot table leaf 是 **if/else ⇒ 預設不建**（`llama-graph.cpp:2491` 原話
+            "the leaf is NOT built when the table is"）⇒ prod-new 交付臂沒有這個 leaf
+            ⇒ map 為空 ⇒ 迴圈 continue 掉每一層。
+      ⇒ **結論：`CGC_ZERO_SLOT=1` 單獨開在本 cell 是 no-op**（P1 未在本路徑上生效）。
+        它只在 slot table leaf 真的被建的路徑上生效 —— 即 S1 那一組開關
+        （`MEMORY_S1.md:729`：`CGC_SEG_BATCH;CGC_B_SCHEME;CGC_SLOT_TABLE_GPU;
+        CGC_MISS_MASK*;CGC_ZERO_SLOT`，那趟 rc=0）。
+      ⛔ 本趟 tg **10.31 不可引用**：worst=HEAVY、swap growth +2059 MiB，
+        且 G3 未生效 ⇒ 它只是又一條 HEAVY 窗的 plain 讀數，不是 G3 的效果。
+      ⛔ 沒有再跑第二趟：跑完 swap 由 6266 → 9111 MiB（盒子不歸還），
+        下一趟必然更髒；且正確的下一趟要帶 S1 整組開關，屬 S1 線的實驗設計。
   - id: P2
     text: |
       **D1 kernel**：matmul 分段 ＋ 單一 combine ＋ C 寫回原始位置。
@@ -205,8 +268,8 @@ subgoals:
     how:    "P0"
   - id: sg-zero-miss
     text:   "缺席 expert 貢獻 = 0（不是 e % ns 別人的權重）"
-    expect: "M1 9/9 M2 9/9"
-    how:    "P1"
+    expect: "見證行 CGC-G3-ZEROSLOT 之 zero_slot>=0 且 CGC-G3-ZEROSLOT-TOTAL placeholder==0。⛔ 不是 M1 9/9：G3 故意不 bit-identical（見 P1 exit）"
+    how:    "P1（G3 已落地，僅需驗收）"
   - id: sg-d1-kernel
     text:   "matmul 分段 ＋ 單一 combine ＋ 位置序不變，M1 9/9"
     expect: "M1 9/9 M2 9/9，且 segs=41 不變、無新增 synchronize"

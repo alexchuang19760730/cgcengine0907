@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>async fill 立項卡 P1 驗收白皮書：G3 在交付臂上是 no-op（2026-09-29）</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1c1c1a; --muted:#5f5e5a;
+    --line:#d3d1c7; --panel:#f7f6f2;
+    --red:#a32d2d; --redbg:#fcebeb;
+    --green:#3b6d11; --greenbg:#eaf3de;
+    --amber:#854f0b; --amberbg:#faeeda;
+    --blue:#185fa5; --bluebg:#e6f1fb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--fg);
+       font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;}
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:24px;font-weight:600;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:28px}
+  h2{font-size:17px;font-weight:600;margin:32px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;font-weight:600;margin:20px 0 8px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel);font-weight:600}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+  .card{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:14px 0;background:var(--panel)}
+  .r{background:var(--redbg);border-left:3px solid var(--red)}
+  .g{background:var(--greenbg);border-left:3px solid var(--green)}
+  .a{background:var(--amberbg);border-left:3px solid var(--amber)}
+  .b{background:var(--bluebg);border-left:3px solid var(--blue)}
+  code{font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--panel);
+       padding:1px 4px;border-radius:4px}
+  ul{padding-left:22px;margin:10px 0}
+  li{margin:5px 0}
+  .k{font-weight:600}
+  footer{margin-top:40px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>P1 驗收：G3 zero slot 在交付臂上是 no-op</h1>
+<div class="sub">async fill ＋ per-expert 重算 kernel 立項卡（e-asyncfill-recompute）· 2026-09-29 00:2x · 0 build、0 程式碼改動</div>
+
+<div class="card b">
+<span class="k">一句話</span>：開卡時把 P1 寫成「待做」，查證後發現 <b>G3 早就落地</b>
+（<code>CGC_ZERO_SLOT=1</code>），但它<b>在 prod-new 交付路徑上一次都沒運行</b> ——
+不是「沒有 miss」，是 writer 壓根沒進迴圈。
+</div>
+
+<h2>1. 兩點更正</h2>
+
+<h3>(1) 已落地：不必動線 I 的檔</h3>
+<ul>
+  <li>專用旋鈕 <code>CGC_ZERO_SLOT=1</code> 已於 09-26 進 <code>scripts/run_server.sh</code> allowlist（:1752-1753）。</li>
+  <li><code>zero_slot_enabled()</code>（<code>llama-expert-cache.cpp:311-313</code>）已含它 ⇒ <b>gate 早已放寬</b>，推翻開卡時「gate 要放寬」的記載。</li>
+  <li>binary 已含：<code>strings -a libllama.0.dylib | grep -c CGC-G3-ZEROSLOT</code> = <b>2</b>（build 630）⇒ 0 build 即可跑。</li>
+</ul>
+
+<h3>(2) 開卡時引用的行號是錯的（勿再引用）</h3>
+<ul>
+  <li><code>llama-expert-cache.cpp:277-282</code> 是<b>驅逐</b>邏輯；<code>:292-316</code> 是 zero-slot 的 MTP fast path。</li>
+  <li><code>llama-graph.cpp:2718</code> 是 gelu。</li>
+  <li><code>CGC_ZERO_MISS</code> 在 <code>src/</code> 裡 <b>0 命中（該 env 不存在）</b>。</li>
+  <li>真正的點在 <code>llama-context.cpp:3745-3815</code>（B-scheme slot table writer）。</li>
+</ul>
+
+<h2>2. 實測</h2>
+
+<p><code>prod-new:CGC_ZERO_SLOT=1</code>，交付 cell，<code>--warm-skip 64 -r 3</code>，起跑 NOMINAL。</p>
+
+<table>
+<tr><th>觀察</th><th>值</th></tr>
+<tr><td>env 送達</td><td><code>CGC_B_SCHEME=1</code> ✅、<code>CGC_ZERO_SLOT=1</code> ✅</td></tr>
+<tr><td><code>CGC-G3-ZEROSLOT-TOTAL</code></td><td><code>zero_slot=0 placeholder=0</code>（印 6 次）</td></tr>
+<tr><td><code>CGC-G3-ZEROSLOT: il=..</code> 逐層行</td><td class="n"><b>0 次</b></td></tr>
+<tr><td>tg</td><td>10.31（worst=<b>HEAVY</b>、swap growth +2059 MiB）⛔ <b>不可引用</b></td></tr>
+</table>
+
+<div class="card r">
+<span class="k">關鍵判讀</span>：逐層行 <b>0 次</b>而 TOTAL 印了 6 次 ⇒ 那段 <code>for</code> 迴圈
+<b>一次都沒進</b>（TOTAL 在迴圈外，所以仍會印）。<br>
+⇒ 不是「沒有 miss」，是 <b>writer 根本沒運行</b>。
+</div>
+
+<h2>3. 原因（源碼級）</h2>
+
+<ul>
+  <li><code>cache_slot_table_tensors</code> 只在 <b>DECODE graph</b> 由 <code>build_moe_ffn</code> 填（<code>llama-context.cpp:3448-3450</code>）。</li>
+  <li>slot table leaf 是 <b>if/else ⇒ 預設不建</b>（<code>llama-graph.cpp:2491</code> 原話
+      <i>"the leaf is NOT built when the table is"</i>）⇒ prod-new 交付臂<b>沒有這個 leaf</b>
+      ⇒ map 為空 ⇒ 每一層都被 <code>continue</code> 掉。</li>
+</ul>
+
+<h2>4. P1 原本的 exit 寫錯了</h2>
+
+<div class="card a">
+源碼註釋（<code>llama-context.cpp:3768-3772</code>）原話：
+<i>"That is <b>NOT</b> bit-identical to the segmented arm, and <b>it is not meant to be</b>"</i>。<br><br>
+G3 是<b>故意</b>不 bit-identical：把 unbounded／arbitrary error（指向別人的權重）換成
+bounded／deterministic／interpretable 的 0。原 exit 要求 <code>M1 9/9</code> 是
+<b>原理上不可能達成</b>的門檻（原文另寫 "A zero slot does NOT make G1 pass"）。<br><br>
+⇒ 已改為見證行判據：<code>zero_slot&gt;=0</code> 且 <code>placeholder==0</code>。
+</div>
+
+<h2>5. 下一步（未做，且本輪不該做）</h2>
+
+<p>G3 只在 slot table leaf 真的被建的路徑上生效 —— 即 <b>S1 那一組開關</b>
+（<code>MEMORY_S1.md:729</code>：<code>CGC_SEG_BATCH;CGC_B_SCHEME;CGC_SLOT_TABLE_GPU;
+CGC_MISS_MASK*;CGC_ZERO_SLOT</code>，那趟 rc=0）。</p>
+
+<div class="card r">
+⛔ 本輪<b>沒有再跑第二趟</b>：跑完 swap 由 6266 → 9111 MiB（盒子不歸還），下一趟必然更髒；
+而正確的下一趟要帶 S1 整組開關，屬 <b>S1 線的實驗設計</b>，不應在本卡內臨時起意。<br>
+⇒ 建議由 S1 線在乾淨窗排一次「S1 組 ＋/− <code>CGC_ZERO_SLOT</code>」的 A/B。
+</div>
+
+<footer>
+產物：立項卡 <code>scripts/check/charters/e-asyncfill-recompute-2026-09-28.yaml</code>、
+理由書 <code>docs/ASYNCFILL_RECOMPUTE_CHARTER_2026-09-28.md</code> §8、
+實測 <code>Backup/phase_decomp/g3/zeromiss.json</code>。0 build、0 <code>src/</code> 改動。
+</footer>
+
+</div>
+</body>
+</html>
