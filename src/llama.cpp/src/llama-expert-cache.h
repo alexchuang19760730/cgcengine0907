@@ -616,6 +616,13 @@ struct llama_expert_cache {
     std::atomic<uint64_t> eb_calls{0};
     std::atomic<uint64_t> eb_miss{0};
     std::atomic<uint64_t> eb_nsum{0};
+    // [CGC 3b fill timer / seg fix 2026-09-29] Which step kinds the CURRENT flush window spans.
+    // The flush fires on a plain call count (`calls % n_layers`), so a window can straddle a
+    // prefill/decode boundary -- then its `step_usec` is neither one step nor one segment.
+    // (See docs/ASYNCFILL_FILL_BUDGET_CLOSURE_20260929_0118.html §2.) Counting the kinds lets a
+    // reader drop mixed windows instead of silently averaging them.
+    std::atomic<uint64_t> eb_nseg_prefill{0};
+    std::atomic<uint64_t> eb_nseg_decode{0};
 
 
     ~llama_expert_cache();

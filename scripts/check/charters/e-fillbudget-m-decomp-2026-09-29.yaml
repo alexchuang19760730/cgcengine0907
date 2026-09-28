@@ -1,0 +1,179 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— 一場次 2 趟，同時收掉兩個未知數：
+#   P1＝交付 cell 的 fill 實測（用剛修好的 EBTIMER seg 標記）
+#   P2＝E 軸：m 的構成（`CGC_MTP_PERF=1`，儀器已存在，本卡不新增）
+# ═══════════════════════════════════════════════════════════════════════
+# 開卡：線 A，2026-09-29 01:2x。前置 commit `ab8bb9e36`（fill 預算閉合）。
+# 盒子約束：一場次只能連跑 2 趟（第 3 趟起 swap 7434 MiB ⇒ tg 0.392）⇒ 本卡正好 2 趟。
+id: e-fillbudget-m-decomp
+owner: lineA
+created: 2026-09-29
+
+question: |
+  兩個各自獨立的未知數，共用同一個 build：
+    **P1**：交付 cell（p2048／-b -ub 5632／build 新）上，一個 decode step 花在
+           `ensure_batch`（assignment loop ＋ 同步 demand fill ＋ bg_cv wait）**多少 ms**？
+           有了它就能把「fill 有效吞吐」從未知變成實測，進而把落點區間
+           （12.9 → 19.4 t/s，見 `ASYNCFILL_FILL_BUDGET_CLOSURE_20260929_0118.html` §3）收成一個數。
+    **P2**：MTP on 時，一輪裡 draft 與 verify 各占多少 ms ⇒ **m 的構成**
+           （「一個 draft token 要幾個 plain step」迄今只有單點反解值 [0.60,0.84]）。
+
+rationale: |
+  P1 為什麼現在才可能：`CGC-EBTIMER` 原本的 flush 會讓 prefill／decode 混在同一行
+  （`n_sum/41` 既有 8.00 也有 14.9–21.3）⇒ 讀數與 step 預算矛盾（170 ms vs 86 ms）
+  ⇒ 本卡先修儀器（**動 `src/llama-expert-cache.cpp`，env-gated，預設行為不變**）：
+    每行加 `seg=decode|prefill|mixed` ＋ `n_pf=`／`n_dec=`，`seg=` 加在**行尾**
+    （既有 `EB_RE` 以 `n_sum=(\d+)` 結尾且用 `.search` ⇒ 不用改）。
+  P2 為什麼不用動 src/：`CGC_MTP_PERF` **已存在**（`common/speculative.cpp:3179`，
+    環境門 `CGC_MTP_PERF`；⚠ 我上一輪只在 `src/llama.cpp/src/` 搜過 ⇒ 誤判為「不存在」，
+    它在 `common/` 且不在 `libllama.0.dylib` 而在 bench 側）。欄位正是需要的：
+    `t_draft_ms`／`t_accept_ms`／`ms_per_round`／`emit_tok_per_round`／`acc_rate`。
+  ⛔⛔ P2 的 t/s **不可與 MTP off 比較**（已判死：ON/OFF 是不同輸出函數）。
+     本卡只取**構成比值**（draft 占一輪的比例），不做跨臂速度主張。
+
+baseline:
+  metric: "P1：無可信實測（`pread_us`／`fill_wait_us`／`EBTIMER step_usec` 三個都不能用，見閉合白皮書 §2）；閉合估算 15–21 MiB/step ⇒ 175–250 MB/s。P2：m∈[0.60,0.84]（k=1 單點反解，不得外推）"
+  cell:   "P1：prod-new 交付 cell（-p 2048 -n 128 -d 512 -r 3 -b/-ub 5632 --ctx-size 0 --warm-skip 64）。P2：MTP on 存活配方"
+  source: "docs/ASYNCFILL_FILL_BUDGET_CLOSURE_20260929_0118.html"
+  source_note: "既有 EBTIMER 產物（舊 cell，不可引用數值）：Backup/nofill_ab/wd_r1_fill/llama_bench_prod-new_p0_n128_d512_r3.stderr.log"
+  known:  |
+    - `ensure_batch` 的 `defer_decode_protect` 參數就是段別：caller 傳
+      `cgc_current_phase == CGC_PHASE_PREFILL`（llama-context.cpp:7678），另一處傳 false（:7435）
+      ⇒ **不必改簽名**就能給 timer 段別。
+    - ⛔ `calls=` 印的是 `nl`（常數 41），**不是**觀測值 ⇒ 別再拿它當分母。
+    - 交付 cell `n_layer=41`、`k=8` ⇒ 純 decode 窗口的 `n_sum` 應為 **328**。
+    - MTP on 存活配方（09-28）：`--arm 'prod-new:CGC_SERVER_LAYER_CAPS=40-40:16;
+      CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1' --spec-type draft-mtp`。⛔ 勿加 `!`、勿用底層名。
+
+hypothesis:
+  mechanism: |
+    P1：修好後應出現 `seg=decode` 且 `n_sum=328` 的行；其 `step_usec` 就是「一步 41 層
+    ensure_batch 的牆鐘和」⇒ 應 < 86 ms（step 預算）。有效吞吐 = 17.3 MiB ÷ (fill ms)。
+    P2：一輪 = draft + verify；`ms_per_round` = draft，`eval_ms_per_round − ms_per_round`
+    ≈ verify ⇒ m := ms_per_round / verify_ms。若 m 仍落在 0.6–0.9，代表 draft 幾乎沒被攤薄
+    ⇒ 槓桿在「為什麼一輪 draft 這麼貴」，不在 accept rate。
+  expected: "P1：至少 1 行 seg=decode 且 n_sum=328，step_usec < 86 ms。P2：CGC-MTP-PERF 至少 1 行，且 eval_ms_per_round > ms_per_round"
+  basis:    |
+    P1：閉合估算每步只需 175–250 MB/s ⇒ 若 fill 是同步且吞吐 ~0.5 GB/s ⇒ ~35 ms/step，
+    量級應落在 8–35 ms。P2：09-28 k 端點包夾的反解值。
+
+acceptance:
+  window_valid: |
+    兩趟各自成立才算可裁判：(a) rc=0 且跑完；(b) 見證行存在。
+    ⛔ 本卡**不要求 NOMINAL 乾淨窗**：
+      P1 主端點是**計數／時間比值**（非 paired t/s），但仍記錄 thermal 與 pageins 增量；
+      P2 的 `ms_per_round` 會受窗影響 ⇒ **只登記、不做 paired 比較**。
+    ⚠ 若任一趟被 memory gate 擋下 ⇒ 不補跑（一場次上限 2 趟），直接登記 UNRESOLVED。
+  success: |
+    P1：≥1 行 `seg=decode` 且 `n_sum=328` 且 `step_usec < 86 ms`
+        ⇒ 得到 fill ms/step 實測 ⇒ 反解有效吞吐 ⇒ **落點區間收成一個數**（success）。
+    P2：`CGC-MTP-PERF` ≥1 行且分母可辨 ⇒ 得到 m 的構成（draft／verify 拆分）。
+  falsify: |
+    P1：完全沒有 `seg=decode` 的行（全是 mixed）⇒ 修儀器沒解決對齊問題
+        ⇒ 登記 UNRESOLVED + 回報「需把 flush 改成 step 邊界（要 caller 帶 step id）」。
+    P2：`t_eval` 分母含混（無法確定它是否含 draft ctx）⇒ **不硬算**，登記 UNDECIDABLE。
+  undecidable: |
+    P1：`seg=decode` 有行但 `n_sum != 328`（例如 ubatch 讓每層 union 不是 8）
+        ⇒ 用 `n_sum/n_dec` 作每層 expert 數重新解釋，不做定點估計。
+    P2：`calls_draft == 0`（draft 鏈沒跑）⇒ 該趟無效（`draft_liveness.py` 判 UNREADABLE）。
+  on_fail: |
+    三種輸出導向同一個行動：**回填本卡與 `e-asyncfill-recompute`，不再為這兩個未知數單獨投盒子**。
+    P1 success ⇒ 落點可定點 ⇒ 決定 async fill 要不要開工單給 owner（期望值從「區間」變成「一個數」）。
+    P2 success ⇒ 若 m 仍 ~0.6–0.9，槓桿改判到「一輪 draft 的成本結構」，不是 accept rate。
+
+targets:
+  n_layer: 40                   # ⛔ 修正：交付 cell 實測 40（舊 cell 才是 41）
+  k: 8
+  pure_decode_n_sum: 320        # 40 × 8（卡開立時寫 328，實測 320 ⇒ 判據本質不變：純 decode 窗口）
+  step_budget_ms: 86.13         # 錨點 11.61 t/s
+  fill_bytes_per_step_mib: [15.0, 21.3]   # ⛔ 舊 cell 值；交付 cell 實測 6.49
+  m_prior: [0.60, 0.84]
+  mdd_pct: 8.5                  # 僅供參考：本卡無 paired t/s 主端點
+
+  # ── 【P1 實測結果（2026-09-29 01:37，交付 cell，1 趟）】────────────────
+  result_p1:
+    instrument_fix_verified: |
+      ✅ 新格式 385 行／舊格式 **0** 行（`seg=` 生效 ⇒ 跑的是新 binary）；
+      `seg=decode` **385/385**、`n_pf=0`、`n_dec=40` ⇒ **交付 cell 沒有跨段問題**
+      （舊 cell `p0_n128_d512` 才會 `n_sum/41` 8.00 vs 18.3）。
+    n_layer_k: "calls=40、n_sum=320 ⇒ **n_layer=40、k=8** ⇒ **J2 = 320 op/step（1.60–3.20 ms）**；先前按 41 層推的 328 作廢"
+    fill_ms_per_step: "p10 1.87 / **p50 5.41** / p90 12.72 / max 79.0 ms（預算 86.13 ⇒ 對齊已修好）"
+    miss_per_step: "6.31（miss 率 **1.97%**，比舊 cell 的 3.1–6.0% 更低 ⇒ 符合「prefill 2048 預熱 pool」的預測）"
+    run_stats: "n_layer=40 req=128920 hits=123935 misses=4985 hit_pct=96.13 read_mib=2614.0"
+    derived: "req/320=402.9 步 ⇒ **6.49 MiB/step**；MiB/miss=0.524；有效吞吐 ≈ **1.2 GiB/s**"
+    landing: "1000/(86.13−5.41+J2) ⇒ **11.92–12.15 t/s（+2.6%~+4.6%）**"
+    verdict: |
+      ⛔⛔ **低於 MDD 8.5%** ⇒ async fill 的收益在 16 GB 盒子上**量不出來**。
+      本趟髒窗（thermal HEAVY、swap +3261 MiB、tg 7.04 不可引用）讓 fill **偏慢**
+      ⇒ 乾淨窗收益只會更小 ⇒ 方向穩健。落點區間從「12.9→19.4」塌到「~12」。
+    caveat: "⚠ 交付 cell MiB/miss=0.524 vs 舊 cell 1.083（差 2×）成因未查 ⇒ 不拿它做定點推論"
+
+  # ── 【P2 實測結果（2026-09-29 02:0x，交付 cell，本場次第 2 趟）】────────
+  result_p2:
+    ran: "rc=0、跑完，但 **tg=0.33 ± 0.05 t/s**（崩）；hit% **47.2**（P1 是 96.1）；wall 1100 s"
+    why: |
+      **metal 工作集閘 REFUSE**：池 8192 + Metal 駐留 12379 + 保留 1024 = 21595 MiB
+      vs 上限 11453 MiB ⇒ **超額 10142 MiB**（最大項＝Metal 駐留）。
+      ⇒ 本場次的**第 2 趟必然崩**（P1 第 1 趟 tg 7.04；P2 第 2 趟 tg 0.33）。
+    instrument_ok: |
+      ✅ `CGC_MTP_PERF` 6 行全取出（末行＝累計）：calls_draft=144 gen_tokens=336
+      acc_tokens=245 t_draft_ms=5123.0 **ms_per_round=35.577** acc_rate=0.7292
+      gen_tok_per_round=2.333 **emit_tok_per_round=2.701**
+      ⇒ **送達方式坐實：arm 必須帶 `CGC_SERVER_MTP=1`**。
+    verdict: "**UNDECIDABLE** — `m` 需要 eval_ms_per_round，而本趟 tg 0.33 ⇒ eval/輪 ≈ 8.2 s 是 thrash 值，與 draft 真實成本不可分 ⇒ 按預註冊 undecidable **不硬算**；`ms_per_round=35.6 ms` 只能證明儀器會吐值"
+    box_fact: "★ 兩趟卡要假設：**第 2 趟只能拿計數器，不能拿 t/s**"
+
+subgoals:
+  - id: sg-p1-env
+    text:   "`CGC_EB_TIMER=1` 真的送達（不被 allowlist 丟掉）"
+    expect: "arm_env_dropped == []"
+    how:    "resolve-only（llama_bench_matrix.resolve + arm_env_dropped），0 GPU — 已實測 dropped=[] ✅"
+  - id: sg-p2-env-caveat
+    text:   "⚠ P2 的 env 送達**不能用 resolve-only 驗**（這是本輪查到的坑）"
+    expect: |
+      `CGC_MTP_PERF` 的 allowlist 條目在 run_server.sh `if [ "$SERVER_MTP" = "1" ]` **區塊內**
+      （:2425，與 `CGC_MTP_SAMPLER_PARITY` 同塊），而 `SERVER_MTP` 由 CLI `--spec-type draft-mtp`
+      設定、**不是 env** ⇒ resolve-only（無 spec-type）必然回報 dropped
+      ⇒ 這支臂的送達**只能用見證行 `CGC-MTP-PERF` 是否出現來驗**（＝ sg-p2-perf）。
+      實測：'CGC_MTP_PERF' 單獨 dropped；加 'SERVER_MTP=1' 一起也 dropped（SERVER_MTP 不是 env）
+      ⇒ 同區塊的 `CGC_MTP_DBG`／`CGC_MTP_SAMPLER_PARITY` 也一樣，別被 resolve-only 的紅字誤導。
+    how:    "跑完 grep 'CGC-MTP-PERF' 該趟 stderr"
+  - id: sg-p1-seg
+    text:   "新欄位 `seg=` 出現在見證行（證明跑的是新 binary）"
+    expect: "至少 1 行含 ' seg=' 且不含 seg 的舊行 0 行"
+    how:    "grep 'CGC-EBTIMER' 該趟 stderr"
+  - id: sg-p1-pure
+    text:   "存在純 decode 窗口"
+    expect: "≥1 行 seg=decode 且 n_sum=328 且 step_usec < 86.13 ms"
+    how:    "同上"
+  - id: sg-p2-perf
+    text:   "`CGC-MTP-PERF` 行存在且 calls_draft > 0"
+    expect: "≥1 行；ms_per_round 有值"
+    how:    "grep 'CGC-MTP-PERF' 該趟 stderr"
+  - id: sg-no-cross-arm-speed
+    text:   "P2 的 t/s 不做跨臂（ON vs OFF）比較"
+    expect: "報告中不出現「MTP 加速 X%」"
+    how:    "寫報告時自查"
+
+arms:
+  # P1：交付 cell，唯一門 `--arm prod-new`，加 env-gated 計時器（不進 numerics-determining 子集）
+  - prod-new:CGC_EB_TIMER=1
+  # P2：MTP on 存活配方 ＋ CGC_MTP_PERF=1
+  # ⚠⚠ 必須帶 `CGC_SERVER_MTP=1`：harness 把 --spec-type 傳給 llama_bench_matrix（不是
+  #    run_server.sh）⇒ run_server.sh 的 SERVER_MTP 走 `SERVER_RUNTIME_PROFILE` 的 case
+  #    （run_server.sh:153-161）而歸 0 ⇒ `CGC_MTP_PERF` 所在的 allowlist 區塊（:2378 起）
+  #    整個不進 ⇒ env 靜默丟失（01:38 實測 rc=1 拒跑）。加 `CGC_SERVER_MTP=1` 後
+  #    resolve-only 實測 dropped=[] ✅。
+  # ⚠ 分隔符是 `;` 不是 `:`（01:3x 踩過：`...=1:CGC_MTP_PERF=1` 會被吃進前一個鍵的值）
+  - prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1
+  # P2 需要 --spec-type draft-mtp（harness bench 的額外參數，不是 arm 字串的一部分）
+
+# ── 【本卡配套的 src/ 改動（唯一一處，env-gated）】───────────────────────
+code_change:
+  file: "src/llama.cpp/src/llama-expert-cache.cpp（+ header 兩個 atomic）"
+  what: |
+    `cgc_eb_timer` 構造多收一個 `bool is_prefill`（= caller 的 `defer_decode_protect`），
+    每次呼叫累加 `eb_nseg_prefill`／`eb_nseg_decode`；flush 時印
+    ` seg=decode|prefill|mixed n_pf=<n> n_dec=<n>`（**加在行尾**，舊 `EB_RE` 不受影響）。
+  default_unchanged: true       # 只在 CGC_EB_TIMER 存在時計時；不加任何 synchronize
+  m1m2m3_impact: "無（純計數／計時，不改數值路徑）"

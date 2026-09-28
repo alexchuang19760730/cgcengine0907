@@ -1168,12 +1168,18 @@ int32_t llama_expert_cache_ensure_slot(llama_expert_cache * cache, uint32_t laye
 //
 // ⚠ The line format is consumed by scripts/check/{fill_onpath_ab,pair_ab}.py -- do not change it
 //   without updating EB_RE in those two scripts.
+// [CGC 3b fill timer / seg fix 2026-09-29] `is_prefill` is the caller's
+// `defer_decode_protect` flag: true = this fill belongs to a PREFILL step, false = decode
+// (llama-context.cpp passes `cgc_current_phase == CGC_PHASE_PREFILL`). It is recorded per call
+// so the flush can say whether its window spans one step kind or straddles both.
 struct cgc_eb_timer {
     llama_expert_cache * c;
     int64_t t0;
     bool on;
+    bool prefill;
 
-    explicit cgc_eb_timer(llama_expert_cache * c) : c(c), t0(0), on(false) {
+    explicit cgc_eb_timer(llama_expert_cache * c, bool is_prefill = false)
+        : c(c), t0(0), on(false), prefill(is_prefill) {
         static const bool timer_on = getenv("CGC_EB_TIMER") != nullptr;
         on = timer_on;
         if (on) {
@@ -1190,15 +1196,26 @@ struct cgc_eb_timer {
         if (!on) { return; }
         const uint64_t us = (uint64_t) (ggml_time_us() - t0);
         c->eb_step_us.fetch_add(us, std::memory_order_relaxed);
+        if (prefill) { c->eb_nseg_prefill.fetch_add(1, std::memory_order_relaxed); }
+        else         { c->eb_nseg_decode.fetch_add(1, std::memory_order_relaxed); }
         const uint64_t calls = c->eb_calls.fetch_add(1, std::memory_order_relaxed) + 1;
         const size_t nl = c->slot_owner.size();
         if (nl > 0 && calls % (uint64_t) nl == 0) {
             const uint64_t step_us = c->eb_step_us.exchange(0, std::memory_order_relaxed);
             const uint64_t miss    = c->eb_miss.exchange(0, std::memory_order_relaxed);
             const uint64_t nsum    = c->eb_nsum.exchange(0, std::memory_order_relaxed);
-            fprintf(stderr, "CGC-EBTIMER: step_usec=%llu calls=%llu miss=%llu n_sum=%llu\n",
+            const uint64_t npf     = c->eb_nseg_prefill.exchange(0, std::memory_order_relaxed);
+            const uint64_t ndec    = c->eb_nseg_decode.exchange(0, std::memory_order_relaxed);
+            // seg= is appended LAST so the existing EB_RE in scripts/check/*.py (which ends at
+            // `n_sum=(\d+)` and uses .search) keeps matching unchanged.
+            // ⛔ `calls` is NOT an observation: it prints `nl` (a constant). It never was the
+            //    number of calls counted -- see docs/ASYNCFILL_P2_ADJUDICATION_2026-09-29.md §7.5.
+            const char * seg = (npf == 0) ? "decode" : (ndec == 0) ? "prefill" : "mixed";
+            fprintf(stderr, "CGC-EBTIMER: step_usec=%llu calls=%llu miss=%llu n_sum=%llu "
+                    "seg=%s n_pf=%llu n_dec=%llu\n",
                     (unsigned long long) step_us, (unsigned long long) nl,
-                    (unsigned long long) miss, (unsigned long long) nsum);
+                    (unsigned long long) miss, (unsigned long long) nsum,
+                    seg, (unsigned long long) npf, (unsigned long long) ndec);
         }
     }
 };
@@ -1211,7 +1228,7 @@ void llama_expert_cache_ensure_batch(llama_expert_cache * cache, uint32_t layer,
     }
     // [CGC 3b fill timer 2026-09-25] RAII: prices this call on every return path. Declared AFTER
     // the null/layer guard above because the timer dereferences `cache`.
-    cgc_eb_timer eb_t(cache);
+    cgc_eb_timer eb_t(cache, defer_decode_protect);
     eb_t.add_n((uint64_t) n);
     const bool defer_decode = defer_decode_protect && cgc_prefill_protect_on();
     int32_t * table = cache->slot_table.data() + (size_t) layer * cache->n_expert;
