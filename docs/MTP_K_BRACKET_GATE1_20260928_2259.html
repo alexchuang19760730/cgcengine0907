@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>門 1（速度）k 端點包夾：判死未達成，但瓶頸改判到 m（2026-09-28 22:59）</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1a1d23; --dim:#5b6270; --line:#dfe3ea;
+    --accent:#1f5fa8; --good:#1a7f4b; --bad:#b3341f; --warn:#9a6b00; --chip:#eef2f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Hiragino Sans GB","Microsoft JhengHei",sans-serif;
+       line-height:1.7;font-size:15px}
+  .wrap{max-width:900px;margin:0 auto;padding:32px 24px 64px}
+  header{border-bottom:3px solid var(--accent);padding-bottom:18px;margin-bottom:28px}
+  h1{font-size:25px;margin:0 0 8px;letter-spacing:.3px}
+  .sub{color:var(--dim);font-size:13.5px}
+  h2{font-size:19px;margin:34px 0 12px;padding-left:11px;border-left:5px solid var(--accent)}
+  h3{font-size:15.5px;margin:22px 0 8px;color:var(--accent)}
+  p{margin:10px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:16px 18px;margin:14px 0}
+  .lead{background:#eaf2fb;border-left:5px solid var(--accent)}
+  .amber{background:#fdf6e6;border-left:5px solid var(--warn)}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--chip);font-weight:600}
+  code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12.5px;
+       font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:#f2f4f8;border:1px solid var(--line);border-radius:7px;padding:12px 14px;
+      overflow-x:auto;font-size:12.5px;line-height:1.6;
+      font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .ok{color:var(--good);font-weight:600}
+  .bad{color:var(--bad);font-weight:600}
+  .warnc{color:var(--warn);font-weight:600}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  .chip{display:inline-block;background:var(--chip);border:1px solid var(--line);
+        border-radius:20px;padding:2px 11px;font-size:12.5px;margin:2px 4px 2px 0}
+  footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);
+         color:var(--dim);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>門 1（速度）k 端點包夾：判死未達成，但瓶頸改判到 <code>m</code></h1>
+  <div class="sub">
+    2026-09-28 22:59 · 本線（線A · ace）· <b>0 build</b> ·
+    立項卡 <code>scripts/check/charters/e-mtp-k-bracket-2026-09-28.yaml</code> ·
+    全文 <code>docs/MTP_K_BRACKET_GATE1_2026-09-28.md</code>
+  </div>
+</header>
+
+<div class="card lead">
+  <h3 style="margin-top:0">一句話</h3>
+  <p>門 1 的 <code>ratio ≥ 1.0</code> <b class="warnc">判不出來</b>（實測 0.989，兩側 spread 5.9%／6.0% ≫ 3% 閘門線），
+  但證實了兩件改變「下一步該打哪裡」的事：
+  <span class="ok"><code>a(k=1) = 0.81 &gt; 0.742</code></span>（接受率這條已過門檻）、
+  <span class="bad"><code>m(k=1) ≈ 0.60–0.84</code></span>（攤薄極差）。
+  ⇒ 瓶頸不在 accept，在 <code>m</code>。</p>
+</div>
+
+<h2>1. 設計：為什麼只掃 k=1 與 k=3</h2>
+<p>兩個互相競爭的假說<b>都預測 <code>S(k)</code> 單調</b>，只是方向相反 ⇒ 單調函數的最值落在端點
+⇒ 量兩個端點就能包住整條曲線。</p>
+<table>
+  <tr><th>假說</th><th>內容</th><th>預測</th></tr>
+  <tr><td>H+ 理論</td><td><code>S(k)=(1+a·k)/(1+m·k)</code>，<code>a=0.62 &gt; m=0.474</code> ⇒ 極限 <code>a/m=1.31</code></td><td>k 越大越好</td></tr>
+  <tr><td>H− 實測</td><td>09-21 prod25 sweep：k=0..3 t/s = 10.845 / 10.320 / 10.809 / 10.072</td><td>k 越大越差</td></tr>
+</table>
+<p>順序 <code>OFF(caps) → ON k=1 → ON k=3 → OFF(caps)</code>：OFF 前後各一次做漂移括號；
+<code>k=0</code> 就是 OFF 臂 ⇒ 實際掃到 <code>k ∈ {0,1,3}</code>。</p>
+<p>⚠ <b>OFF 控制組帶與 ON 同源的三個旋鈕</b>（<code>CGC_SERVER_LAYER_CAPS=40-40:16</code>／
+<code>CGC_DRAFT_CTX_ALIGN=1</code>／<code>CGC_DRAFT_SMALL_BATCH=1</code>）⇒ paired ratio 的唯一差異
+就是 <code>--spec-type</code>，不是「MTP ＋ 順便改了 cap」。</p>
+
+<h2>2. 逐趟</h2>
+<table>
+  <tr><th>趟</th><th>起跑</th><th>arm</th><th>tg reps</th><th>中位</th><th>rep1</th><th>pp</th><th>swap 起→峰</th><th>wall</th></tr>
+  <tr><td>off_a</td><td>22:01</td><td>OFF＋caps</td><td>10.87 / 10.91 / 10.22</td><td><b>10.869</b></td><td>10.869</td><td>250.0</td><td>2410 → 6828</td><td>96 s</td></tr>
+  <tr><td>on_k1</td><td>22:06</td><td>ON k=1</td><td>10.74 / 9.20 / 15.28</td><td><b>10.742</b></td><td>10.742</td><td>257.9</td><td>5434 → 9026</td><td>96 s</td></tr>
+  <tr><td>on_k3</td><td>22:06</td><td>ON k=3</td><td>0.392 / 0.371 / 0.397</td><td class="bad">0.392 ⚠</td><td>—</td><td>267.1</td><td class="bad">7434 → 8680</td><td class="bad">1012 s ⚠</td></tr>
+  <tr><td>off_b</td><td>22:25</td><td>OFF＋caps</td><td>4.09 / 11.82 / 11.53</td><td><b>11.528</b></td><td class="bad">4.087 ⚠</td><td>274.5</td><td>7650 → 9482</td><td>93 s</td></tr>
+  <tr><td>on_k1_witness</td><td>22:39</td><td>ON k=1（重跑取見證行）</td><td>12.35 / 11.41 / 9.58</td><td><b>11.407</b></td><td><b>12.349</b></td><td>291.5</td><td>5651 → 8737</td><td>89 s</td></tr>
+</table>
+<div class="card amber">
+  <p><b>⚠ <code>on_k3</code> 的 0.392 不是 MTP 的速度。</b>那一趟起跑時盒子 swap 已 7434 MiB，
+  wall 1012 s（正常 90–96 s）⇒ 是<b>盒子崩潰</b>，不是 <code>k=3</code> 的效應。
+  ⇒ <code>k=3</code> 這一輪<b>沒有量到</b>，預註冊規則裡的 <code>ratio=0.035</code> 視為無效讀數。</p>
+</div>
+
+<h2>3. 判決：UNRESOLVED（且按預註冊不再投入盒子）</h2>
+<p>漂移校正（OFF 前後線性內插）：<code>k=1</code> ⇒ <b>ratio 0.9687（−3.1%）</b>；<code>k=3</code> ⇒ 0.035（無效）。
+<code>0.9687 ∈ (0.90, 1.10)</code> ⇒ <span class="warnc">UNRESOLVED</span>。</p>
+<pre>verdict: REFUSED
+  output function: candidate=MTP-on baseline=MTP-off identical=False
+  NOT INTERPRETABLE AS A SPEEDUP: on t/s only as 'MTP-on output function'; never as a % of off
+  REFUSE: off repeats disagree by 5.88% &gt; 3% -- pair noise is above the gate
+  REFUSE: on repeats disagree by 6.00% &gt; 3% -- pair noise is above the gate
+  REFUSE: MTP-on is slower than its own paired off control: 0.99x (11.07 vs 11.20 t/s)
+  note: paired ratio: on/off = 0.989x</pre>
+<p>⇒ <b>連「盒況可比性」那一層都沒過</b>（規則 4），根本沒走到 ratio 那一條。
+B1 語義層照常印出 ⇒ <code>on_k1_witness</code> 的 rep1 <b>12.349</b> 只能標為
+「MTP-on 輸出函數下的 t/s」——它高於 OFF 走廊上緣 12.02，<b class="bad">極容易被誤讀成一個勝利</b>。</p>
+
+<h2>4. ★ 見證行：證實 ON 真的在 draft</h2>
+<pre>CGC-DRAFT-CTX-ALIGN: applied path=mtp n_ctx_req=0 -&gt; n_ctx_draft=768 (target ctx=768)
+CGC-DRAFT-SMALL-BATCH: applied path=mtp n_batch_req=2048/512 -&gt; n_batch_draft=4 (n_max=1)
+CGC-BENCH-ACCEPT phase=warm_skip rounds=38 drafted=38 acc_drafts=32 mean_len=1.8421 draft_ratio=0.84211
+CGC-BENCH-ACCEPT phase=timed   rounds=36 drafted=36 acc_drafts=32 mean_len=1.8889 draft_ratio=0.88889
+CGC-BENCH-ACCEPT phase=warm_skip rounds=39 drafted=39 acc_drafts=32 mean_len=1.8205 draft_ratio=0.82051
+CGC-BENCH-ACCEPT phase=timed   rounds=42 drafted=42 acc_drafts=32 mean_len=1.7619 draft_ratio=0.76190
+CGC-BENCH-ACCEPT phase=warm_skip rounds=40 drafted=40 acc_drafts=32 mean_len=1.8000 draft_ratio=0.80000
+CGC-BENCH-ACCEPT phase=timed   rounds=45 drafted=45 acc_drafts=32 mean_len=1.7111 draft_ratio=0.71111</pre>
+<ol>
+  <li><b>排除「ON 那趟其實量到 plain decode」這個替代解釋。</b>今天 18:26 的 prod25 log 有
+      <code>THIS GENERATION YIELDS 0 DRAFTS/ROUND</code>；本趟<b>沒有</b>這一行，且有 <code>n_max=1</code>
+      見證 ⇒ MTP 真的在 draft。⇒ <code>ratio ≈ 0.99</code> 是真的在量 MTP。</li>
+  <li><b><code>a(k=1) = 0.711–0.889，中位 0.810</code></b>，<code>mean_len ∈ [1.711, 1.889]</code>。</li>
+</ol>
+
+<h2>5. ★ 由此改判：門檻問題從 accept 移到 m</h2>
+<table>
+  <tr><th>量</th><th>值</th><th>對照門檻</th><th>判讀</th></tr>
+  <tr><td><code>a(k=1)</code></td><td><b>0.810</b>（0.711–0.889）</td><td>model-one <code>acc &gt; 0.742</code></td><td class="ok">✅ 過門檻</td></tr>
+  <tr><td><code>E = mean_len(k=1)</code></td><td>1.71–1.89</td><td>—</td><td>一輪真的吐 ~1.8 個 token</td></tr>
+  <tr><td><code>S</code>（實測 paired）</td><td>0.989</td><td>gate <code>≥ 1.0</code></td><td class="bad">❌ 持平</td></tr>
+  <tr><td><code>m</code> 反解</td><td><b>0.60 – 0.84</b></td><td>skill：<code>m ≤ 0.25</code> 良好／<code>m ≥ 0.6</code> 幾乎沒攤薄</td><td class="bad">⛔ 落在最差區</td></tr>
+</table>
+<p>反解：<code>cost = E / S</code>、<code>m = (cost − 1)/k_eff</code>、<code>k_eff = 1</code>。
+用閘門的 <code>S = 0.989</code> 與 <code>E = 1.82</code> ⇒ <code>m = 0.84</code>；
+用 rep1 配對（12.349 vs 10.869）⇒ <code>S = 1.136</code> ⇒ <code>m = 0.60</code>。</p>
+<div class="card amber">
+  <p>⚠ <b>這是單點反解不是擬合</b>（<code>k_eff = 1</code> ⇒ 只有 <code>k ∈ {0,1}</code> 兩點）。
+  按 <code>cgc-mtp-cost-curve</code> 鐵律 9，<b>不得拿這個 <code>m</code> 外推到別的 k</b>。
+  可引用範圍就是「<code>k=1</code> 這一點上 <code>m ∈ [0.60, 0.84]</code>」。</p>
+</div>
+<p>⇒ <b>「accept 不夠」在 k=1 上不成立</b>（0.81 &gt; 0.742）；<b>「練 draft head 值得」也不成立</b>
+（<code>m ≥ 0.6</code> ⇒ skill 判讀明寫「練 head 白花錢，去查 batch／並集路徑」）。
+兩個既有結論<b>在這個 k 上同時被修正</b>。</p>
+<p>⚠ 與既有「accept ≤ 0.62」不衝突：那一族多半是較大 k 的每位置平均，而 <b><code>a</code> 隨 k 變</b>
+（本輪 k=1 得 0.81）⇒ <b>不能再拿單一 accept 數字當全域結論</b>，引用時必須帶 k。</p>
+
+<h2>6. 盒子層事實（比本輪結論更耐用）</h2>
+<ol>
+  <li><b>這顆 cell 在這盒子上實際只能連跑 2 趟，不是 2–4 趟。</b>第 3 趟起跑 swap 已 7434 MiB
+      ⇒ 0.392 t/s、wall 1012 s。既有認知應下修為 <b>2 趟</b>。</li>
+  <li><b>同一配置兩趟中位差 6.0%</b>（10.742 vs 11.407）⇒ 單趟噪音仍是效應量級
+      ⇒ 4 趟 ABBA 結構上無法分辨 ±5% 以內的效應。</li>
+  <li><b>單臂內 spread 最高 67%</b>（<code>off_b</code> rep1 4.087 vs 中位 11.528）
+      ⇒ <b>中位與 rep1 會給出相反結論，兩者都要報</b>。</li>
+  <li>⚠ <b><code>/tmp/harness_bench</code> 的 stderr 檔名由 arm 字串決定 ⇒ 同 arm 的第二趟會覆蓋第一趟的 log。</b>
+      本輪因此丟了 <code>on_k1</code> 的見證行（被 <code>off_b</code> 覆蓋），只能重跑補回。
+      ⇒ 要見證行就必須 <code>--workdir</code> 分開。</li>
+</ol>
+
+<h2>7. on_fail（按預註冊執行）</h2>
+<div class="card">
+  <p><b>不再投入盒子。</b>理由寫在立項卡裡，不是事後找的：門 1 的三種輸出 ——
+  FAIL／數值 PASS／UNRESOLVED —— <b>導向同一個行動</b>（都不投 MTP 加速資源、交付口徑維持 MTP off）。
+  PASS 那一支被 B1 擋掉「可表述為加速」，也被立項 §3「不重啟 MTP 加速預算」擋掉。
+  ⇒ 追加盒子不會改變決策。</p>
+  <p>⇒ <b>門 1 結案為 UNRESOLVED（且不再投入盒子）</b>，不是 FAIL、也不是 PASS。</p>
+  <p>將來若要重啟，正確入口<b>不是「再掃 k」</b>，而是量 <code>m</code> 的構成：
+  <code>CGC_MTP_PERF=1</code>（已 hoist ⇒ <code>--extra-env</code> 直接拿）取 <code>t_draft_ms</code>，
+  或用 n-gram draft 做診斷：同 k、無 draft 前向 ⇒ <code>m</code> 掉 ⇒ 成本是 draft 前向；
+  <code>m</code> 不動 ⇒ 成本在 verify 的每 token 路徑。</p>
+</div>
+
+<footer>
+  產物：<code>Backup/phase_decomp/mtp_kbracket/</code>（<code>run_k_bracket.sh</code>／<code>analyze.py</code>／
+  <code>off_a|on_k1|on_k3|off_b|on_k1_witness.json</code>／<code>cand_k1.json</code>／<code>cand_k1_verdict.json</code>）·
+  閘門：<code>scripts/check/mtp_promotion_gate.py</code>（v2 ＋ B1 語義層）·
+  基線：<code>scripts/check/mtp_off_baseline.json</code>（v4，本輪一個鍵未動）
+</footer>
+
+</div>
+</body>
+</html>

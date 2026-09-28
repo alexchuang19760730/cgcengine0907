@@ -34,7 +34,7 @@
 | **B1** | MTP on 的 t/s **不可與 OFF 互比**，跨臂比較一律拒絕並說明理由 | `scripts/check/mtp_promotion_gate.py`（`output_function`／`comparability` 兩節）＋ `scripts/check/mtp_off_baseline.json`（新增 `output_function` 節，schema → **v4**） | ✅ **已完成**（2026-09-28 21:0x）：既有 8 條繼續管**盒況可比性**；**新增獨立語義層** `output_function.identical` ＋ `comparability.interpretable_speedup` ⇒ **ON 即使配對通過且較快，仍不得表述為「OFF 的 X%」**。端到端實測見 §7 |
 | **B2** | 引用 ON 數字必須附「輸出函數 = MTP-on」標籤；既有把 ON 當 OFF 加速版的結論全部重標 | `docs/*.md`（**兩批合計 76 份**：第一批 20 份＝字面 `MTP-on`＋`t/s` 同行；第二批 56 份＝引用 `12.57`／`12.62` 且當基線寫） | ✅ **已完成**（2026-09-28 16:4x ＋ 20:5x，皆純插入） |
 | **B3** | 交付口徑**維持 MTP off**（`prod-new` 的 `CGC_SERVER_MTP=0` 不動） | `scripts/check/harness.py` profile 定義 | ✅ **已是現狀**，只需明文寫進本卡與收尾文（本卡即為該明文） |
-| **B4** | 若要重新追求「ON 當加速用」，**先決條件**＝ON 在乾淨窗口上 paired 快過 OFF（目前方向**相反**：OFF 中位 11.92 vs ON 7.34） | `scripts/check/mtp_promotion_gate.py` ＋ `mtp_off_baseline.json` | ✅ **已完成**（v2/v3 機制 09-27 已有；「**ELIGIBLE ≠ 同一輸出函數**」一條隨 B1 於 2026-09-28 追加，寫進 baseline 的 `output_function.claim_rule`） |
+| **B4** | 若要重新追求「ON 當加速用」，**先決條件**＝ON 在乾淨窗口上 paired 快過 OFF（目前方向**相反**：OFF 中位 11.92 vs ON 7.34） | `scripts/check/mtp_promotion_gate.py` ＋ `mtp_off_baseline.json` | ✅ **已完成**（v2/v3 機制 09-27 已有；「**ELIGIBLE ≠ 同一輸出函數**」一條隨 B1 於 2026-09-28 追加，寫進 baseline 的 `output_function.claim_rule`）。⚠ **2026-09-28 22:59 補記**：本格那組「OFF 11.92 vs ON 7.34」是**非配對**讀數；當晚的 k 端點包夾（配對、OFF 前後括號扣漂移）給 **ratio 0.989（11.07 vs 11.20）**，兩側 spread 5.9%／6.0% ⇒ 閘門在「盒況可比性」那一層就 REFUSED ⇒ **門 1 結案為 UNRESOLVED，不是 FAIL**。全文 `docs/MTP_K_BRACKET_GATE1_2026-09-28.md` |
 
 ### ★ B1 的精確增量（本立項真正要加的東西）
 

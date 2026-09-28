@@ -1,0 +1,87 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— 門 1（速度）k 端點包夾
+# ═══════════════════════════════════════════════════════════════════════
+id: e-mtp-k-bracket
+owner: lineA
+created: 2026-09-28
+
+# ── 【目標】─────────────────────────────────────────────────────────────
+question: |
+  在交付 cell 上，MTP-on 是否有任何 draft 深度 k 能讓 paired ratio（on/off）達到
+  mtp_promotion_gate 的硬門檻 ≥ 1.0？本卡用「k 端點包夾」在 4 趟盒子預算內回答。
+
+# ── 【為什麼只掃 k=1 與 k=3（不掃 k=2）】───────────────────────────────
+# 兩個互相競爭的假說**都預測 S(k) 單調**，只是方向相反：
+#   (H+) 理論  S(k) = (1+a·k)/(1+m·k)，a=0.62 > m=0.474 ⇒ 遞增，極限 a/m=1.31
+#   (H-) 實測  09-21 prod25 sweep：k=0..3 t/s = 10.845/10.320/10.809/10.072 ⇒ 遞減
+# 單調函數的最值落在端點 ⇒ 量兩個端點就能包住整條曲線；只有「內點有峰」這一種
+# （兩種假說都不預測的）情形會漏。⇒ 4 趟換 2 個 ON 端點 + OFF 前後包夾漂移，
+# 比「4 個 k 各 1 趟、OFF 只有 1 趟」資訊量高（後者無法扣漂移，且 gate 規則 3
+# 要求每側 ≥2 reps）。
+design_rationale: |
+  順序 OFF → ON(k=1) → ON(k=3) → OFF（ABBA 變體，OFF 前後各一次做漂移括號）。
+  k=0 就是 OFF 臂本身，故實際掃到 k ∈ {0, 1, 3}。
+
+# ── 【現狀】─────────────────────────────────────────────────────────────
+baseline:
+  metric: "decode tg 11.61 t/s（走廊 10.97–12.02，anchor band ±15% = [9.87, 13.35]，MDD ≈8.5%）"
+  cell:   "prod-new, MTP off, -b/-ub 5632, --warm-skip 64, --fixed-fill-seed 1, reps 3"
+  source: "scripts/check/mtp_off_baseline.json   # v4 凍結錨點"
+  known:  |
+    既有 ON 讀數散在 ×0.695 ~ +4.3%（方向未定）；09-28 修復後那批 −18%~−28% 但
+    thermal 不乾淨 ⇒「慢多少」不可定價。accept ≤0.62 對 model-one 門檻 0.742。
+
+# ── 【假設】─────────────────────────────────────────────────────────────
+hypothesis:
+  mechanism: |
+    若 MTP 有淨增益，它只能來自「一輪吐 >1 個 token」攤掉 verify 的並集成本；
+    那項隨 k 變化，所以 k 是唯一還沒量過、且能翻轉符號的軸。
+  expected: "兩個端點的 paired ratio 落在 1.0 的同一側（目前證據偏向 <1.0）"
+  basis:    "docs/MTP_K_SWEEP_2026-09-22.md（best_k=0）＋ docs/MTP_ON_FIX_RESULT_2026-09-28.md"
+
+# ── 【預註冊判決規則（跑之前寫死，看到資料後不得改）】───────────────────
+acceptance:
+  # 讀數口徑：每趟取 llama-bench 3 reps 的中位；OFF 前後兩趟做線性內插得到
+  # ON(k=1)（權重 2/3）與 ON(k=3)（權重 1/3）各自的漂移校正基準；ratio = ON/OFF_adj。
+  window_valid: |
+    同時成立才算「本輪有可引用的 ratio」：
+      (a) 每趟起跑 thermal = NOMINAL；
+      (b) 每趟起跑前 pages_available >= 4000；
+      (c) OFF 兩趟的中位落在 anchor band [9.87, 13.35]。
+    任一不成立 ⇒ 本輪 0 個可引用 ratio（不是「髒」，是判據級不合格）。
+  success: "任一端點 ratio >= 1.10 ⇒ 門 1 數值 PASS"
+  falsify: "兩端點 ratio 皆 <= 0.90 ⇒ 門 1 判死 FAIL（配合單調性 ⇒ 所有 k 皆不過）"
+  undecidable: |
+    任一端點落在 (0.90, 1.10) ⇒ 登記 UNRESOLVED。
+  on_fail: |
+    - FAIL：B4 的先決條件確定不成立 ⇒「不投 MTP 加速資源」從暫定升級為有實證支撐。
+    - PASS（數值）：仍印 NOT INTERPRETABLE AS A SPEEDUP（B1：兩側是不同輸出函數），
+      且立項 §3「不重啟 MTP 加速預算」不因本結果解除 ⇒ 只登記「MTP-on 輸出函數下的
+      絕對 t/s」，不改交付口徑。
+    - UNRESOLVED：**不再投入盒子**。理由：門 1 的三種輸出（FAIL／PASS／UNRESOLVED）
+      導向同一個行動（都不投資源）⇒ 追加盒子不會改變決策。
+
+# ── 【量化目標】───────────────────────────────────────────────────────
+targets:
+  decode_tps: 11.61      # OFF 控制組要回到走廊內
+  mdd_pct: 8.5
+
+# ── 【技術子目標】───────────────────────────────────────────────────────
+subgoals:
+  - id: sg-kbracket-window
+    text:   "4 趟全部起跑於 NOMINAL 且過 memory gate"
+    expect: "4/4"
+    how:    "run 前輪詢 notifyutil + vm_stat，逐趟記錄"
+  - id: sg-kbracket-off
+    text:   "OFF 控制組回到 anchor band（證明窗口是同一類）"
+    expect: "中位 ∈ [9.87, 13.35]"
+    how:    "harness.py bench --arm prod-new 兩趟"
+  - id: sg-kbracket-ratio
+    text:   "兩個 ON 端點的漂移校正 ratio 落在 1.0 的同一側且分得開"
+    expect: "兩點皆 ≤0.90 或 至少一點 ≥1.10"
+    how:    "線性內插 OFF 基準後相除"
+
+arms:
+  - prod-new
+  - prod-new + draft-mtp (k=1)
+  - prod-new + draft-mtp (k=3)
