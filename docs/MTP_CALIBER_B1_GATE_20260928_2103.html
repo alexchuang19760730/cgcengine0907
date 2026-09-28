@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MTP 口徑重定義 B1：把「輸出函數不同」寫進推廣閘門（2026-09-28 21:03）</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1a1d23; --dim:#5b6270; --line:#dfe3ea;
+    --accent:#1f5fa8; --good:#1a7f4b; --bad:#b3341f; --warn:#9a6b00; --chip:#eef2f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Hiragino Sans GB","Microsoft JhengHei",sans-serif;
+       line-height:1.7;font-size:15px}
+  .wrap{max-width:900px;margin:0 auto;padding:32px 24px 64px}
+  header{border-bottom:3px solid var(--accent);padding-bottom:18px;margin-bottom:28px}
+  h1{font-size:25px;margin:0 0 8px;letter-spacing:.3px}
+  .sub{color:var(--dim);font-size:13.5px}
+  h2{font-size:19px;margin:34px 0 12px;padding-left:11px;border-left:5px solid var(--accent)}
+  h3{font-size:15.5px;margin:22px 0 8px;color:var(--accent)}
+  p{margin:10px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:16px 18px;margin:14px 0}
+  .lead{background:#eaf2fb;border-left:5px solid var(--accent)}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--chip);font-weight:600}
+  code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12.5px;
+       font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  pre{background:#f2f4f8;border:1px solid var(--line);border-radius:7px;padding:12px 14px;
+      overflow-x:auto;font-size:12.5px;line-height:1.6;
+      font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .ok{color:var(--good);font-weight:600}
+  .bad{color:var(--bad);font-weight:600}
+  .warnc{color:var(--warn);font-weight:600}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  .chip{display:inline-block;background:var(--chip);border:1px solid var(--line);
+        border-radius:20px;padding:2px 11px;font-size:12.5px;margin:2px 4px 2px 0}
+  footer{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);
+         color:var(--dim);font-size:12.5px}
+  svg{max-width:100%;height:auto;display:block;margin:10px auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>MTP 口徑重定義 B1：把「輸出函數不同」寫進推廣閘門</h1>
+  <div class="sub">
+    2026-09-28 21:03 · 本線（線A · ace）· <b>0 build</b> ·
+    立項卡 <code>docs/MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md</code> ·
+    落地點 <code>scripts/check/mtp_promotion_gate.py</code>、<code>scripts/check/mtp_off_baseline.json</code>
+  </div>
+</header>
+
+<div class="card lead">
+  <b>一句話：</b>既有推廣閘門的 8 條規則判的是<b>盒況可比性</b>；本輪補上獨立的一層
+  <b>「輸出函數是否同一個」</b>。結果是：一個配對全綠、ON 快 <b>+21.4%</b> 的候選，
+  閘門仍給 <code>ELIGIBLE</code>，但機器會明確印出
+  <span class="bad">NOT INTERPRETABLE AS A SPEEDUP</span> ——
+  「X% of off」這種寫法從此有欄位可擋，不再只靠人記得。
+</div>
+
+<h2>1. 補的是哪一個洞</h2>
+
+<p>立項卡 §1 已證：MTP on 讓 <code>cparams.n_rs_seq</code> 從 0 變成
+<code>draft.n_max &gt; 0</code>（<code>src/llama.cpp/common/common.h:395</code>
+<code>need_n_rs_seq()</code>），於是
+<code>src/llama.cpp/src/models/delta-net-base.cpp:494</code> 的
+<code>if (cparams.n_rs_seq == 0)</code> 改走「K 槽位回滾」而不是「單槽位原地寫回」——
+<b>計算份數本身變了</b>（<code>gdn</code> 30→60、<code>conv_input</code> 30→150），
+第一個 decode 就分歧（<code>pos=209</code>：off 19.22745 vs on 19.25835）。</p>
+
+<p>既有閘門完全沒碰到這一層。它問的是「這兩個讀數是不是在同一個盒況窗口裡量出來的」，
+而沒問「這兩個讀數算的是不是同一個東西」。缺口的後果不是抽象的——下面的 demo 是具體的。</p>
+
+<h3>1.1 一個「ON 快 21.4% 且配對全綠」的候選</h3>
+
+<p><code>Backup/b1_gate_demo/cand_on_faster.json</code>：off 11.61 vs on 14.09 t/s，
+null 底噪 0.18%，兩側 spread 0.26%／0.43%，cell 15 維全等，<code>design: ABBA</code>。
+這是既有 8 條規則<b>全部通過</b>的情形：</p>
+
+<pre>verdict: ELIGIBLE
+  output function: candidate=MTP-on baseline=MTP-off identical=False
+  NOT INTERPRETABLE AS A SPEEDUP: on t/s only as 'MTP-on output function'; never as a % of off
+    root cause: cparams.n_rs_seq 0 -&gt; draft.n_max &gt; 0 (delta-net-base.cpp:494)
+  note: paired ratio: on/off = 1.214x (14.10 vs 11.61 t/s)</pre>
+
+<p><b>改動前</b>，這份輸出只會有最後那行 ratio，讀者拿到的是「MTP 加速 21.4%」。
+<b>改動後</b>，<code>ELIGIBLE</code> 仍然給（正確——配對確實可比），但語義被機器標住了。</p>
+
+<h2>2. 新增的機檢欄位</h2>
+
+<table>
+  <tr><th style="width:34%">欄位</th><th>意義</th></tr>
+  <tr><td><code>output_function.identical</code></td>
+      <td>兩側是否同一輸出函數。由 <code>spec</code> 歸一化；candidate 可用
+          <code>output_function</code> 顯式宣告，<b>優先於</b> <code>spec</code></td></tr>
+  <tr><td><code>output_function.root_cause</code></td>
+      <td>不同時給出源頭（<code>n_rs_seq</code> 0 → &gt;0 與檔案行號），不讓人自行猜</td></tr>
+  <tr><td><code>comparability.paired_comparable</code></td>
+      <td>既有 8 條（盒況可比性），語義不變</td></tr>
+  <tr><td><code>comparability.interpretable_speedup</code></td>
+      <td><b><code>paired_comparable</code> AND <code>identical</code></b> ——
+          只有兩者都成立，才可寫「X% of off」</td></tr>
+  <tr><td><code>comparability.claim_rule</code></td>
+      <td>人讀的一句話，直接印在主輸出裡</td></tr>
+</table>
+
+<div class="card">
+  <h3 style="margin-top:0">歸一化規則（fail-closed）</h3>
+  <ul>
+    <li><code>""</code> / <code>none</code> / <code>off</code> / <code>"none (MTP off)"</code> → <code>MTP-off</code></li>
+    <li>含 <code>mtp</code> / <code>draft</code> / <code>spec</code> → <code>MTP-on</code></li>
+    <li><b>未知的非空 spec → 原字串回傳</b>，永遠不等於 <code>MTP-off</code> ⇒ 判為不同函數。
+        寧可誤擋一個新 spec 名，也不要默認「應該是同一個函數」。</li>
+  </ul>
+</div>
+
+<h2>3. 自測：18/18，且 4 組突變皆會紅</h2>
+
+<p><code>mtp_promotion_gate.py --selftest</code> 從 12 條加到 <b>18 條</b>；
+既有 12 條<b>一條未改、全綠</b>（沒有破壞既有語義），新增 6 條專測 B1。</p>
+
+<table>
+  <tr><th style="width:52%">突變</th><th style="width:18%">結果</th><th>誰抓到</th></tr>
+  <tr><td>M1 <code>ON_SPEC_MARKERS</code> 清空（映射表失效）</td><td class="ok">✅ 會紅</td>
+      <td>字面標籤斷言（見下）</td></tr>
+  <tr><td>M2 <code>interpretable_speedup</code> 恆 True</td><td class="ok">✅ 會紅</td>
+      <td>3 條用例</td></tr>
+  <tr><td>M3 <code>declared</code> 不再優先</td><td class="ok">✅ 會紅</td>
+      <td>declared-vs-spec 用例</td></tr>
+  <tr><td>M4 fallback 改 fail-open（未知 spec 當 off）</td><td class="ok">✅ 會紅</td>
+      <td><code>eagle-3</code> 用例</td></tr>
+</table>
+
+<div class="card">
+  <h3 style="margin-top:0"><span class="warnc">⚠ M1 第一次沒紅</span> —— 一條值得記的教訓</h3>
+  <p>第一版只斷言布林值 <code>identical</code>。結果 M1（清空 marker 表）<b>沒有讓自測變紅</b>，
+  因為 fallback 本身也 fail-closed：未知 spec 回傳原字串，同樣不等於 <code>MTP-off</code>，
+  兩條路徑結果相同 —— 這在突變測試裡叫<b>等價突變</b>，不是程式對，是<b>斷言沒有區分力</b>。</p>
+  <p>修正：改為<b>同時斷言歸一化後的字面標籤</b>（<code>MTP-on</code>／<code>MTP-off</code>／原字串）。
+  改完 M1 立刻變紅。</p>
+  <p><b>通則：斷言要能區分「對」與「碰巧對」。</b>只斷言布林結果的測試，
+  在有多條路徑通向同一結論時是假的安全網。</p>
+</div>
+
+<h2>4. baseline 側：schema → v4，量測值一個未動</h2>
+
+<p><code>scripts/check/mtp_off_baseline.json</code> 是凍結錨點（tg 11.61 t/s）。本輪用帶
+assert 的補丁腳本改，並與 v3 備份<b>逐鍵比對</b>，只有 4 個鍵變動：</p>
+
+<table>
+  <tr><th style="width:30%">鍵</th><th>變動</th></tr>
+  <tr><td><code>output_function</code></td><td class="ok">新增</td></tr>
+  <tr><td><code>note</code></td><td>追加 v4 一句（指向 <code>output_function</code> 節）</td></tr>
+  <tr><td><code>schema</code></td><td><code>mtp-off-baseline/3</code> → <code>/4</code></td></tr>
+  <tr><td><code>reproduce</code></td>
+      <td>修掉過期後門 <code>--charter none</code> → <code>--charter waive --waive-reason ...</code>
+          （那條命令現在 0 秒退出，重現不出任何東西）</td></tr>
+</table>
+
+<p>新增的 <code>output_function</code> 節有 7 個鍵：根因、<b>為何沒有旋鈕能還原</b>
+（<code>n_max=0</code> 觸發 <code>GGML_ASSERT</code>）、品質說明（ON 不是缺陷，是另一個函數）、
+claim 規則、以及「誰在強制」。</p>
+
+<p class="bad">⛔ <code>measured.tg_t_s</code> 仍 11.61、<code>pp_t_s</code> 275.74、
+<code>frozen</code> 未改 —— 錨點沒有被移動。</p>
+
+<h2>5. 卡上的一條錯誤認知已修正</h2>
+
+<p>立項卡 §4 S4 原本寫：「<code>scripts/check/*</code> 在自動索引範圍 ⇒ commit 前要重生索引」，
+這也是我之前判斷「B1 卡在索引那 76 筆漂移」的依據。<b>實測是錯的</b>：</p>
+
+<pre>$ python3 agent_harness/engine_loop/index_assets.py --check | grep mtp_
+    scripts/check/mtp_off_baseline.json:  on disk but not in the manifest
+    scripts/check/mtp_promotion_gate.py:  on disk but not in the manifest</pre>
+
+<p>兩檔<b>都不在 MANIFEST</b>，改它們既不新增漂移也不需要重生索引。那 76 筆漂移全部來自
+別條線<b>尚未提交</b>的 <code>agent_harness/</code> 與 <code>scripts/check/</code>；
+此刻重生索引只會把別人的 WIP 凍進 MANIFEST。⇒ <b>本輪不重生索引</b>。</p>
+
+<h2>6. 適用範圍與未做的事</h2>
+
+<div class="card">
+  <p><b>B1 現在擋的是「表述」，不是「比較」。</b></p>
+  <ul>
+    <li>配對比較本身仍然合法、仍然要繼續做 —— ON 到底比 OFF 快或慢，是實證問題。</li>
+    <li>擋掉的是：<b>把 ON 的 t/s 寫成「OFF 的 X%」</b>。這在兩個輸出函數之間是未定義的，
+        不是「雜訊大一點」。</li>
+    <li>因此 <code>verdict</code> 與 exit code <b>都沒有改</b>：既有 8 條的語義完整保留。</li>
+  </ul>
+</div>
+
+<h3>未做</h3>
+<ul>
+  <li><b>索引未重生</b> —— 理由見 §5（別條線 76 筆 WIP）。</li>
+  <li>B2 第二批那 <b>7 份未追蹤檔</b>已加標籤但仍未 stage（屬別條線未提交檔案，不併入本線 commit）。</li>
+  <li>本輪<b>沒有任何量測</b>：沒 launch、沒 GPU 取樣、沒產生新的 t/s 讀數。
+      demo 候選的數字是構造來驗證閘門語義的，<b>不可當成效應量級引用</b>。</li>
+</ul>
+
+<h2>7. 閘門實錄</h2>
+
+<table>
+  <tr><th style="width:26%">檢查</th><th>結果</th></tr>
+  <tr><td><code>mtp_promotion_gate.py --selftest</code></td><td class="ok">PASS（18 cases）</td></tr>
+  <tr><td>突變測試（4 組）</td><td class="ok">全數會紅</td></tr>
+  <tr><td><code>py_compile</code> / JSON 合法</td><td class="ok">OK</td></tr>
+  <tr><td>check 8 源碼↔binary 同步</td><td class="ok">PASS「無 llama 原始碼變更（僅 doc/腳本/產物）」</td></tr>
+  <tr><td>check 12 量測產物帶出處</td><td class="ok">PASS</td></tr>
+  <tr><td>7a–7d</td><td class="ok">PASS</td></tr>
+  <tr><td><code>traces/validate.py</code></td><td class="ok">OK（1 warning，既有）</td></tr>
+  <tr><td><code>traces/selftest.py</code></td><td class="ok">10/10 injected violations rejected</td></tr>
+  <tr><td>SKIP（4 段）</td><td>@rpath（非 dev 分支）／prod-accept（未開）／harmonyos／replay（<code>RUN_REPLAY_BENCH=0</code>）—— 理由均成立</td></tr>
+</table>
+
+<h2>8. 必備章節 A／B／C 的適用聲明</h2>
+
+<p><b>A. TPOT 分解 —— 不適用。</b>本輪純屬閘門語義與標註，<b>沒有任何量測</b>，
+未跑 DECPROF／未取 GPU timing，沒有分解基礎。</p>
+
+<p><b>B. 提速量級 —— 不適用。</b>沒有產生可比讀數；demo 裡的 1.214x 是構造輸入，
+用於驗證閘門行為，<b>不可引用為效應量級</b>。</p>
+
+<p><b>C. prefill + decode 同報 —— 不適用。</b>本輪無 launch、無 thermal／swap 採樣。</p>
+
+<footer>
+  產生：2026-09-28 21:03 · 0 build · 本線（線A · ace）·
+  權威：立項卡 <code>docs/MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md</code> §2 B1／B4、§4 S4、§7 實錄 ·
+  根因：<code>docs/MTP_BITIDENT_P1_ROOTCAUSE_2026-09-28.md</code> ·
+  收尾：<code>docs/MTP_BITIDENT_CLOSEOUT_2026-09-28.md</code>
+</footer>
+
+</div>
+</body>
+</html>

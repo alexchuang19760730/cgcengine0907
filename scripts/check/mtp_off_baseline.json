@@ -1,0 +1,230 @@
+{
+  "schema": "mtp-off-baseline/4",
+  "note": "Frozen MTP-off box-state baseline for the authoritative bench cell. An MTP-on candidate that wants promotion talk must carry a same-shape OFF control measured in the same session whose tg lands inside `band`; a window outside the band is NOT comparable and the gate refuses. Regenerate only by a declared re-baseline (docs/ACCEPT_LEVERS_AND_DIRTY_BOX_PAIR_2026-09-26.md §12). v3 (2026-09-27 evening): the corridor grew from 5 to 7 accepted samples (a 4-run back-to-back null series was added) and `stable_window` now states what today's data can/cannot support: the 10.84-12.02 range is mostly ONE-HIT REP BIMODALITY, not slow drift -- inside a 5-minute window the run medians spread 1.52%, while a single arm's two agreeing reps agree to <=1%. v4 (2026-09-28): added the `output_function` section -- the gate's ELIGIBLE means the PAIR is comparable, not that an MTP-on number is a percentage of MTP-off (B1, docs/MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md). No measured value changed in v4; the anchor stays 11.61 t/s.",
+  "frozen": "2026-09-27 10:44-10:45 +0800",
+  "frozen_scope": "the anchor POINT; the window CLASS is `corridor`, the citation rules are `stable_window`",
+  "profile": "prod-new",
+  "spec": "none (MTP off)",
+  "output_function": {
+    "baseline": "MTP-off",
+    "role": "the anchor was measured with MTP off; an MTP-on candidate is a DIFFERENT output function, not a faster version of this one",
+    "root_cause": "MTP on makes need_n_rs_seq() (src/llama.cpp/common/common.h:395) return draft.n_max > 0, so src/llama.cpp/src/models/delta-net-base.cpp:494 (if cparams.n_rs_seq == 0) takes the K-slot rollback branch instead of the in-place write-back -- the reduction width changes (gdn 30->60, conv_input 30->150) and the FIRST decode already differs (pos=209: off 19.22745 vs on 19.25835, greedy).",
+    "why_no_knob_can_undo_it": "n_max=0 is rejected by GGML_ASSERT as an illegal configuration, so there is no configuration with MTP on and n_rs_seq == 0. Proven at source level 2026-09-28 (docs/MTP_BITIDENT_CLOSEOUT_2026-09-28.md, hypothesis H8).",
+    "quality_note": "the MTP-on output is NOT a quality defect: both sides are fluent and semantically equivalent under greedy decoding. It is a different function, which is why a t/s ratio between them is undefined rather than merely noisy.",
+    "claim_rule": "ELIGIBLE (pair comparability) != same output function (inter-comparability). When output_function.identical is false, an MTP-on t/s may be cited only as 't/s under the MTP-on output function' and MUST NOT be written as 'X% of off' or 'X% faster than off' -- even when the pair is comparable and on is the faster of the two.",
+    "enforced_by": "scripts/check/mtp_promotion_gate.py: output_function.identical and comparability.interpretable_speedup. Its --selftest asserts both (18 cases) and four mutants were verified to turn it red, so the layer is not decorative."
+  },
+  "cell": {
+    "model": "models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf",
+    "ngl": 99,
+    "load_mode": "none",
+    "threads": 8,
+    "batch": 5632,
+    "ubatch": 5632,
+    "prompt": 2048,
+    "gen": 128,
+    "depths": 512,
+    "reps": 3,
+    "warm_skip": 64,
+    "ctx_size": 0,
+    "fixed_fill_seed": 1
+  },
+  "measured": {
+    "pp_t_s": 275.74,
+    "tg_t_s": 11.61,
+    "build_number": 630,
+    "head": "e5d1c0f14",
+    "harness_rc": 0,
+    "base_check": "PASS",
+    "thermal_worst": "NOMINAL",
+    "swap_launch_mib": 8314.69,
+    "swap_worst_mib": 9290.75,
+    "artifact": "/tmp/mtp_off_bench_0927.json",
+    "server_log": "Backup/cgc_logs/llama_server_20260927_104402.log"
+  },
+  "corridor": {
+    "purpose": "off corridor: every same-cell off reading that passed the ingest rules, with its distribution -- so the baseline stops being one point that a lucky window can beat by 3.5%",
+    "artifact": "Backup/mtp_off_corridor/off_corridor_20260927.json",
+    "summary": "Backup/mtp_off_corridor/off_corridor_20260927.summary.json",
+    "schema": "bench-corridor/1",
+    "tool": "scripts/check/bench_ingest.py",
+    "generated": "2026-09-27 evening",
+    "window": "2026-09-27 10:44-12:20 (5 samples, spaced 15-33 min) + 19:29-19:34 (4 back-to-back samples, 2 of them NOMINAL), all on head e5d1c0f14 (build 630)",
+    "n_products": 11,
+    "n_accepted": 7,
+    "n_rejected": 4,
+    "runners": {
+      "harness-bench": 10,
+      "matrix-direct": 1
+    },
+    "tg_t_s": {
+      "median": 11.661,
+      "min": 10.973,
+      "max": 12.019,
+      "spread_pct": 8.97,
+      "sd": 0.349,
+      "mean_within_run_sd": 0.267,
+      "n": 7
+    },
+    "pp_t_s": {
+      "median": 292.853,
+      "min": 275.736,
+      "max": 304.7,
+      "spread_pct": 9.89,
+      "sd": 10.846,
+      "mean_within_run_sd": 4.207,
+      "n": 7
+    },
+    "wall_s": {
+      "median": 77.8,
+      "min": 73.4,
+      "max": 85.2,
+      "spread_pct": 15.17,
+      "n": 7
+    },
+    "health_mix": {
+      "clean": 2,
+      "mixed": 5,
+      "sick": 4,
+      "clean_samples": [
+        "2026-09-27T10:59+0800 (tg 10.973, reps 1.9%)",
+        "2026-09-27T12:19+0800 (tg 11.696, reps 0.94%)"
+      ],
+      "why_mixed": "in 8 of 11 runs exactly one of the three reps landed 3.1-8.2% below the other two (which agreed to <=1%); a run median that contains one hit rep is a MIXTURE value, not the mode"
+    },
+    "rejected": [
+      {
+        "session": "2026-09-27T09:46+0800",
+        "artifact": "/tmp/harness_prodnew_094531.json",
+        "tg_t_s": 10.84,
+        "pp_t_s": 230.35,
+        "wall_s": 110.9,
+        "reasons": [
+          "r_head: engine_build='825ec07d5' != 'e5d1c0f14'"
+        ],
+        "health": {
+          "verdict": "sick",
+          "coverage": 0.739,
+          "note": "冷窗：sampler 覆蓋率 0.74 而正常是 0.91-0.97"
+        }
+      },
+      {
+        "session": "2026-09-27T13:55+0800",
+        "artifact": "/tmp/mtp_std/off_dense.json",
+        "tg_t_s": 3.62,
+        "pp_t_s": 47.03,
+        "wall_s": 996.5,
+        "reasons": [
+          "r_wall: wall_s=996.5 > 240.0 s (窗級崩壞，不是同一種窗)",
+          "r_floor: pp 47.03 < 165.44 t/s (60% of frozen 275.74)",
+          "r_floor: tg 3.62 < 6.97 t/s (60% of frozen 11.61)"
+        ],
+        "health": {
+          "verdict": "sick",
+          "coverage": 0.118,
+          "note": "監測執行緒只跑到 235/1992 次 ⇒ 整台機器在 stall"
+        }
+      },
+      {
+        "session": "2026-09-27T19:32+0800",
+        "artifact": "/tmp/mtp_null_series/null_3.json",
+        "tg_t_s": 11.61,
+        "pp_t_s": 269.22,
+        "wall_s": 78.1,
+        "reasons": [
+          "r_thermal: thermal.worst='HEAVY' != 'NOMINAL'"
+        ],
+        "health": {
+          "verdict": "sick",
+          "thermal_hist": {
+            "NOMINAL": 80,
+            "MODERATE": 39,
+            "HEAVY": 32
+          },
+          "note": "背對背第 3 支：熱累積"
+        }
+      },
+      {
+        "session": "2026-09-27T19:34+0800",
+        "artifact": "/tmp/mtp_null_series/null_4.json",
+        "tg_t_s": 11.31,
+        "pp_t_s": 258.01,
+        "wall_s": 80.5,
+        "reasons": [
+          "r_thermal: thermal.worst='HEAVY' != 'NOMINAL'"
+        ],
+        "health": {
+          "verdict": "sick",
+          "thermal_hist": {
+            "NOMINAL": 70,
+            "MODERATE": 14,
+            "HEAVY": 69
+          },
+          "note": "背對背第 4 支：熱累積 + pp 已掉到 258"
+        }
+      }
+    ],
+    "role": "window-class distribution ONLY. It answers \"which single points are the same kind of window\", and it is NOT the comparison precision: the seven accepted samples span 8.97%, i.e. 3x the pair threshold, so feeding the corridor in as `off.reps` is REFUSED by mtp_promotion_gate.py rule 4 (demonstrated 2026-09-27). Promotion talk still needs a paired ABBA/interleaved session whose own repeats are tight.",
+    "staleness_rule": "the corridor artifact pins `ingest.baseline_md5` (this file's md5 at ingest time) -- after ANY edit here, re-run the reproduce command below so the pinned hash is not stale. The hash is deliberately one-way: this file never carries the artifact's md5, so the two can't lock each other.",
+    "reproduce": "python3 scripts/check/bench_ingest.py --product /tmp/harness_prodnew_094531.json --product /tmp/mtp_off_bench_0927.json --product /tmp/mtp_off_now.json --product /tmp/mtp_std/off.json --product /tmp/mtp_std/off_dirty.json --product /tmp/mtp_std/off_after_on.json --product /tmp/mtp_std/off_dense.json --product /tmp/mtp_null_series/null_1.json --product /tmp/mtp_null_series/null_2.json --product /tmp/mtp_null_series/null_3.json --product /tmp/mtp_null_series/null_4.json --out Backup/mtp_off_corridor/off_corridor_20260927.json --summary-out Backup/mtp_off_corridor/off_corridor_20260927.summary.json"
+  },
+  "stable_window": {
+    "definition": "可引用的窗 = 同 head、同 cell、health=clean（rep_shape=tight、thermal hist 無 MODERATE/HEAVY、sampler coverage>=0.90、wall<=1.3x 同批健康中位），且與同伴樣本間隔 <=10 分鐘。任何 <=3% 的宣稱還必須來自這個窗內的配對（ABBA／交錯、兩側各 >=2 reps、兩側 spread<=3%）。",
+    "measured_scales_2026-09-27": {
+      "rep_level": {
+        "clean_run_reps_spread_pct": "0.94-1.9",
+        "hit_run_low_rep_gap_pct": "3.1-8.2",
+        "note": "同一個 arm 的三個 rep 是雙模的：要嘛 2 個互差 <=1%（第 3 個也 <=2%），要嘛其中 1 個掉 3-8%。今天 11 支 run 裡有 8 支是後者。"
+      },
+      "run_median_within_5_min_window_pct": 1.52,
+      "run_median_across_95_min_pct": 8.97,
+      "single_vs_single_min_detectable_pct": 8.5,
+      "reading": "單讀對單讀 1σ≈3.0%（走廊 7 支，sd 0.349 t/s = 2.99%）、最小可辨差 ≈8.5%（95%，2*sqrt(2)*sigma）；同 5 分鐘窗內的 run 中位數 spread=1.52%（19:29-19:34 四支，2 支 accepted 11.66/11.48）。也就是說 10.84-12.02 這個範圍主要是『那次跑裡有一個 rep 被撞到』的混合值，不是同一個窗慢慢漂。"
+    },
+    "health_rules": {
+      "rep_spread_clean_pct": 2.5,
+      "outlier_gap_min_pct": 3.0,
+      "coverage_min": 0.9,
+      "wall_factor_max": 1.3,
+      "segment_gap_min": 10.0,
+      "enforced_by": "scripts/check/bench_ingest.py（每臂 health.checks，ok/warn/fail + 讀數；--selftest 12/12）"
+    },
+    "confounds_found": [
+      {
+        "name": "thermal / pool carry-over in back-to-back runs",
+        "read": "19:29-19:34 四支背對背：pp 302.85 -> 281.65 -> 269.22 -> 258.01（單調 -14.8%），tg 只 -3.0%；thermal hist 第 3 支起出現 MODERATE/HEAVY（32/151、69/153），worst 標籤在啟動前仍是 NOMINAL",
+        "implication": "連續跑的第 3 支起不可當對照；A/B 必須交錯（ABBA）且 >2 支要留冷卻段。pp 對 carry-over 的敏感度遠大於 tg，所以任何 pp 比較更要用交錯。"
+      },
+      {
+        "name": "sampler starvation (machine-level stall)",
+        "read": "sampler coverage = thermal.n*interval/wall：正常 0.91-0.97、冷窗 0.74、13:55 崩壞 0.118",
+        "implication": "這是唯一能自動抓到『整台機器 stall』的免費見證，而且它同時抓到了冷窗（09:46，不同 build）與崩壞（13:55）。任何『這支就是慢』的結論都應該先看它。"
+      },
+      {
+        "name": "no recorded box variable tracks tg",
+        "read": "對 5 支晨間樣本算 Spearman(tg, x)：swap 存量 0.00、run 內 swap 成長 -0.30、啟動時 free +0.30、wired 成長 -0.30、per-miss 延遲 +0.40（方向相反）、run 內 pagein 率 ~0.00（扣掉沒有 sys_rate 的那支後）、pp +0.60；對 clock 也只有 +0.10",
+        "implication": "不要把 10.84-12.02 讀成某個開關或某個環境變數的線性效應；它與任何單一被記錄的變數都沒有可用的相關。注意 pagein 率那格：把它當 0 代入會得到 -0.80 的假相關 —— 缺件不能當 0（本 repo 已踩過這個坑）。"
+      }
+    ],
+    "what_this_does_not_say": "它沒有說 tg 是常數：走廊 1σ=3.0%（7 樣本），只是說這個散佈在今天的資料裡不是趨勢、不是任何單一記錄變數，而主要是 rep 級雙模 + 窗級慢漂的混合；要把它壓到 3% 以下，只能靠配對與交錯，不是靠挑最高分。"
+  },
+  "band": {
+    "low": 0.85,
+    "high": 1.15,
+    "role": "window-class anchor ONLY -- not the comparison precision",
+    "covers_corridor": true,
+    "corridor_span_pct": 8.97,
+    "why": "cross-window single readings are NOT 3%: the same frozen-shape off cell read 11.61 t/s at 10:44 and 10.97 t/s at 10:59 (-5.5% in 15 min, swap +1407 MiB during the run), and paired_ab.py's header records six unpaired interleaved arms of one engine spanning 1.54x while reps inside one arm agreed to 0.6-2%. The 3% lives in the PAIRING and is enforced on the pair's own repeats by mtp_promotion_gate.py v2. The corridor shows the same thing seven times over (spread 8.97% over 95 minutes + one 5-minute segment), and it fits inside this +/-15% band ([9.87, 13.35]) -- the band width was right, the single point was the wrong shape."
+  },
+  "reproduce": "python3 scripts/check/harness.py bench --arm prod-new --charter waive --waive-reason \"reproducing the frozen MTP-off baseline (window-class check only, not a charter comparison)\" --prompt 2048 --gen 128 --depths 512 --reps 3 --warm-skip 64 --fixed-fill-seed 1 --json /tmp/mtp_off_bench.json",
+  "known_on_state_2026-09-27": {
+    "verdict": "not eligible",
+    "why": "spec-type draft-mtp dies in the cell (rc=-6, CGC-METAL-FAIL compute #41) with AND without CGC_DRAFT_CTX_ALIGN=1; server-path warm A/B reads on/off ~0.57 (8.00 vs 14.00 t/s at 51-token segments); acceptance ~0.256 (draft 90/23)",
+    "artifacts": [
+      "/tmp/ctxalign_harness_0927.log",
+      "/tmp/mtp_decode_ab_warm/report.json",
+      "/tmp/census_align/on_align.buffers.txt"
+    ]
+  },
+  "pair_threshold_pct": 3
+}

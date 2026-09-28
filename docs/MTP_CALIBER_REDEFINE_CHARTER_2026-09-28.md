@@ -31,10 +31,10 @@
 
 | # | 判據 | 落地點 | 現況 |
 |---|---|---|---|
-| **B1** | MTP on 的 t/s **不可與 OFF 互比**，跨臂比較一律拒絕並說明理由 | `scripts/check/mtp_promotion_gate.py`（verdict 語義）＋ `scripts/check/mtp_off_baseline.json`（`note`） | ⚠ **部分存在**：現有 gate 做的是「paired 設計 ＋ 3% 重現性 ＋ 凍結 OFF 錨點」，管的是**盒況可比性**；**沒有「輸出函數不同」這一層** ⇒ 補一層語義 |
+| **B1** | MTP on 的 t/s **不可與 OFF 互比**，跨臂比較一律拒絕並說明理由 | `scripts/check/mtp_promotion_gate.py`（`output_function`／`comparability` 兩節）＋ `scripts/check/mtp_off_baseline.json`（新增 `output_function` 節，schema → **v4**） | ✅ **已完成**（2026-09-28 21:0x）：既有 8 條繼續管**盒況可比性**；**新增獨立語義層** `output_function.identical` ＋ `comparability.interpretable_speedup` ⇒ **ON 即使配對通過且較快，仍不得表述為「OFF 的 X%」**。端到端實測見 §7 |
 | **B2** | 引用 ON 數字必須附「輸出函數 = MTP-on」標籤；既有把 ON 當 OFF 加速版的結論全部重標 | `docs/*.md`（**兩批合計 76 份**：第一批 20 份＝字面 `MTP-on`＋`t/s` 同行；第二批 56 份＝引用 `12.57`／`12.62` 且當基線寫） | ✅ **已完成**（2026-09-28 16:4x ＋ 20:5x，皆純插入） |
 | **B3** | 交付口徑**維持 MTP off**（`prod-new` 的 `CGC_SERVER_MTP=0` 不動） | `scripts/check/harness.py` profile 定義 | ✅ **已是現狀**，只需明文寫進本卡與收尾文（本卡即為該明文） |
-| **B4** | 若要重新追求「ON 當加速用」，**先決條件**＝ON 在乾淨窗口上 paired 快過 OFF（目前方向**相反**：OFF 中位 11.92 vs ON 7.34） | `scripts/check/mtp_promotion_gate.py` ＋ `mtp_off_baseline.json` | ✅ **已有機制**（v2/v3，09-27）⇒ 只需追加「**ELIGIBLE ≠ 同一輸出函數**」一條 |
+| **B4** | 若要重新追求「ON 當加速用」，**先決條件**＝ON 在乾淨窗口上 paired 快過 OFF（目前方向**相反**：OFF 中位 11.92 vs ON 7.34） | `scripts/check/mtp_promotion_gate.py` ＋ `mtp_off_baseline.json` | ✅ **已完成**（v2/v3 機制 09-27 已有；「**ELIGIBLE ≠ 同一輸出函數**」一條隨 B1 於 2026-09-28 追加，寫進 baseline 的 `output_function.claim_rule`） |
 
 ### ★ B1 的精確增量（本立項真正要加的東西）
 
@@ -62,7 +62,7 @@
 | S1 | 本卡開立（✅ 已完成） | 0 | 本檔 |
 | S2 | **B3** 明文（✅ 已完成，見 §2 表） | 0 | 交付口徑未動 |
 | S3 | **B2** 重標：docs 逐一加「輸出函數」標籤 | 純編輯 | ✅ **已完成**（**20 ＋ 56 ＝ 76 份**，每份 6 行純插入、既有數字未改；第二批 **7 份是未追蹤檔 ⇒ 已加標籤但未 stage**，見 §5） |
-| S4 | **B1／B4** 補語義層到 `mtp_promotion_gate.py`（＋ `--selftest` 要過） | 動 `scripts/check/` | ⚠ `scripts/check/*` 在自動索引範圍 ⇒ **commit 前要重生索引**（`build_memory_index.py` → `index_assets.py`，順序不可顛） |
+| S4 | **B1／B4** 補語義層到 `mtp_promotion_gate.py`（＋ `--selftest` 要過） | 動 `scripts/check/` | ✅ **已完成**（2026-09-28 21:0x）：`--selftest` **18/18 PASS**（既有 12 條未破壞 ＋ B1 新增 6 條），**4 組突變實測皆會紅** ⇒ 語義層非裝飾。⚠ **卡上「`scripts/check/*` 在自動索引範圍」是錯的**：實測 `mtp_promotion_gate.py` 與 `mtp_off_baseline.json` 皆**不在 MANIFEST**（`index_assets.py --check` 報 `on disk but not in the manifest`）⇒ 改它們不會新增漂移，也**不需要重生索引**（重生反而會把別條線 76 筆未提交 WIP 寫進 MANIFEST） |
 | S5 | 收尾資產：更新 `MEMORY.md`／日誌，視需要開一份 `docs/MTP_CALIBER_*_RESULT_*.md` | 純編輯 | — |
 
 ## 5. B2 重標清單（✅ 已完成）
@@ -136,3 +136,68 @@ docs/VOID_NUMBER_CITATIONS_2026-09-25.md
 
 > **MTP on 與 off 是兩個輸出函數。** 引用任一方時必須標輸出函數；
 > 交付口徑 = **MTP off**；在 ON 於乾淨窗口 paired 快過 OFF 之前，不投任何「MTP 加速」資源。
+
+---
+
+## 7. B1 落地實錄（2026-09-28 21:0x）
+
+### 7.1 補的是哪個洞
+
+既有 gate 的 8 條規則判的是**盒況可比性**。缺的這一層是：**即使全部通過，ON 與 OFF
+算的不是同一個函數**。實證如下 —— 構造一個「配對全綠且 ON 快 **+21.4%**」的候選
+（`Backup/b1_gate_demo/cand_on_faster.json`：off 11.61 vs on 14.09，null 底噪 0.18%，
+兩側 spread 0.26%／0.43%）：
+
+```
+verdict: ELIGIBLE
+  output function: candidate=MTP-on baseline=MTP-off identical=False
+  NOT INTERPRETABLE AS A SPEEDUP: on t/s only as 'MTP-on output function'; never as a % of off
+    root cause: cparams.n_rs_seq 0 -> draft.n_max > 0 (delta-net-base.cpp:494)
+  note: paired ratio: on/off = 1.214x (14.10 vs 11.61 t/s)
+```
+
+⇒ 既有 gate **仍給 `ELIGIBLE`、exit 0**（正確：配對確實可比），但**原先會被讀成
+「MTP 加速 21.4%」** —— 那正是本立項要擋的語義錯誤。現在這一層由機器印出來。
+
+### 7.2 判據（機檢欄位）
+
+| 欄位 | 意義 |
+|---|---|
+| `output_function.identical` | 兩側是否同一輸出函數（`spec` 歸一化；candidate 可用 `output_function` 顯式宣告，優先於 `spec`） |
+| `comparability.paired_comparable` | 既有 8 條（盒況可比性） |
+| `comparability.interpretable_speedup` | **`paired_comparable` AND `identical`** ⇒ 只有兩者都成立才可寫「X% of off」 |
+
+未知 spec 採 **fail-closed**：回傳原字串 ⇒ 永遠不等於 `MTP-off` ⇒ 判為不同函數。
+
+### 7.3 自測會紅（4 組突變實測）
+
+`--selftest` **18/18 PASS**（既有 12 條未破壞 ＋ B1 新增 6 條）。突變實測：
+
+| 突變 | 結果 |
+|---|---|
+| M1 `ON_SPEC_MARKERS` 清空（映射失效） | ✅ 會紅 |
+| M2 `interpretable_speedup` 恆 True（語義層失效） | ✅ 會紅 |
+| M3 `declared` 不優先 | ✅ 會紅 |
+| M4 fallback 改 fail-open（未知 spec 當 off） | ✅ 會紅 |
+
+⚠ **M1 第一次沒紅** —— 因為 fallback 本身也 fail-closed，清空 marker 表是**等價突變**，
+只斷言布林值沒有區分力。已改為**同時斷言歸一化後的字面標籤**（`MTP-on`／`MTP-off`／原字串）
+才拿到區分力。這條值得記：**斷言要能區分「對」與「碰巧對」。**
+
+### 7.4 baseline 側（schema → v4）
+
+`scripts/check/mtp_off_baseline.json` 只動 4 個鍵（已逐鍵比對 v3 備份）：
+
+- 新增 `output_function` 節（7 個鍵：根因／為何無旋鈕可還原／品質說明／claim 規則／誰強制）
+- `note` 追加 v4 一句
+- `schema` `mtp-off-baseline/3` → `/4`
+- `reproduce` 修掉過期後門 `--charter none` → `--charter waive --waive-reason ...`
+
+⛔ **量測值一個未動**：`measured.tg_t_s` 仍 **11.61**、`pp_t_s` 275.74、`frozen` 未改。
+
+### 7.5 未做／待辦
+
+- **索引未重生**（`index_assets.py`）—— 76 筆漂移**全部來自別條線未提交的
+  `agent_harness/`／`scripts/check/`**；本輪改的兩檔本身不在 MANIFEST，重生只會把別人的
+  WIP 凍進去。
+- B2 第二批那 **7 份未追蹤檔**已加標籤但仍未 stage（同原則：不併入本線 commit）。
