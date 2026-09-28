@@ -156,6 +156,37 @@ acceptance:
     ⇒ 判死後寫 deadend 結案，改回主線 gap/wait 桶，不再往「把 miss 移出臨界
     路徑」投入。
 
+# ── 【★ 結案（2026-09-29 02:1x）—— 依 fill_budget_closure 的實測落點】──────
+final_disposition:
+  status: "🔴 **CLOSED — 建議不做**（不是判死，是判「不值得」）"
+  decided_by: |
+    不是 M1 破產，而是**收益低於可量測門檻**：
+      `e-fillbudget-m-decomp.result_p1`（交付 cell，1 趟，儀器已修好）
+      fill **p50 = 5.41 ms/step**（預算 86.13）⇒
+      落點 1000/(86.13 − 5.41 + J2) = **11.92–12.15 t/s（+2.6%~+4.6%）**
+      ⇒ **< MDD 8.5%** ⇒ 在 16 GB 盒子上量不出來。
+  why_not_just_do_it: |
+    ⛔ 它需要動 `src/` 且**碰 M1/M2/M3 護欄**（改 combine 的加法順序／寫回位置）。
+    「動護欄去換一個量不出來的 2.6–4.6%」是本專案明確禁止的交換
+    （參照 MTP B 卡前例：護欄只能在口徑被證明必須移動時才動）。
+  survives: |
+    ✅ 保留（作為知識，不是作為工單）：
+      - **J1 原理可行**：未融合路徑（`CGC_DOWN_COMBINE` `<unset>`）下，D1 的 M1
+        原理成立（列獨立／`ggml_acc` 原位寫回／`+0` 精確）。
+      - **J2 成本模型**：靜態圖 ⇒ 固定 `k×n_layer = 8×40 = 320 op/step`，與 miss 率無關。
+      - **EBTIMER `seg=` 欄位**（已落地，`e-fillbudget-m-decomp` 的 src/ 改動）：
+        這是本線留下的**永久資產**，不受本卡結案影響。
+  voided: |
+    ⛔ 作廢：P0 的整段論證（裁的 `sum_rows` 不參與 combine）、「~12 op/step」、
+    「14.1~19.9 t/s」與「12.9~19.4 t/s」兩個落點區間、J2 的 312（應為 320）。
+  reopen_condition: |
+    只有在**兩條同時成立**時才重開：
+      (a) 盒子換成 ≥32 GB（pool 不再有 ~4.4 GiB 落在 swap ⇒ `cb` 桶消失 ⇒
+          step 預算與 fill 的相對關係改變）；**且**
+      (b) 重新實測 fill ms/step ≥ 8.5% × step 預算。
+    ⛔ 單獨「髒窗讓數字難看」不構成重開理由。
+  owner_note: "owner 從未明文指派 ⇒ 本線依 `on_fail` 自行結案，不實作、不開工單。"
+
 # ── 【階段（Q1 沒過不得進下一階段）】────────────────────────────────────
 phases:
   - id: P0

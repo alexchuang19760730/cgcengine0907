@@ -123,6 +123,42 @@ targets:
     verdict: "**UNDECIDABLE** — `m` 需要 eval_ms_per_round，而本趟 tg 0.33 ⇒ eval/輪 ≈ 8.2 s 是 thrash 值，與 draft 真實成本不可分 ⇒ 按預註冊 undecidable **不硬算**；`ms_per_round=35.6 ms` 只能證明儀器會吐值"
     box_fact: "★ 兩趟卡要假設：**第 2 趟只能拿計數器，不能拿 t/s**"
 
+  # ── 【P3 預註冊（2026-09-29 02:1x，新場次第 1 趟）—— 算式寫在看結果之前】──
+  p3_preregistered:
+    why: |
+      P2 崩在「本場次第 2 趟」；盒子已回收（81% free、無佔用、thermal 0）
+      ⇒ 重跑同一支臂作**新場次第 1 趟**（env 已修好：帶 `CGC_SERVER_MTP=1`）。
+      ⚠ 算式必須在看到數字**之前**定死，否則就是事後挪門檻（method_culpa #3 的教訓）。
+    formula: |
+      E       = emit_tok_per_round                  # CGC-MTP-PERF **末行**（累計）
+      T_draft = ms_per_round                        # ⚠ 只含 draft head（源碼註釋明載
+                                                    #   「The TARGET's verify forward is NOT here」）
+      tg      = rows[n_gen>0].avg_ts                # 同一趟自己的 tg
+      T_round = E * 1000 / tg                       # ms / round（含 verify）
+      T_ver   = T_round - T_draft                   # 殘差＝target verify + begin + accept
+      T_plain = 86.13 ms                            # 錨點 11.61 t/s（MTP off，build 630）
+      m = T_draft / T_plain                         # draft head 的成本，以 plain step 為單位
+      v = T_ver   / T_plain                         # verify 的成本，同上
+    validity_gate: |
+      四條**全過**才把 m／v 當實測；否則判 UNDECIDABLE，**不硬算**：
+        (a) rc=0 且 n_kept ≥ 2
+        (b) tg ≥ **8.0 t/s**（P2 是 0.33 ⇒ thrash 值不可分）
+        (c) cache hit_rate_pct ≥ **90**（P2 是 47.2）
+        (d) `CGC-MTP-PERF` ≥1 行且 calls_draft > 0
+    interpretation_preregistered: |
+      - **v > 1.2** ⇒ 損失主要在 **target verify**（一次 forward 吃 k+1 token 比 plain 一步貴）
+        ⇒ 槓桿在 verify 的 batching／KV，**不在 draft head** ⇒ E 軸（拉 accept）的價值下降。
+      - **m > 0.5** ⇒ draft head 本身就貴 ⇒ 槓桿在縮小 draft head／減少 draft 次數。
+      - 09-28 由 tg 反解出 m∈[0.60,0.84]；若實測 m 明顯 **< 0.6** ⇒ 反解模型有偏
+        （把 T_ver 當成 T_plain 了）⇒ 09-28 的「為何一個 draft token 要 0.6–0.9 個 plain step」
+        這個提問本身要改寫成「verify 為什麼比 plain 貴」。
+    forbids: |
+      ⛔ 不得寫「MTP 加速 X%」：M2 已 FAIL（ON/OFF 是**不同的輸出函數**，`n_rs_seq` 改變計算份數）
+      ⇒ m／v 只作為**診斷量**，不做跨臂速度比較。
+    caveat: |
+      ⚠ T_plain=86.13 來自**另一趟**（錨點、MTP off、build 630）⇒ m／v 帶 ±MDD 8.5% 的跨趟不確定性；
+      本趟 build_commit `e5d1c0f14`（EBTIMER 改動後重建，env-gated、不進數值路徑）。
+
 subgoals:
   - id: sg-p1-env
     text:   "`CGC_EB_TIMER=1` 真的送達（不被 allowlist 丟掉）"
