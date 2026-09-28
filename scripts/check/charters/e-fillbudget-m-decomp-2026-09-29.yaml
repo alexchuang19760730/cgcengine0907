@@ -82,6 +82,9 @@ acceptance:
     P2 success ⇒ 若 m 仍 ~0.6–0.9，槓桿改判到「一輪 draft 的成本結構」，不是 accept rate。
 
 targets:
+  # ⚠ 結構瑕疵（歷史遺留，未改以免動到既有判據）：下面 `result_p1`／`result_p2`／
+  #   `p3_preregistered`／`result_p3` 是**縮排兩格嵌在 targets 底下**，不是頂層鍵
+  #   ⇒ 讀「實測結果」要往 `targets.*` 找，別只在頂層找（YAML 有效、`_charter_gate` PASS）。
   n_layer: 40                   # ⛔ 修正：交付 cell 實測 40（舊 cell 才是 41）
   k: 8
   pure_decode_n_sum: 320        # 40 × 8（卡開立時寫 328，實測 320 ⇒ 判據本質不變：純 decode 窗口）
@@ -158,6 +161,37 @@ targets:
     caveat: |
       ⚠ T_plain=86.13 來自**另一趟**（錨點、MTP off、build 630）⇒ m／v 帶 ±MDD 8.5% 的跨趟不確定性；
       本趟 build_commit `e5d1c0f14`（EBTIMER 改動後重建，env-gated、不進數值路徑）。
+
+  # ── 【P3 實測結果（2026-09-29 02:4x，新場次第 1 趟，env 已修好）】──────────
+  result_p3:
+    ran: "rc=0、incomplete=False；`CGC-MTP-PERF` 12 行（＝6 唯一 ×2 reps）、calls_draft=124"
+    gate: |
+      (a) rc=0 完整 ✅   (d) MTP-PERF 有行且 calls_draft>0 ✅
+      (b) tg ≥ 8.0 ⛔ **tg=0.506**   (c) hit% ≥ 90 ⛔ **hit=51.8**
+      ⇒ 四條不全過 ⇒ 按 `validity_gate`：**m／v 判 UNDECIDABLE，不硬算**。
+    one_sided_bound: |
+      ★★ **但與閘門無關的單邊結論成立**：thrash 與冷啟動都只會把 wall-clock 計時**吹大**
+      （等頁只會更久）⇒ 實測 T_draft ≥ 真值 ⇒ `m` 的**上界**不需要乾淨窗。
+        末行累計均 35.08 ms ⇒ m ≤ **0.407**
+        差分後的穩態 23.7–29.5 ms ⇒ m ≤ **0.34**
+      ⇒ 兩種讀法都 **< 0.60** ⇒ ⛔ **09-28 由 tg 反解的 m∈[0.60,0.84] 作廢（偏高）**。
+      ⇒ E 軸提問改寫：「不是為何 draft token 要 0.6–0.9 個 plain step，
+        而是**為何一次 verify forward 比一個 plain step 貴**」⇒ 主導項是 **v**。
+      ⛔ v 仍 UNDECIDABLE（T_round 要用到本趟 thrash 的 tg ⇒ v≈72，純垃圾）。
+    instrument_caveat_new: |
+      ⚠⚠ **`ms_per_round` 是累計均值、未收斂**（P3：55.91→48.94→42.05→38.83→37.00→35.08
+      單調下降）⇒ **末行高估穩態 20–50%** ⇒ 必須**差分相鄰行**取增量：
+        P3: 43.25 / 24.30 / 26.66 / 29.14 / 23.74 ms per round（後四段 ≈ 24–29）
+        P2: 37.85 / 40.20 / 40.18 / 28.59 / 29.48 ms per round（後兩段 ≈ 29）
+      ⇒ **穩態帶 24–30 ms/輪**。另：12 行是 6 個唯一值各印兩次，取末行前先去重。
+    retraction_culpa4: |
+      ⛔ **撤回**：我曾由「P2 35.577 vs P3 35.076 差 1.4%、而 tg 差 55%」推
+      「ms_per_round 是 thrash 不變量」。**錯** —— 兩趟 calls_draft 相近（144/124）
+      且序列未收斂 ⇒ 一致是**累計結構相似**使然。穩態值要從差分來（見上），不是末行。
+    box_fact_updated: |
+      ★ 不只是「一場次第 2 趟必崩」——**新場次第 1 趟也崩**（P3 tg 0.506、hit 51.8、
+      swap 7186/8192 MiB）。場次之間**機器不回收**（P3 起跑時 swap 已 3567 MiB、free ~1.2 GB）。
+      ⇒ **MTP on 臂目前只能拿計數器，不能拿 t/s**。
 
 subgoals:
   - id: sg-p1-env
