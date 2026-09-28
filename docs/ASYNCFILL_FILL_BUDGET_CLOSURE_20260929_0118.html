@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fill 預算閉合白皮書：穩態只需 175–250 MB/s，但「fill 占多少 ms/step」仍無可信實測（2026-09-29 01:18）</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1c1c1a; --muted:#5f5e5a;
+    --line:#d3d1c7; --panel:#f7f6f2;
+    --red:#a32d2d; --redbg:#fcebeb;
+    --green:#3b6d11; --greenbg:#eaf3de;
+    --amber:#854f0b; --amberbg:#faeeda;
+    --blue:#185fa5; --bluebg:#e6f1fb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--fg);
+       font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;}
+  .wrap{max-width:880px;margin:0 auto}
+  h1{font-size:23px;font-weight:600;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:26px}
+  h2{font-size:17px;font-weight:600;margin:30px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;font-weight:600;margin:18px 0 8px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:var(--panel);font-weight:600}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+  .card{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:14px 0;background:var(--panel)}
+  .r{background:var(--redbg);border-left:3px solid var(--red)}
+  .g{background:var(--greenbg);border-left:3px solid var(--green)}
+  .a{background:var(--amberbg);border-left:3px solid var(--amber)}
+  .b{background:var(--bluebg);border-left:3px solid var(--blue)}
+  code{font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--panel);
+       padding:1px 4px;border-radius:4px}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+      padding:12px 14px;overflow-x:auto;font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+  ul,ol{padding-left:22px;margin:10px 0}
+  li{margin:5px 0}
+  .k{font-weight:600}
+  footer{margin-top:40px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>fill 預算閉合：穩態只需 175–250 MB/s</h1>
+<div class="sub">async fill 立項卡 <code>e-asyncfill-recompute</code> §5b／§7 · 2026-09-29 01:18 ·
+<b>0 build、0 GPU、0 <code>src/</code></b> · 純既有資料再分析</div>
+
+<div class="card b">
+<span class="k">一句話。</span>
+EBTIMER 的口徑壞掉（窗口跨段）⇒ 改走<b>趟末 pool 統計行</b>（整趟累計、不受 flush 對齊影響），
+把「背景 fill 供不供得上」從「量不出來」變成<b>帶寬上供得上（4–6× 餘量）</b>。
+但「fill 到底占多少 ms/step」<b>仍然沒有任何可信實測</b> —— 三個看起來能算的計數器全都不能用。
+</div>
+
+<h2>1. 閉合數字（6 臂，build 578 / <code>p0_n128_d512</code>）</h2>
+
+<table>
+<tr><th>臂</th><th class="n">req</th><th class="n">steps<br>(req/328)</th><th class="n">miss</th><th class="n">hit%</th>
+    <th class="n">read_mib</th><th class="n">MiB/miss</th><th class="n">MiB/step</th><th class="n">miss/step</th></tr>
+<tr><td>r1_fill</td><td class="n">178055</td><td class="n">542.9</td><td class="n">8694</td><td class="n">95.12</td><td class="n">9419.3</td><td class="n">1.083</td><td class="n">17.35</td><td class="n">16.02</td></tr>
+<tr><td>r4_fill</td><td class="n">192654</td><td class="n">587.4</td><td class="n">8178</td><td class="n">95.76</td><td class="n">8842.7</td><td class="n">1.081</td><td class="n">15.05</td><td class="n">13.92</td></tr>
+<tr><td>r5_fill</td><td class="n">163635</td><td class="n">498.9</td><td class="n">9769</td><td class="n">94.03</td><td class="n">10628.0</td><td class="n">1.088</td><td class="n">21.30</td><td class="n">19.58</td></tr>
+<tr><td>r2_nofill</td><td class="n">178523</td><td class="n">544.3</td><td class="n">6728</td><td class="n">96.23</td><td class="n">0.0</td><td class="n">—</td><td class="n">0</td><td class="n">12.36</td></tr>
+<tr><td>r3_nofill</td><td class="n">135419</td><td class="n">412.9</td><td class="n">6158</td><td class="n">95.45</td><td class="n">0.0</td><td class="n">—</td><td class="n">0</td><td class="n">14.92</td></tr>
+<tr><td>r6_nofill</td><td class="n">186350</td><td class="n">568.1</td><td class="n">5845</td><td class="n">96.86</td><td class="n">0.0</td><td class="n">—</td><td class="n">0</td><td class="n">10.29</td></tr>
+</table>
+
+<p>兩條一致性支撐閉合：<b>MiB/miss = 1.081–1.088（±0.3%）</b> ⇒ 一顆 expert 就是 1.083 MiB；
+<b>hit% 94.03–96.86</b> 四臂一致 ⇒ 穩態 miss 率是 <b>3.1–6.0%</b>。</p>
+
+<div class="card g">
+<b>穩態 fill = 15.0–21.3 MiB/step</b> ⇒ 以錨點 86.13 ms/step（11.61 t/s）計
+⇒ <b>持續頻寬需求 = 175–250 MB/s</b>。<br>
+即使保守取 1 GB/s 有效讀速，供給／需求 = <b>4–6×</b> ⇒ <b>帶寬上，背景 fill 供得上</b>。
+剩下的是「能否重疊」（§EN-463：重疊 = 0）與「實際有效吞吐多少」（未知）。
+</div>
+
+<div class="card a">
+⚠ 注意：<b>穩態 miss 率是 3.1–6.0%，不是 44.5%</b>。44.5% 來自 EBTIMER 的
+<code>miss=146 / n_sum=328</code> 那一行 —— 那是<b>冷啟動首窗</b>（pool 空），不是穩態。
+</div>
+
+<h2>2. ⛔ 三個計數器都不能拿來算 fill</h2>
+
+<table>
+<tr><th style="width:170px">計數器</th><th>為什麼不能用</th></tr>
+<tr><td><code>pread_us</code></td>
+    <td><b>nofill 臂 <code>read_mib=0</code> 卻 <code>pread_us</code>=375–556 s</b>
+        ⇒ 它計的根本不是 fill，是別的 pread（模型權重／mmap 頁入）。
+        誤用會得到「每次 miss 52–95 ms」——比真值大兩個量級。</td></tr>
+<tr><td><code>fill_wait_us</code></td>
+    <td>只覆蓋 <code>ensure_slot</code>（同步單 slot）路徑；本 cell 走
+        <code>ensure_batch</code>（L3 Option A）⇒ r1/r5 為 <b>0</b>、r4 整趟僅 154 ms
+        ⇒ 不是 fill 總耗時。</td></tr>
+<tr><td><code>EBTIMER step_usec</code></td>
+    <td>窗口跨段：同一份 log 裡 <code>n_sum/41</code> 既有 <b>8.00</b>（純 decode）
+        也有 <b>14.9–21.3</b>（混 prefill）⇒ 一行既可能是一步、也可能是一段。</td></tr>
+</table>
+
+<p>⇒ <b>「fill 占多少 ms/step」至今沒有任何可信實測</b>。這是本線目前最大的未量量。</p>
+
+<h2>3. 「34.5 ms」的物理含義</h2>
+
+<p>34.5 ms ≈ <b>17.3 MiB @ ~0.5 GB/s</b>，與「同步 fill、有效吞吐 ~500 MB/s」自洽
+（不是 SSD 峰值：pool 頁在 swap、隨機讀、單執行緒 pread）。
+⇒ 落點區間的跨度其實來自<b>「fill 實際有效吞吐」這個未知數</b>：</p>
+
+<table>
+<tr><th>有效吞吐</th><th class="n">fill 占 step</th><th class="n">扣 J2 (1.6–3.3 ms) 後</th><th class="n">落點</th></tr>
+<tr><td>0.5 GB/s</td><td class="n">34.6 ms</td><td class="n">50.0–51.6 ms</td><td class="n"><b>19.4–20.0 t/s</b></td></tr>
+<tr><td>1.0 GB/s</td><td class="n">17.3 ms</td><td class="n">66.8–68.5 ms</td><td class="n"><b>14.6–15.0 t/s</b></td></tr>
+<tr><td>2.0 GB/s</td><td class="n">8.6 ms</td><td class="n">75.9–77.6 ms</td><td class="n"><b>12.9–13.2 t/s</b></td></tr>
+</table>
+
+<div class="card r">
+⛔⛔ <b>不可比性（本輪最重要的限制）</b>：上表全部基於 <code>Backup/nofill_ab/</code>
+＝ <b>p0（無 prefill）／n_batch 512／build 578</b>；交付 cell 是
+<b>p2048／n_batch 5632／build 630</b>。prefill 2048 會把 pool 預熱得更熱
+⇒ 交付 cell 的穩態 miss 率<b>可能更低</b> ⇒ fill 成本更低 ⇒ <b>收益更小</b>。<br>
+⇒ 只能定<b>數量級</b>，不能做定點估計。也不要把 19.4–20.0 當成上界救回 ——
+先前查到的離群值問題（B 端 20.66 t/s 被 <code>CACHE_SIZE_AB_2026-09-23.md:137</code>
+自己標為「超出這台機器歷史上任何同形狀讀數的上緣」）仍獨立成立。
+</div>
+
+<h2>4. k = 8 的論證修正（method_culpa #2）</h2>
+
+<p>上一節用 <code>328 / 41 = 8.000</code> 解出 k —— <b>除法對，理由錯</b>：
+源碼 <code>llama-expert-cache.cpp:~1195</code> 的 <code>fprintf</code> 第 4 個參數是
+<code>nl</code>（<code>slot_owner.size()</code>）⇒ <b><code>calls</code> 恆等於 41，不是觀測值</b>。</p>
+
+<ol>
+<li>flush 條件 <code>calls % nl == 0</code> ⇒ 每個窗口<b>確實含 nl 次</b> <code>ensure_batch</code>；</li>
+<li>其它窗口 <code>n_sum/41 = 14.9–21.3</code> ⇒ prefill 段每次呼叫 n ≈ <b>18</b>；</li>
+<li>若 328 窗口混了 x 次 decode(n=8) 與 41−x 次 prefill(n=18)：
+    <code>8x + 18(41−x) = 328 ⇒ x = 41</code> ⇒ 純 decode、每次 n = 8 ⇒ <b>k = 8</b>；</li>
+<li><code>n_layer = 41</code> 由趟末統計行 <code>n_layer=41</code> <b>獨立證實</b>（非由 <code>calls</code> 推得）。</li>
+</ol>
+
+<p>⇒ <b>結論保住、論證換掉</b>；J2 = 328 op/step 不變，J1 不依賴 k 故不受影響。</p>
+
+<h2>5. 給線 I 的工單（本線不動 <code>src/</code>）</h2>
+
+<p>修 EBTIMER 的價值 = 把上表的「有效吞吐」從未知變成實測（跨 12.9 → 19.4 t/s）。
+位置：<code>src/llama.cpp/src/llama-expert-cache.cpp</code>，<code>cgc_eb_timer</code>（1159-1195）。</p>
+
+<ol>
+<li><code>calls</code> 欄位現在印的是 <code>nl</code>（恆 41）⇒ 改印實際累積呼叫數，或改名 <code>nl=</code>；</li>
+<li>窗口邊界改成 step 邊界（<code>calls % nl == 0</code> 讓 prefill／decode 共用同一個累加器）
+    ⇒ 帶 step id 或由呼叫端顯式 flush，見證行加 <code>seg=</code>；</li>
+<li><code>pread_us</code> 改名（它不測 fill）。</li>
+</ol>
+
+<div class="card a">
+⚠ 見證行被 <code>scripts/check/{fill_onpath_ab,pair_ab}.py</code> 的 <code>EB_RE</code> 消費
+⇒ 加欄位要同步改那兩支腳本。<br>
+<b>驗收（可機檢）</b>：一個 decode 步恰好一條行、<code>n_sum ≡ 328</code>、
+<code>step_usec &lt; 86 ms</code>。達不到就別引用 <code>step_usec</code>。
+</div>
+
+<footer>
+本輪 0 build、0 GPU、0 <code>src/</code>；只讀既有 <code>Backup/nofill_ab/</code> 的 log／json 與源碼。
+全文見 <code>docs/ASYNCFILL_P2_ADJUDICATION_2026-09-29.md</code> §5b、§7；
+預註冊登錄於 <code>scripts/check/charters/e-asyncfill-recompute-2026-09-28.yaml</code>
+（<code>J2_cost_ceiling.fill_budget_closure</code>／<code>work_order_line_I</code>／<code>k_resolved_20260929</code>）。
+</footer>
+
+</div>
+</body>
+</html>

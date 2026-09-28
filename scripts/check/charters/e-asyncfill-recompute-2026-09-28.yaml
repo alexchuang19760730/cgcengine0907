@@ -354,6 +354,17 @@ p2_adjudication:
       ⇒ **J2 成本定死 = 41×8 = 328 op/step**（不是先前用 39 層推的 312）
       ⇒ 328 × 5–10 µs = **1.64–3.28 ms/step（1.9%–3.8%）**。J1 仍不依賴 k。
 
+      ⚠⚠ **論證修正（2026-09-29 01:1x，method_culpa #2）：結論保住、理由換掉。**
+      源碼 `llama-expert-cache.cpp:~1195` 的 `fprintf` 第 4 個參數是 **`nl`**（= `slot_owner.size()`），
+      ⇒ **`calls` 恆等於 41，不是觀測值** ⇒ 上面「數到 calls=41 次」的讀法是錯的。
+      修正後的論證（不依賴 `calls` 欄位）：
+        (1) flush 條件 `calls % nl == 0` ⇒ 每個窗口**確實含 nl 次** `ensure_batch`；
+        (2) 其它窗口 `n_sum/41 = 14.9–21.3` ⇒ prefill 段每次呼叫 n ≈ 18；
+        (3) 若 328 窗口混了 x 次 decode(n=8) 與 41−x 次 prefill(n=18)：
+            `8x + 18(41−x) = 328 ⇒ x = 41` ⇒ 純 decode、每次 n = 8 ⇒ **k = 8**；
+        (4) `n_layer = 41` 由趟末統計行 `n_layer=41` 獨立證實（非由 `calls` 推得）。
+      ⇒ J2 = 328 op/step **不變**；J1 不依賴 k，**不受影響**。
+
     landing_band_audit: |
       ★★ **落點區間（14.1~19.9）的兩個輸入都不牢 ⇒ 現在不可用來決策**（2026-09-29 查證）。
       區間 = 現行錨點 step − (省下 − 補算成本) − J2：
@@ -385,6 +396,51 @@ p2_adjudication:
       且讀到 fill 臂 **170–199 ms/step** —— 與 decode step 預算 **86 ms**（11.61 t/s）
       **矛盾** ⇒ 這台儀器的 flush 與「一步」沒對齊，數字現在不能用。
       ⚠ 修它要動 `llama-expert-cache.cpp` ⇒ **屬線 I，本線不動 src/**。
+
+    fill_budget_closure: |
+      ★★ **繞開壞儀器，改用趟末 pool 統計行（`llama-expert-cache.cpp:1121`）閉合**
+      （2026-09-29 01:1x）—— 它是整趟累計，**不受 flush 對齊問題影響**。
+      6 臂（`Backup/nofill_ab/`，build 578、`p0_n128_d512`）：
+        arm        req     steps(=req/328)  miss   hit%    read_mib  MiB/miss  MiB/step  miss/step
+        r1_fill    178055  542.9            8694   95.12    9419.3    1.083    17.35     16.02
+        r4_fill    192654  587.4            8178   95.76    8842.7    1.081    15.05     13.92
+        r5_fill    163635  498.9            9769   94.03   10628.0    1.088    21.30     19.58
+        r2_nofill  178523  544.3            6728   96.23       0.0       —        0      12.36
+        r3_nofill  135419  412.9            6158   95.45       0.0       —        0      14.92
+        r6_nofill  186350  568.1            5845   96.86       0.0       —        0      10.29
+      兩條一致性：MiB/miss = **1.081–1.088（±0.3%）** ⇒ expert = 1.083 MiB；
+      hit% 94.03–96.86 四臂一致 ⇒ **穩態 miss 率 3.1–6.0%**（不是 EBTIMER 那行的 44.5%，
+      那是冷啟動首窗）。
+      ⇒ **穩態 fill = 15.0–21.3 MiB/step** ⇒ @86.13 ms **持續頻寬需求 175–250 MB/s**
+      ⇒ 即使保守 1 GB/s，供給／需求 = **4–6×** ⇒ **帶寬上背景 fill 供得上**。
+
+      ⛔⛔ **三個計數器都不能拿來算 fill**（誤用錯一個量級）：
+        `pread_us` — nofill 臂 `read_mib=0` 卻 375–556 s ⇒ 它測的不是 fill（是模型權重／mmap 頁入）；
+                     誤用會得「52–95 ms/miss」，比真值大兩個量級。
+        `fill_wait_us` — 只覆蓋 `ensure_slot` 同步路徑；本 cell 走 `ensure_batch` ⇒ r1/r5 = 0。
+        `EBTIMER step_usec` — 窗口跨段（`n_sum/41` 8.00 vs 14.9–21.3）。
+      ⇒ **「fill 占多少 ms/step」至今無任何可信實測**（本線最大未量量）。
+
+      ★ 「34.5 ms」的物理含義：≈ **17.3 MiB @ ~0.5 GB/s**，與「同步 fill、有效吞吐 ~500 MB/s」
+      自洽（不是 SSD 峰值：pool 頁在 swap、隨機讀、單執行緒 pread）
+      ⇒ 落點區間的跨度其實來自**有效吞吐未知**：
+        0.5 GB/s ⇒ fill 34.6 ms ⇒ **19.4–20.0 t/s**
+        1.0 GB/s ⇒ fill 17.3 ms ⇒ **14.6–15.0 t/s**
+        2.0 GB/s ⇒ fill  8.6 ms ⇒ **12.9–13.2 t/s**
+      ⛔⛔ **不可比性**：上列全基於 `p0／n_batch 512／build 578`；交付 cell 是
+      `p2048／n_batch 5632／build 630`，prefill 2048 會預熱 pool ⇒ 穩態 miss 率可能更低
+      ⇒ 收益更小。⇒ **只能定數量級，不能定點估計**；也不要把 19.4–20.0 當成上界救回
+      （`landing_band_audit` (a) 的離群值問題仍獨立成立）。
+
+    work_order_line_I: |
+      修 EBTIMER 口徑（本線不動 `src/`），價值 = 把上表的「有效吞吐」從未知變實測。
+      位置：`src/llama.cpp/src/llama-expert-cache.cpp`，`cgc_eb_timer`（1159-1195）。
+        (1) `calls` 欄位現在印的是 `nl`（恆 41）⇒ 改印實際累積呼叫數，或改名 `nl=`；
+        (2) 窗口邊界改 step 邊界（`calls % nl == 0` 會讓 prefill/decode 共用累加器）
+            ⇒ 帶 step id 或由呼叫端顯式 flush，見證行加 `seg=`；
+        (3) `pread_us` 改名（它不測 fill）。
+      ⚠ 見證行被 `scripts/check/{fill_onpath_ab,pair_ab}.py` 的 `EB_RE` 消費 ⇒ 同步改。
+      驗收：一個 decode 步一條行、`n_sum ≡ 328`、`step_usec < 86 ms`。
 
   consequences:
     - "★ 關卡從「圖建構（能否寫回原位）」改判為「**靜態圖 vs 逐 step 變化的 miss 集合**」；
