@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CGC pool／wired 預算白皮書（2026-09-28）</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1c1c1a; --muted:#5f5e5a;
+    --line:#d3d1c7; --panel:#f7f6f2;
+    --red:#a32d2d; --redbg:#fcebeb;
+    --green:#3b6d11; --greenbg:#eaf3de;
+    --amber:#854f0b; --amberbg:#faeeda;
+    --blue:#185fa5; --bluebg:#e6f1fb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--fg);
+       font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;}
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:24px;font-weight:600;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:28px}
+  h2{font-size:17px;font-weight:600;margin:32px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;font-weight:600;margin:20px 0 8px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel);font-weight:600}
+  td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+  .card{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:14px 0;background:var(--panel)}
+  .r{background:var(--redbg);border-left:3px solid var(--red)}
+  .g{background:var(--greenbg);border-left:3px solid var(--green)}
+  .a{background:var(--amberbg);border-left:3px solid var(--amber)}
+  .b{background:var(--bluebg);border-left:3px solid var(--blue)}
+  code{font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--panel);
+       padding:1px 4px;border-radius:4px}
+  ul{padding-left:22px;margin:10px 0}
+  li{margin:5px 0}
+  .k{font-weight:600}
+  footer{margin-top:40px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>CGC pool／wired 預算：16 GB 盒子上的真實瓶頸</h1>
+<div class="sub">2026-09-28 · 線 A 受 operator 授權跨線處理線 I（expert cache／<code>cb</code>）記憶體預算議題 · 0 build、0 程式碼改動</div>
+
+<h2>三條結論（都與既有認知相反）</h2>
+
+<div class="card g"><span class="k">1. 「記憶體不歸還」是錯的。</span>
+每趟結束 <code>pages_wired_mb</code> 都回落到 <b>1778–7723 MB</b>（<code>on_k3</code> 只剩 1778，幾乎全還）
+⇒ 歸還本來就在發生。<b>不存在「歸還問題」需要解決。</b></div>
+
+<div class="card r"><span class="k">2. 真瓶頸是「單趟峰值共存」，不是累積。</span>
+<code>wired 峰值 ≈ 12.4 GB</code>（模型權重的 Metal 駐留）＋ <code>pool 8 GiB</code> ＝ <b>20.4 GiB vs 實體 16 GiB</b>
+⇒ <b>必然有 ~4.4 GiB 的 pool 頁在 swap 上</b> ⇒ 這就是 <code>cb</code> 桶的物理來源。</div>
+
+<div class="card a"><span class="k">3. pool 不能縮。</span>
+真曲線（2026-09-25）：<b>8 GiB 12.06 → 6 GiB 10.48 → 4 GiB 7.67 t/s</b>（8→4 慢 <b>36%</b>）
+⇒ 熱集（143/256 專家吃 98.8% 路由）需要 8 GiB 才裝得下。</div>
+
+<div class="card b"><span class="k">⇒ 淨結論：</span>「加記憶體」與「縮 pool」兩條路<b>都已被數據關掉</b>。
+真問題是「模型權重的 wired 足跡（12.4 GB）把 pool 擠到 swap 上」。</div>
+
+<h2>實測：wired 峰值恆定、且會歸還</h2>
+<p>5 趟 ABBA（<code>Backup/phase_decomp/mtp_kbracket/</code>，交付 cell，<code>--warm-skip 64 -r 3</code>）：</p>
+<table>
+<thead><tr><th>趟</th><th class="n">wired 起跑</th><th class="n">wired 峰值</th><th class="n">wired 結束</th><th class="n">available 起跑</th><th class="n">min_free</th></tr></thead>
+<tbody>
+<tr><td>off_a</td><td class="n">1922</td><td class="n"><b>12364</b></td><td class="n">7123</td><td class="n">6613</td><td class="n">14.2 MB</td></tr>
+<tr><td>on_k1</td><td class="n">1688</td><td class="n"><b>12423</b></td><td class="n">6051</td><td class="n">7703</td><td class="n">14.1 MB</td></tr>
+<tr><td>on_k3</td><td class="n">1861</td><td class="n"><b>12397</b></td><td class="n"><b>1778</b></td><td class="n">9460</td><td class="n">14.1 MB</td></tr>
+<tr><td>off_b</td><td class="n">1755</td><td class="n"><b>12349</b></td><td class="n">7723</td><td class="n">9650</td><td class="n">14.2 MB</td></tr>
+</tbody>
+</table>
+<p>（單位 MB；來源為各 json 的 <code>memory.launch</code>／<code>memory.worst</code>／<code>memory.end</code>）</p>
+<ul>
+<li><b>峰值 12349–12423 MB，四趟差異 &lt;1%</b> ⇒ 與趟數無關、非洩漏，是<b>單次載入的固有成本</b>。</li>
+<li><b>峰值 12.4 GB ≈ 模型 13030 MiB（12.72 GiB）</b> ⇒ wired 峰值就是模型權重的 Metal 駐留（不可換頁）。</li>
+<li>結束值 1778–7723 MB ⇒ <b>絕大部分已歸還</b>。</li>
+</ul>
+
+<h2>更正本輪稍早的兩條推導（勿引用）</h2>
+<table>
+<thead><tr><th>已作廢</th><th>為什麼錯</th></tr></thead>
+<tbody>
+<tr><td>「需要 32 GB 才能判門 1」</td><td>拿 <code>swap_used</code> 當壓力指標。實測每趟起跑 <code>memory_pressure</code> 皆 <b>75–82% free</b>；且 off_b（第 4 趟）起跑 swap 7650 <b>&gt;</b> on_k3（第 3 趟）7459 卻跑出 11.528 ⇒ 「累積到閾值就崩」直接證偽。</td></tr>
+<tr><td>「超訂 4838 MiB（model 13030 + pool 8192 = 21222 on 16384）」</td><td>這是 <b>09-24 舊帳</b>。<code>llama-expert-cache.cpp:818</code> 描述的是 P0 之前的狀態；<b>P0（<code>CGC_EXPERT_SKIP_READRAW=1</code>）已砍掉 ~10.9 GiB heap 匿名副本</b>，本輪 env 確認已生效。</td></tr>
+</tbody>
+</table>
+<p>⚠ 但<b>方向沒變、只換了成分</b>：新的峰值共存是 <code>wired 12.4 + pool 8 = 20.4 &gt; 16</code> ⇒ 超訂 ~4.4 GiB。
+舊帳 4.7 GiB（heap 副本）與新帳 4.4 GiB（pool 換出）<b>數值接近但成因不同，不得混用</b>。</p>
+
+<h2>線 I 已完成清單（避免重複勞動）</h2>
+<table>
+<thead><tr><th>項目</th><th>狀態</th><th>證據</th></tr></thead>
+<tbody>
+<tr><td>P0 ＝ L2 單一駐留</td><td>✅ 已落地、預設開</td><td><code>CGC_EXPERT_SKIP_READRAW=1</code>（<code>run_server.sh:354</code>）</td></tr>
+<tr><td>P1／P2（madvise 丟頁）</td><td>✅ 已落地、預設開</td><td><code>CGC_POOL_MADVISE=2</code>（<code>run_server.sh:355</code>）</td></tr>
+<tr><td>熱門優先替換</td><td>✅ 已落地、預設開</td><td><code>CGC_B_SCHEME=1</code>（<code>run_server.sh:356</code>）</td></tr>
+<tr><td>pool 尺寸曲線</td><td>✅ 已掃（3 點）</td><td><code>run_server.sh:566-571</code></td></tr>
+<tr><td>「縮 pool」這條路</td><td>⛔ 已證偽</td><td>8→4 慢 36%</td></tr>
+</tbody>
+</table>
+<div class="card r"><span class="k">⛔ 一個會產生假結論的坑（已踩過）：</span>
+override pool 必須用 <code>CGC_SERVER_EXPERT_CACHE_BYTES</code>（有 <code>SERVER_</code> 前綴）；
+用 <code>CGC_EXPERT_CACHE_BYTES</code> 會被 <code>run_server.sh</code> 守門<b>靜默忽略</b>
+⇒ 兩臂其實都是 8 GiB ⇒ ABBA 得出「4G≈8G」的假結論（<code>run_server.sh:573-574</code> 明文記錄）。</div>
+
+<h2>剩下的槓桿（未做，供線 I 排程）</h2>
+<h3>(A) 降模型權重的 wired 足跡（12.4 GB，最大項）</h3>
+<ul>
+<li>量化（改模型，非本專案可單獨決定）／降 <code>ngl</code>（部分層回 CPU，會慢）。</li>
+<li>⚠ 兩者都動到 M1/M2/M3 或輸出函數 ⇒ 屬護欄內改動，須先過 bit-identical。</li>
+</ul>
+<h3>(B) 讓 pool 頁「換出更便宜」</h3>
+<ul>
+<li>目前 pool 是 <b>malloc 匿名頁</b> ⇒ 換出要寫 swap、換入要讀 swap。</li>
+<li>改成 <b>file-backed</b> ⇒ 乾淨頁可直接丟棄、不用寫 swap；pool 內容是權重副本（讀多寫少）
+  ⇒ 理論上大部分是乾淨頁。</li>
+<li>線索：<code>run_server.sh:1024-1027</code> 的 <code>CGC_MMAP_POOL_FIX</code> 是<b>探測</b>
+  （判斷 binary 有沒有 <code>pool</code> 符號），<b>不是開關</b>。</li>
+</ul>
+<h3>(C)（不推薦）縮 pool 到 6 GiB</h3>
+<p>已有數據 10.48 t/s（−13%），只在目標機器 &lt;16 GB 時才值得重新評估。</p>
+
+<h2>判據：替換掉 swap</h2>
+<p>⛔ <b><code>swap_used</code> 不得用於</b>判記憶體壓力、推算工作集、推算「需要多大記憶體」——
+它是<b>歷史累積量</b>，<code>purge</code> 也降不了它（09-22 已記）。</p>
+<table>
+<thead><tr><th>指標</th><th>正常趟</th><th>崩的趟</th><th>鑑別力</th></tr></thead>
+<tbody>
+<tr><td><code>memory.worst.max_wired_mb</code></td><td>~12.4 GB（恆定）</td><td>同</td><td><b>無</b>（固有成本）</td></tr>
+<tr><td>趟內 <code>pageins</code> 增量</td><td>+~170 萬</td><td><code>on_k3</code> +2360 萬</td><td><b>14 倍，最乾淨</b></td></tr>
+<tr><td><code>memory.end.pages_wired_mb</code></td><td>6051–7723</td><td>1778</td><td>歸還程度</td></tr>
+<tr><td><code>sys_before.memory_pressure</code></td><td>75–82% free</td><td>81% free（一樣）</td><td><b>無</b></td></tr>
+<tr><td><code>memory.worst.min_free_mb</code></td><td>14.1–14.2 MB（每趟一樣）</td><td>同</td><td><b>無</b>（macOS 常態）</td></tr>
+</tbody>
+</table>
+<p>⇒ <b>唯一能判「這趟有沒有 thrash」的是 <code>pageins</code> 增量。</b>其餘都會給出假的平靜。</p>
+
+<h2>「這個應用能不能用」</h2>
+<ul>
+<li>在 <b>16 GB</b> 上：<b>能用</b>，但 pool 必有 ~4.4 GiB 在 swap 上 ⇒ <code>cb</code> 桶是<b>常態成本，不是 bug</b>。
+交付讀數 <b>11.61 t/s</b> 就是在這個狀態下量到的（走廊 10.97–12.02）。</li>
+<li>要更好，只有 (A) 或 (B) —— 兩條都尚未做。</li>
+<li>⛔ <b>不要對使用者說「請升級到 32 GB」</b>：錯誤診斷，真因不是總量不足而是峰值共存。</li>
+</ul>
+
+<footer>
+全文：<code>docs/CGC_POOL_WIRED_BUDGET_2026-09-28.md</code> ·
+資料：<code>Backup/phase_decomp/mtp_kbracket/*.json</code>（gitignored）·
+本輪 0 build、0 程式碼改動。
+</footer>
+
+</div>
+</body>
+</html>
