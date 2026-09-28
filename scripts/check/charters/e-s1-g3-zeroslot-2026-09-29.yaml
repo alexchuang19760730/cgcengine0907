@@ -1,0 +1,121 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— G3（CGC_ZERO_SLOT）在 S1 組上是否真的生效：A/B 見證行
+# ═══════════════════════════════════════════════════════════════════════
+# 交接卡：由線 A（09-29 00:2x P1 驗收 `209cf650b`）開立，**交 S1 線執行**。
+# 全文 docs/S1_G3_ZEROSLOT_AB_2026-09-29.md
+id: e-s1-g3-zeroslot
+owner: lineA 開卡 / S1 線執行
+created: 2026-09-29
+
+# ── 【目標】─────────────────────────────────────────────────────────────
+question: |
+  在 **S1 單段提交組**（`CGC_SEG_BATCH=1` + `CGC_SLOT_TABLE_GPU=1`，`CGC_B_SCHEME=1` 預設開）
+  上，`CGC_ZERO_SLOT=1`（G3）是否真的把「非駐留專家」從 `e % ns` 佔位符改成 zero slot？
+  判據是**見證行計數**，不是 t/s：A 臂（不開 G3）與 B 臂（開 G3）各自的
+  `CGC-G3-ZEROSLOT-TOTAL: zero_slot=N placeholder=M` 是否出現
+  「A: N==0 且 M>0」→「B: N>0 且 M==0」的翻轉。
+
+# ── 【為什麼值得 2 趟】──────────────────────────────────────────────────
+# 09-26 的 G3 smoke（Backup/phase_decomp/g1b_g3_smoke2/s1.log）已經有單臂證據：
+#   CGC-G3-ZEROSLOT: il=9 ns=143 zero_slot=142 (reserved slot exists and is now zeroed)
+#   CGC-G3-ZEROSLOT-TOTAL: zero_slot=3398260 placeholder=0
+# 但那是**沒有對照臂**的單臂讀數 ⇒ 「zero_slot=3398260」無法與「那個計數器本來就會數到東西」
+# 區分；也無法排除「這個 cell 根本沒有非駐留專家 ⇒ 佔位符路徑從沒被走到」。
+# 09-29 00:2x 又證實：在 **prod-new 交付臂**上 G3 是 no-op（逐層行 0 次、TOTAL 0/0）
+# ⇒ 只有 S1 組能驗。所以缺的正好是「同一組、不開 G3」的那一趟。
+rationale: |
+  主端點是**計數器**，不是速度 ⇒ 不受 MDD 8.5% 與趟間漂移 σ 限制，**髒窗也可裁判**
+  （見證行在最初幾步就印完，`s_g3_shots<8`、`s_g3_total_shots<6`）。
+  ⛔ 兩臂的 tg **一律不可引用**：單段提交臂輸出是 garbage（無 recompute），
+  且 G3 依設計就不 bit-identical（`llama-context.cpp:3768-3772`）。
+
+# ── 【現狀】─────────────────────────────────────────────────────────────
+baseline:
+  metric: "G3 計數器：S1 組（有 G3）zero_slot=3398260 / placeholder=0（09-26 單臂）；prod-new 交付臂 zero_slot=0 / placeholder=0（09-29，逐層行 0 次 ⇒ writer 沒跑）"
+  cell:   "prod-new 基底 + S1 組開關；-b/-ub 5632、--warm-skip 64、reps 1~3"
+  source: "Backup/phase_decomp/g1b_g3_smoke2/s1.log   # 09-26 G3 smoke（單臂，無對照）"
+  source_note: "prod-new no-op 的對照產物在 Backup/phase_decomp/g3/zeromiss.json（tg 10.31，HEAVY 窗，不可引用）"
+  known:  |
+    - 最小武裝條件（09-29 00:4x 源碼查證）：G3 的 for 迴圈在 `if (cgc_b_scheme)`
+      （llama-context.cpp:3730-3731），而 `CGC_B_SCHEME=1` 由 run_server.sh:355 預設開啟
+      ⇒ 交付臂**有進這個 if**；空轉的真正原因是 `cache_slot_table_tensors` 為空。
+    - 該 map 只在 graph 建出 `ffn_moe_slot_table` 時填入（llama-graph.cpp:2261/2266 +
+      llama-context.cpp:8261），而那條分支的開關是 **`CGC_SLOT_TABLE_GPU`**（:2146）
+      ⇒ **G3 要能被觀察，最小條件是 `CGC_SLOT_TABLE_GPU=1`**；`CGC_MISS_MASK*` 只是 G1b 定價用，
+      驗 G3 不需要（`CGC_MISS_MASK_DBG` 每步多一次 synchronize ⇒ 絕對別開）。
+    - `CGC_SEG_BATCH=1` 的作用是讓 preflight 的寫入成為**唯一**寫入（它跳過逐層 hook 的
+      argsort 後重寫）⇒ 佔位符/zero-slot 的選擇才會真的影響輸出；沒有它時 hook 會把
+      正確映射寫回去，G3 的替換被覆蓋 ⇒ 組間差異不可讀。
+    - resolve-only 已驗（0 GPU）：三鍵 `CGC_SEG_BATCH` / `CGC_SLOT_TABLE_GPU` / `CGC_ZERO_SLOT`
+      皆 `arm_env_dropped=[]`（**不加 `!`**；prod-new 基底 env 為空 ⇒ 加 `!` 是多餘且易被丟）。
+
+# ── 【假設】─────────────────────────────────────────────────────────────
+hypothesis:
+  mechanism: |
+    `zero_slot_enabled()`（llama-expert-cache.cpp:311-313）＝
+    `CGC_VERIFY_DECODE || CGC_DRAFT_DECODE || CGC_ZERO_SLOT`。
+    B 臂開 `CGC_ZERO_SLOT=1` ⇒ `llama_expert_cache_zero_slot(ec, il)` 回 `slots_l-1`（≥0），
+    `usable_slots` 變成 `ns-1`（保留最後一槽不被 claim）⇒ writer 的 else-if 分支命中
+    `v = zs; ++s_g3_zero`。A 臂沒開 ⇒ `zs == -1` ⇒ 落到 `v = e % ns; ++s_g3_ph`。
+    兩條分支互斥且都有計數器 ⇒ 翻轉是二值的，不受噪聲影響。
+  expected: "A: zero_slot=0 且 placeholder>0（量級 1e5~1e7）；B: zero_slot>0 且 placeholder=0"
+  basis:    |
+    09-26 單臂 B 側實測 zero_slot=3398260 / placeholder=0；交付 cell 命中率 96.2%
+    ⇒ 每步必有非駐留專家 ⇒ A 側 placeholder 應遠大於 0。
+
+# ── 【預註冊判決規則（跑之前寫死，看到資料後不得改）】───────────────────
+acceptance:
+  window_valid: |
+    兩臂各自成立才算可裁判：
+      (a) rc=0 且跑完（沒被 watchdog／memory gate 擋下）；
+      (b) 見證行存在：`CGC-G3-ZEROSLOT: il=..` **至少 1 行**
+          （0 行 ⇒ map 仍是空的 ⇒ 該趟無效，**不結論**，先回報 env 沒送達）；
+      (c) `CGC-G3-ZEROSLOT-TOTAL:` 至少 1 行。
+    ⛔ 本卡**不要求 NOMINAL 乾淨窗**（主端點是計數器）；thermal 只影響能不能跑完。
+  success: |
+    A: 逐層行帶 `(NOT ARMED -> placeholder)` 且 TOTAL `zero_slot=0`、`placeholder>0`；
+    B: 逐層行帶 `(reserved slot exists and is now zeroed)`（`zero_slot=142`，ns=143）
+       且 TOTAL `zero_slot>0`、`placeholder=0`
+    ⇒ **G3 在 S1 組上真生效，且是唯一把佔位符清零的機制** ⇒ 關卡（G4 重算的前置）成立。
+  falsify: |
+    B 臂逐層行仍 `zero_slot=-1` 或 TOTAL `placeholder>0` ⇒ arming 沒生效
+    （查 `CGC_DUMP_ENV` 是否送出、與 `llama_expert_cache_usable_slots` 是否真的變 ns-1），
+    ⇒ G3 在本 cell 不可用，`e-asyncfill-recompute` 的 P2（圖建構）需先補這個前置。
+  undecidable: |
+    A 臂 `placeholder==0`（本 cell 無非駐留專家 ⇒ 計數器無法分辨）⇒ 登記 UNRESOLVED，
+    改以 `CGC_MISS_MASK=1`（不帶 `_DBG`）或直接讀 slot table 的非負項數量來量 miss 數。
+  on_fail: |
+    三種輸出導向同一個行動：**把結果回填 `e-asyncfill-recompute` 卡與本卡，不再為 G3 單獨投盒子**。
+    PASS ⇒ G3 可視為 G4 的既有前置（不必重做），線 A 的 async fill 卡可進 P2（圖建構／scatter 成本）。
+
+# ── 【量化目標】───────────────────────────────────────────────────────
+targets:
+  ns_expected: 143          # slots per layer；armed 後 zero_slot 應為 ns-1 = 142
+  arm_a_placeholder_min: 1  # >0 才證明佔位符路徑是活的
+  arm_b_zero_slot_min: 1
+  mdd_pct: 8.5              # 僅供參考：本卡主端點不受 MDD 限制
+
+# ── 【技術子目標】───────────────────────────────────────────────────────
+subgoals:
+  - id: sg-s1-arm-a
+    text:   "A 臂（S1 組、不開 G3）跑完並留下 TOTAL 見證行"
+    expect: "zero_slot=0, placeholder>0"
+    how:    "grep 'CGC-G3-ZEROSLOT' 該趟 stderr"
+  - id: sg-s1-arm-b
+    text:   "B 臂（S1 組、開 G3）跑完並留下 TOTAL 見證行"
+    expect: "zero_slot>0, placeholder=0；逐層 zero_slot=142 ns=143"
+    how:    "同上"
+  - id: sg-s1-env-delivered
+    text:   "確認三鍵真的送達引擎（不是被 allowlist 靜默丟掉）"
+    expect: "arm_env_dropped == []"
+    how:    "resolve-only（llama_bench_matrix.resolve + arm_env_dropped），0 GPU"
+  - id: sg-s1-no-speed-claim
+    text:   "兩臂 tg 一律不引用（garbage 輸出、M1 不適用）"
+    expect: "報告中不出現任何 t/s 數字"
+    how:    "寫報告時自查"
+
+arms:
+  - prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1                      # A：對照（不開 G3）
+  - prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1      # B：處理（開 G3）
+  # 選跑（第三趟，僅當 A 的 placeholder==0 時才需要）：
+  # - prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1     # 量 miss 數用的定價臂（不加 _DBG）
