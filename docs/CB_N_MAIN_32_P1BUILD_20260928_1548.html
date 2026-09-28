@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CGC_CB_N_MAIN=32 在 13:55 build 上的複測（2026-09-28 15:48）</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1f2328; --mut:#57606a; --line:#e5e7eb;
+    --blue:#0969da; --green:#1a7f37; --red:#cf222e; --amber:#9a6700; --pur:#8250df; --gray:#6e7781;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Helvetica Neue",Arial,sans-serif;
+       font-size:15px;line-height:1.75}
+  .wrap{max-width:1040px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:26px;margin:.2em 0 .4em}
+  h2{font-size:20px;margin:2em 0 .6em;padding-bottom:.3em;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:1.4em 0 .4em}
+  p,li{color:var(--fg)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+       font-size:.92em;background:#f6f8fa;padding:.12em .38em;border-radius:4px}
+  pre{background:#f6f8fa;border:1px solid var(--line);border-radius:6px;padding:12px 14px;overflow:auto}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;margin:.6em 0 1em;font-size:14px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f9fafb;font-weight:600}
+  td.num,th.num{white-space:nowrap;font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;font-size:12px;line-height:1.6;padding:1px 8px;border-radius:10px;
+       border:1px solid var(--line);color:#fff;font-weight:600}
+  .t-blue{background:var(--blue)} .t-green{background:var(--green)} .t-red{background:var(--red)}
+  .t-amber{background:var(--amber)} .t-pur{background:var(--pur)} .t-gray{background:var(--gray)}
+  .box{border-left:4px solid var(--line);background:#f6f8fa;padding:10px 14px;margin:1em 0;border-radius:0 6px 6px 0}
+  .box.warn{border-left-color:var(--amber);background:#fff8e5}
+  .box.ok{border-left-color:var(--green);background:#eaf6ec}
+  .box.bad{border-left-color:var(--red);background:#fdeeee}
+  .box.pur{border-left-color:var(--pur);background:#f5f0ff}
+  .mut{color:var(--mut);font-size:13px}
+  figure{margin:1.2em 0} figcaption{color:var(--mut);font-size:13px;margin-top:.4em}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1><code>CGC_CB_N_MAIN=32</code> 複測：09-26 的 <b>+12.8%</b> 未復現</h1>
+<p class="mut">2026-09-28 15:48 · 本線（線A / ace）· 權威判讀
+<code>docs/CB_N_MAIN_32_P1BUILD_RESULT_2026-09-28.md</code> ·
+立項卡 <code>scripts/check/charters/e-cbnmain32-p1build.yaml</code> ·
+產物 <code>Backup/phase_decomp/cbnmain_p1build/</code></p>
+
+<p>
+<span class="tag t-red">falsify 觸發</span>
+<span class="tag t-amber">未定死（全窗 HEAVY）</span>
+<span class="tag t-green">D5 1045/1045（可引用）</span>
+<span class="tag t-gray">0 個 src 改動</span>
+<span class="tag t-gray">不改預設值</span>
+</p>
+
+<div class="box bad">
+<strong>一句話</strong>：在 13:55 那顆 build（<code>libllama.0.dylib=6375e39296c349e3</code>）上，
+<code>CGC_CB_N_MAIN=32</code> 相對預設 64 的增益，在最乾淨可比的一層（每趟的 <b>rep1</b>）只有
+<b>+1.86%</b>（11.468 → 11.681 t/s）—— 低於立項卡門檻 3%，也遠低於最小可辨差 <b>8.5%</b>；
+而中位看到的 +8.4% <b>完全由一趟好窗（nm32b）驅動</b>。09-26 讀到的 <b>+12.8% 未復現</b>。
+⇒ 不改 <code>scripts/run_server.sh</code> 的預設值（維持 unset）。
+</div>
+
+<h2>1. 這一份在回答什麼</h2>
+
+<p>立項卡 <code>e-cbnmain32-p1build</code>（owner lineA，2026-09-28）的問題只有一個：</p>
+
+<div class="box">
+<code>CGC_CB_N_MAIN=32</code> 能否在 09-28 13:55 那顆 build 上，把 prod-new 交付 cell 的 decode 提高
+<b>≥3%</b>（ABBA 配對中位），且對數值 bit-identical（D5 長探針 1045/1045）？
+</div>
+
+<p>為什麼要重問一次：09-26 那個 <b>+12.8%</b> 是在<b>另一顆 binary</b>
+（<code>libllama.0.dylib=312ba56a00a14199</code>）上讀到的，而 13:55 這顆是新的
+（含別條線 <b>4 處未提交 <code>src/</code></b> 改動 ＋ 本線的 <code>CGC_GRAPH_NAMES</code> 儀器）。
+「換 binary 之後效應還在嗎」是本輪唯一的主張。</p>
+
+<h3>1.1 現狀錨點（引用前必讀）</h3>
+
+<table>
+<thead><tr><th>量</th><th class="num">值</th><th>出處</th></tr></thead>
+<tbody>
+<tr><td>交付 decode 錨點（MTP off）</td><td class="num">11.61 t/s</td><td><code>scripts/check/mtp_off_baseline.json</code> v3（build 630／head <code>e5d1c0f14</code>）</td></tr>
+<tr><td>走廊（7 accepted 樣本）</td><td class="num">10.84 – 12.02</td><td>同上；1σ = 3.0%</td></tr>
+<tr><td>最小可辨差（MDD）</td><td class="num">≈ 8.5%</td><td>同上；<b>3% 只能靠配對＋交錯量，單讀對單讀不可比</b></td></tr>
+<tr><td>本輪 build 指紋</td><td class="num">6375e39296c349e3</td><td><code>md5 src/llama.cpp/build/bin/libllama.0.dylib</code>（與 <code>libllama.0.0.630.dylib</code> 同值，複查於 15:47）</td></tr>
+</tbody>
+</table>
+
+<div class="box warn">
+<strong>⛔ <code>10.84</code> 是走廊下緣，不是基線。</strong>把它當基線會低估約 7%。
+本輪所有比值一律以 <b>同一次 ABBA 內的配對</b> 為準，不與錨點直接相減。
+</div>
+
+<h2>2. 機制假說：它動的是「時間軸」，不是工作量</h2>
+
+<p><code>ggml_metal_graph_compute</code> 每次開 <code>n_cb + 1</code> 個 command buffer；<b>最後一個
+（slot <code>n_cb</code>）由呼叫執行緒序列編碼</b>節點 <code>[0, n_main)</code>，其餘由 worker 並行編碼剩下的。
+<code>n_main</code> 的預設是：</p>
+
+<pre><code>const int n_main = cgc_cb_nmain != NULL ? MAX(1, atoi(cgc_cb_nmain)) : MAX(64, 0.1*gf-&gt;n_nodes);</code></pre>
+
+<figure>
+<svg viewBox="0 0 1000 210" width="100%" role="img" aria-label="n_main 改變 command buffer 邊界">
+  <defs><marker id="ar" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+    <polygon points="0 0,10 3.5,0 7" fill="#57606a"/></marker></defs>
+  <text x="20" y="34" font-size="14" fill="#1f2328">n_main = 64（預設）</text>
+  <rect x="20" y="44" width="360" height="34" rx="6" fill="#fdeeee" stroke="#cf222e"/>
+  <text x="200" y="66" text-anchor="middle" font-size="12" fill="#1f2328">呼叫執行緒序列編碼 [0, 64)</text>
+  <rect x="384" y="44" width="560" height="34" rx="6" fill="#eaf6ec" stroke="#1a7f37"/>
+  <text x="664" y="66" text-anchor="middle" font-size="12" fill="#1f2328">worker 並行編碼 [64, n_nodes)</text>
+  <line x1="380" y1="88" x2="380" y2="112" stroke="#57606a"/>
+  <text x="390" y="106" font-size="12" fill="#57606a">分界線</text>
+
+  <text x="20" y="150" font-size="14" fill="#1f2328">n_main = 32</text>
+  <rect x="20" y="160" width="180" height="34" rx="6" fill="#fdeeee" stroke="#cf222e"/>
+  <text x="110" y="182" text-anchor="middle" font-size="12" fill="#1f2328">序列 [0, 32)</text>
+  <rect x="204" y="160" width="740" height="34" rx="6" fill="#eaf6ec" stroke="#1a7f37"/>
+  <text x="574" y="182" text-anchor="middle" font-size="12" fill="#1f2328">worker 並行編碼 [32, n_nodes)</text>
+</svg>
+<figcaption>圖：切分線左移 ⇒ 呼叫執行緒要序列編碼的節點變少 ⇒ <b>更早提交首個 command buffer</b>（打到 <code>submit</code> 與段起的 GPU 起始延遲）。節點集合不變 ⇒ 不是「算得比較少」。</figcaption>
+</figure>
+
+<p>09-26 的桶分解（<code>docs/CB_N_MAIN_BUCKETS_2026-09-26.md</code> §3–§4）與這個機制一致：
+<code>submit</code> <b>−23.0%</b>、<code>cb</code> 只有 <b>−3.3%</b>（噪音內，因為 <code>cb</code> 是 gather，
+與編碼切分無關）、大頭落在 <code>wait</code>（−6.80 ms）。</p>
+
+<h2>3. 前置門：<code>n_main</code> 對數值中立 —— 在新 build 上重新確認（可引用）</h2>
+
+<p>這是本輪<b>唯一被確定的新成果</b>：09-26 那次 1045/1045 是在舊 binary 上測的，前提必須在新 binary 上重驗。</p>
+
+<pre><code>m123_oracle_gate.py --profile prod25 --probe-max-tokens 400
+  control  : --tag cb64_long_p1build  --write-ref ref_cb64_long_20260928.jsonl
+  treatment: --tag cb32_long_p1build  --ref &lt;ref&gt; --allow-incomparable --env CGC_CB_N_MAIN=32</code></pre>
+
+<table>
+<thead><tr><th>量</th><th class="num">值</th></tr></thead>
+<tbody>
+<tr><td><code>n_compared</code> / coverage</td><td class="num">1045 / 100.0%</td></tr>
+<tr><td>M1 numeric identity</td><td class="num">1045/1045（100%）</td></tr>
+<tr><td>M2 decision agreement</td><td class="num">1045/1045（100%）</td></tr>
+<tr><td>M3 top-k set agreement</td><td class="num">1045/1045（100%）</td></tr>
+<tr><td>(aux) full_fnv1a64</td><td class="num">1045/1045</td></tr>
+<tr><td><code>n_only_a</code> / <code>n_only_b</code></td><td class="num">0 / 0</td></tr>
+<tr><td>cross-tab（M1 同 &amp; M2 同）</td><td class="num">1045；其餘三格全 0</td></tr>
+</tbody>
+</table>
+
+<p>機檢產物 <code>Backup/m123_oracle_gate/oraclecmp_cb32_long_p1build.json</code>：</p>
+
+<pre><code>{"n_a": 1045, "n_b": 1045, "n_common": 1045, "n_only_a": 0, "n_only_b": 0,
+ "row_hash_equal": 1045, "full_hash_equal": 1045, "argmax_equal": 1045, "top_equal": 1045}</code></pre>
+
+<div class="box warn">
+<strong>那筆 <code>INVALID COMPARISON</code> 戳記要會讀。</strong>treatment 那趟被閘門戳
+<code>comparable=false</code>，而唯一的一筆 diff 是
+<code>ENV.CGC_CB_N_MAIN: ref='&lt;absent&gt;'  now='32'</code> —— <b>那正是被測變數本身</b>，
+<code>--allow-incomparable</code> 的說明書就是為此用途提供的。行級證據（1045/1045、<code>only_A=0</code>、
+cross-tab 三格為 0）與該戳記無關。
+</div>
+
+<h2>4. 速度 ABBA：四趟實測（prefill ＋ decode 同報）</h2>
+
+<p>cell = <code>prod-new p2048 n128 d512 r3</code>（唯一對外門 <code>scripts/check/harness.py bench</code>），
+順序 ctl64a → nm32a → nm32b → ctl64b，趟間冷卻 40 s。
+⚠ 14:58 那批（<code>thermal_worst=HEAVY</code>、tg 9.58）<b>已整批作廢</b>並重跑。</p>
+
+<table>
+<thead><tr>
+<th>趟</th><th class="num">n_main</th><th class="num">pp (t/s)</th><th class="num">tg (t/s)</th>
+<th class="num">HEAVY 採樣</th><th class="num">swap 成長</th><th>attribution</th><th class="num">wall_s</th>
+</tr></thead>
+<tbody>
+<tr><td>abba1_ctl64a</td><td class="num">64（預設）</td><td class="num">216.49 ± 4.12</td><td class="num">10.42 ± 1.11</td><td class="num">84 / 174（48%）</td><td class="num">+1403.63 MiB</td><td><code>both</code></td><td class="num">89.6</td></tr>
+<tr><td>abba2_nm32a</td><td class="num">32</td><td class="num">228.03 ± 15.34</td><td class="num">10.16 ± 1.52</td><td class="num">100 / 168（60%）</td><td class="num">+443.24 MiB</td><td><code>both</code></td><td class="num">87.0</td></tr>
+<tr><td>abba3_nm32b</td><td class="num">32</td><td class="num">262.17 ± 8.48</td><td class="num">11.91 ± 0.27</td><td class="num">81 / 153（53%）</td><td class="num">+220.82 MiB</td><td><code>both</code></td><td class="num">78.8</td></tr>
+<tr><td>abba4_ctl64b</td><td class="num">64（預設）</td><td class="num">249.99 ± 12.12</td><td class="num">9.94 ± 1.45</td><td class="num">100 / 164（61%）</td><td class="num">−959.38 MiB</td><td><code>thermal</code></td><td class="num">86.7</td></tr>
+</tbody>
+</table>
+
+<p class="mut">pp 與 tg 為 <code>llama_bench_matrix.py</code> 的 3-rep 均值 ± 標準差
+（<code>Backup/phase_decomp/cbnmain_p1build/abba*.log</code>）；HEAVY 採樣與 swap 成長取自
+各趟 JSON 的 <code>thermal.hist</code> ／ <code>attribution</code>（採樣間隔 0.5 s）。四趟
+<code>cell</code> 全同：<code>reps=3, warm_skip=64, ctx_size=0, fixed_fill_seed=1</code>，
+<code>warm_skip_applied=True</code>，<code>build_commit=e5d1c0f14</code>、<code>build_number=630</code>。</p>
+
+<p><b>配對（3-rep 中位）符號不一致</b>：對 1 = <b>−1.7%</b>（10.17 → 10.00），對 2 = <b>+18.6%</b>
+（10.10 → 11.98）⇒ 兩對沒有共同的效應方向。四趟 <code>thermal.worst</code> 全是 <code>HEAVY</code>
+⇒ <b>全窗不乾淨</b>。</p>
+
+<div class="box">
+<strong>關於第四趟的 <code>attribution=thermal</code>：</strong>前三趟是 <code>both</code>
+（thermal＋swap 成長），第四趟 swap 是<b>淨回收 −959.38 MiB</b>，所以只有 thermal 那一半成立。
+「窗不乾淨」的結論由 thermal 獨立成立，<b>不依賴 swap 的符號</b>。
+</div>
+
+<h2>5. 決定性的一刀：看 rep1，不要看中位</h2>
+
+<p>四趟的 <b>rep1 幾乎相同</b>（11.63 / 11.75 / 11.61 / 11.30），而 rep2–rep3 發散：</p>
+
+<figure>
+<svg viewBox="0 0 1000 260" width="100%" role="img" aria-label="四趟的三個 rep 折線">
+  <line x1="80" y1="220" x2="950" y2="220" stroke="#e5e7eb"/>
+  <line x1="80" y1="180" x2="950" y2="180" stroke="#f0f2f4"/>
+  <line x1="80" y1="140" x2="950" y2="140" stroke="#f0f2f4"/>
+  <line x1="80" y1="100" x2="950" y2="100" stroke="#f0f2f4"/>
+  <line x1="80" y1="60"  x2="950" y2="60"  stroke="#f0f2f4"/>
+  <text x="70" y="224" text-anchor="end" font-size="11" fill="#57606a">8.0</text>
+  <text x="70" y="184" text-anchor="end" font-size="11" fill="#57606a">9.0</text>
+  <text x="70" y="144" text-anchor="end" font-size="11" fill="#57606a">10.0</text>
+  <text x="70" y="104" text-anchor="end" font-size="11" fill="#57606a">11.0</text>
+  <text x="70" y="64"  text-anchor="end" font-size="11" fill="#57606a">12.0</text>
+  <text x="180" y="240" text-anchor="middle" font-size="12" fill="#1f2328">rep1（最冷）</text>
+  <text x="470" y="240" text-anchor="middle" font-size="12" fill="#1f2328">rep2</text>
+  <text x="760" y="240" text-anchor="middle" font-size="12" fill="#1f2328">rep3</text>
+
+  <polyline points="180,74.8 470,133.2 760,161.6" fill="none" stroke="#0969da" stroke-width="2.5"/>
+  <circle cx="180" cy="74.8" r="4" fill="#0969da"/><circle cx="470" cy="133.2" r="4" fill="#0969da"/><circle cx="760" cy="161.6" r="4" fill="#0969da"/>
+  <text x="775" y="165" font-size="11" fill="#0969da">ctl64a（64）</text>
+
+  <polyline points="180,70 470,191.2 760,140" fill="none" stroke="#9a6700" stroke-width="2.5"/>
+  <circle cx="180" cy="70" r="4" fill="#9a6700"/><circle cx="470" cy="191.2" r="4" fill="#9a6700"/><circle cx="760" cy="140" r="4" fill="#9a6700"/>
+  <text x="775" y="143" font-size="11" fill="#9a6700">nm32a（32）</text>
+
+  <polyline points="180,75.6 470,54.8 760,60.8" fill="none" stroke="#cf222e" stroke-width="3"/>
+  <circle cx="180" cy="75.6" r="4.5" fill="#cf222e"/><circle cx="470" cy="54.8" r="4.5" fill="#cf222e"/><circle cx="760" cy="60.8" r="4.5" fill="#cf222e"/>
+  <text x="775" y="64" font-size="11" fill="#cf222e">nm32b（32）← 唯獨不遞減</text>
+
+  <polyline points="180,88 470,136 760,203.6" fill="none" stroke="#6e7781" stroke-width="2.5" stroke-dasharray="6 4"/>
+  <circle cx="180" cy="88" r="4" fill="#6e7781"/><circle cx="470" cy="136" r="4" fill="#6e7781"/><circle cx="760" cy="203.6" r="4" fill="#6e7781"/>
+  <text x="775" y="207" font-size="11" fill="#6e7781">ctl64b（64）</text>
+</svg>
+<figcaption>圖：三趟（ctl64a／nm32a／ctl64b）呈<b>單調遞減</b>＝ carry-over／熱累積的簽名；
+只有 nm32b 不遞減，而它 swap 成長最小（220.82 MiB）且 HEAVY 採樣最少（81）⇒ 那是<b>拿到好窗</b>，不是 <code>n_main</code> 效應。</figcaption>
+</figure>
+
+<table>
+<thead><tr><th>判據</th><th class="num">64</th><th class="num">32</th><th class="num">差</th></tr></thead>
+<tbody>
+<tr><td><b>rep1 平均（最冷、未受 carry-over）</b></td><td class="num">11.468</td><td class="num">11.681</td><td class="num"><b>+1.86%</b></td></tr>
+<tr><td>3-rep 中位（配對 1）</td><td class="num">10.17</td><td class="num">10.00</td><td class="num">−1.7%</td></tr>
+<tr><td>3-rep 中位（配對 2）</td><td class="num">10.10</td><td class="num">11.98</td><td class="num">+18.6%</td></tr>
+</tbody>
+</table>
+
+<div class="box bad">
+在最乾淨、可比的那一層（rep1）上，32 只比 64 快 <b>1.86%</b> —— 低於立項卡門檻 3%，
+也遠低於最小可辨差 <b>8.5%</b>。中位看到的 +8.4% <b>完全由 nm32b 一趟的好窗驅動</b>。
+</div>
+
+<h2>6. 09-26 vs 09-28：同一個設計、兩顆 binary、兩個答案</h2>
+
+<table>
+<thead><tr><th>項目</th><th>09-26</th><th>09-28（本輪）</th></tr></thead>
+<tbody>
+<tr><td>build 指紋</td><td class="num">312ba56a00a14199</td><td class="num">6375e39296c349e3</td></tr>
+<tr><td>設計</td><td colspan="2">同一個：ABBA，4 趟，prod-new cell，control 寫 ref／treatment 比對</td></tr>
+<tr><td>tg 配對增益</td><td class="num"><b>+12.8%</b>（10.07 → 11.36）</td><td class="num">符號不一致（−1.7% ／ +18.6%）</td></tr>
+<tr><td>rep1 增益</td><td class="num">未單獨報</td><td class="num"><b>+1.86%</b></td></tr>
+<tr><td>臂內散佈（處理臂 total）</td><td class="num">0.17%（&lt;&lt; 效應 11.4%）</td><td class="num">兩趟 32 的 tg 差 17.2%（10.16 vs 11.91）</td></tr>
+<tr><td>熱／swap</td><td class="num">未記 HEAVY 比例</td><td class="num">四趟 HEAVY 48–61%，swap 成長 −959 ~ +1404 MiB</td></tr>
+<tr><td>D5 數值中立</td><td class="num">1045/1045</td><td class="num">1045/1045（本輪重新確認）</td></tr>
+</tbody>
+</table>
+
+<p><b>讀法</b>：09-26 那次「差比噪音大一個量級」的判據，是<b>處理臂內部兩趟幾乎重合</b>（0.17%）。
+本輪同一個內部散佈指標是 <b>17.2%</b> —— 噪音比效應大一個量級 ⇒ 本輪這份數據<b>沒有能力</b>
+支持「有 +12.8%」這種量級的主張，也沒有能力支持「完全沒有」。它唯一能支持的是
+「在最乾淨的一層上，增益 ≤ 3%」。</p>
+
+<h2>7. 必備節 A：TPOT 分解（本輪<b>未</b>量測 —— 如實標記）</h2>
+
+<p>契約（<code>docs/MEASUREMENT_CONTRACT_2026-09-25.md</code> §1，白皮書規範 §1.5）要求每一個給出的
+t/s 都要有 ms/token 分解，拆成<b>不可避免 / 可回收 / 必須還回去</b>三段並標出處。</p>
+
+<div class="box warn">
+<strong>本輪沒有跑 DECPROF／GPU timing ⇒ 三段分解本輪沒有新數據。</strong>
+底下只做<b>換算</b>（<code>ms/token = 1000 / t/s</code>，純算術，不是分解），三段分解的數字一律
+標「<b>本輪未量測</b>」，並指到既有產物。這是有意的：把換算當成分解報出來，正是本 repo 判為錯的做法。
+</div>
+
+<table>
+<thead><tr><th>趟</th><th class="num">tg (t/s)</th><th class="num">ms/token（算術）</th><th>三段分解（不可避免／可回收／必須還回去）</th></tr></thead>
+<tbody>
+<tr><td>abba1_ctl64a</td><td class="num">10.42</td><td class="num">95.97</td><td rowspan="4"><b>本輪未量測</b>。<br>既有分解見 <code>docs/S1_TPOT_DECOMPOSITION_2026-09-25.html</code>（錨點那一次的分解，<b>不是</b>本輪 build）；本輪未跑任何分段儀器。</td></tr>
+<tr><td>abba2_nm32a</td><td class="num">10.16</td><td class="num">98.43</td></tr>
+<tr><td>abba3_nm32b</td><td class="num">11.91</td><td class="num">83.96</td></tr>
+<tr><td>abba4_ctl64b</td><td class="num">9.94</td><td class="num">100.60</td></tr>
+</tbody>
+</table>
+
+<h2>8. 必備節 B：decode 分段拆解（引用 09-26，本輪未跑）</h2>
+
+<p>本輪<b>沒有</b>跑 <code>CGC-DECPROF</code>。底下是 09-26 那一次（舊 binary、
+<code>segs=41</code>／<code>layers=40</code>，48 個 decode step 的中位數，ms），
+<b>僅供說明機制，不代表本輪 build</b>：</p>
+
+<table>
+<thead><tr><th>桶</th><th class="num">ctl（64）</th><th class="num">nm（32）</th><th class="num">Δ</th><th class="num">Δ%</th><th>性質</th></tr></thead>
+<tbody>
+<tr><td><code>total</code></td><td class="num">87.06</td><td class="num">77.14</td><td class="num">−9.92</td><td class="num">−11.4%</td><td>—</td></tr>
+<tr><td>├ <code>wait</code></td><td class="num">74.40</td><td class="num">67.60</td><td class="num">−6.80</td><td class="num">−9.1%</td><td><b>同步阻塞</b>（CPU 等 GPU；複合量＝ union ＋ gap）</td></tr>
+<tr><td>├ <code>cb</code></td><td class="num">5.57</td><td class="num">5.38</td><td class="num">−0.19</td><td class="num">−3.3%</td><td><b>可 overlap</b>（expert cache 填池 IO，噪音內）</td></tr>
+<tr><td>└ <code>submit</code></td><td class="num">5.38</td><td class="num">4.14</td><td class="num">−1.23</td><td class="num"><b>−23.0%</b></td><td><b>同步阻塞</b>（dispatch；機制預期打這裡）</td></tr>
+</tbody>
+</table>
+
+<div class="box warn">
+<code>wait</code> 是複合量：09-26 那次 GPU 側欄位 <code>gpu=/union=/gap=</code> <b>全是 0.00</b>
+⇒ <b>「−6.80 ms 是 gap 縮了還是 union 縮了」到今天仍未拆</b>。這兩者意義相反（gap 縮＝目標達成；
+union 縮＝動到了 compute）。拆它要 <code>CGC_GPU_TIMING</code>，本輪<b>沒做</b>。
+</div>
+
+<h2>9. 判定與處置</h2>
+
+<table>
+<thead><tr><th>立項卡項目</th><th>結果</th></tr></thead>
+<tbody>
+<tr><td>success：兩對配對增益 ≥3% 且 D5 1045/1045</td><td><span class="tag t-red">❌ 不成立</span>（符號不一致；rep1 僅 +1.86%）</td></tr>
+<tr><td>falsify：配對增益 &lt;3%（落在噪聲內）</td><td><span class="tag t-amber">✅ 觸發</span></td></tr>
+<tr><td>D5 數值中立</td><td><span class="tag t-green">✅ 1045/1045</span></td></tr>
+</tbody>
+</table>
+
+<div class="box bad">
+<b>判定：09-26 的 +12.8% 未能在這顆 build 上複現。</b>本輪最強的證據（rep1）指向<b>無增益</b>。
+</div>
+
+<div class="box warn">
+<strong>⛔ 尚未定死。</strong>本輪四趟全是髒窗（HEAVY 48–61%），所以
+「<b>未複現</b>」與「<b>窗太髒量不出來</b>」目前<b>無法分離</b>。要到乾淨窗
+（全程 <code>thermal=NOMINAL</code>、swap 成長近 0）重跑一次同一組 ABBA 才能判死。
+</div>
+
+<h3>9.1 處置</h3>
+<ol>
+<li><b>不改 <code>scripts/run_server.sh</code> 的預設值</b>（<code>CGC_CB_N_MAIN</code> 維持 unset ⇒ upstream 行為）。
+這是本輪唯一會動到別條線的動作，缺乏支持證據時不做。</li>
+<li><code>n_main</code> 對數值中立（§3）<b>可以引用</b> —— 它是本輪確定下來的成果。</li>
+<li>若要定案：在乾淨窗重跑同一組 ABBA；若 rep1 差異仍 &lt;3% ⇒ 按 <code>on_fail</code> 登記判死、從待辦移除。</li>
+</ol>
+
+<h2>10. 誠實邊界：這一份<b>不</b>主張什麼</h2>
+
+<ul>
+<li><b>不主張 <code>n_main=32</code> 沒有增益。</b>只主張「增益 ≤3%」（rep1 層），且是在髒窗下。</li>
+<li><b>不主張 09-26 的 +12.8% 是錯的。</b>它可能真的存在於那顆 binary 上、或真的存在於乾淨窗裡。本輪只是沒看到。</li>
+<li><b>不主張任何 TPOT 分解或分段拆解</b>（§7、§8 全部標「本輪未量測」）。</li>
+<li><b>不主張 <code>wait</code> 的縮減來自 <code>gap</code></b> —— union/gap 未拆（§8 黃框）。</li>
+<li><b>未跑</b>：<code>CGC-DECPROF</code>、<code>CGC_GPU_TIMING</code>、<code>{16,64,128}</code> 掃描、乾淨窗 ABBA。</li>
+<li><b>未做</b>：索引重生（<code>agent_harness/</code> 有別條線未提交的改動，重生會吸收對方位元組；
+且本 commit 的兩個新檔都不在 <code>MANIFEST.jsonl</code> 的掃描範圍內 —— <code>scripts/check/charters/</code>
+在 manifest 中命中數為 0）。</li>
+<li><b>技術子目標</b>：本槓桿既不動 41 段提交的同步（S）、也不動 MTP（M）⇒ <b>不適用</b>；
+立項卡自己的子目標是 <code>sg-cbnmain-submit</code>（submit −23%，本輪<b>未複測</b>）與
+<code>sg-cbnmain-tps</code>（+8%~+13%，<b>未達成</b>）。</li>
+</ul>
+
+<h2>11. 現場閘門輸出（原樣貼上）</h2>
+
+<p class="mut">以下四條於 2026-09-28 15:4x 在 <code>flashkv-devserver</code> worktree 上執行。</p>
+
+<h3>11.1 traces / 索引四條</h3>
+<pre><code>$ python3 agent_harness/engine_loop/traces/validate.py
+  decisions.jsonl: 68 records {'decision': 68}
+  -&gt; OK
+  lessons.jsonl: 193 records {'lesson': 193}
+    WARN  eng-mh-0048: applies_to path does not exist: src/llama.cpp/build/bin/libllama.0.0.279.dylib
+  -&gt; OK, 1 warning(s)
+
+$ python3 agent_harness/engine_loop/traces/selftest.py
+  10/10 injected violations rejected
+
+$ python3 agent_harness/engine_loop/memory/build_memory_index.py --check
+    .workbuddy/memory/MEMORY_HYGIENE.md :: ... fields differ ['body_bytes','line_end','line_start',...]
+    regenerate with: python3 memory/build_memory_index.py
+
+$ python3 agent_harness/engine_loop/index_assets.py --check
+  [error] 74 drift(s) between the manifest and disk:
+    scripts/check/cell_drift_audit.py: on disk but not in the manifest</code></pre>
+
+<div class="box warn">
+兩條 <code>--check</code> 都不是綠的，<b>而且紅的成因不是本輪</b>：
+74 筆漂移裡沒有 <code>docs/CB_N_MAIN_32_P1BUILD_RESULT_2026-09-28.md</code>、
+也沒有 <code>scripts/check/charters/e-cbnmain32-p1build.yaml</code>（<code>MANIFEST.jsonl</code> 中
+<code>charters</code> 命中數 = 0 ⇒ 這兩個新檔不在掃描範圍）。
+漂移來自 <code>agent_harness/</code> 與 <code>scripts/check/</code> 上<b>別條線未提交的改動</b>
+⇒ 依 commit 閘門 §4，<b>不重生索引</b>（重生會把對方的位元組寫進本 commit）。
+<code>MEMORY_HYGIENE.md</code> 那一筆是本線自己今天的日誌，同樣留到對方收工後一起重生。
+</div>
+
+<h3>11.2 提交閘門預演（必帶 <code>BIN_DIR</code>）</h3>
+<pre><code>$ BIN_DIR='src/llama.cpp/build/bin' RUN_REPLAY_BENCH=0 bash scripts/check_build_tracked.sh --repo "$PWD"
+  PASS  12 本次 commit 的量測產物都帶出處（engine digest + window block）且報告與 sidecar 成對
+  PASS  7a pick_slot 用精確 batch_mask（非啟發式近似）
+  PASS  7b batch_owned mask 在位 (14 處 &gt;= 3)
+  PASS  7c 掛死看門狗在位（ensure_batch + ensure_slot FATAL）
+  PASS  7d 裸 bg_cv.wait 2 個 ≤ in_flight 守衛 2 個
+SKIP  檢查 原始碼↔binary 同步：無 staged 檔案（手動跑 hook 時屬正常）
+SKIP  RUN_REPLAY_BENCH=0 → 跳過 replay benchmark regression 檢查
+OK: 沒有 FAIL —但本次有 5 個區段被 SKIP</code></pre>
+
+<p><code>check 8</code>（原始碼↔產物同步）SKIP 是<b>正確的</b>：本 commit 0 個 <code>src/</code>
+（<code>git diff --cached --name-only | grep -c '^src/'</code> = 0）。</p>
+
+<h3>11.3 D5 數值那一半</h3>
+<p>本 commit <b>0 個 <code>src/</code> ⇒ D5 數值那一半不適用</b>（不是「可以不跑」：產物沒變，
+閘門對它沒有鑑別力）。本輪實驗<b>另有一次自願的 D5</b>（§3），結果 1045/1045，
+build 指紋 <code>6375e39296c349e3</code> 兩臂相同。</p>
+
+<h2>12. 產物與重現</h2>
+
+<table>
+<thead><tr><th>路徑</th><th>內容</th></tr></thead>
+<tbody>
+<tr><td><code>Backup/phase_decomp/cbnmain_p1build/abba{1..4}_*.json|.log</code></td><td>四趟實測（pp/tg、thermal、memory、attribution、cell）</td></tr>
+<tr><td><code>Backup/phase_decomp/cbnmain_p1build/ref_cb64_long_20260928.jsonl</code></td><td>1045 行 logits 參考（control 臂寫出）</td></tr>
+<tr><td><code>Backup/phase_decomp/cbnmain_p1build/run_d5.sh</code>／<code>run_abba2.sh</code></td><td>重現腳本</td></tr>
+<tr><td><code>Backup/m123_oracle_gate/oraclecmp_cb32_long_p1build.json</code></td><td>D5 比對結果（1045/1045）</td></tr>
+<tr><td><code>scripts/check/charters/e-cbnmain32-p1build.yaml</code></td><td>立項卡</td></tr>
+<tr><td><code>docs/CB_N_MAIN_32_P1BUILD_RESULT_2026-09-28.md</code></td><td>權威判讀（本白皮書的來源）</td></tr>
+</tbody>
+</table>
+
+<pre><code># 重現（需要 8080 空、無別條線量測行程；趟間等 compressor QUIET + thermal NOMINAL）
+python3 scripts/check/harness.py bench --arm "prod-new"                       # ctl64
+python3 scripts/check/harness.py bench --arm "prod-new:CGC_CB_N_MAIN=32"       # nm32
+# ABBA 順序：ctl64a → nm32a → nm32b → ctl64b</code></pre>
+
+<p class="mut">對應報告：<a href="CB_N_MAIN_32_P1BUILD_RESULT_2026-09-28.md">CB_N_MAIN_32_P1BUILD_RESULT_2026-09-28.md</a>
+· 機制來源：<a href="CB_N_MAIN_BUCKETS_2026-09-26.md">CB_N_MAIN_BUCKETS_2026-09-26.md</a>
+· 量測契約：<a href="MEASUREMENT_CONTRACT_2026-09-25.md">MEASUREMENT_CONTRACT_2026-09-25.md</a></p>
+
+</div>
+</body>
+</html>

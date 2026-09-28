@@ -1,0 +1,51 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）
+# ═══════════════════════════════════════════════════════════════════════
+id: e-cbnmain32-p1build
+owner: lineA
+created: 2026-09-28
+
+# ── 【目標】─────────────────────────────────────────────────────────────
+question: |
+  CGC_CB_N_MAIN=32 能否在 09-28 13:55 那顆 build 上，把 prod-new 交付 cell 的
+  decode 提高 ≥3%（ABBA 配對中位），且對數值 bit-identical（D5 長探針 1045/1045）？
+
+# ── 【現狀】─────────────────────────────────────────────────────────────
+baseline:
+  metric: "decode tg 11.61 t/s（走廊 10.84–12.02，1σ=3.0%，最小可辨差 ≈8.5%）"
+  cell:   "prod-new, MTP off, -b/-ub 5632, --warm-skip 64, --fixed-fill-seed 1, reps 3"
+  source: "scripts/check/mtp_off_baseline.json   # v3 凍結錨點，build 630 / head e5d1c0f14"
+
+# ── 【假設】─────────────────────────────────────────────────────────────
+hypothesis:
+  mechanism: |
+    降低 Metal encoder 的 n_main 地板（64 → 32）使 command buffer 邊界變小 ⇒
+    呼叫執行緒更早提交首個 command buffer。09-26 實測命中 submit（−23%），
+    大頭落在 wait；cb 本身不動。屬「時間軸（何時開始算）」而非工作量。
+  expected: "+8% ~ +13%（12.5 ~ 13.1 t/s）；09-26 同設計讀到 −11.4% step / +12.8% t/s"
+  basis:    "docs/CB_N_MAIN_BUCKETS_2026-09-26.md §3（ABBA）＋ §8（D5 1045/1045）"
+
+# ── 【驗收】─────────────────────────────────────────────────────────────
+acceptance:
+  success: "ABBA 兩對配對的 tg 中位增益 ≥3%，且 D5 長探針 M1/M2/M3 = 1045/1045"
+  falsify: "配對增益 <3%（落在噪聲內）→ 假設否證"
+  on_fail: "不改 run_server.sh 預設值；NEXT_ACTIONS 登記判死，轉下一優先方向"
+
+# ── 【量化目標】─────────────────────────────────────────────────────────
+targets:
+  decode_tps: 13.0
+  prefill_tps: 250.0
+
+# ── 【技術子目標】───────────────────────────────────────────────────────
+subgoals:
+  - id: sg-cbnmain-submit
+    text:   "submit 時間下降（command buffer 邊界變小 ⇒ 更早提交）"
+    expect: "-23%（09-26 實測）"
+    how:    "DECPROF submit 配對對比"
+  - id: sg-cbnmain-tps
+    text:   "decode tg 提升（同樣 logits，更少時間）"
+    expect: "+8% ~ +13%"
+    how:    "harness.py bench ABBA 配對中位"
+
+arms:
+  - prod-new
