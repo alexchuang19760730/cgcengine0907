@@ -108,7 +108,7 @@
 <li>L20-8（前提題）與 L20-5（搬家）可並行；L20-9 是背景題。</li>
 <li>L25 六格裡唯一不需新機制的一格是 <b>L25-3 乾淨窗口</b>；<b>L25-4／L25-5 是產品決策</b>，L25-6 要加大配對 n。</li>
 <li>~~最便宜且唯一能翻盤的一件事：多印一個逐層 miss 直方圖~~ → <b>09-29 已做，結果是「不成立」</b>：交付 cell 穩態每層峰值 <b>6</b>（≤2 只覆蓋 64% 的步）；連用峰值 6 當設計點的重算 <b>6.07 ms</b> 都 > 它取代的 fill <b>3.955</b>。⇒ L20-3 <b>不實作</b>、L25-2 維持「機制撤回」、L20-6 一起維持判死（實測見 <code>docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</code>）。</li>
-<li><b>下一步只剩一條</b>：<b>L25-1 第六條軸</b>（立卡問「每 token 的 bytes 或 steps 有沒有可改的乘數」）—— 全板唯一還沒被判死的一格；其餘不是等窗口（L20-1／L25-3 端點是<b>時間</b>，需可回收 ≥8 GB，今天只有 6.3 GB），就是要產品決策（L25-4／L25-5）。</li>
+<li><b>下一步只剩一條</b>：<b>L25-1 第六條軸</b> —— <b>候選已盤完</b>（7 個、1 PRIMARY）⇒ 動作＝<b>量 <code>--spec-type ngram-simple</code> 的 <code>E</code> 與輸出同一性</b>（三趟：A 對照／B 處理／C 重跑；驗收 <code>need_n_rs_seq()==0</code> ∧ <code>E&gt;1</code> ∧ <code>answer_md5</code> 與 A 相同）；次量 <code>CGC_SERVER_LOAD_MODE=mmap</code>。其餘格不是等窗口（L20-1／L25-3 端點是<b>時間</b>，需可回收 ≥8 GB，今天只有 6.3 GB），就是要產品決策（L25-4／L25-5）。</li>
 </ol></div>
 <h2>C 軸：背景上界（依定義不是槓桿，但不能消失）</h2>
 <p class="legend">依 <code>mindmap.json</code> 的 C 軸定義：受模型形狀與 kernel 物理約束 ⇒ 只當背景約束與上界。</p>
