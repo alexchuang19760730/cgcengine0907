@@ -34,7 +34,6 @@
 - **profile**：`prod-new`
 - **被測 option**：`CGC_SEG_BATCH=1`；`CGC_B_SCHEME=1`；`CGC_SLOT_TABLE_GPU=1`
 - **儀器開關**（不是被測 option）：`CGC_MISS_MASK=1`；`CGC_MISS_MASK_DBG=1`；`CGC_MISS_MASK_COST=1`
-- **arm 1（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1`
 - **結案狀態**：未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是穩定窗口 —— 該讀數經引用閘門判 DIRTY：逐 rep 1.015 合格，但 attribution=swap）
 - **逐條處置**：整合進子目標　→ `L20-1`　—　單段提交本體 —— L20-1 要校準的那個 step 就是它
 - **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）

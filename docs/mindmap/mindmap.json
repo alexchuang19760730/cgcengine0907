@@ -454,10 +454,7 @@
         "title": "武裝 G3（CGC_ZERO_SLOT）",
         "layer": "L20",
         "profile": "prod-new",
-        "arm_strings": [
-          "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1",
-          "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1"
-        ],
+        "arm_strings": [],
         "options": [
           "CGC_ZERO_SLOT=1",
           "CGC_SEG_BATCH=1",
@@ -507,9 +504,7 @@
         "title": "底（S1 的 step）校準",
         "layer": "L20",
         "profile": "prod-new",
-        "arm_strings": [
-          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1"
-        ],
+        "arm_strings": [],
         "options": [
           "CGC_SEG_BATCH=1",
           "CGC_B_SCHEME=1",
@@ -598,10 +593,7 @@
         "title": "武裝 G3（CGC_ZERO_SLOT）",
         "layer": "L20",
         "profile": "prod-new",
-        "arm_strings": [
-          "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1",
-          "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1"
-        ],
+        "arm_strings": [],
         "options": [
           "CGC_ZERO_SLOT=1",
           "CGC_SEG_BATCH=1",
@@ -642,10 +634,7 @@
         "title": "餵料搬家（P1）",
         "layer": "L20",
         "profile": "prod-new",
-        "arm_strings": [
-          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1",
-          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_PREFETCH_SRC=hist;CGC_PREFETCH_WINDOW=4"
-        ],
+        "arm_strings": [],
         "options": [
           "CGC_SPAC_DBG=1",
           "CGC_PREFETCH_SRC=hist",
@@ -686,9 +675,7 @@
         "title": "重算本體 B（靜態 ggml_acc）",
         "layer": "L20",
         "profile": "prod-new",
-        "arm_strings": [
-          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_MISS_MASK_HIST=1"
-        ],
+        "arm_strings": [],
         "options": [],
         "instruments": [
           "CGC_MISS_MASK_HIST=1"
@@ -1238,7 +1225,6 @@
         "layer": "L20",
         "profile": "prod-new",
         "arm_strings": [
-          "prod-new:CGC_RHO_PROBE=1",
           "prod-new:CGC_PREBIND_PROBE=1"
         ],
         "options": [
@@ -1289,7 +1275,6 @@
         "layer": "L20",
         "profile": "prod-new",
         "arm_strings": [
-          "prod-new:CGC_RHO_PROBE=1",
           "prod-new:CGC_PREBIND_PROBE=1"
         ],
         "options": [
@@ -2156,9 +2141,7 @@
         "title": "底（S1 的 step）校準",
         "layer": "L20",
         "profile": "prod-new",
-        "arm_strings": [
-          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1"
-        ],
+        "arm_strings": [],
         "options": [
           "CGC_SEG_BATCH=1",
           "CGC_B_SCHEME=1",
@@ -3533,9 +3516,7 @@
         "title": "底（S1 的 step）校準",
         "layer": "L20",
         "profile": "prod-new",
-        "arm_strings": [
-          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1"
-        ],
+        "arm_strings": [],
         "options": [
           "CGC_SEG_BATCH=1",
           "CGC_B_SCHEME=1",
@@ -3823,10 +3804,7 @@
         "title": "餵料搬家（P1）",
         "layer": "L20",
         "profile": "prod-new",
-        "arm_strings": [
-          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1",
-          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_PREFETCH_SRC=hist;CGC_PREFETCH_WINDOW=4"
-        ],
+        "arm_strings": [],
         "options": [
           "CGC_SPAC_DBG=1",
           "CGC_PREFETCH_SRC=hist",

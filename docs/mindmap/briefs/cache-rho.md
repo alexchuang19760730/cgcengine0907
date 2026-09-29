@@ -34,8 +34,7 @@ qu gate（覆蓋率 ＋ 視窗）
 - **profile**：`prod-new`
 - **被測 option**：`CGC_RHO_PROBE=1`；`CGC_PREBIND_PROBE=1`
 - **儀器開關**（不是被測 option）：`CGC_PREBIND_PROBE_VERBOSE=1`；`CGC_RHO_PROBE_LATE=1`
-- **arm 1（可複製）**：`prod-new:CGC_RHO_PROBE=1`
-- **arm 2（可複製）**：`prod-new:CGC_PREBIND_PROBE=1`
+- **arm 1（可複製）**：`prod-new:CGC_PREBIND_PROBE=1`
 - **結案狀態**：未結案（有前置）
 - **逐條處置**：整合進子目標　→ `L20-7`　—　ρ 按層批次化 prefetch（覆蓋 0.849、每步付 4.76 ms）
 - **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）

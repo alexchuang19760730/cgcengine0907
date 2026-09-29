@@ -34,7 +34,6 @@ G0–G7 序列化／調度消減（41 段→1 段、縮 union、藏 gap、消 cb
 - **profile**：`prod-new`
 - **被測 option**：`CGC_SEG_BATCH=1`；`CGC_B_SCHEME=1`；`CGC_SLOT_TABLE_GPU=1`
 - **儀器開關**（不是被測 option）：`CGC_MISS_MASK=1`；`CGC_MISS_MASK_DBG=1`；`CGC_MISS_MASK_COST=1`
-- **arm 1（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1`
 - **結案狀態**：未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是穩定窗口 —— 該讀數經引用閘門判 DIRTY：逐 rep 1.015 合格，但 attribution=swap）
 - **逐條處置**：整合進子目標　→ `L20-1`　—　G0–G7 的序列化回顧：同一條軸的歷史與作廢清單，決定 L20-1 只認哪一端
 - **測試 log（實跑）**：[bench.json](../../../Backup/phase_decomp/cbnmain_pair/on1/bench.json)　[bench.json](../../../Backup/phase_decomp/cbnmain_pair/off2/bench.json)　[bench.json](../../../Backup/phase_decomp/cbnmain_pair/on3/bench.json)

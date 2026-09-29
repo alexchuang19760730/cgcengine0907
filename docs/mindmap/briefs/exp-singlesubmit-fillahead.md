@@ -33,8 +33,6 @@
 - **來源**：子目標看板（唯一來源）　·　置信度 `high`
 - **profile**：`prod-new`
 - **被測 option**：`CGC_SPAC_DBG=1`；`CGC_PREFETCH_SRC=hist`；`CGC_PREFETCH_WINDOW=4`
-- **arm 1（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1`
-- **arm 2（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_PREFETCH_SRC=hist;CGC_PREFETCH_WINDOW=4`
 - **結案狀態**：未結案（P0 成立、P1 未做）
 - **逐條處置**：整合進子目標　→ `L20-5`　—　單次提交臂上把 union 交給預取；P1 餵料的載體
 - **測試 log（實跑）**：[fed_default.json](../../../Backup/fillahead_2026-09-28/fed_default.json)　[exp-singlesubmit-fillahead_20260929_012703.json](../../../Backup/exp_runs/exp-singlesubmit-fillahead_20260929_012703.json)　[filla_run.json](../../../Backup/fillahead_delivery_2026-09-29/filla_run.json)

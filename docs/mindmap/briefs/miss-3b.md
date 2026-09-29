@@ -31,8 +31,6 @@
 - **來源**：子目標看板（唯一來源）　·　置信度 `high`
 - **profile**：`prod-new`
 - **被測 option**：`CGC_SPAC_DBG=1`；`CGC_PREFETCH_SRC=hist`；`CGC_PREFETCH_WINDOW=4`
-- **arm 1（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1`
-- **arm 2（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_PREFETCH_SRC=hist;CGC_PREFETCH_WINDOW=4`
 - **結案狀態**：未結案（P0 成立、P1 未做）
 - **逐條處置**：整合進子目標　→ `L20-5`　—　fill 觸發點搬出 hook ＋ batch 化 —— 正是 L20-5「餵料搬家」要搬的那一段
 - **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）

@@ -31,7 +31,6 @@
 - **來源**：子目標看板（唯一來源）　·　置信度 `high`
 - **profile**：`prod-new`
 - **儀器開關**（不是被測 option）：`CGC_MISS_MASK_HIST=1`
-- **arm 1（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_MISS_MASK_HIST=1`
 - ⚠ **本格沒有旋鈕**：本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置的儀器已經跑完（見上）⇒ 前置否證，不必再印。
 - **結案狀態**：未結案（前置已量、不成立：穩態每層峰值 6；連把設計點降到峰值 6，重算 6.07 ms 都 > 它要取代的 fill 3.955）
 - **逐條處置**：整合進子目標　→ `L20-3`　—　per-expert 重算 kernel（已判 0）—— L20-3 的 B 是同一件事的靜態版本，判詞要一起讀

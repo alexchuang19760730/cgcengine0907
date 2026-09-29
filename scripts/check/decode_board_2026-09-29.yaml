@@ -87,7 +87,12 @@ layers:
         evidence: {profile: prod-new, entry: "harness bench", value: "S1 **36.33 ms**（27.526±0.228 t/s）vs 控制 **88.29 ms**（11.327±0.349）——**兩臂皆 attribution=swap（+851／+1768 MiB）⇒ 不可引用**", metric: ms_per_step, meets: false, quote: {artifact: "Backup/clean_window_2026-09-29/s1_1.json", verdict: DIRTY, why: "逐 rep [27.26, 27.65, 27.67] ⇒ max/min 1.015（合格）；被擋在窗口項：attribution=swap"}}
         options:
           profile: prod-new
-          arms: ["prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1"]
+          arms: []
+          arms_removed:   # 2026-09-30：不能量交付目標（20+／25+）的臂 —— 判準 R5／R6，定義在 scripts/check/quote_gate.py
+            - arm: "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1"
+              rules: [R6]
+              flags: { CGC_SEG_BATCH: R6 }
+              why: "這一格的數（27.53／36.33 ms）只能從單次提交臂出來，而單次提交臂的 t/s 與交付目標不是同一個函數（R6）。"
           knobs:
           - {name: CGC_SEG_BATCH, value: "1", role: subject, why: "單段提交：41 段→1 段，本格要校準的就是它的 step", source: "charters/e-s1-base-calibrate arms[]"}
           - {name: CGC_B_SCHEME, value: "1", role: subject, why: "段內 slot 指派方案", source: "同上"}
@@ -112,7 +117,16 @@ layers:
         evidence: {profile: prod-new, entry: "harness bench", value: "A 0/250582 → B 250636/0（翻轉）；逐層 142=ns−1；counter 端點 ⇒ 髒窗可判（attribution=swap、pageins +0.88M／+0.52M）", metric: "zero_slot_flip", meets: true, source: "Backup/s1_g3_ab_2026-09-29/{A,B}.json", counter_quote: {tool: g3_zeroslot_ab, artifact_a: "Backup/s1_g3_ab_2026-09-29/A.json", artifact_b: "Backup/s1_g3_ab_2026-09-29/B.json", verdict: FLIP, why: "A <code>zero_slot=0 placeholder=250582</code> → B <code>zero_slot=250636 placeholder=0</code>；逐層 <code>zero_slot=142=ns−1</code>；對照臂 armed 行數 0；寫入量守恆差 0.02%"}}
         options:
           profile: prod-new
-          arms: ["prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1", "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1"]
+          arms: []
+          arms_removed:   # 2026-09-30：不能量交付目標（20+／25+）的臂 —— 判準 R5／R6，定義在 scripts/check/quote_gate.py
+            - arm: "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1"
+              rules: [R6]
+              flags: { CGC_SEG_BATCH: R6 }
+              why: "本格結案判的是計數器翻轉（zero_slot>0 且 placeholder=0），不是 t/s；作為「量 20+ 的選項」它不合格（R6）。"
+            - arm: "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1"
+              rules: [R6]
+              flags: { CGC_SEG_BATCH: R6 }
+              why: "同上：處理臂也是單次提交臂，其 t/s 不可當交付目標的讀數（R6）；結案依據是 counter_quote，不是這一條。"
           knobs:
           - {name: CGC_ZERO_SLOT, value: "1", role: subject, why: "被測：零槽位（主端點是計數器翻轉 zero_slot>0 且 placeholder=0）", source: "charters/e-s1-g3-zeroslot arms[]"}
           - {name: CGC_SEG_BATCH, value: "1", role: subject, why: "單段提交（G3 的載體）", source: "同上"}
@@ -134,7 +148,12 @@ layers:
         evidence: {profile: prod-new, entry: "harness bench", value: "逐層 max 分布（穩態 322 步）：1→43、2→163、<b>3→82、4→28、5→5、6→1</b>；平均 <b>0.470</b> miss/層。✅ 計數器（結構量，不隨窗口漂移）；⚠ 同趟 t/s 不可引用", metric: "count_per_layer", meets: false}
         options:
           profile: prod-new
-          arms: ["prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_MISS_MASK_HIST=1"]
+          arms: []
+          arms_removed:   # 2026-09-30：不能量交付目標（20+／25+）的臂 —— 判準 R5／R6，定義在 scripts/check/quote_gate.py
+            - arm: "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_MISS_MASK_HIST=1"
+              rules: [R5, R6]
+              flags: { CGC_MISS_MASK_COST: R5, CGC_MISS_MASK_DBG: R5, CGC_MISS_MASK_HIST: R5, CGC_SEG_BATCH: R6 }
+              why: "唯一的臂同時帶三個「原始碼／登記表明文不得引用吞吐」的診斷量具（R5）與單次提交（R6）⇒ 它量到的是量具的成本，不是交付目標。"
           knobs:
           - {name: CGC_MISS_MASK_HIST, value: "1", role: instrument, why: "逐層 miss 直方圖（決定靜態寬度 k 的唯一量）", source: "docs/MISSHIST_REVIVAL_GATE_2026-09-29.md；runA.stderr.log"}
           no_knob: "本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置的儀器已經跑完（見上）⇒ <b>前置否證，不必再印</b>。"
@@ -176,7 +195,16 @@ layers:
         evidence: {profile: prod-new, entry: "harness bench", value: "—（搬家未跑）", metric: ms_per_step, meets: false, quote: {artifact: "Backup/fillahead_delivery_2026-09-29/filla_run.json", verdict: DIRTY, why: "逐 rep [26.98, 26.43, 25.96] ⇒ max/min 1.018（合格）；被擋在窗口項：attribution=swap"}}
         options:
           profile: prod-new
-          arms: ["prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1", "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_PREFETCH_SRC=hist;CGC_PREFETCH_WINDOW=4"]
+          arms: []
+          arms_removed:   # 2026-09-30：不能量交付目標（20+／25+）的臂 —— 判準 R5／R6，定義在 scripts/check/quote_gate.py
+            - arm: "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1"
+              rules: [R5, R6]
+              flags: { CGC_MISS_MASK_COST: R5, CGC_MISS_MASK_DBG: R5, CGC_SPAC_DBG: R5, CGC_SEG_BATCH: R6 }
+              why: "這一臂身上掛著 CGC_SPAC_DBG（餵料目前掛在 debug 之下，逐層同步讀回）＋兩個 miss 遮罩量具（R5）＋單次提交（R6）⇒ 不可引用。等 P1 把餵料搬到不依賴 debug 的位置後再立新臂。"
+            - arm: "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_PREFETCH_SRC=hist;CGC_PREFETCH_WINDOW=4"
+              rules: [R5, R6]
+              flags: { CGC_MISS_MASK_COST: R5, CGC_MISS_MASK_DBG: R5, CGC_SEG_BATCH: R6 }
+              why: "同上（R5＋R6）。這一臂缺 CGC_SPAC_DBG 不代表乾淨：它仍是單次提交臂。"
           knobs:
           - {name: CGC_SPAC_DBG, value: "1", role: subject, why: "餵料目前掛在 debug 之下 —— 本格就是要把它搬到不依賴 debug 的位置", source: "node exp-singlesubmit-fillahead 實跑 arm"}
           - {name: CGC_PREFETCH_SRC, value: "hist", role: subject, why: "餵料來源（history 端）", source: "charters/exp-singlesubmit-fillahead arms[]"}
@@ -217,7 +245,12 @@ layers:
         evidence: {profile: "prod25（探針驅動）", entry: "prebind_probe_run.sh／rho 探針", value: "4.76 ms/step 插入成本", metric: ms_per_step, meets: false}
         options:
           profile: prod-new
-          arms: ["prod-new:CGC_RHO_PROBE=1", "prod-new:CGC_PREBIND_PROBE=1"]
+          arms: ["prod-new:CGC_PREBIND_PROBE=1"]
+          arms_removed:   # 2026-09-30：不能量交付目標（20+／25+）的臂 —— 判準 R5／R6，定義在 scripts/check/quote_gate.py
+            - arm: "prod-new:CGC_RHO_PROBE=1"
+              rules: [R5]
+              flags: { CGC_RHO_PROBE: R5 }
+              why: "CGC_RHO_PROBE 自帶每層同步讀回，登記表明文 never quote throughput from it alone（R5）⇒ 它的 t/s 不能當 20+ 的數。"
           knobs:
           - {name: CGC_RHO_PROBE, value: "1", role: subject, why: "ρ 路線：按層批次化 prefetch（覆蓋 0.849、每步付 4.76 ms GPU 插入）", source: "docs/RHO_STAGE0_RESULT_2026-09-23.md；node cache-rho"}
           - {name: CGC_PREBIND_PROBE, value: "1", role: subject, why: "prebind／方案 A：預指派 slot", source: "docs/PREBIND_STAGE0_SPEC_2026-09-23.md；node cache-prebind"}
@@ -303,11 +336,11 @@ layers:
         expect_ms: "缺口 45.45 ms ⇒ 需要一個能動 <b>bytes 或 steps</b> 的乘數"
         expect_tps: "≥25.0（在 ≤40.0 ms 下）"
         now: "現有軸（ms、段數、kernel、IO）<b>全量完</b>；缺口 <b>45.45 ms</b>（交付錨點 85.45 ms → 25 t/s 的 40.0 ms）。<b>§51 撤回 §50 的「未判定」</b>（B 半補丁的價目漏掉主項：備援重算 320 列 ＝ 8.09 ms；§52 用交付 cell 底座複核，仍差 7.5–11.6 ms）⇒ <b>decode ≥25 回到判死</b>，而<b>本格是全板唯一還沒被判死的一格</b>。<br><b>09-29 23:5x 唯讀盤點完成</b>（0 跑）：每 token <b>1.171 GB</b> 裡只有 <b>381 MB（33%）</b>的專家段會 miss，<b>790 MB（67%）</b>的 dense 段常駐 RAM ⇒ <b>bytes 類候選最多只能動那 33%</b>。<b>7 個候選盤完</b>：1 個 PRIMARY = <code>--spec-type ngram-*</code>（**不需要 draft head**，且 <code>need_n_rs_seq()</code> 對它回 <b>0</b> ⇒ 結構上不觸發 M2 的輸出函數改變 —— 那正是 MTP 被判「產品決策」的原因）、1 個 SECONDARY = <code>CGC_SERVER_LOAD_MODE=mmap</code>、5 個已判（bpw／top-k／砍 dense／MTP／池命中）。"
-        action: "① ~~量 PRIMARY~~ <b>已做、否證</b>（E 0.984）；② 接著量 SECONDARY＝<code>CGC_SERVER_LOAD_MODE=mmap</code> （A/B 各一趟；比 <code>answer_md5</code> 同一性，主端點見下）—— <b>旋鈕已在 09-30 驗過真的到達</b>（<code>arm_env_dropped()</code> 回空；解析後 <code>none</code> → <code>mmap</code>），且本臂 <b>MTP off</b> ⇒ <b>不吃「可回收 ≥8 GB」那條線</b>，是 <b>L25 六格裡唯一現在就能跑的一格</b>。<br>★ <b>要量的是 §8 的兩項，不是 §7 的 f</b>：① miss 數 ÷ step（現況每 step 73.83 miss × 0.695 ms ＝ 51.3 ms）② <b>有 miss 的層數</b>（現況 27.96／40 —— barrier 是階躍，只要能少一層就有非線性收益）。〈若 Δ ≈ 0 也<b>不是白跑</b>：它把「動 dense 那 67%」這條路當場判掉（<code>dense-cut</code> 已因同一理由被判掉），引擎側候選就窮盡了 ⇒ 力氣轉 §8.3／§8.4 唯一有算術支撐的一條＝<b>只壓專家 bpw</b>（2.5 ⇒ 工作集 8.6 GiB、miss ~7%、<b>24.5 t/s</b>；1.94 ⇒ ≤8 GiB、miss ~0、<b>~45 t/s</b>）—— 那是<b>換量化</b>，屬產品／模型決策。〉"
+        action: "① ~~量 PRIMARY~~ <b>已做、否證</b>（E 0.984）；② 接著量 SECONDARY＝<code>CGC_SERVER_LOAD_MODE=mmap</code> （A/B 各一趟；比 <code>answer_md5</code> 同一性，主端點見下）—— <b>旋鈕已在 09-30 驗過真的到達</b>（<code>arm_env_dropped()</code> 回空；解析後 <code>none</code> → <code>mmap</code>），且本臂 <b>MTP off</b> ⇒ 不吃「可回收 ≥8 GB」那條線。⛔ <b>但 09-30 實跑兩臂都被拒</b>：A 被<b>壓縮機閘</b>擋（BUSY，rc=2）；B 過了壓縮機卻被 <b>cell contract</b> 擋（<code>load_mode: 實際 mmap ≠ 權威 none</code> ⇒ fail-closed）⇒ <b>load-mode 是 cell 級欄位，不能當 arm 級旋鈕 A/B</b>。⇒ 本格現在的卡點＝<b>測試卡 §2.5 要不要新增一格</b>（權威決策）。<br>★ <b>要量的是 §8 的兩項，不是 §7 的 f</b>：① miss 數 ÷ step（現況每 step 73.83 miss × 0.695 ms ＝ 51.3 ms）② <b>有 miss 的層數</b>（現況 27.96／40 —— barrier 是階躍，只要能少一層就有非線性收益）。〈若 Δ ≈ 0 也<b>不是白跑</b>：它把「動 dense 那 67%」這條路當場判掉（<code>dense-cut</code> 已因同一理由被判掉），引擎側候選就窮盡了 ⇒ 力氣轉 §8.3／§8.4 唯一有算術支撐的一條＝<b>只壓專家 bpw</b>（2.5 ⇒ 工作集 8.6 GiB、miss ~7%、<b>24.5 t/s</b>；1.94 ⇒ ≤8 GiB、miss ~0、<b>~45 t/s</b>）—— 那是<b>換量化</b>，屬產品／模型決策。〉"
         accept: "需要一個新乘數：≤40.0 ms 且 M1 bit-identical。★ 對 ngram 展開成三條：① <code>need_n_rs_seq()==0</code>（✅ 源碼已得）② <code>E&gt;1</code>（<b>⛔ 0.984</b>）③ <code>answer_md5</code> 與對照臂相同（量不到，見 <code>docs/SIXTH_AXIS_NGRAM_2026-09-30.md</code> §4）"
         falsify: "<b>② 已觸發</b>（E ≤1）⇒ 這個乘數不產生攤薄，回到「以現有軸加總到不了」；③ 仍 UNDECIDABLE 但<b>不改變判決</b>（沒有攤薄就沒有「要不要接受它的輸出」這個問題）"
         stage: 1
-        badge: {text: "PRIMARY 否證（E=0.98）", tone: dead}
+        badge: {text: "PRIMARY 否證；SECONDARY 等新 cell", tone: warn}
         charter: scripts/check/charters/e-sixth-axis-2026-09-29.yaml
         state: "未結案（<b>PRIMARY 候選已量、否證</b>：ngram 的 E <b>0.984</b>（6/6 rep 一致；archive 的 map-k 0.992）⇒ steps/token 這條無 draft-head 的路<b>不攤薄</b>；下一步＝SECONDARY <code>CGC_SERVER_LOAD_MODE</code>）"
         evidence: {profile: prod-new, entry: "harness bench", value: "<b>A 對照 vs B ngram-simple</b>：E ＝ 63 token／64 輪 ＝ <b>0.984</b>（6 rep 全同）；draft 寬度 {1:32, 3:32}、192 輪提交 0 個 ⇒ <b>不攤薄</b>", metric: "tokens_per_round", meets: false, source: "Backup/ngram_simple_ab_2026-09-30/{A,B}.json ＋ {A,B}.stderr.log"}
@@ -323,7 +356,7 @@ layers:
           - {name: "--spec-ngram-simple-size-n", value: "12（編譯期預設，不可覆寫）", role: candidate, why: "⛔ bench 拒絕此旗標 ⇒ 在唯一認可入口上**只能跑預設**；要掃參數得先改 `src/`（且改動會動到共用 binary）", source: "common.h:367-371；llama-bench.cpp:1330"}
           - {name: "--spec-ngram-simple-size-m", value: "48（同上）", role: candidate, why: "⛔ 同上（`--spec-ngram-simple-size-m` 也被 bench 的 arg 白名單拒）", source: "同上"}
           - {name: "--spec-ngram-simple-min-hits", value: "1（同上）", role: candidate, why: "⛔ 同上", source: "同上"}
-          - {name: CGC_SERVER_LOAD_MODE, value: "mmap", role: candidate, why: "被測 SECONDARY：dense 段由匿名頁變可回收檔案頁 ⇒ 改變「誰在搶實體記憶體」⇒ 間接影響<b>有效池容量</b>。⚠ <b>它的舊依據（§7 的「等效慢速位元組 f」，f 20% ⇒ 85.9 ms、25 要 f ≤7.9%）已被同一份文件的 §8 判為<u>錯模型</u></b>：「§7 用『SSD 3 GB/s × 全部 1.171 GB』是錯模型；miss 的成本是 page fault ＋ 拷貝 ＋ 等待，不是傳輸」。§8 的正確口徑：85.8 ms ≈ <b>64 ms miss 相關（75%）＋ 22 ms 其他</b>；那 22.4% 是<b>容量 miss</b>（工作集 10.3 GiB vs 專家 11.5 GiB）⇒「容量 miss 靠 prefetch 救不了，只能<b>裝得下</b>或<b>訪問更少</b>」。⇒ 本鈕屬「裝得下」那一類（間接），<b>不是</b>降 bytes。<b>09-30 已驗它到得了引擎</b>：prod-new 解析後是 <code>--load-mode none</code>，設這顆 ⇒ <code>--load-mode mmap</code>，且 <code>llama_bench_matrix.arm_env_dropped()</code> 回<b>空清單</b>。⚠ 它是 run_server.sh 的別名（被翻譯成 argv）⇒ <code>grep src/</code> 會 0 命中，<b>那不是判據</b>", source: "scripts/run_server.sh:513-518（預設 none）；docs/DECODE25_CEILING_2026-09-20.md §7"}
+          - {name: CGC_SERVER_LOAD_MODE, value: "mmap", role: candidate, why: "被測 SECONDARY：dense 段由匿名頁變可回收檔案頁 ⇒ 改變「誰在搶實體記憶體」⇒ 間接影響<b>有效池容量</b>。⚠ <b>它的舊依據（§7 的「等效慢速位元組 f」，f 20% ⇒ 85.9 ms、25 要 f ≤7.9%）已被同一份文件的 §8 判為<u>錯模型</u></b>：「§7 用『SSD 3 GB/s × 全部 1.171 GB』是錯模型；miss 的成本是 page fault ＋ 拷貝 ＋ 等待，不是傳輸」。§8 的正確口徑：85.8 ms ≈ <b>64 ms miss 相關（75%）＋ 22 ms 其他</b>；那 22.4% 是<b>容量 miss</b>（工作集 10.3 GiB vs 專家 11.5 GiB）⇒「容量 miss 靠 prefetch 救不了，只能<b>裝得下</b>或<b>訪問更少</b>」。⇒ 本鈕屬「裝得下」那一類（間接），<b>不是</b>降 bytes。<b>09-30 已驗它到得了引擎</b>：prod-new 解析後是 <code>--load-mode none</code>，設這顆 ⇒ <code>--load-mode mmap</code>，且 <code>llama_bench_matrix.arm_env_dropped()</code> 回<b>空清單</b>。⚠ 它是 run_server.sh 的別名（被翻譯成 argv）⇒ <code>grep src/</code> 會 0 命中，<b>那不是判據</b>。⛔ <b>09-30 實跑被 cell contract 擋下（fail-closed）</b>：<code>load_mode</code> 是 <b>cell 級欄位</b>不是 arm 級旋鈕 —— 實際 <code>mmap</code> ≠ 權威 <code>none</code> ⇒ 拒跑。要跑它必須先在<b>測試卡 §2.5 新增一格</b>（同 L20-10 的情況）", source: "scripts/run_server.sh:513-518（預設 none）；docs/DECODE25_CEILING_2026-09-20.md §7"}
           note: "⚠ 本格的 `knobs.name` 有兩種：`CGC_*`＝env；`--*`＝**CLI 旗標**（`--spec-type` 不是 env，寫成 env 會被 allowlist 靜默丟掉 —— 那正是 MTP 修復臂空轉一趟的原因）。三趟：A 對照＝裸 `prod-new`（不帶任何 spec 旗標）、B＝A ＋ 上面那串、C＝B 重跑（驗 ON 自身 identical）。驗收三條：**① `need_n_rs_seq()==0` ② `E>1` ③ `answer_md5` 與 A 相同**。⛔ 三趟的 t/s 一律先過引用閘門；本格的第一個產物是「有沒有乘數」，不是速度。"
       - id: L25-2
         title: "讓某一格超過自己的已量上界"
