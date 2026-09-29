@@ -23,9 +23,9 @@ summary:
 
 stage_legend: ["已量到判定", "卡／動作就緒", "已跑出讀數", "已認證（prod-new ＋ harness bench ＋ 達標）"]
 
-rows:
-  - id: "—"
-    kind: certified
+# [2026-09-30] `rows:`（表格區段清單）已刪：版面收斂後**沒有任何程式碼讀它**（grep 0 命中）。
+#   它是 7b374d03b 那次改動把 `</tbody></table>` 縮排吃進迴圈的同一批殘骸 —— 留著只會讓下一個人
+#   以為「表格由 rows 決定」。三段的表格現在是硬寫在 render_board 裡的。
 # [2026-09-30 版面收斂] 本頁只保留三段：已認證／L20／L25。原本的 `calls`／`reading`／`stale`／`order`
 # 四個敘述鍵已全部刪除（`reading` 的 ①–⑧ 與這裡的 certified_note 講同一件事 ⇒ 同一頁講兩次就是亂）。
 # `certified_note` 是那兩句判準的唯一落點：認證只有三格、09-27 的「+25.7%」是冷啟 rep 的產物。

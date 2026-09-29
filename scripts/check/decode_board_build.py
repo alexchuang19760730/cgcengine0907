@@ -449,7 +449,10 @@ def render_board(board, nodes, here, out_path):
           "<td>%s</td><td>%s</td><td><code>%s</code></td></tr>"
           % (c["id"], c["item"], c["value"], c["profile"], c["entry"],
              "✅" if c.get("meets") else "—", gate, c.get("source", "")))
-        A("</tbody></table>")
+    # ⚠ 這一行的縮排是**表格完不完整的開關**：`</tbody></table>` 若留在上面那個 `for c` 的迴圈裡，
+    #   每一列都會各自關一次表格 ⇒ 瀏覽器把 C2／C3 擠出表格外（2026-09-30 的 7b374d03b 就是這樣壞的：
+    #   縮排 4 → 8 把關閉標籤吃進了迴圈）。它必須與 `A("<table>…")` 同層。
+    A("</tbody></table>")
     # [CGC 2026-09-30 版面收斂] 本頁＝**三段**：已認證／L20／L25。operator 的指令：
     # 「三個『結案』到現在只成立三格；以下（冷啟 rep 的產物，不是機器變快）以上的內容請整理在
     #   已認證/L20/L25 上面，其餘刪除。」
@@ -712,6 +715,51 @@ def build(yaml_path=DEFAULT_YAML, root=ROOT):
     return board, nodes, errs, artifacts(board, nodes)
 
 
+def html_structure_problems(text):
+    """回產物的**結構**問題（空＝每一列的表格歸屬都成立）。
+
+    為什麼需要這條：`7b374d03b` 把 `</tbody></table>` 多縮排兩格、吃進了「逐列」的迴圈
+    ⇒ **每一列各自關一次表格**，瀏覽器於是把 C2／C3 擠出表格外。但頁面照樣生成、
+    `--check` 全綠、D4 也說「產物不落後」 —— 這類破壞**只有人眼看得到**，所以要有閘門看它。
+
+    只判「表格歸屬」（`<tr>/<td>/<th>` 在不在 `<table>` 裡、`<table>` 有沒有關完）；
+    不比對內容、不碰樣式 —— 這是結構閘門，不是渲染器。
+    """
+    from html.parser import HTMLParser
+
+    class _P(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.depth = 0
+            self.tables = 0
+            self.problems = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "table":
+                self.depth += 1
+                self.tables += 1
+            elif tag in ("tr", "td", "th") and self.depth == 0:
+                self.problems.append("<%s> 出現在 <table> 之外 ⇒ 這一列會被擠出表格" % tag)
+
+        def handle_endtag(self, tag):
+            if tag == "table":
+                self.depth -= 1
+                if self.depth < 0:
+                    self.problems.append("多餘的 </table>（表格已經關過了）")
+                    self.depth = 0
+
+    p = _P()
+    p.feed(text)
+    if p.depth:
+        p.problems.append("有 %d 個 <table> 沒有關閉" % p.depth)
+    seen, out = set(), []
+    for x in p.problems:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
 def cmd_check(yaml_path, quiet=False):
     board, nodes, errs, arts = build(yaml_path)
     for path, text in arts.items():
@@ -722,6 +770,8 @@ def cmd_check(yaml_path, quiet=False):
             with open(path, encoding="utf-8") as fh:
                 if fh.read() != text:
                     errs.append("D4 產物落後於 YAML（跑一次 build 即可）：%s" % rel)
+        for prob in html_structure_problems(text):
+            errs.append("D9 產物結構壞了（%s）：%s" % (prob, rel))
     if not quiet:
         tg = collect_targets(board)
         closed = [t["id"] for t in tg if str(t.get("state", "")).startswith("結案")]
@@ -863,6 +913,15 @@ def cmd_selftest():
             open(probe, "w", encoding="utf-8").write(old)
         elif os.path.exists(probe):
             os.remove(probe)
+    # --- D9 產物結構（fixture；不回讀檔案，直接餵字串）---
+    good = '<table><thead><tr><th>a</th></tr></thead><tbody><tr><td>1</td></tr><tr><td>2</td></tr></tbody></table>'
+    case("D9 完整表格", not html_structure_problems(good))
+    # 這正是 7b374d03b 的破壞形態：關閉標籤被縮排吃進逐列迴圈 ⇒ 每列各關一次
+    broken = ('<table><tbody><tr><td>C1</td></tr></tbody></table>'
+              '<tr><td>C2</td></tr></tbody></table>')
+    case("D9 逐列各關一次表格（7b374d03b 的形態）", bool(html_structure_problems(broken)))
+    case("D9 未關閉的表格", bool(html_structure_problems('<table><tr><td>a</td></tr>')))
+    case("D9 乾淨的字串不誤報", not html_structure_problems('<p>沒有表格</p><br><div>x</div>'))
     print("SELFTEST %s（%d/%d）" % ("PASS" if ok == total else "FAIL", ok, total))
     return 0 if ok == total else 1
 
