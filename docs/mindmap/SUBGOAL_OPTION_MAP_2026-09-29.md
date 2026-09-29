@@ -23,7 +23,7 @@
 | **L20-8**<br>churn 判詞在交付口徑的重檢 | `prod-new` | `CGC_S1_TABLE_CHURN=1`；`CGC_SLOT_TABLE_GPU=1` | `CGC_GPU_TIMING=1`；`CGC_DECODE_PROFILE=1` | — | `prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1;CGC_GPU_TIMING=1;CGC_DECODE_PROFILE=1` | `exp-churn-delivery-630.yaml` | [exp-churn-delivery-630](briefs/exp-churn-delivery-630.md) |
 | **L20-9**<br>C 軸唯一「活著」的一格 | `prod-new` | — | `CGC_MMV_NSG=8`；`CGC_MMV_FUSE=1` | — | `prod-new` | `e-shape-knobs-2026-09-29.yaml` | [shape-knobs](briefs/shape-knobs.md) |
 | **L25-1**<br>第六條軸：改「每 token 的 bytes 或 steps」 | `prod-new` | —<br>⚠ 新軸尚未命名：本格要問的是「每 token 的 bytes 或 steps 有沒有可改的乘數」⇒ 仍在立卡階段，沒有既有旋鈕可綁。 | — | — | `prod-new` | `e-sixth-axis-2026-09-29.yaml` | [m-decode25](briefs/m-decode25.md)<br>[exp-caliber-calibration](briefs/exp-caliber-calibration.md) |
-| **L25-2**<br>讓某一格超過自己的已量上界 | `prod-new` | —<br>⚠ 本格沒有自己的旋鈕：它指向 L20-3 的 B 半補丁（同一個 src/ 改動），options 見 L20-3。 | — | — | `prod-new` | `e-beyond-ceiling-2026-09-29.yaml` | [m-decode25](briefs/m-decode25.md) |
+| **L25-2**<br>讓某一格超過自己的已量上界 | `prod-new` | —<br>⚠ 本格沒有自己的旋鈕，而<b>唯一被指名過的機制（B 半補丁）已被 §51 量死</b>：價目漏掉備援重算 320 列 ＝ <b>8.09 ms</b>（同儀器實測；靜態寬度被正確性逼成 k=8）⇒ <code>39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms</code>。⇒ 要嘛**新的**上界外機制，要嘛維持判死。<br>⚠ B 的<b>唯一復活門不在本格</b>，在 <b>L20-3</b>：先補那一行逐層 miss 直方圖儀器（<code>CGC-MISSMASK-STEP</code>），若每層最大 ≤2 則重算掉到 1.0–2.0 ms、B 才可能正回收。 | — | — | `prod-new` | `e-beyond-ceiling-2026-09-29.yaml` | [m-decode25](briefs/m-decode25.md) |
 | **L25-3**<br>乾淨窗口（C7） | `prod-new` | —<br>⚠ 窗口條件不是旋鈕：attribution=none ∧ thermal NOMINAL ∧ reps≥3。CGC_WINDOW_OVERRIDE 是繞過閘門的開關，不能當本格的 option。 | — | — | `prod-new` | `e-clean-window-2026-09-29.yaml` | [sys-window](briefs/sys-window.md) |
 | **L25-4**<br>MTP（C6）：唯一「乘」的軸 | `prod-new` | `CGC_SERVER_MTP=1`；`CGC_SERVER_LAYER_CAPS=40-40:16`；`CGC_DRAFT_CTX_ALIGN=1`；`CGC_DRAFT_SMALL_BATCH=1` | `CGC_MTP_PERF=1` | `--spec-type draft-mtp`；`--spec-draft-n-max 1` | `prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1` | `exp-m-draft-cost.yaml`<br>`e-mtp-k-bracket-2026-09-28.yaml` | [exp-m-draft-cost](briefs/exp-m-draft-cost.md)<br>[mtp-ksweep](briefs/mtp-ksweep.md) |
 | **L25-5**<br>MTP 的產品化上限 | `prod25` | `CGC_SERVER_MTP_N_MAX=1` | `CGC_MTP_PERF=1` | — | `prod25` | `e-mtp-m-acc-2026-09-29.yaml` | [mtp-2x](briefs/mtp-2x.md)<br>[mtp-caliper](briefs/mtp-caliper.md)<br>[mtp-instrument](briefs/mtp-instrument.md)<br>[mtp-accept](briefs/mtp-accept.md) |
@@ -71,7 +71,7 @@
 | [在單次提交臂上，**把每一步的 union 不經 hook 交給預取…](briefs/exp-singlesubmit-fillahead.md) | 3a | 整合進子目標 | `L20-5` | 單次提交臂上把 union 交給預取；P1 餵料的載體 |
 | [CGC_EB_NOFILL 診斷臂（fill 成本）](briefs/io-nofill.md) | 3a | 整合進子目標 | `L20-4` | CGC_EB_NOFILL 診斷臂：fill 那一個 term 的定價就靠它（3.955→0.206 ms/step） |
 | [k=3 的 1.43× 飄移定位 ＋ 配對認證](briefs/k3-swing.md) | 3a | 整合進子目標 | `L25-6` | k=3 的 1.43× 飄移定位：16.4% 的底噪就是它 |
-| [decode ≥ 25（M-25）](briefs/m-decode25.md) | 4 | 整合進子目標 | `L25-1` | decode ≥25 的主節點（tier 4）；§51 之後由 L25-1 決定它是否還有路 |
+| [decode ≥ 25（M-25）](briefs/m-decode25.md) | 4 | 整合進子目標 | `L25-1` | decode ≥25 的主節點（tier 4）；§51 之後只剩 L25-1 一條活路（L25-2 唯一被指名的機制 B 已被量死） |
 | [3a：未填充 expert 貢獻歸零（MISS_MASK / ZERO_MISS）](briefs/miss-3a.md) | 3b | 整合進子目標 | `L20-2` | 未填充 expert 貢獻歸零（MISS_MASK／ZERO_SLOT）—— L20-2 武裝 G3 的正確性前提 |
 | [3b：fill 觸發點搬出 hook ＋ batch 化](briefs/miss-3b.md) | 4 | 整合進子目標 | `L20-5` | fill 觸發點搬出 hook ＋ batch 化 —— 正是 L20-5「餵料搬家」要搬的那一段 |
 | [3c：per-expert 重算 kernel](briefs/miss-3c.md) | 4 | 整合進子目標 | `L20-3` | per-expert 重算 kernel（已判 0）—— L20-3 的 B 是同一件事的靜態版本，判詞要一起讀 |

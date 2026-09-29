@@ -102,7 +102,7 @@ layers:
         accept: "M1 <b>9/9</b> ∧ M2 <b>9/9</b>、<code>config_diffs==[]</code>、op 增量 <b>320 且不隨 miss 放大</b>、生產路徑無新增 <code>synchronize</code>；<b>§51 加一條前置</b>：每層 miss 上界 ≤ k（否則靜態寬度必須 8 ⇒ 價 <b>8.09 ms</b>）"
         falsify: "成本隨 miss 縮放 ⇒ 靜態圖論證不成立"
         stage: 1
-        badge: {text: "尖兵未跑", tone: info}
+        badge: {text: "價目不成立", tone: warn}
         charter: scripts/check/charters/e-b-accpatch-feasibility-2026-09-29.yaml
         state: "未結案（<b>尖兵已跑（唯讀）⇒ 價目不成立</b>；缺的那個量＝逐層 miss 直方圖，一行儀器）"
         evidence: {profile: "—", entry: "—（唯讀尖兵，非產物）", value: "<code>sg-b-alloc</code> PASS／<code>sg-b-cost</code> FAIL：散佈 1.6–5.7 ＋ 重算 <b>8.09</b> ＝ +9.7~13.8 ms vs 取代 3.955 ⇒ <b>−5.7 ~ −9.9</b>", metric: ms_per_step, meets: false}
@@ -110,7 +110,7 @@ layers:
           profile: prod-new
           arms: ["prod-new"]
           no_knob: "本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置是先補一行儀器印逐層 miss 直方圖（CGC-MISSMASK-STEP 目前不存在），確認每層最大 ≤ k 才考慮實作。"
-          note: "§51 尖兵已量：被定價的是散佈（320 op），沒被定價的是備援重算 320 列 ＝ 8.09 ms ⇒ 淨回收為負，decode ≥25 回到判死。"
+          note: "§51 尖兵已量：被定價的是散佈（320 op），沒被定價的是備援重算 320 列 ＝ 8.09 ms ⇒ 淨回收為負，decode ≥25 回到判死。<br>★ <b>本格是 B 的唯一復活門</b>：那一行逐層 miss 直方圖若證「每層最大 ≤2」，重算即由 8.09 掉到 1.0–2.0 ms、B 轉正回收（L25-2 才可能有出處）。「k 必須 8」目前只是<b>最壞情形</b>論證，平均 0.49/層（19/39）尚未量。"
       - id: L20-4
         title: "fill 那一個 term 的定價"
         nodes: [io-nofill]
@@ -250,10 +250,10 @@ layers:
         nodes: [m-decode25, exp-caliber-calibration]
         expect_ms: "缺口 45.45 ms ⇒ 需要一個能動 <b>bytes 或 steps</b> 的乘數"
         expect_tps: "≥25.0（在 ≤40.0 ms 下）"
-        now: "現有軸（ms、段數、kernel、IO）<b>全量完</b>；缺口 <b>45.45 ms</b>。**§50 更正**：25 的判詞已由「判死」改記「**未判定**」——`fillahead` A 半（池活著、miss 6.1%、已過 G4 閘）在 **39.0 ms**，只差 **0.6–2.2 ms**（B 半補丁）到 40.0 ⇒ <b>本格（第六條軸）不再是唯一出路</b>，但它仍是唯一能繞過那個補丁的路。"
+        now: "現有軸（ms、段數、kernel、IO）<b>全量完</b>；缺口 <b>45.45 ms</b>（交付錨點 85.45 ms → 25 t/s 的 40.0 ms）。<b>§51 撤回 §50 的「未判定」</b>（B 半補丁的價目漏掉主項：備援重算 320 列 ＝ 8.09 ms；§52 用交付 cell 底座複核，仍差 7.5–11.6 ms）⇒ <b>decode ≥25 回到判死</b>，而<b>本格是全板唯一還沒被判死的一格</b> —— 它是唯一能繞過那個補丁的路。"
         action: "立卡，先問「本步的 bytes 或 steps 有沒有可改的乘數」"
         accept: "需要一個新乘數：≤40.0 ms 且 M1 bit-identical"
-        falsify: "找不到候選乘數 ⇒ 25 不再靠本格成立（維持<b>未判定</b>，§50）"
+        falsify: "找不到候選乘數 ⇒ 25 不再靠本格成立（維持<b>判死</b>；全板到時無一格存活）"
         stage: 0
         badge: {text: "本輪立項", tone: info}
         charter: scripts/check/charters/e-sixth-axis-2026-09-29.yaml
@@ -270,19 +270,19 @@ layers:
         expect_ms: "41.2 → ≤40.0（四塊各自的已量上界目前相加為 41.2）"
         expect_tps: "24.3 → ≥25.0"
         now: "每一格都已放在<b>自己的上界</b>上（四塊代入 ⇒ 41.2 ms ＝ 24.3 t/s &gt; 40.0）。§50 曾把本格具體化成「<code>39.0 ＋ B 1.60–3.20</code>」，但 <b>§51 尖兵把 B 重新定價</b>：漏掉的主項是<b>備援重算 320 列 ＝ 8.09 ms</b> ⇒ <code>39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms（18.9–20.5 t/s）</code> ⇒ <b>本格撤回，指不出來了</b>。"
-        action: "指名<b>一格</b> ＋ 指名它上界<b>以外的</b>機制（§50 已指向 **B 半補丁**：`e-b-accpatch-feasibility`）"
+        action: "指名<b>一格</b> ＋ 指名它上界<b>以外的</b>機制 —— ⛔ <b>不得再指 B 半補丁</b>（§51 已把它撤回，§52 用交付 cell 底座複核：仍差 <b>7.5–11.6 ms</b>）"
         accept: "該格出現超出上界的實測（且 M1 過）"
         falsify: "指不出來 ⇒ 25 維持<b>判死</b>（<b>§51 已觸發</b>：唯一被指名的 B 補丁，淨回收為負）"
         stage: 0
-        badge: {text: "本輪立項", tone: info}
+        badge: {text: "機制已撤回", tone: warn}
         charter: scripts/check/charters/e-beyond-ceiling-2026-09-29.yaml
-        state: "未結案（本輪立項）"
+        state: "未結案（<b>§51 撤回唯一被指名的機制 B</b>；本格等**新**機制，25 維持判死）"
         evidence: {profile: "—", entry: "—", value: "41.2 ms（上界相加）", metric: ms_per_step, meets: false}
         options:
           profile: prod-new
           arms: ["prod-new"]
-          no_knob: "本格沒有自己的旋鈕：它指向 L20-3 的 B 半補丁（同一個 src/ 改動），options 見 L20-3。"
-          note: "§51 已把 §50 的「未判定」撤回 ⇒ decode ≥25 回到判死；唯一未動的是本層 L25-1。"
+          no_knob: "本格沒有自己的旋鈕，而<b>唯一被指名過的機制（B 半補丁）已被 §51 量死</b>：價目漏掉備援重算 320 列 ＝ <b>8.09 ms</b>（同儀器實測；靜態寬度被正確性逼成 k=8）⇒ <code>39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms</code>。⇒ 要嘛**新的**上界外機制，要嘛維持判死。<br>⚠ B 的<b>唯一復活門不在本格</b>，在 <b>L20-3</b>：先補那一行逐層 miss 直方圖儀器（<code>CGC-MISSMASK-STEP</code>），若每層最大 ≤2 則重算掉到 1.0–2.0 ms、B 才可能正回收。"
+          note: "§51 撤回 §50 的「未判定」⇒ decode ≥25 回到判死；<b>L25-1 是全板唯一還沒被判死的一格</b>。「k 必須 8」是<b>最壞情形</b>論證，平均 0.49/層（19/39）尚未量 —— 那個量就是 L20-3 的復活門。"
       - id: L25-3
         title: "乾淨窗口（C7）"
         nodes: [sys-window]
@@ -374,7 +374,7 @@ calls:
   - tone: warning
     html: "<b>L20 的性質：</b>9 格裡 <b>2 格是校準（不改碼）</b>、1 格要動 <code>src/</code>、1 格是搬家、1 格已排除、1 格是 C 軸背景、2 格是前提題。上限 <b>19.2–24.5 t/s</b> ⇒ <b>L20 自己就壓在 20 的邊界上</b>。"
   - tone: danger
-    html: "<b>做到底的實測界線：</b>把<b>所有</b>已量到的都疊上，<b>可交付</b>只到 11.703 → 11.83 t/s（＋0.95 ± 2.01，實質 0）。越過 25 的三格都是錯輸出臂，<b>但機制不同（§50 更正 §41）</b>：27.17／24.88 是<b>池凍結</b>（41.8%）；<b>25.64（39.0 ms）是<u>池活著</u></b>——miss 42.9%→<b>6.1%</b>、已過 G4 的 ≤25% 閘，錯的只是 B 半沒重算（≈19 個 (layer,expert)/步）。⇒ 修正後的 margin（§50）為 <b>39.0 ＋ 1.60–3.20 ＝ 40.6–42.2 ms（23.7–24.6 t/s）＝ 差 0.6–2.2 ms</b> ⇒ 依 §39 §三 改記為「<b>未判定</b>」。"
+    html: "<b>做到底的實測界線：</b>把<b>所有</b>已量到的都疊上，<b>可交付</b>只到 11.703 → 11.83 t/s（＋0.95 ± 2.01，實質 0）。越過 25 的三格都是錯輸出臂，<b>但機制不同（§50 更正 §41）</b>：27.17／24.88 是<b>池凍結</b>（41.8%）；<b>25.64（39.0 ms）是<u>池活著</u></b>——miss 42.9%→<b>6.1%</b>、已過 G4 的 ≤25% 閘，錯的只是 B 半沒重算（≈19 個 (layer,expert)/步）。<br>⚠ <b>§51 已撤回 §50 那一格的樂觀</b>：§50 把 B 半算成 1.60–3.20 ms（那是<b>散佈</b>的價，且是推算），主項<b>備援重算 320 列 ＝ 8.09 ms</b>（同儀器實測，靜態寬度被正確性逼成 k=8）⇒ <code>39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms</code>；§52 用<b>交付 cell 底座 37.81 ms</b>複核，仍差 <b>7.5–11.6 ms</b>。<b>⇒ 判詞回到「判死」，唯一未動的是 L25-1（第六條軸）。</b>"
 
 order:
   - "L20-2 武裝 G3（2 趟、不動 <code>src/</code>，主端點是計數器翻轉）—— 成本最低，且是 L20-3 的前置。"
@@ -382,7 +382,8 @@ order:
   - "L20-4 定價 fill —— 它決定 L20-3 的回收值（1.60 vs 8.3）。"
   - "<b>才決定 L20-3</b>（那顆無範例可抄的 <code>ggml_acc</code> 路徑）。"
   - "L20-8（前提題）與 L20-5（搬家）可並行；L20-9 是背景題。"
-  - "L25 六格裡唯一不需新機制的一格是 <b>L25-3 乾淨窗口</b>；其餘都要產品決策或新乘數。"
+  - "L25 六格裡唯一不需新機制的一格是 <b>L25-3 乾淨窗口</b>；<b>L25-4／L25-5 是產品決策</b>，L25-6 要加大配對 n。"
+  - "<b>最便宜且唯一能翻盤的一件事</b>（§51 §五·2）：在 <code>CGC-MISSMASK-STEP</code> 那一行<b>多印一個逐層 miss 直方圖</b>（一行儀器 ＋ 一趟既有臂）⇒ 每層最大 ≤2 則 B 的重算由 8.09 掉到 1.0–2.0 ms、<b>B 轉正回收</b>（L25-2 才有出處）；出現 3+ 則 B 與 L20-6 <b>一起</b>維持判死（兩者共用「靜態寬度按 k 計價」這個 blocker，不可只換機制）。"
 
 footer: "資料出處：<code>docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md</code> §34（G4 權威讀數）、§36（P2 否證）、§37／§38（gap／邊界窗）、§39–§41（盤點與「做到底」）、§42（MISS_MASK 成本）、§43–§46（19.2 的底、完備性稽核）、§47（結案規則與兩個帳目的仲裁）；<code>docs/CACHE_SIZE_AB_2026-09-23.md</code>（池大小）；<code>docs/K3_PAIR_CERT_VERDICT_2026-09-28.md</code>（17.669 重現）；<code>docs/mindmap/mindmap.json</code>；<code>scripts/check/charters/</code>。<br>本頁為<b>轉引</b>（0 跑、0 build）；除三格已認證（C1–C3）外，頁上任何 t/s 都不是成績。"
 
@@ -456,7 +457,7 @@ dispositions:
   - {id: io-nofill, kind: subgoal, ref: L20-4, why: "CGC_EB_NOFILL 診斷臂：fill 那一個 term 的定價就靠它（3.955→0.206 ms/step）"}
   - {id: exp-churn-delivery-630, kind: subgoal, ref: L20-8, why: "在交付口徑上重檢 churn；L20-8 的產物"}
   - {id: shape-knobs, kind: subgoal, ref: L20-9, why: "shape／knob 世界模型：C 軸唯一還活著的一格"}
-  - {id: m-decode25, kind: subgoal, ref: L25-1, why: "decode ≥25 的主節點（tier 4）；§51 之後由 L25-1 決定它是否還有路"}
+  - {id: m-decode25, kind: subgoal, ref: L25-1, why: "decode ≥25 的主節點（tier 4）；§51 之後只剩 L25-1 一條活路（L25-2 唯一被指名的機制 B 已被量死）"}
   - {id: exp-caliber-calibration, kind: subgoal, ref: L25-1, why: "口徑＋k=3 飄移認證；第六條軸要用的量測基準"}
   - {id: sys-window, kind: subgoal, ref: L25-3, why: "box 准入單一來源閘門 —— 乾淨窗口那一格就是它"}
   - {id: exp-m-draft-cost, kind: subgoal, ref: L25-4, why: "攤薄係數 m 的成本曲線；MTP 決策的價格表"}

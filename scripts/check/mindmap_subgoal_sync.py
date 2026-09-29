@@ -260,6 +260,49 @@ def charter_options_block(sg: dict) -> str:
     return "\n".join(ln) + "\n"
 
 
+MARK_RE = re.compile(r"^# ── 【子目標設定（由 .*? 的 (L\d+-\d+) 同步；勿手改，改看板）】──$", re.M)
+
+
+def options_blocks(txt: str) -> list[tuple[int, int, str]]:
+    """所有**頂層** `options:` 區塊 → [(起, 訖, 標的子目標或 '')]。
+
+    區塊尾端用「縮排或註解」判定，遇到下一個不縮排的內容行就停（同 arms_block 的理由：
+    寬鬆的 regex 會多吃下一節）。帶 marker 註解者是本工具寫的。
+    """
+    out = []
+    lines = txt.split("\n")
+    pos = 0
+    for i, ln in enumerate(lines):
+        nxt = pos + len(ln) + 1
+        if ln.startswith("options:"):
+            # marker 註解在緊鄰的上方（本工具寫的一定有）
+            tag = ""
+            for back in range(i - 1, max(-1, i - 3), -1):
+                m = MARK_RE.match(lines[back])
+                if m:
+                    tag = m.group(1)
+                    break
+            # 尾端
+            j, end = i + 1, nxt
+            while j < len(lines):
+                s = lines[j]
+                if s.strip().startswith("#") or s.strip() == "":
+                    j += 1
+                    continue
+                if s.startswith(" ") or s.startswith("\t"):
+                    end = sum(len(x) + 1 for x in lines[:j + 1])
+                    j += 1
+                    continue
+                break
+            start = sum(len(x) + 1 for x in lines[:i])
+            # 含 marker 註解那一行
+            if tag:
+                start = sum(len(x) + 1 for x in lines[:i - 1])
+            out.append((start, end, tag))
+        pos = nxt
+    return out
+
+
 def apply_charters(sgs: list[dict]) -> tuple[int, list[str]]:
     """把看板的 arms／options 寫進每一張被指名的立項卡；回傳（改了幾張、警告）。"""
     touched, warns = 0, []
@@ -280,10 +323,23 @@ def apply_charters(sgs: list[dict]) -> tuple[int, list[str]]:
                     txt = txt[:b_end] + "".join(f"{indent}- {a}\n" for a in add) + txt[b_end:]
             else:
                 warns.append(f"{rel} 沒有 arms: 區塊，未動（請補一張卡的臂）")
-            # ② options 區塊：已存在就跳過（不覆寫別人的手改）
-            if re.search(r"^options:", txt, re.M):
-                warns.append(f"{rel} 已有 options: 區塊，未覆寫（請手動對齊看板 {sg['id']}）")
+            # ② options 區塊：**我們自己寫的（有 marker 註解）要整塊換新** ——
+            #    看板改了、卡沒改，就會出現「卡上寫著舊結論」這種最陰的漂移
+            #    （例：L25-2 的 B 半補丁由「指向它」改成「已被量死」時，卡上還留著舊的指向）。
+            #    沒有 marker 的（別人手寫的）不碰，只留警告。
+            blocks = options_blocks(txt)
+            marked = [b for b in blocks if b[2]]
+            if blocks and not marked:
+                warns.append(f"{rel} 有（非本工具寫的）options: 區塊，未覆寫（請手動對齊看板 {sg['id']}）")
             else:
+                # ① 先把**所有**頂層 options 區塊拿掉，再寫一份新的（不這樣做的話，
+                #    重複執行會疊出第二塊，而 YAML 只讀最後一塊 ⇒ 卡上留著舊結論而檢查看不出來）。
+                for st, en, _t in reversed(blocks):
+                    txt = txt[:st] + txt[en:]
+                for b in marked:
+                    if b[2] != sg["id"]:
+                        warns.append(f"{rel} 的 options 區塊標的是 {b[2]}，但看板把它指到 {sg['id']}"
+                                     f" ⇒ 已重寫（請確認這一格沒被換掉）")
                 txt = txt.rstrip("\n") + "\n\n" + charter_options_block(sg)
             p.write_text(txt, encoding="utf-8")
             touched += 1
@@ -359,6 +415,12 @@ def audit_rows(sgs: list[dict]) -> tuple[list[dict], list[str]]:
             for a in (o.get("arms") or []):
                 if a not in txt:
                     gaps.append(f"{s['id']}：{Path(rel).name} 沒有寫入 arm `{a}`")
+            # 重複的頂層 options 區塊 = 卡上留著舊結論而 YAML 只讀最後一塊（最陰的漂移）
+            nb = len(options_blocks(txt))
+            if nb > 1:
+                gaps.append(f"{s['id']}：{Path(rel).name} 有 {nb} 個頂層 options 區塊（應只有 1）")
+            elif nb == 1 and not options_blocks(txt)[0][2]:
+                gaps.append(f"{s['id']}：{Path(rel).name} 的 options 區塊沒有同步標記（非本工具寫的？）")
     for rel in charters_without_arms():
         gaps.append(f"立項卡缺 arms：{rel}")
     return rows, gaps
