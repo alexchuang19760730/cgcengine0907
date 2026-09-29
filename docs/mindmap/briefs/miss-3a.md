@@ -35,7 +35,7 @@
 - **被測 option**：`CGC_ZERO_SLOT=1`；`CGC_SEG_BATCH=1`；`CGC_SLOT_TABLE_GPU=1`
 - **arm 1（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1`
 - **arm 2（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1`
-- **結案狀態**：未結案（卡已立、未跑）
+- **結案狀態**：結案（PASS／FLIP）：A zero_slot=0 placeholder=250582 → B zero_slot=250636 placeholder=0；逐層 zero_slot=142=ns−1；寫入量守恆（差 0.02%）
 - **逐條處置**：整合進子目標　→ `L20-2`　—　未填充 expert 貢獻歸零（MISS_MASK／ZERO_SLOT）—— L20-2 武裝 G3 的正確性前提
 - **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
 - A/B 兩臂只差 CGC_ZERO_SLOT，不動 src/；2 趟，主端點是計數器不是 t/s。

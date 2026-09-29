@@ -108,14 +108,14 @@ layers:
         expect_ms: "0（主端點是<b>計數器翻轉</b>，不是 ms）"
         expect_tps: "—（它是 L20-3 的前置）"
         now: "單獨開是 <b>no-op</b>：<code>zero_slot=0 placeholder=0</code>；slot table 的 leaf 只在 <code>CGC_SLOT_TABLE_GPU=1</code> 下存在"
-        action: "2 趟、不動 <code>src/</code>（卡已立：<code>e-s1-g3-zeroslot</code>）"
-        accept: "<code>zero_slot&gt;0 ∧ placeholder=0</code>（計數器翻轉）"
-        falsify: "仍 <code>placeholder&gt;0</code> ⇒ B 的「0 ＋ 補算 ＝ 原值」前提不成立"
+        action: "2 趟、不動 <code>src/</code>（<b>已跑完</b>；判詞機械化：<code>scripts/check/g3_zeroslot_ab.py</code>）"
+        accept: "<code>zero_slot&gt;0 ∧ placeholder=0</code>（計數器翻轉）—— <b>已達成</b>"
+        falsify: "仍 <code>placeholder&gt;0</code> ⇒ B 的「0 ＋ 補算 ＝ 原值」前提不成立 —— <b>未觸發</b>"
         stage: 2
-        badge: {text: "卡已立、未跑", tone: warn}
+        badge: {text: "已結案・翻轉成立", tone: ok}
         charter: scripts/check/charters/e-s1-g3-zeroslot-2026-09-29.yaml
-        state: "未結案（卡已立、未跑）"
-        evidence: {profile: prod-new, entry: "harness bench", value: "—（未跑）", metric: pct, meets: false}
+        state: "結案（<b>PASS／FLIP</b>）：A <code>zero_slot=0 placeholder=250582</code> → B <code>zero_slot=250636 placeholder=0</code>；逐層 <code>zero_slot=142=ns−1</code>；寫入量守恆（差 0.02%）"
+        evidence: {profile: prod-new, entry: "harness bench", value: "A 0/250582 → B 250636/0（翻轉）；逐層 142=ns−1；counter 端點 ⇒ 髒窗可判（attribution=swap、pageins +0.88M／+0.52M）", metric: "zero_slot_flip", meets: true, source: "Backup/s1_g3_ab_2026-09-29/{A,B}.json", counter_quote: {tool: g3_zeroslot_ab, artifact_a: "Backup/s1_g3_ab_2026-09-29/A.json", artifact_b: "Backup/s1_g3_ab_2026-09-29/B.json", verdict: FLIP, why: "A <code>zero_slot=0 placeholder=250582</code> → B <code>zero_slot=250636 placeholder=0</code>；逐層 <code>zero_slot=142=ns−1</code>；對照臂 armed 行數 0；寫入量守恆差 0.02%"}}
         options:
           profile: prod-new
           arms: ["prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1", "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1"]
@@ -436,14 +436,14 @@ calls:
     html: "<b>做到底的實測界線：</b>把<b>所有</b>已量到的都疊上，<b>可交付</b>只到 11.703 → 11.83 t/s（＋0.95 ± 2.01，實質 0）。越過 25 的三格都是錯輸出臂，<b>但機制不同（§50 更正 §41）</b>：27.17／24.88 是<b>池凍結</b>（41.8%）；<b>25.64（39.0 ms）是<u>池活著</u></b>——miss 42.9%→<b>6.1%</b>、已過 G4 的 ≤25% 閘，錯的只是 B 半沒重算（≈19 個 (layer,expert)/步）。<br>⚠ <b>§51 已撤回 §50 那一格的樂觀</b>：§50 把 B 半算成 1.60–3.20 ms（那是<b>散佈</b>的價，且是推算），主項<b>備援重算 320 列 ＝ 8.09 ms</b>（同儀器實測，靜態寬度被正確性逼成 k=8）⇒ <code>39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms</code>；§52 用<b>交付 cell 底座 37.81 ms</b>複核，仍差 <b>7.5–11.6 ms</b>。<b>⇒ 判詞回到「判死」，唯一未動的是 L25-1（第六條軸）。</b>"
 
 order:
-  - "L20-2 武裝 G3（2 趟、不動 <code>src/</code>，主端點是計數器翻轉）—— 成本最低，且是 L20-3 的前置。"
+  - "~~L20-2 武裝 G3（2 趟、不動 <code>src/</code>，主端點是計數器翻轉）~~ → <b>09-29 23:4x 已跑完＝PASS／FLIP</b>：A <code>0/250582</code> → B <code>250636/0</code>、逐層 <code>142=ns−1</code>、寫入量守恆（差 0.02%）⇒ G3 是真的；交付臂的 0/0 是「路徑沒被走到」而不是 G3 壞掉。判詞機械化：<code>scripts/check/g3_zeroslot_ab.py</code>。"
   - "L20-1 校準底 —— 它決定 L20-3 值不值得寫：底 36.8 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。"
   - "L20-4 定價 fill —— 它決定 L20-3 的回收值（1.60 vs 8.3）。"
   - "<b>才決定 L20-3</b>（那顆無範例可抄的 <code>ggml_acc</code> 路徑）。"
   - "L20-8（前提題）與 L20-5（搬家）可並行；L20-9 是背景題。"
   - "L25 六格裡唯一不需新機制的一格是 <b>L25-3 乾淨窗口</b>；<b>L25-4／L25-5 是產品決策</b>，L25-6 要加大配對 n。"
   - "~~最便宜且唯一能翻盤的一件事：多印一個逐層 miss 直方圖~~ → <b>09-29 已做，結果是「不成立」</b>：交付 cell 穩態每層峰值 <b>6</b>（≤2 只覆蓋 64% 的步）；連用峰值 6 當設計點的重算 <b>6.07 ms</b> 都 > 它取代的 fill <b>3.955</b>。⇒ L20-3 <b>不實作</b>、L25-2 維持「機制撤回」、L20-6 一起維持判死（實測見 <code>docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</code>）。"
-  - "<b>下一步只剩兩條</b>：① <b>L20-2 武裝 G3</b>（2 趟、不動 src/、主端點是計數器）—— L20 這一層唯一還能推進的；② <b>L25-1 第六條軸</b>（立卡問「每 token 的 bytes 或 steps 有沒有可改的乘數」）—— 全板唯一還沒被判死的一格。"
+  - "<b>下一步只剩一條</b>：<b>L25-1 第六條軸</b>（立卡問「每 token 的 bytes 或 steps 有沒有可改的乘數」）—— 全板唯一還沒被判死的一格；其餘不是等窗口（L20-1／L25-3 端點是<b>時間</b>，需可回收 ≥8 GB，今天只有 6.3 GB），就是要產品決策（L25-4／L25-5）。"
 
 footer: "資料出處：<code>docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md</code> §34（G4 權威讀數）、§36（P2 否證）、§37／§38（gap／邊界窗）、§39–§41（盤點與「做到底」）、§42（MISS_MASK 成本）、§43–§46（19.2 的底、完備性稽核）、§47（結案規則與兩個帳目的仲裁）；<code>docs/CACHE_SIZE_AB_2026-09-23.md</code>（池大小）；<code>docs/K3_PAIR_CERT_VERDICT_2026-09-28.md</code>（17.669 重現）；<code>docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</code>（逐層 miss 直方圖 ⇒ L20-3/L25-2/L20-6 的實測依據）；<code>docs/mindmap/mindmap.json</code>；<code>scripts/check/charters/</code>。<br>本頁為<b>轉引</b>（0 跑、0 build）；除三格已認證（C1–C3）外，頁上任何 t/s 都不是成績。"
 

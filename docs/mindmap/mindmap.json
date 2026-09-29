@@ -461,7 +461,7 @@
         "cli": [],
         "no_knob": "",
         "note": "A/B 兩臂只差 CGC_ZERO_SLOT，不動 src/；2 趟，主端點是計數器不是 t/s。",
-        "state": "未結案（卡已立、未跑）",
+        "state": "結案（PASS／FLIP）：A zero_slot=0 placeholder=250582 → B zero_slot=250636 placeholder=0；逐層 zero_slot=142=ns−1；寫入量守恆（差 0.02%）",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -605,7 +605,7 @@
         "cli": [],
         "no_knob": "",
         "note": "A/B 兩臂只差 CGC_ZERO_SLOT，不動 src/；2 趟，主端點是計數器不是 t/s。",
-        "state": "未結案（卡已立、未跑）",
+        "state": "結案（PASS／FLIP）：A zero_slot=0 placeholder=250582 → B zero_slot=250636 placeholder=0；逐層 zero_slot=142=ns−1；寫入量守恆（差 0.02%）",
         "also": [],
         "source": "board",
         "confidence": "high"

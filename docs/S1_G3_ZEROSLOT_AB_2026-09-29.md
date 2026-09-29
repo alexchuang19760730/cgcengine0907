@@ -139,6 +139,63 @@ thermal.worst=..  pageins 增量=..
 
 ---
 
-## 8. 執行結果（S1 線回填處）
+## 8. 執行結果（回填：2026-09-29 23:4x）
 
-_（待跑；未跑前本節留白，勿自行填數字。）_
+**判決：PASS（FLIP）—— G3 在 S1 組上是真的，不是 no-op。**
+
+| | A 臂（對照，不開 G3） | B 臂（開 `CGC_ZERO_SLOT=1`） |
+|---|---|---|
+| arm | `prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1` | 以上 ＋ `CGC_ZERO_SLOT=1` |
+| 逐層見證 | 8 行，全部 `zero_slot=-1 (NOT ARMED -> placeholder)` | 8 行，全部 `zero_slot=142 (reserved slot exists and is now zeroed)` |
+| TOTAL（末行，累計） | `zero_slot=0 placeholder=250582` | `zero_slot=250636 placeholder=0` |
+| 觸及的層 | `il=11,12,14,31,32`（共 5 層） | 同左 |
+| rc | 0 | 0 |
+| wall | 59.3 s | 46.7 s |
+| thermal | NOMINAL（launch／worst 皆 NOMINAL） | 同左 |
+| 趟內 pageins | **+0.88 M** | **+0.52 M**（健康趟基準 +1.7 M） |
+| hit% | 100.0 | 99.3 |
+| attribution | `swap`（累積高水位 4514 MiB） | `swap` |
+
+**判準是二值翻轉，兩條分支互斥且各有計數器** ⇒ 這種判詞不受 MDD／漂移限制，**髒窗也能裁判**
+（本趟 `attribution=swap` 但端點是計數器，照樣可引用 —— 見 `docs/MISSHIST_REVIVAL_GATE_2026-09-29.md` §4 的通則）。
+
+### 8.1 三個內部一致性檢查（都過）
+
+1. **逐層不變量**：B 的每一行都是 `zero_slot == ns - 1`（142 == 143−1）⇒ 保留的確實是**最後一槽**。
+2. **A 沒有被武裝**：A 的 8 行全部是 `NOT ARMED`、`armed 0／not-armed 8` ⇒ 對照臂乾淨
+   （若 A 自己也走 zero 分支，判詞會是 `ARMED-A`「對照不成立」而不是 FLIP）。
+3. **寫入量守恆**：A `placeholder=250582` vs B `zero_slot=250636`，**差 54（0.02%）**
+   ⇒ 兩臂寫了**同樣多**的項目，只是把「非駐留專家」寫成不同的值 ⇒ 路由沒有改變，
+   兩臂真的只差那個 substitution。這是本判決最有力的旁證。
+
+### 8.2 這條證明了什麼、沒證明什麼
+
+- ✅ 證明：`CGC_ZERO_SLOT=1` 在 S1 組（`CGC_SEG_BATCH=1` ＋ `CGC_SLOT_TABLE_GPU=1`）上
+  **可達且生效**；09-26 那個沒有對照臂的單臂讀數（`zero_slot=3398260 / placeholder=0`）現在有了對照。
+- ✅ 也證明：09-29 觀察到的「prod-new 交付臂 0/0」不是 G3 壞了，而是**那條路徑沒被走到**
+  （`cache_slot_table_tensors` 為空 ⇒ writer 沒跑）—— 與本檔 §4 的源碼查證一致。
+- ⛔ **不證明**任何速度：兩臂 tg（27.94／27.35）**一律不可引用**（單段提交臂輸出是 garbage、
+  且 G3 依設計不 bit-identical；`llama-context.cpp:3768-3772`）。本節全篇不含任何 t/s 主張。
+- ⛔ **不等於 L20-3 復活**：L20-3 的 blocker 是**成本**（靜態寬度按 k 計價 ⇒ 備援重算 8.09 ms @ k=8），
+  不是「G3 是不是真的」。那條已在 `MISSHIST_REVIVAL_GATE` 用逐層 miss 直方圖關閉
+  （穩態每層峰值 6 ⇒ k 只能取 6 ⇒ 重算 6.07 ms > 它取代的 fill 3.955 ms）。
+
+### 8.3 判詞是機械產生的
+
+```
+python3 scripts/check/g3_zeroslot_ab.py \
+  --a Backup/s1_g3_ab_2026-09-29/A.json \
+  --b Backup/s1_g3_ab_2026-09-29/B.json \
+  --json Backup/s1_g3_ab_2026-09-29/verdict.json
+⇒ VERDICT: FLIP（rc=0）
+```
+
+卡上的 `how:` 原本寫 `grep 'CGC-G3-ZEROSLOT'`（人眼看）。可是這是**二值翻轉**，而四種結局
+（FLIP／NO-OP-B／EMPTY-A／ARMED-A）在肉眼下的樣子很像 —— 尤其 `EMPTY-A`（對照臂 0/0）
+最容易被誤讀成「否證 G3」，實際上它只代表**這趟無效**。所以改成一支有 11 條突變式斷言的檢查器：
+`--selftest`，產品是 exit code。
+
+回報格式對照本檔 §7：`A: il 行數=8 逐層尾綴=NOT ARMED TOTAL zero_slot=0 placeholder=250582 rc=0
+／B: il 行數=8 zero_slot=142(ns=143) TOTAL zero_slot=250636 placeholder=0 rc=0／
+thermal.worst=NOMINAL pageins 增量=0.88M／0.52M／判決：PASS`。
+

@@ -122,6 +122,34 @@ arms:
   # 選跑（第三趟，僅當 A 的 placeholder==0 時才需要）：
   # - prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1     # 量 miss 數用的定價臂（不加 _DBG）
 
+
+# ── 【執行結果（2026-09-29 23:4x，本檔 §8 回填）】────────────────────────
+result_ab:
+  verdict: PASS            # FLIP
+  ran_by: auto (harness bench, reps 3 = 權威 cell)
+  arms:
+    a: "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1"
+    b: "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1"
+  witness:
+    a: "8 行全部 `zero_slot=-1 (NOT ARMED -> placeholder)`；TOTAL zero_slot=0 placeholder=250582"
+    b: "8 行全部 `zero_slot=142 = ns-1 (reserved slot exists and is now zeroed)`；TOTAL zero_slot=250636 placeholder=0"
+    layers: "il=11,12,14,31,32（5 層）"
+  checks:
+    - "逐層不變量：B 每行 zero_slot == ns-1（保留最後一槽）"
+    - "對照臂乾淨：A 的 armed 行數 = 0（否則判詞會是 ARMED-A）"
+    - "寫入量守恆：A placeholder=250582 vs B zero_slot=250636，差 54（0.02%）⇒ 路由沒變，只差 substitution"
+  window:
+    thermal: "NOMINAL（launch/worst）"
+    pageins_delta: "+0.88 M / +0.52 M（健康趟基準 +1.7 M）"
+    attribution: swap           # 累積高水位；端點是計數器 ⇒ 不影響判詞
+    hit_pct: "100.0 / 99.3"
+  tg_quotable: false            # 單段提交臂輸出是 garbage；且 G3 依設計不 bit-identical
+  verdict_tool: "scripts/check/g3_zeroslot_ab.py（11 條突變式斷言；--selftest）"
+  does_not_imply: |
+    ⛔ 不等於 L20-3 復活。L20-3 的 blocker 是**成本**（靜態寬度按 k 計價 ⇒ 備援重算 8.09 ms @ k=8），
+    已由逐層 miss 直方圖關閉（穩態每層峰值 6 ⇒ k 只能取 6 ⇒ 重算 6.07 ms > 取代的 fill 3.955 ms）。
+  artifacts: "Backup/s1_g3_ab_2026-09-29/{A,B}.json ＋ .stderr.log ＋ verdict.json；docs/S1_G3_ZEROSLOT_AB_2026-09-29.md §8"
+
 # ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-2 同步；勿手改，改看板）】──
 options:
   subgoal: L20-2
