@@ -28,6 +28,11 @@
   D6 標了「結案」卻不滿足結案規則（prod-new ＋ harness bench ＋ 達標）——唯一例外是「結案（排除）」要有出處
   D7 引用閘門（quote_gate）：子目標宣告的可引用性必須與閘門**當場**判的一致；且「結案」不得
      建立在不可引用的讀數上（`attribution=none` 不再是充分的理由 —— 見 §55）
+  D8 主節點（L20／L25）的 goal／evidence 必須一致：綠燈只能建在可引用的讀數上
+  D9 產物結構（表格標籤配對）
+  D10 臂身分（quote_gate 的 R5／R6 在**看板面**）：`options.arms` 不准留著「量不到交付目標」的臂
+      （單次提交臂跳過 per-layer hook ⇒ 計數器回傳常數；或源碼明文 never-quote 的量具）。
+      要嘛刪掉，要嘛搬進 `options.arms_removed` 附規則與出處（那是留下來的否證，不是待跑的路）。
 """
 
 import argparse
@@ -53,8 +58,10 @@ NEEDS = {
     "handled": ("by",), "done": ("why",), "goal": ("why",), "c-axis": ("why",),
     "account": ("why", "impact"), "no-claim": ("why",), "recheck": ("why",),
 }
+# `runnable`（09-30 operator）：每格必須宣告「現在能不能跑＋前置是啥」——
+# 放在現況欄最前面。缺它＝D3（fail-closed：新增格子忘了寫，看板會紅，不會默默少資訊）。
 TARGET_FIELDS = ("id", "title", "nodes", "now", "action", "accept", "falsify",
-                 "expect_ms", "expect_tps", "state", "evidence", "badge", "stage")
+                 "expect_ms", "expect_tps", "state", "evidence", "badge", "stage", "runnable")
 
 CSS = """  * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans TC',Roboto,sans-serif; line-height:1.6; color:#1a1b1c; background:#f8f9fa; }
@@ -78,6 +85,12 @@ CSS = """  * { margin:0; padding:0; box-sizing:border-box; }
   .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
+  /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
+  tr.row-done td { background:#ecfdf5; }
+  tr.row-done td:first-child { border-left:4px solid #059669; }
+  /* 每格開頭的「現在能不能跑＋前置」宣告 pill（資料來源＝target.runnable） */
+  .runnable { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11.5px; font-weight:600;
+              background:#eef2ff; color:#312e81; }
   ul,ol { margin:8px 0 12px 22px; } li { margin-bottom:5px; font-size:13.5px; }
   .warning { background:#fffbeb; border-left:4px solid #f59e0b; padding:13px 15px; border-radius:0 8px 8px 0; margin:12px 0; font-size:13.5px; }
   .success { background:#ecfdf5; border-left:4px solid #10b981; padding:13px 15px; border-radius:0 8px 8px 0; margin:12px 0; font-size:13.5px; }
@@ -190,6 +203,51 @@ def gate_verdict(root, artifact):
 
 
 D7_EXCLUDED_CLOSURES = ("結案（排除）",)
+
+
+def arm_census(board):
+    """回 (live, removed, bare)：可跑的臂數、已刪的臂數、**已無可跑臂**的子目標 id。
+
+    這三個數是 D10 的儀表：`bare` 不為 0 時，看板上一部分格子「沒有任何一條量得到交付目標的路」，
+    這件事必須在頁面上看得見，而不是埋在某一格的 options 裡。
+    """
+    live = removed = 0
+    bare = []
+    for layer in board.get("layers") or []:
+        for t in layer.get("targets") or []:
+            o = t.get("options") or {}
+            n_live = len([a for a in (o.get("arms") or []) if isinstance(a, str)])
+            n_rm = len([r for r in (o.get("arms_removed") or []) if isinstance(r, dict)])
+            live += n_live
+            removed += n_rm
+            if n_rm and not n_live:
+                bare.append(t.get("id"))
+    return live, removed, bare
+
+
+def arm_void_flags(arm):
+    """回 (flags, why)：這支臂身上有哪些「**量不到交付目標**」的東西真的開著。
+
+    `flags = {旗標: "R5"｜"R6"}`；判不了 ⇒ `(None, 說明)`。
+    判準的**唯一定義**在 scripts/check/quote_gate.py（R5 量具登記表 THROUGHPUT_VOID_INSTRUMENTS
+    ＋ R6 輸出見證登記表 UNVERIFIED_OUTPUT_ARMS）。這裡只做轉接、不重寫清單 ——
+    兩份清單一旦漂移，D10 就會跟同一格產物的判詞說不同的話。
+    臂的字串形式與看板一致（`prod-new:FLAG=1;FLAG=1`）⇒ 走 quote_gate 的同一條解析路徑。
+    """
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    try:
+        import quote_gate
+    except Exception as exc:  # noqa: BLE001
+        return None, "載不進 quote_gate：%s: %s" % (type(exc).__name__, exc)
+    try:
+        prod = {"tag": str(arm)}
+        flags = {k: "R5" for k in quote_gate.arm_instruments(prod)}
+        flags.update({k: "R6" for k in quote_gate.unverified_output_arms(prod)})
+    except Exception as exc:  # noqa: BLE001
+        return None, "解析臂失敗：%s: %s" % (type(exc).__name__, exc)
+    return flags, ""
+
 
 # ── 計數器端點的結案路徑（2026-09-29，L20-2 是第一例）────────────────────────
 # 為什麼需要第二條路：D7 的引用閘門（quote_gate）判的是**時間**讀數（逐 rep 離散、樣本數、
@@ -310,6 +368,55 @@ def validate(board, nodes, root=ROOT):
                 errs.append("D7 %s 標結案但沒有 evidence.quote（結案必須有一場可引用的讀數）" % t["id"])
             elif q.get("verdict") != "QUOTABLE":
                 errs.append("D7 %s 標結案，但引用判詞是 %s ≠ QUOTABLE" % (t["id"], q.get("verdict")))
+        # D10 臂必須量得到交付目標（2026-09-30）—— R5／R6 的**看板面**。
+        # 為什麼：20+／25+ 目前沒有一列是在交付目標的函數上、用活著的計數器量到的，
+        # 而 `options.arms` 是「跑這一格要開什麼」的唯一來源 ⇒ 它留著單次提交臂
+        # （per-layer hook 被跳過、計數器回傳常數）或源碼明文 never-quote 的量具時，
+        # 下一個人照著跑只會再得到一個不可引用的數。這種臂不准當**選項**。
+        o = t.get("options") or {}
+        live_arms = [a for a in (o.get("arms") or []) if isinstance(a, str)]
+        lived = {a.lstrip("-").strip() for a in live_arms}
+        for arm in live_arms:
+            flags, why = arm_void_flags(arm)
+            if flags is None:
+                errs.append("D10 %s 的臂判不了（%s）" % (t["id"], why)); continue
+            if flags:
+                errs.append("D10 %s 的 options.arms 留著不能量交付目標的臂（%s）：%s"
+                            % (t["id"], "、".join("%s=%s" % kv for kv in sorted(flags.items())), arm))
+        removed = o.get("arms_removed")
+        if removed is not None and not isinstance(removed, list):
+            errs.append("D10 %s 的 arms_removed 必須是清單" % t["id"])
+        recs = [r for r in (removed if isinstance(removed, list) else []) if isinstance(r, dict)]
+        for rec in recs:
+            if not rec.get("arm"):
+                errs.append("D10 %s 的 arms_removed 每筆要有 arm" % t["id"]); continue
+            arm = str(rec["arm"])
+            if arm.lstrip("-").strip() in lived:
+                errs.append("D10 %s 的 %s 同時列在 arms 與 arms_removed（要嘛能跑、要嘛已刪）"
+                            % (t["id"], arm))
+            flags, why = arm_void_flags(arm)
+            if flags is None:
+                errs.append("D10 %s 的 arms_removed %s 判不了（%s）" % (t["id"], arm, why)); continue
+            if not flags:
+                errs.append("D10 %s 的 arms_removed 收了沒有 R5／R6 量具的臂（%s）"
+                            "—— 這一欄只能放判準擋掉的臂" % (t["id"], arm))
+            if not str(rec.get("why") or "").strip():
+                errs.append("D10 %s 的 arms_removed %s 缺 why（刪除必須留理由）" % (t["id"], arm))
+            got = {str(k): str(v) for k, v in (rec.get("flags") or {}).items()}
+            if got != flags:
+                errs.append("D10 %s 的 arms_removed %s 的 flags=%r 與登記表算出的 %r 不符"
+                            "（刪除紀錄必須與 quote_gate 的 R5／R6 登記表一致）"
+                            % (t["id"], arm, got, flags))
+            rules = [str(r) for r in (rec.get("rules") or [])]
+            if not rules or sorted(set(rules)) != sorted(set(flags.values())):
+                errs.append("D10 %s 的 arms_removed %s 的 rules=%r 與 flags 不符 %r"
+                            % (t["id"], arm, rules, sorted(set(flags.values()))))
+            for r in rules:
+                if r not in ("R5", "R6"):
+                    errs.append("D10 %s 的 arms_removed %s 的 rule=%r 不合法（只收 R5／R6）"
+                                % (t["id"], arm, r))
+        if len({str(r.get("arm")) for r in recs}) != len(recs):
+            errs.append("D10 %s 的 arms_removed 有重複的臂" % t["id"])
         for f in ("expect_ms", "expect_tps"):
             v = str(t.get(f) or "").strip()
             if v.startswith("—") or v == "":
@@ -414,6 +521,14 @@ def render_board(board, nodes, here, out_path):
     cr = board.get("closure_rule") or {}
     A('<div class="success"><b>結案規則（機器強制）</b>：%s<br><span class="legend">條件：%s ｜ %s</span></div>'
       % (cr.get("text", ""), "、".join(cr.get("requires") or []), cr.get("note", "")))
+    _live, _rm, _bare = arm_census(board)
+    if _rm:
+        A('<div class="warning"><b>臂的身分（D10）</b>：可跑 %d 支 ／ 已依 <b>R5／R6</b> 刪除 %d 支。'
+          '%s判準的唯一定義在 <code>scripts/check/quote_gate.py</code>（被刪的臂在逐子目標頁有規則與理由）。'
+          '</div>'
+          % (_live, _rm,
+             ("其中 <b>%d 格（%s）已沒有任何可跑的臂</b> ⇒ 目前沒有任何一條已知的路能量到它的交付數字。"
+              % (len(_bare), "、".join(_bare))) if _bare else ""))
     A('<div class="grid">')
     for s in board.get("summary") or []:
         tone = (' %s' % s["tone"]) if s.get("tone") else ""
@@ -425,7 +540,7 @@ def render_board(board, nodes, here, out_path):
     #   可操作的兩句已併入 `certified_note`；其餘 §50–§58 的細節留在各自的 docs 與 git 歷史裡。
     A('<div class="legend"><span class="steps"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span> 進展＝%s ／ '
       '<span class="badge b-ok">已成立</span><span class="badge b-warn">有前置／待跑</span><span class="badge b-info">未立卡</span><span class="badge b-dead">已排除</span></div>'
-      '<br>主節點（L20／L25）<span class="badge b-ok">達標</span>＝該層已有一場<b>可引用</b>''（引用閘門 <code>QUOTABLE</code>）的讀數達到目標；未達標<b>不變色</b>，理由寫在標題的 <code>title</code> 裡。''<br><span style="padding:2px 10px;border-left:6px solid #059669;background:#ecfdf5;border-radius:6px">綠底＝達標</span></div>'
+      '<br>主節點（L20／L25）<span class="badge b-ok">達標</span>＝該層已有一場<b>可引用</b>''（引用閘門 <code>QUOTABLE</code>）的讀數達到目標；未達標<b>不變色</b>，理由寫在標題的 <code>title</code> 裡。''<br><span style="padding:2px 10px;border-left:6px solid #059669;background:#ecfdf5;border-radius:6px">綠底＝達標</span>　<span style="padding:2px 10px;border-left:6px solid #059669;background:#ecfdf5;border-radius:6px">整列綠底＝已了結（結案／判死，資料旗標 <code>settled</code>）</span>　<span class="runnable">每格開頭</span>＝現在能不能跑＋前置是啥（<code>runnable</code>）</div>'
       % " ／ ".join("①②③④"[i] + " " + x for i, x in enumerate(board.get("stage_legend") or [])))
     A("<h2>已認證（符合結案規則的實測）</h2>")
     cn = board.get("certified_note") or {}
@@ -481,7 +596,15 @@ def render_board(board, nodes, here, out_path):
                                for c in chs) or "—"
             ev = t.get("evidence") or {}
             st = str(t.get("state") or "")
-            cls = "b-ok" if st.startswith("結案") else "b-warn"
+            # [09-30 operator] 已了結的格（結案／判死）整列綠底；進行中不變色。
+            # `settled` 是**資料裡的旗標**（YAML），不是從 state 字串猜的——判死格（L20-3）
+            # 的 state 仍以「未結案」開頭（前置否證），但它在格線上已經死了，
+            # 不該再用紅色暗示「有待辦」。
+            settled = bool(t.get("settled"))
+            cls = "b-ok" if (st.startswith("結案") or settled) else "b-warn"
+            rowcls = ' class="row-done"' if settled else ""
+            # 每格「現在能不能跑＋前置是啥」放在現況欄最前面（operator 09-30）
+            nowcell = '<span class="runnable">%s</span><br>%s' % (t["runnable"], t["now"])
             cert = ""
             if ev.get("cert_by"):
                 cert = '<br><span class="legend">排除依據：%s</span>' % ev.get("source", "")
@@ -491,12 +614,12 @@ def render_board(board, nodes, here, out_path):
             if ev.get("quote"):
                 qv = ev["quote"].get("verdict", "—")
                 cert += ('<br><span class="legend">引用閘門：<b>%s</b></span>' % qv)
-            A("<tr><td><b>%s</b></td><td><b>%s</b><br><a class=\"legend\" href=\"%s\">逐條頁 ›</a></td><td>%s</td>"
+            A("<tr%s><td><b>%s</b></td><td><b>%s</b><br><a class=\"legend\" href=\"%s\">逐條頁 ›</a></td><td>%s</td>"
               "<td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><b>驗收</b>：%s<br><b>否證</b>：%s</td>"
               "<td>%s</td><td><span class=\"badge %s\">%s</span>%s</td>"
               "<td><span class=\"steps\">%s</span></td></tr>"
-              % (t["id"], t["title"], rel_from(here, os.path.join(PAGES_DIR, t["id"] + ".html")),
-                 cell, t["expect_ms"], t["expect_tps"], t["now"], t["action"],
+              % (rowcls, t["id"], t["title"], rel_from(here, os.path.join(PAGES_DIR, t["id"] + ".html")),
+                 cell, t["expect_ms"], t["expect_tps"], nowcell, t["action"],
                  t["accept"], t["falsify"], chcell, cls, st, cert,
                  "".join('<i class="%s"></i>' % ("on" if i < t["stage"] else "") for i in range(4))))
         A("</tbody></table>")
@@ -549,10 +672,12 @@ def render_page(board, t, nodes):
     A("<h1>%s ｜ %s</h1>" % (t["id"], t["title"]))
     st = str(t.get("state") or "")
     A('<p class="subtitle">結案狀態：<span class="badge %s">%s</span> ｜ 依 <b>%s</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>'
-      % ("b-ok" if st.startswith("結案") else "b-warn", st, board.get("id", "")))
+      % ("b-ok" if (st.startswith("結案") or t.get("settled")) else "b-warn", st, board.get("id", "")))
     A('<div class="card"><table class="kv">')
     A("<tr><th>預期（ms/step）</th><td>%s</td></tr>" % t["expect_ms"])
     A("<tr><th>預期（t/s）</th><td>%s</td></tr>" % t["expect_tps"])
+    # 09-30 operator：能不能跑／前置是啥，放在現況之前，一眼可判
+    A('<tr><th>現在能跑？</th><td><span class="runnable">%s</span></td></tr>' % t["runnable"])
     A("<tr><th>現況（已量）</th><td>%s</td></tr>" % t["now"])
     A("<tr><th>action</th><td>%s</td></tr>" % t["action"])
     A("<tr><th>驗收</th><td>%s</td></tr>" % t["accept"])
@@ -577,6 +702,21 @@ def render_page(board, t, nodes):
              q.get("verdict", "—"), art_html, q.get("why", "")))
     elif ev.get("quote_ungateable"):
         A('<div class="warning"><b>引用閘門：無從判</b> —— %s</div>' % ev["quote_ungateable"])
+    o = t.get("options") or {}
+    A("<h3>臂（options）</h3>")
+    arms = o.get("arms") or []
+    if arms:
+        A("<ul>%s</ul>" % "".join("<li><code>%s</code></li>" % esc(a) for a in arms))
+    else:
+        A('<div class="warning">本格<b>沒有可跑的臂</b> —— 宣告過的臂全部被 R5／R6 擋掉（見下），'
+          '所以 20+／25+ 不可能靠它們量到。</div>')
+    for rec in (o.get("arms_removed") or []):
+        A('<div class="warning"><b>已刪除的臂</b> <code>%s</code>（%s）<br>%s</div>'
+          % (esc(rec.get("arm", "")), "／".join(rec.get("rules") or []), esc(rec.get("why", ""))))
+    if o.get("no_knob"):
+        A("<p>%s</p>" % o["no_knob"])
+    if o.get("note"):
+        A("<p>%s</p>" % o["note"])
     ch = t.get("charter")
     chs = [ch] if isinstance(ch, str) else (ch or [])
     A("<h3>立項（charter）</h3>")
@@ -612,7 +752,7 @@ def render_page_md(board, t):
          "- **結案狀態**：%s" % t.get("state", ""),
          "- **預期 ms/step**：%s" % re_plain(t["expect_ms"]),
          "- **預期 t/s**：%s" % re_plain(t["expect_tps"]),
-         "", "## 現況（已量）", re_plain(t["now"]), "",
+         "", "## 現況（已量）", re_plain(t["runnable"]), "", re_plain(t["now"]), "",
          "## 動作與判準", "- **action**：%s" % re_plain(t["action"]),
          "- **驗收**：%s" % re_plain(t["accept"]), "- **否證**：%s" % re_plain(t["falsify"]), "",
          "## 結案判準現況", "",
@@ -630,6 +770,18 @@ def render_page_md(board, t):
               "- **為什麼**：%s" % re_plain(q.get("why", "")), ""]
     elif ev.get("quote_ungateable"):
         L += ["### 引用閘門", "", "> **無從判** —— %s" % re_plain(ev["quote_ungateable"]), ""]
+    o = t.get("options") or {}
+    L += ["## 臂（options）", ""]
+    arms = o.get("arms") or []
+    L += [("- `%s`" % a) for a in arms] or ["（本格沒有可跑的臂 —— 宣告過的臂全被 R5／R6 擋掉）"]
+    for rec in (o.get("arms_removed") or []):
+        L.append("- **已刪除** `%s`（%s）：%s"
+                 % (rec.get("arm", ""), "／".join(rec.get("rules") or []), re_plain(rec.get("why", ""))))
+    if o.get("no_knob"):
+        L += ["", "> %s" % re_plain(o["no_knob"])]
+    if o.get("note"):
+        L += ["", re_plain(o["note"])]
+    L += [""]
     L += ["## 立項（charter）", ""]
     L += ["- `%s`" % c for c in chs] or ["（未立項）"]
     L += ["", "## 對應節點", ""]
@@ -803,6 +955,10 @@ def cmd_build(yaml_path=DEFAULT_YAML):
           % (len(arts), board["out"], len(tg)))
     print("[decode-board] 子目標 %d；結案 %d（%s）；認證 %d 格"
           % (len(tg), len(closed), "、".join(closed) or "—", len(board.get("certified") or [])))
+    _live, _rm, _bare = arm_census(board)
+    if _rm:
+        print("[decode-board] 臂：可跑 %d／已刪 %d（R5／R6）；無可跑臂的格 %d（%s）"
+              % (_live, _rm, len(_bare), "、".join(_bare)))
     print("VERDICT: PASS")
     return 0
 
@@ -830,6 +986,9 @@ def cmd_selftest():
     case("D2 uncovered live node", any(e.startswith("D2") for e in validate(b, nodes)[0]))
     b = copy.deepcopy(base); b["layers"][0]["targets"][0]["charter"] = "scripts/check/charters/nope.yaml"
     case("D5 missing charter", any(e.startswith("D5") for e in validate(b, nodes)[0]))
+    # [09-30 operator] runnable／settled 兩條：缺宣告要紅；已了結的格要整列綠底。
+    b = copy.deepcopy(base); del b["layers"][0]["targets"][0]["runnable"]
+    case("D3 缺 runnable（現在能跑宣告）", any(e.startswith("D3") for e in validate(b, nodes)[0]))
     b = copy.deepcopy(base)
     b["layers"][0]["targets"][0]["state"] = "結案"
     b["layers"][0]["targets"][0]["evidence"] = {"profile": "prod25", "entry": "decode_sweep", "value": "8.43", "metric": "tps", "meets": True}
@@ -890,6 +1049,9 @@ def cmd_selftest():
     b["layers"][0]["evidence"] = {"value": 11.703, "artifact": art_ok, "quote_verdict": "QUOTABLE"}
     html, e = _board_html(b)
     case("未達標 ⇒ 不變色（無綠標題）", '<h2 class="layer-met"' not in html and not e, e)
+    b = copy.deepcopy(base); b["layers"][0]["targets"][0]["settled"] = True
+    html, e = _board_html(b)
+    case("settled ⇒ 整列綠底（row-done）", 'class="row-done"' in html and not e, e)
     b = copy.deepcopy(base)
     b["layers"][0]["goal"] = {"metric": "decode_tps", "target": 10.0}
     b["layers"][0]["evidence"] = {"value": 11.703, "artifact": art_dirty,
@@ -913,6 +1075,34 @@ def cmd_selftest():
             open(probe, "w", encoding="utf-8").write(old)
         elif os.path.exists(probe):
             os.remove(probe)
+    # --- D10 臂必須量得到交付目標（R5／R6 的看板面）---
+    def _d10(arms=None, removed="keep"):
+        b = copy.deepcopy(base)
+        o = dict(b["layers"][0]["targets"][0].get("options") or {})
+        if arms is not None:
+            o["arms"] = arms
+        if removed != "keep":
+            o["arms_removed"] = removed
+        b["layers"][0]["targets"][0]["options"] = o
+        return [e for e in validate(b, nodes)[0] if e.startswith("D10")]
+
+    case("D10 現況看板不擋", not _d10())
+    case("D10 單次提交臂不准留在 options", bool(_d10(arms=["prod-new:CGC_SEG_BATCH=1"])))
+    case("D10 診斷量具臂不准留在 options", bool(_d10(arms=["prod-new:CGC_RHO_PROBE=1"])))
+    case("D10 已刪除的臂可以留（附規則＋出處）",
+         not _d10(arms=[], removed=[{"arm": "prod-new:CGC_SEG_BATCH=1", "rules": ["R6"],
+                                     "flags": {"CGC_SEG_BATCH": "R6"}, "why": "fixture"}]))
+    case("D10 刪除紀錄說謊（規則與登記表不符）",
+         bool(_d10(arms=[], removed=[{"arm": "prod-new:CGC_SEG_BATCH=1", "rules": ["R6"],
+                                      "flags": {"CGC_SEG_BATCH": "R5"}, "why": "fixture"}])))
+    case("D10 同一支臂兩邊都列",
+         bool(_d10(arms=["prod-new:CGC_SEG_BATCH=1"],
+                   removed=[{"arm": "prod-new:CGC_SEG_BATCH=1", "rules": ["R6"],
+                             "flags": {"CGC_SEG_BATCH": "R6"}, "why": "fixture"}])))
+    case("D10 刪掉沒有 R5／R6 量具的臂",
+         bool(_d10(arms=[], removed=[{"arm": "prod-new", "rules": ["R5"], "flags": {},
+                                      "why": "fixture"}])))
+
     # --- D9 產物結構（fixture；不回讀檔案，直接餵字串）---
     good = '<table><thead><tr><th>a</th></tr></thead><tbody><tr><td>1</td></tr><tr><td>2</td></tr></tbody></table>'
     case("D9 完整表格", not html_structure_problems(good))

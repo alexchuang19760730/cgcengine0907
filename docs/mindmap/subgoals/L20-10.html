@@ -24,6 +24,12 @@
   .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
+  /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
+  tr.row-done td { background:#ecfdf5; }
+  tr.row-done td:first-child { border-left:4px solid #059669; }
+  /* 每格開頭的「現在能不能跑＋前置」宣告 pill（資料來源＝target.runnable） */
+  .runnable { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11.5px; font-weight:600;
+              background:#eef2ff; color:#312e81; }
   ul,ol { margin:8px 0 12px 22px; } li { margin-bottom:5px; font-size:13.5px; }
   .warning { background:#fffbeb; border-left:4px solid #f59e0b; padding:13px 15px; border-radius:0 8px 8px 0; margin:12px 0; font-size:13.5px; }
   .success { background:#ecfdf5; border-left:4px solid #10b981; padding:13px 15px; border-radius:0 8px 8px 0; margin:12px 0; font-size:13.5px; }
@@ -45,6 +51,7 @@
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>兩個候選各給一個可判的 level：起點 ⇒ ~11.5（11.3–11.7）；batch ⇒ ~9.7</td></tr>
 <tr><th>預期（t/s）</th><td>11.5 / 9.7 —— 判別句是「哪一邊」，不是「多少」</td></tr>
+<tr><th>現在能跑？</th><td><span class="runnable">⛔ 現在不能跑 — 前置＝測試卡 §2.5 新增一格（batch／prompt／warm_skip 是嚴格維度，現有孿生只開 reps）⇒ operator 決策。</span></td></tr>
 <tr><th>現況（已量）</th><td><b>§56：11.703（<code>(default)</code>、<code>-b/-ub 5632</code>、一次 launch 兩列）與 8.26／9.7／10.7（<code>delivery</code>、<code>-b/-ub 512</code>、只有 tg 一列）的差，前提本身就不成立</b>——按 <code>cell_contract</code> 兩格<b>不可互比</b>。可量的那一項只有盒子：<b>−3.2%</b>（同 (default) 格：今天 11.327 vs 06:56 11.703）。剩下最大的候選是<b>量測起點</b>：default 的 tg 在<b>同一行程</b>裡排在 <code>pp2048</code> 之後（矩陣自註「ONE launch measures TWO rows」），delivery 沒有 pp 測試。證據：整臂 <code>fill_batch</code> 26.0/31.0 s vs <b>4.9/5.5 s</b>（<b>5×</b>）、<code>file_reads</code> 82k vs <b>26k</b>；default 的 reps 是平的，delivery 出現<b>單調上升</b>（+21%／+11%）且末 rep 落在 default 的平台高度（11.65／11.16 對 11.3–11.7）；<b>反向證據</b>——default 的 tg 窗較晚較熱卻反而快 ⇒ 熱不是主因。</td></tr>
 <tr><th>action</th><td>兩個互斥的判別臂、同一窗口成對：<b>B1</b>＝<code>delivery</code> 孿生加大 <code>warm_skip</code>（起點是主因 ⇒ 升到 ~11.5 且 reps 變平）；<b>B3</b>＝<code>(default)</code> 孿生用 <code>batch 512</code> 保留 <code>p2048</code>（batch 是主因 ⇒ 掉到 ~9.7）。⚠ 兩者都需要<b>測試卡 §2.5 新增一格</b>（<code>batch</code>／<code>prompt</code>／<code>warm_skip</code> 是嚴格維度，現有孿生機制只開放 <code>reps</code>／<code>rep_split</code>）</td></tr>
 <tr><th>驗收</th><td>B1 與 B3 的 tg level 至少一邊明顯靠近 11.5 或 9.7（差 ≥10%），且兩臂都過引用閘門（QUOTABLE）</td></tr>

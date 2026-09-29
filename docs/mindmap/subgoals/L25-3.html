@@ -24,6 +24,12 @@
   .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
+  /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
+  tr.row-done td { background:#ecfdf5; }
+  tr.row-done td:first-child { border-left:4px solid #059669; }
+  /* 每格開頭的「現在能不能跑＋前置」宣告 pill（資料來源＝target.runnable） */
+  .runnable { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11.5px; font-weight:600;
+              background:#eef2ff; color:#312e81; }
   ul,ol { margin:8px 0 12px 22px; } li { margin-bottom:5px; font-size:13.5px; }
   .warning { background:#fffbeb; border-left:4px solid #f59e0b; padding:13px 15px; border-radius:0 8px 8px 0; margin:12px 0; font-size:13.5px; }
   .success { background:#ecfdf5; border-left:4px solid #10b981; padding:13px 15px; border-radius:0 8px 8px 0; margin:12px 0; font-size:13.5px; }
@@ -45,6 +51,7 @@
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>—（它保護的是任何新讀數）</td></tr>
 <tr><th>預期（t/s）</th><td>讓 <b>36.33 ms／27.53 t/s</b>（09-29 成對實測）在 <code>attribution=none</code> 重現</td></tr>
+<tr><th>現在能跑？</th><td><span class="runnable">⛔ 現在不能跑 — 前置＝一場 <code>attribution=none</code> ∧ NOMINAL ∧ reps≥3 且<b>穩定</b>的窗口（§55 那場被判 UNSTABLE：max/min 2.691）。</span></td></tr>
 <tr><th>現況（已量）</th><td>§33–§46 <b>全部 <code>attribution=swap</code></b>；09-29 <b>§53 四場錨點嘗試</b>：記憶體項已拿下（reclaimable <b>9736</b>、無 override 起跑），但 swap growth = <b>338／1394／2401／4830 MiB</b> ⇒ 沒有一場 <code>none</code>；門檻 500 MiB <b>低於這支臂自己的成長分布</b>（550–2984，原文自陳「拒或不拒有一半是抽籤」）。</td></tr>
 <tr><th>action</th><td>找一場 <code>attribution=none</code> ∧ NOMINAL ∧ reps≥3 的窗口，跑交付 cell 錨點（prod-new ＋ harness bench）</td></tr>
 <tr><th>驗收</th><td>一場<b>可引用的成對</b>錨點</td></tr>
