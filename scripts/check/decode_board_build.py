@@ -420,8 +420,9 @@ def render_board(board, nodes, here, out_path):
         A('<div class="card stat"><div class="stat-value%s">%s</div><div class="stat-label">%s</div></div>'
           % (tone, s.get("value", ""), s.get("label", "")))
     A("</div>")
-    if board.get("reading"):
-        A('<div class="info">%s</div>' % board["reading"].strip())
+    # `reading`（①–⑧ 的敘述區塊）已於 2026-09-30 從 YAML 刪除：它與 `certified_note` 講同一件事
+    #   （認證只有三格、09-27 的 +25.7% 是冷啟 rep），同一頁講兩次就是「很亂」的來源。
+    #   可操作的兩句已併入 `certified_note`；其餘 §50–§58 的細節留在各自的 docs 與 git 歷史裡。
     A('<div class="legend"><span class="steps"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i></span> 進展＝%s ／ '
       '<span class="badge b-ok">已成立</span><span class="badge b-warn">有前置／待跑</span><span class="badge b-info">未立卡</span><span class="badge b-dead">已排除</span></div>'
       '<br>主節點（L20／L25）<span class="badge b-ok">達標</span>＝該層已有一場<b>可引用</b>''（引用閘門 <code>QUOTABLE</code>）的讀數達到目標；未達標<b>不變色</b>，理由寫在標題的 <code>title</code> 裡。''<br><span style="padding:2px 10px;border-left:6px solid #059669;background:#ecfdf5;border-radius:6px">綠底＝達標</span></div>'

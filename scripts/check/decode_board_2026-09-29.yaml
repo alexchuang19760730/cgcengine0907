@@ -21,37 +21,21 @@ summary:
   - {value: "19.2–24.5",  tone: "",  label: "20+ 路線的天花板（t/s）· 底未裁：49.18 或 36.80 ms"}
   - {value: "判死",       tone: bad, label: "decode ≥25（M-25）· 交付缺 45.45 ms；可交付回收 ≈ 0 ｜ <b>§51：B 的復活路被量死</b>——被定價的是散佈（320 op），漏掉的是<b>備援重算 320 列 ＝ 8.09 ms</b> ⇒ 淨回收 <b>−5.7 ~ −9.9 ms</b>（負）"}
 
-reading: |
-  <b>三個「結案」到現在只成立三格。</b>依 2026-09-29 定的規則，結案 = <b>prod-new</b> ＋ <b>harness bench</b> ＋ 達到跑前寫死的預期值。
-  本頁轉引的漂亮數字幾乎都來自<b>別的 profile／別的儀器</b> ⇒ 它們是<b>證據</b>，不是<b>結案</b>。
-  ① 已認證：prefill 296.24（≥250）、G4 中位 6.09%（≤25%）、交付錨點 11.703 t/s。② 未認證但可引用的判定：兩個帳目的仲裁（都是轉引）。
-  ③ 外推：kernel 22.6／21.8、G4 地圖 19.2、B 補丁 19.3–20.0 —— 只列位置，不算證據。
-  ④ <b>§50（09-29）</b>：decode ≥25 的判詞由「<b>判死</b>」改記「<b>未判定</b>」——越線的三格機制<b>不同</b>（27.17／24.88 是池凍結；25.64＝39.0 ms 是<b>池活著</b>、已過 G4 閘），
-  修正後 margin 只剩 <b>0.6–2.2 ms</b>，而它<b>小於</b> `k3-swing` 的 16.4% 未認證飄移 ⇒ 連「死不死」都落在未校準帶內。
-  <br>⑤ <b>§51（09-29，唯讀尖兵）推翻 ④ 的樂觀</b>：B 補丁的價目定錯了對象——被定價的是<b>散佈</b>（320 op × 5–10 µs），沒被定價的是<b>備援重算 320 列 ＝ 8.09 ms</b>（同儀器實測，因為靜態寬度被正確性逼成 k=8）。
-  ⇒ <code>39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms（18.9–20.5 t/s）</code> ⇒ <b>§50 的「未判定」撤回，decode ≥25 回到「判死」</b>；唯一未動的是 <b>L25-1 第六條軸</b>。
-  <br>⑥ <b>§55（09-29）引用閘門落地</b>：<code>attribution</code> 答的是「窗口乾不乾淨」，答不了「這一場的三個 rep 是不是同一個量」——交付 cell 唯一一場 <code>none</code> 是<b>最慢且離散 46%</b> 的那一場。
-  判準改為<b>逐 rep 離散</b>（沿用 <code>http_duo.py</code> 已校準的 <code>max/min ≤ 1.10</code>；bench 族獨立佐證：乾淨場 ≤1.09、不乾淨場 ≥1.24），由 <code>scripts/check/quote_gate.py</code> 持有；
-  <b>D7</b> 使「宣告的可引用性」與閘門當場判定不符就 build 失敗，且<b>結案不得建立在不可引用的讀數上</b>。
-  套用結果：<b>今日 5 場全不可引用</b>（4 場 <code>swap</code>／1 場 <code>UNSTABLE</code>）、歷史 8 列過 3 列（含認證錨點 11.703 ⇒ 1.061）。
-  <b>閘門抓到的第一件事</b>：09-27 的「舊基線 9.311」其 rep 1 是 4.12（其餘 12.01／11.80）⇒ kept 半邊＝<b>11.905</b>，與 11.703 幾乎相同 ⇒ §15 的「+25.7% 進步」主要是<b>冷啟 rep 的產物</b>，不是機器變快。
-  <br>⑦ <b>§56（09-29）「同一個格子但差 29%」的前提不成立</b>：11.703 是 <code>(default)</code> cell（<code>-b/-ub 5632</code>、<code>-p 2048</code>、一次 launch 兩列），8.26／9.7／10.7 是 <code>delivery</code> cell（<code>-b/-ub 512</code>、<code>-p 0</code>、只有 tg 一列）——按 <code>cell_contract</code> 兩格<b>不可互比</b>。可量的那一項只有盒子（同 (default) 格 −<b>3.2%</b>）；最大候選是<b>量測起點</b>：default 的 tg 在同一行程裡排在 pp2048 之後（整臂 <code>fill_batch</code> <b>5×</b>、<code>file_reads</code> 82k vs 26k），delivery 的 reps 則出現單調上升、末 rep 落在 default 的平台高度。已立項 <b>L20-10</b>（互斥的 B1／B3），但它需要<b>測試卡 §2.5 新增一格</b>才能跑。
-
-  <br>⑧ <b>§58（09-29）交付 cell 的第一列可引用讀數，以及一個差點變成假綠燈的 27.3</b>：全語料掃描（1061 列）只有 <b>4</b> 列可引用，而 <code>delivery</code> cell 的 30 列裡<b>只有 1 列</b>——<code>stepbudget_2026-09-29/delivery_fuse.json</code> <b>9.377 t/s</b>（逐 rep [8.83, 9.59, 9.70] ⇒ 1.099／kept 1.011、<code>none</code>、<code>contract.ok</code>、有成對 log）。它的孿生 <code>delivery_base</code>（同 cell、只差 <code>CGC_MMV_FUSE</code>）9.909 被<b>冷啟 rep</b> 擋下（kept 10.31 ⇒ 同帶）。<b>同一輪掃描的另一列才是重點</b>：SPAC K sweep 的 <code>k_sweep_T4_K4</code> 在<b>交付 cell</b> 上報 <b>27.338 t/s</b>（逐 rep 1.005）、<code>attribution=none</code> ⇒ <b>R1–R4 全過</b>，而 27.338 同時 ≥20 與 ≥25。但它的臂上掛著 <code>CGC_MISS_MASK_DBG</code>／<code>_COST</code>／<code>CGC_SPAC_DBG</code>，原始碼自己寫「<b>Never quote throughput from an arm with this on</b>」（<code>llama-context.cpp:3962</code>：每步多一次 synchronize）⇒ 沒有新規則時，只要有人把 L20／L25 的 evidence 指過去，<b>兩個主節點會一起變綠</b>。因此引用閘門補上 <b>R5 臂身分</b>（清單＝原始碼明文 never-quote 的 6 個旗標，附出處）⇒ 該列 <b>DIRTY</b>、全語料可引用數 5 → 4。這條與 §57 的綠燈規則是同一件事的兩面：<b>先把「可引用」判對，再讓綠燈跟著它走</b>。<b>§58b（09-30 00:15）</b>：把那三個旗標<b>洗掉</b>、其餘逐欄不變地重跑一次（同 build <code>e5d1c0f14</code>、<code>harness bench</code>）⇒ <b>26.203 t/s</b>（逐 rep 1.010）⇒ <b>level 不是旗標的產物</b>；那一場的窗口是 swap（+4344 MiB）⇒ 判 DIRTY，但下一次抽到乾淨窗口就會出現「≥25 而<b>輸出未驗</b>」的讀數（該臂 stderr：decode 期 <code>gather (ensure) hits=0/0</code>、<code>prefetch=0/0</code> ⇒ 池是 prefill 填的）⇒ 閘門再補 <b>R6 輸出見證</b>：單次提交臂沒有 M1／answer-hash 見證就不得引用其 t/s（可解除，見 <code>UNVERIFIED_OUTPUT_ARMS</code>）。
-
 stage_legend: ["已量到判定", "卡／動作就緒", "已跑出讀數", "已認證（prod-new ＋ harness bench ＋ 達標）"]
 
 rows:
   - id: "—"
     kind: certified
-# [2026-09-30 版面收斂] 本頁只保留三段：已認證／L20／L25。「其餘刪除」時，這兩句**必須**留在
-# 已認證段裡（它們是「什麼才叫認證」的判準），來源＝原本的 calls[0] 與 reading。
+# [2026-09-30 版面收斂] 本頁只保留三段：已認證／L20／L25。原本的 `calls`／`reading`／`stale`／`order`
+# 四個敘述鍵已全部刪除（`reading` 的 ①–⑧ 與這裡的 certified_note 講同一件事 ⇒ 同一頁講兩次就是亂）。
+# `certified_note` 是那兩句判準的唯一落點：認證只有三格、09-27 的「+25.7%」是冷啟 rep 的產物。
 certified_note:
   title: "本頁只有三段（已認證／L20／L25）—— 而「結案」到現在只成立三格："
   lines:
     - "① <b>只有 C1／C2／C3 三格</b>符合結案規則（<code>prod-new</code> ＋ <code>harness bench</code> ＋ 達標）：prefill ≥250、G4 重算 ≤25%、以及錨點本身（錨點是<b>基準</b>不是目標）。<b>L20／L25 兩層沒有任何一格結案。</b>"
     - "② ⚠ <b>歷史上的「進步」要打折</b>：09-27 那條「舊基線 9.311」其 rep 1 是 4.12（其餘 12.01／11.80）⇒ kept 半邊 ＝ <b>11.905</b>，與錨點 11.703 幾乎相同 ⇒ 當時的「＋25.7%」主要是 <b>冷啟 rep 的產物，不是機器變快</b>。"
     - "③ ⇒ <b>引用任何 t/s 之前先過引用閘門</b>（逐 rep 離散／樣本數／窗口／參考帶／<b>臂身分 R5</b>／<b>輸出見證 R6</b>）。全語料 1061 列裡只有 <b>4</b> 列可引用，交付 cell 的 30 列裡<b>只有 1 列</b>。<br>帳目：見 <code>scripts/check/quote_gate.py</code> 與 <code>docs/quote_gate_2026-09-29/</code>。"
+    - "④ <b>R6 可解除</b>（它擋的是「單次提交臂的輸出未被驗」，不是那支臂永遠不可用）：產物附上 M1／answer-hash 見證即回到正常判準；解除條件寫死在 <code>UNVERIFIED_OUTPUT_ARMS</code>（<code>scripts/check/quote_gate.py</code>）。"
 certified:
   - id: C1
     item: "prefill ≥ 250（交付 cell）"
