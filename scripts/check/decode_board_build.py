@@ -321,6 +321,9 @@ def validate(board, nodes, root=ROOT):
                 errs.append("D1 %s 指向不存在的節點 %s" % (t["id"], n))
     covered = {n for t in targets for n in (t.get("nodes") or [])}
     seen = set()
+    # ⚠ `notes` **仍然必需**，雖然 09-30 之後不再渲染：它是 D2 的唯一依據（每個未結案節點
+    #   必須「被子目標覆蓋」或「被分類」）。拿掉它會讓下面那條 D2 對所有里程碑／A 軸節點報紅，
+    #   或者（若順手也拿掉 D2）讓「全數有歸屬」從一條會紅的閘門降級成一句沒人驗的聲明。
     for note in board.get("notes") or []:
         n = note.get("node")
         if n not in nodes:
@@ -339,12 +342,8 @@ def validate(board, nodes, root=ROOT):
                 if tok not in by_id:      # 複合格（L20-1／2／3）逐段驗
                     errs.append("D3 %s 的 by 指到不存在的子目標：%s" % (n, tok))
         covered.add(n)
-    for s in board.get("stale") or []:
-        if s.get("node") not in nodes:
-            errs.append("D1 stale 指向不存在的節點 %s" % s.get("node"))
-        for f in ("have", "want"):
-            if not s.get(f):
-                errs.append("D3 stale %s 缺欄位 %s" % (s.get("node"), f))
+    # `stale`（節點文字就地更新的紀錄）已於 2026-09-30 隨「本頁只保留三段」一併從 YAML 移除；
+    # 它沒有任何閘門依賴它（純敘述），所以這裡不留死碼。
     for n in [x for x in live_nodes(nodes) if x not in covered]:
         errs.append("D2 未結案節點既沒被子目標覆蓋、也沒被分類：%s" % n)
     cr = board.get("closure_rule") or {}
@@ -445,7 +444,16 @@ def render_board(board, nodes, here, out_path):
           "<td>%s</td><td>%s</td><td><code>%s</code></td></tr>"
           % (c["id"], c["item"], c["value"], c["profile"], c["entry"],
              "✅" if c.get("meets") else "—", gate, c.get("source", "")))
-    A("</tbody></table>")
+        A("</tbody></table>")
+    # [CGC 2026-09-30 版面收斂] 本頁＝**三段**：已認證／L20／L25。operator 的指令：
+    # 「三個『結案』到現在只成立三格；以下（冷啟 rep 的產物，不是機器變快）以上的內容請整理在
+    #   已認證/L20/L25 上面，其餘刪除。」
+    # ⇒ 兩句必須留在**已認證**段裡（它們正是「什麼才叫認證」的判準），而不是散在後面的敘述段。
+    #   資料來源＝`certified_note`（YAML）；其餘段落的 `order`／`calls`／`stale` 已從資料裡移除。
+    cn = board.get("certified_note") or {}
+    if cn:
+        A('<div class="warning"><b>%s</b>%s</div>'
+          % (cn.get("title", ""), "".join("<br>%s" % x for x in (cn.get("lines") or []))))
     for layer in board.get("layers") or []:
         met, why = layer_goal(layer)
         head = layer.get("title", layer.get("id", ""))
@@ -488,50 +496,17 @@ def render_board(board, nodes, here, out_path):
                  t["accept"], t["falsify"], chcell, cls, st, cert,
                  "".join('<i class="%s"></i>' % ("on" if i < t["stage"] else "") for i in range(4))))
         A("</tbody></table>")
-    for c in board.get("calls") or []:
-        A('<div class="%s">%s</div>' % (c.get("tone", "info"), c.get("html", "")))
-    if board.get("order"):
-        A("<h3>建議施工順序</h3><div class=\"card\"><ol>")
-        for o in board["order"]:
-            A("<li>%s</li>" % o)
-        A("</ol></div>")
-    notes = board.get("notes") or []
-
-    def section(title, sub, cols, rows):
-        if not rows:
-            return
-        A("<h2>%s</h2>" % title)
-        if sub:
-            A('<p class="legend">%s</p>' % sub)
-        A("<table><thead><tr>%s</tr></thead><tbody>" % "".join("<th>%s</th>" % c for c in cols))
-        for r in rows:
-            A("<tr>%s</tr>" % "".join("<td>%s</td>" % x for x in r))
-        A("</tbody></table>")
-
-    section("C 軸：背景上界（依定義不是槓桿，但不能消失）",
-            "依 <code>mindmap.json</code> 的 C 軸定義：受模型形狀與 kernel 物理約束 ⇒ 只當背景約束與上界。",
-            ["節點", "已量（取自 mindmap 的 res）", "為什麼不是槓桿"],
-            [["<code>%s</code>" % n["node"], esc((nodes.get(n["node"]) or {}).get("res", "—")), n.get("why", "")]
-             for n in notes if n.get("class") == "c-axis"])
-    section("已仲裁的帳目（本輪 09-29；兩者都因 profile／儀器不認證而不結案）", None,
-            ["節點", "仲裁", "影響"],
-            [["<code>%s</code>" % n["node"], n.get("why", ""), n.get("impact", "")]
-             for n in notes if n.get("class") == "account"])
-    section("節點文字：本輪已就地更新（09-29）", None,
-            ["節點", "舊文字", "新文字", "狀態"],
-            [["<code>%s</code>" % s["node"], s.get("have", ""), s.get("want", ""), s.get("state", "")]
-             for s in (board.get("stale") or [])])
-    section("已由子目標覆蓋的節點（對位表）", None,
-            ["節點", "覆蓋它的子目標"],
-            [["<code>%s</code>" % n["node"],
-              '<a href="%s"><b>%s</b></a>' % (rel_from(here, os.path.join(PAGES_DIR, str(n.get("by", "")).split("／")[0] + ".html")), n.get("by", ""))]
-             for n in notes if n.get("class") == "handled"])
-    rest = [n for n in notes if n.get("class") in ("done", "goal", "no-claim", "recheck")]
-    section("其餘未結案節點（已結／里程碑／不主張吞吐／待複核）", None,
-            ["節點", "分類", "說明"],
-            [["<code>%s</code>" % n["node"], n.get("class", ""), n.get("why", "")] for n in rest])
+    # ── 以下是 09-30 之前會渲染、現在**整段移除**的區塊（operator：其餘刪除）─────────
+    #   ① `calls`（要點）：其中兩句已整理進 已認證 段的 `certified_note`；
+    #   ② `order`（建議施工順序）：活項都已寫在各格的 `action` 裡；
+    #   ③ `notes` 的五個分類段（C 軸上界／已仲裁帳目／節點文字就地更新／對位表／其餘未結案節點）
+    #      —— 這些是**導覽視圖**，資料仍在 `mindmap.json` 與各節點頁。
+    #   ⚠ `notes` **刻意留在 YAML 裡**：它同時是 D2 的依據（未結案節點必須有歸屬），
+    #     刪它等於刪掉一條會紅的閘門、把「全數有歸屬」變成沒人驗的聲明。
+    #     所以本檔只停渲染，不動那份分類表；`stale`（節點文字更新紀錄）純敘述 ⇒ 已從 YAML 移除。
     A("<footer>本檔由 <code>scripts/check/decode_board_build.py</code> 從 <code>%s</code> ＋ <code>docs/mindmap/mindmap.json</code> "
-      "<b>生成</b>（勿手改）；資料截止 <b>%s</b>；未結案節點共 <b>%d</b> 個，全數有歸屬（<code>--check</code> 可驗）。<br>%s</footer>"
+      "<b>生成</b>（勿手改）；資料截止 <b>%s</b>；本頁<b>只保留三段</b>（已認證／L20／L25）——"
+      "未結案節點共 <b>%d</b> 個，歸屬仍在 <code>mindmap.json</code> 與各節點頁（<code>--check</code> 可驗）。<br>%s</footer>"
       % (os.path.relpath(DEFAULT_YAML, ROOT), board.get("data_asof", "—"), len(live_nodes(nodes)), board.get("footer", "")))
     A("</div></body></html>")
     return "\n".join(L) + "\n"
