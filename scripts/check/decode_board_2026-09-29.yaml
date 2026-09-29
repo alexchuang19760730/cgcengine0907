@@ -147,10 +147,10 @@ layers:
         accept: "M1 <b>9/9</b> ∧ M2 <b>9/9</b>、<code>config_diffs==[]</code>、op 增量 <b>320 且不隨 miss 放大</b>、生產路徑無新增 <code>synchronize</code>；<b>§51 的前置</b>「每層 miss 上界 ≤ k」——<b>09-29 實測不成立</b>（穩態峰值 <b>6</b>；≤2 只覆蓋 <b>64%</b> 的步）"
         falsify: "成本隨 miss 縮放 ⇒ 靜態圖論證不成立"
         stage: 1
-        badge: {text: "前置否證", tone: danger}
+        badge: {text: "結案（排除）", tone: ok}
         charter: scripts/check/charters/e-b-accpatch-feasibility-2026-09-29.yaml
-        state: "未結案（<b>前置已量、不成立</b>：穩態每層峰值 <b>6</b>；連把設計點降到峰值 6，重算 <b>6.07 ms</b> 都 > 它要取代的 fill <b>3.955</b>）"
-        evidence: {profile: prod-new, entry: "harness bench", value: "逐層 max 分布（穩態 322 步）：1→43、2→163、<b>3→82、4→28、5→5、6→1</b>；平均 <b>0.470</b> miss/層。✅ 計數器（結構量，不隨窗口漂移）；⚠ 同趟 t/s 不可引用", metric: "count_per_layer", meets: false}
+        state: "結案（排除）——<b>前置已量、不成立</b>：穩態每層峰值 <b>6</b>；連把設計點降到峰值 6，重算 <b>6.07 ms</b> 都 > 它要取代的 fill <b>3.955</b>（09-30 operator：既然綠底，狀態就該寫結案——排除也是結案）"
+        evidence: {profile: prod-new, entry: "harness bench", value: "逐層 max 分布（穩態 322 步）：1→43、2→163、<b>3→82、4→28、5→5、6→1</b>；平均 <b>0.470</b> miss/層。✅ 計數器（結構量，不隨窗口漂移）；⚠ 同趟 t/s 不可引用", metric: "count_per_layer", meets: false, cert_by: "前置否證（miss 直方圖實測，非達標）", source: "docs/MISSHIST_REVIVAL_GATE_2026-09-29.md"}
         options:
           profile: prod-new
           arms: []

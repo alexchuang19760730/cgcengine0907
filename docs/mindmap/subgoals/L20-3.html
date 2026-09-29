@@ -47,7 +47,7 @@
 <nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container">
 <h1>L20-3 ｜ 重算本體 B（靜態 <code>ggml_acc</code>）</h1>
-<p class="subtitle">結案狀態：<span class="badge b-ok">未結案（<b>前置已量、不成立</b>：穩態每層峰值 <b>6</b>；連把設計點降到峰值 6，重算 <b>6.07 ms</b> 都 > 它要取代的 fill <b>3.955</b>）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
+<p class="subtitle">結案狀態：<span class="badge b-ok">結案（排除）——<b>前置已量、不成立</b>：穩態每層峰值 <b>6</b>；連把設計點降到峰值 6，重算 <b>6.07 ms</b> 都 > 它要取代的 fill <b>3.955</b>（09-30 operator：既然綠底，狀態就該寫結案——排除也是結案）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>−0.76 ~ −2.36（＝還回去的 fill 3.96 − op 1.60~3.20）</td></tr>
 <tr><th>預期（t/s）</th><td>+0.2 ~ +0.6（在 19.2 的天花板上位移；底在 36.8 側則 +0.7 ~ +2.0）</td></tr>
@@ -60,6 +60,7 @@
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
 <tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td>逐層 max 分布（穩態 322 步）：1→43、2→163、<b>3→82、4→28、5→5、6→1</b>；平均 <b>0.470</b> miss/層。✅ 計數器（結構量，不隨窗口漂移）；⚠ 同趟 t/s 不可引用</td><td>count_per_layer</td><td>❌</td></tr>
 </tbody></table>
+<div class="success"><b>排除依據（前置否證（miss 直方圖實測，非達標））</b>：docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</div>
 <h3>臂（options）</h3>
 <div class="warning">本格<b>沒有可跑的臂</b> —— 宣告過的臂全部被 R5／R6 擋掉（見下），所以 20+／25+ 不可能靠它們量到。</div>
 <div class="warning"><b>已刪除的臂</b> <code>prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_MISS_MASK_HIST=1</code>（R5／R6）<br>唯一的臂同時帶三個「原始碼／登記表明文不得引用吞吐」的診斷量具（R5）與單次提交（R6）⇒ 它量到的是量具的成本，不是交付目標。</div>
