@@ -53,6 +53,10 @@
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
 <tr><td><code>prod25（探針驅動）</code></td><td><code>prebind_probe_run.sh／rho 探針</code></td><td>4.76 ms/step 插入成本</td><td>ms_per_step</td><td>❌</td></tr>
 </tbody></table>
+<h3>臂（options）</h3>
+<ul><li><code>prod-new:CGC_PREBIND_PROBE=1</code></li></ul>
+<div class="warning"><b>已刪除的臂</b> <code>prod-new:CGC_RHO_PROBE=1</code>（R5）<br>CGC_RHO_PROBE 自帶每層同步讀回，登記表明文 never quote throughput from it alone（R5）⇒ 它的 t/s 不能當 20+ 的數。</div>
+<p>前置題：先付 4.76 ms（藏掉或攤平）再談收益；前置成本 ≤ 收益且覆蓋不降才算過。</p>
 <h3>立項（charter）</h3>
 <ul>
 <li><a href="../../../scripts/check/charters/e-prefetch-prereq-2026-09-29.yaml"><code>scripts/check/charters/e-prefetch-prereq-2026-09-29.yaml</code></a></li>

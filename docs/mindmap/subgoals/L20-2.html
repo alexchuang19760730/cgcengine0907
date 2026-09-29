@@ -53,6 +53,11 @@
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
 <tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td>A 0/250582 → B 250636/0（翻轉）；逐層 142=ns−1；counter 端點 ⇒ 髒窗可判（attribution=swap、pageins +0.88M／+0.52M）</td><td>zero_slot_flip</td><td>✅</td></tr>
 </tbody></table>
+<h3>臂（options）</h3>
+<div class="warning">本格<b>沒有可跑的臂</b> —— 宣告過的臂全部被 R5／R6 擋掉（見下），所以 20+／25+ 不可能靠它們量到。</div>
+<div class="warning"><b>已刪除的臂</b> <code>prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1</code>（R6）<br>本格結案判的是計數器翻轉（zero_slot>0 且 placeholder=0），不是 t/s；作為「量 20+ 的選項」它不合格（R6）。</div>
+<div class="warning"><b>已刪除的臂</b> <code>prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1</code>（R6）<br>同上：處理臂也是單次提交臂，其 t/s 不可當交付目標的讀數（R6）；結案依據是 counter_quote，不是這一條。</div>
+<p>A/B 兩臂只差 CGC_ZERO_SLOT，不動 src/；2 趟，主端點是計數器不是 t/s。</p>
 <h3>立項（charter）</h3>
 <ul>
 <li><a href="../../../scripts/check/charters/e-s1-g3-zeroslot-2026-09-29.yaml"><code>scripts/check/charters/e-s1-g3-zeroslot-2026-09-29.yaml</code></a></li>

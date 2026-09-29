@@ -53,6 +53,9 @@
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
 <tr><td><code>prod25（MTP on）</code></td><td><code>bench／server ABBA</code></td><td>19.25（k=3）／24.59（k→∞）</td><td>tps</td><td>❌</td></tr>
 </tbody></table>
+<h3>臂（options）</h3>
+<ul><li><code>prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1</code></li></ul>
+<p>⛔ 必帶 --spec-draft-n-max 1：沒帶就是 k_eff≈2.33 必 thrash。且 MTP on/off 是不同輸出函數 ⇒ t/s 不可互比。</p>
 <h3>立項（charter）</h3>
 <ul>
 <li><a href="../../../scripts/check/charters/exp-m-draft-cost.yaml"><code>scripts/check/charters/exp-m-draft-cost.yaml</code></a></li>

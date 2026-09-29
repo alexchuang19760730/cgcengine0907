@@ -54,6 +54,10 @@
 <tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td>S1 **36.33 ms**（27.526±0.228 t/s）vs 控制 **88.29 ms**（11.327±0.349）——**兩臂皆 attribution=swap（+851／+1768 MiB）⇒ 不可引用**</td><td>ms_per_step</td><td>❌</td></tr>
 </tbody></table>
 <div class="warning"><b>引用閘門：DIRTY</b>（判準＝<code>scripts/check/quote_gate.py</code>，逐 rep 離散 ＋ 樣本數 ＋ 窗口 ＋ 參考帶）<br>產物 <a href="../../../Backup/clean_window_2026-09-29/s1_1.json"><code>Backup/clean_window_2026-09-29/s1_1.json</code></a><br>逐 rep [27.26, 27.65, 27.67] ⇒ max/min 1.015（合格）；被擋在窗口項：attribution=swap</div>
+<h3>臂（options）</h3>
+<div class="warning">本格<b>沒有可跑的臂</b> —— 宣告過的臂全部被 R5／R6 擋掉（見下），所以 20+／25+ 不可能靠它們量到。</div>
+<div class="warning"><b>已刪除的臂</b> <code>prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1</code>（R6）<br>這一格的數（27.53／36.33 ms）只能從單次提交臂出來，而單次提交臂的 t/s 與交付目標不是同一個函數（R6）。</div>
+<p>控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。</p>
 <h3>立項（charter）</h3>
 <ul>
 <li><a href="../../../scripts/check/charters/e-s1-base-calibrate-2026-09-29.yaml"><code>scripts/check/charters/e-s1-base-calibrate-2026-09-29.yaml</code></a></li>

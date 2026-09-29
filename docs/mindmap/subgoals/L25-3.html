@@ -54,6 +54,10 @@
 <tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td><b>§54 22:40 交付 cell、8 GiB、無 override：<code>attribution=none</code></b>（swap +356.44 MiB、NOMINAL 126/126）——但 <b>8.26 ± 3.79 t/s</b>（離散 46%）≠ 錨點 11.703（85.45 ms）；本輪 5 場無一重現錨點</td><td>tps</td><td>❌</td></tr>
 </tbody></table>
 <div class="warning"><b>引用閘門：UNSTABLE</b>（判準＝<code>scripts/check/quote_gate.py</code>，逐 rep 離散 ＋ 樣本數 ＋ 窗口 ＋ 參考帶）<br>產物 <a href="../../../Backup/pool_window_2026-09-29/anchor8g.json"><code>Backup/pool_window_2026-09-29/anchor8g.json</code></a><br>逐 rep [10.45, 10.44, 3.88]：第 3 個 rep 慢 2.7× ⇒ max/min 2.691；窗口 none 但量到的不是同一個東西</div>
+<h3>臂（options）</h3>
+<ul><li><code>prod-new</code></li></ul>
+<p>窗口條件不是旋鈕：attribution=none ∧ thermal NOMINAL ∧ reps≥3。CGC_WINDOW_OVERRIDE 是繞過閘門的開關，不能當本格的 option。</p>
+<p>產物＝一場可引用的成對錨點（交付 cell、prod-new、harness bench）。</p>
 <h3>立項（charter）</h3>
 <ul>
 <li><a href="../../../scripts/check/charters/e-clean-window-2026-09-29.yaml"><code>scripts/check/charters/e-clean-window-2026-09-29.yaml</code></a></li>

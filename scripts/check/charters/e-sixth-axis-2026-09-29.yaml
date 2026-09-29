@@ -74,7 +74,9 @@ inventory:
       mechanism: "bpw 3.12 → ≤1.96（IQ2_XXS 級）或模型 ≤8 GiB"
       magnitude: "§7 排名第一，理論直達 ~100 t/s"
       identity: "**換模型 ⇒ M1 不適用**"
-      status: PRODUCT_DECISION（同 C6 類）
+      status: FORBIDDEN —— **operator 裁定（2026-09-30）：量化不做**（不再是「待決策」，是**被禁止**）
+      ruling: "⇒ §8.3／§8.4 那條『只壓專家 bpw』（2.5 ⇒ 24.5 t/s；1.94 ⇒ ~45 t/s）**從槓桿清單移除**；
+               『裝得下』那一類只剩**不換模型**的手段（池容量／load-mode 這類）。"
     - id: topk
       changes: bytes/token（真）
       mechanism: "top-8 → 更少專家"
@@ -165,7 +167,7 @@ subgoals:
       ② 同一性：兩臂**都不是投機臂** ⇒ forward 份數相同 ⇒ `--align step` 必須成立
          （common == 全部；這是第一次能真正判 ③ 的機會，ngram 那輪因對齊失敗只能記 UNDECIDABLE）。
     succeed_if: "B 的 miss/step 或有 miss 的層數相對 A 降 >10% ⇒ 找到第六條軸的第一個真乘數 ⇒ 再跑乾淨成對取可引用 t/s"
-    falsify_if: "Δ ≤ ~5% ⇒ load-mode 不動 miss 桶 ⇒ SECONDARY 否證；引擎側候選窮盡（PRIMARY ngram 已否證）⇒ L25-1 收在「候選已盡」，力氣轉 §8.3／§8.4 只壓專家 bpw（產品／模型決策）"
+    falsify_if: "Δ ≤ ~5% ⇒ load-mode 不動 miss 桶 ⇒ SECONDARY 否證；引擎側候選窮盡（PRIMARY ngram 已否證）⇒ **25 定案：判死**（引擎候選窮盡 ＋ 唯一有算術的模型側槓桿『降專家 bpw』已被 operator 禁止）。力氣回 L20（20+，天花板 19.2–24.5）與 L25-4 的口徑決策"
     how: |
       `python3 scripts/check/harness.py bench --arm "prod-new:CGC_MISS_MASK=1;CGC_MISS_MASK_HIST=1;CGC_LOGITS_ORACLE_DUMP=<path>" [--arm 內再加 CGC_SERVER_LOAD_MODE=mmap]`
       ＋ `--charter scripts/check/charters/e-sixth-axis-2026-09-29.yaml`（reps 3 權威 cell）。
@@ -197,5 +199,5 @@ options:
     - {name: --spec-ngram-simple-size-n, value: "12（編譯期預設，不可覆寫）", role: candidate, why: "⛔ bench 拒絕此旗標 ⇒ 在唯一認可入口上**只能跑預設**；要掃參數得先改 `src/`（且改動會動到共用 binary）", source: "common.h:367-371；llama-bench.cpp:1330"}
     - {name: --spec-ngram-simple-size-m, value: "48（同上）", role: candidate, why: "⛔ 同上（`--spec-ngram-simple-size-m` 也被 bench 的 arg 白名單拒）", source: "同上"}
     - {name: --spec-ngram-simple-min-hits, value: "1（同上）", role: candidate, why: "⛔ 同上", source: "同上"}
-    - {name: CGC_SERVER_LOAD_MODE, value: "mmap", role: candidate, why: "被測 SECONDARY：dense 段由匿名頁變可回收檔案頁 ⇒ 改變「誰在搶實體記憶體」⇒ 間接影響<b>有效池容量</b>。⚠ <b>它的舊依據（§7 的「等效慢速位元組 f」，f 20% ⇒ 85.9 ms、25 要 f ≤7.9%）已被同一份文件的 §8 判為<u>錯模型</u></b>：「§7 用『SSD 3 GB/s × 全部 1.171 GB』是錯模型；miss 的成本是 page fault ＋ 拷貝 ＋ 等待，不是傳輸」。§8 的正確口徑：85.8 ms ≈ <b>64 ms miss 相關（75%）＋ 22 ms 其他</b>；那 22.4% 是<b>容量 miss</b>（工作集 10.3 GiB vs 專家 11.5 GiB）⇒「容量 miss 靠 prefetch 救不了，只能<b>裝得下</b>或<b>訪問更少</b>」。⇒ 本鈕屬「裝得下」那一類（間接），<b>不是</b>降 bytes。<b>09-30 已驗它到得了引擎</b>：prod-new 解析後是 <code>--load-mode none</code>，設這顆 ⇒ <code>--load-mode mmap</code>，且 <code>llama_bench_matrix.arm_env_dropped()</code> 回<b>空清單</b>。⚠ 它是 run_server.sh 的別名（被翻譯成 argv）⇒ <code>grep src/</code> 會 0 命中，<b>那不是判據</b>。⛔ <b>09-30 實跑被 cell contract 擋下（fail-closed）</b>：<code>load_mode</code> 是 <b>cell 級欄位</b>不是 arm 級旋鈕 —— 實際 <code>mmap</code> ≠ 權威 <code>none</code> ⇒ 拒跑。要跑它必須先在<b>測試卡 §2.5 新增一格</b>（同 L20-10 的情況）", source: "scripts/run_server.sh:513-518（預設 none）；docs/DECODE25_CEILING_2026-09-20.md §7"}
+    - {name: CGC_SERVER_LOAD_MODE, value: "mmap", role: candidate, why: "被測 SECONDARY：dense 段由匿名頁變可回收檔案頁 ⇒ 改變「誰在搶實體記憶體」⇒ 間接影響<b>有效池容量</b>。⚠ <b>它的舊依據（§7 的「等效慢速位元組 f」，f 20% ⇒ 85.9 ms、25 要 f ≤7.9%）已被同一份文件的 §8 判為<u>錯模型</u></b>：「§7 用『SSD 3 GB/s × 全部 1.171 GB』是錯模型；miss 的成本是 page fault ＋ 拷貝 ＋ 等待，不是傳輸」。§8 的正確口徑：85.8 ms ≈ <b>64 ms miss 相關（75%）＋ 22 ms 其他</b>；那 22.4% 是<b>容量 miss</b>（工作集 10.3 GiB vs 專家 11.5 GiB）⇒「容量 miss 靠 prefetch 救不了，只能<b>裝得下</b>或<b>訪問更少</b>」。⇒ 本鈕屬「裝得下」那一類（間接），<b>不是</b>降 bytes。★ <b>operator 裁定（09-30）：量化不做</b> ⇒「降專家 bpw 來裝得下」也被排除 ⇒「裝得下」只剩<b>不換模型</b>的手段（池容量／load-mode 這類）。<b>09-30 已驗它到得了引擎</b>：prod-new 解析後是 <code>--load-mode none</code>，設這顆 ⇒ <code>--load-mode mmap</code>，且 <code>llama_bench_matrix.arm_env_dropped()</code> 回<b>空清單</b>。⚠ 它是 run_server.sh 的別名（被翻譯成 argv）⇒ <code>grep src/</code> 會 0 命中，<b>那不是判據</b>。⛔ <b>09-30 實跑被 cell contract 擋下（fail-closed）</b>：<code>load_mode</code> 是 <b>cell 級欄位</b>不是 arm 級旋鈕 —— 實際 <code>mmap</code> ≠ 權威 <code>none</code> ⇒ 拒跑。要跑它必須先在<b>測試卡 §2.5 新增一格</b>（同 L20-10 的情況）", source: "scripts/run_server.sh:513-518（預設 none）；docs/DECODE25_CEILING_2026-09-20.md §7"}
   note: "⚠ 本格的 `knobs.name` 有兩種：`CGC_*`＝env；`--*`＝**CLI 旗標**（`--spec-type` 不是 env，寫成 env 會被 allowlist 靜默丟掉 —— 那正是 MTP 修復臂空轉一趟的原因）。三趟：A 對照＝裸 `prod-new`（不帶任何 spec 旗標）、B＝A ＋ 上面那串、C＝B 重跑（驗 ON 自身 identical）。驗收三條：**① `need_n_rs_seq()==0` ② `E>1` ③ `answer_md5` 與 A 相同**。⛔ 三趟的 t/s 一律先過引用閘門；本格的第一個產物是「有沒有乘數」，不是速度。"
