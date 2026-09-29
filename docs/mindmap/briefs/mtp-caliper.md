@@ -36,7 +36,7 @@
 - **儀器開關**（不是被測 option）：`CGC_MTP_PERF=1`
 - **CLI**：`--spec-type draft-mtp`；`--spec-draft-n-max 1`
 - **arm 1（可複製）**：`prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1`
-- **結案狀態**：未結案（交付口徑第一次量到、但窗劣化＋逾時中斷 ⇒ 只有單邊上界 m ≤0.257，不是判詞）
+- **結案狀態**：未結案（判準兩半已答：m ≈ 0.10、主項＝draft 流量；缺的是同一配置下一趟乾淨的複核）
 - **逐條處置**：整合進子目標　→ `L25-5`　—　MTP 口徑與混淆定位：m 的每一個讀數都要先過它
 - **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
 - ★ 09-29 起本格的量測口徑改為 prod-new ＋ harness bench（唯一認可入口），不再是 prod25／server ABBA。判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。⚠ 單邊性：窗劣化只把 wall 吹大 ⇒ 實測 t_draft ≥ 真值 ⇒ 由它算出的 m 是上界。

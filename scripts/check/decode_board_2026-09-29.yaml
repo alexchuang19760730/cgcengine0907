@@ -72,6 +72,10 @@ layers:
   - id: L20
     title: "L20（decode ≥20）：9 個子目標"
     note: "主節點 <code>exp-prodnew-decode20-g4miss</code>（S／3a／target 20.0）；其餘各掛它自己的節點。上限 <b>19.2–24.5 t/s</b> —— <b>L20 自己就壓在 20 的邊界上</b>。"
+    goal: {metric: tps, target: 20.0, crit: "decode t/s（交付 cell）"}
+    evidence: {artifact: "Backup/mtp_off_clean/res_2026-09-29c.json", value: 11.703, metric: tps,
+               quote_verdict: QUOTABLE, met: false,
+               note: "全語料目前唯一可引用的 decode 讀數（逐 rep 1.061，(default) cell）⇒ 距 20.0 還差 41%；交付 cell 今日 5 場 0/5 可引用，沒有第二個候選"}
     targets:
       - id: L20-1
         title: "底（S1 的 step）校準"
@@ -294,6 +298,10 @@ layers:
   - id: L25
     title: "L25（decode ≥25）：6 個子目標 —— 沒有一格是既有清單的加數"
     note: "它們各自是「讓 25 重新變成<b>可判定</b>的問題」的手段，不是「讓 25 成立」的手段。節點 <code>m-decode25</code>（both／4）、<code>exp-caliber-calibration</code>（na／3a／target 25.0）。"
+    goal: {metric: tps, target: 25.0, crit: "decode t/s（交付 cell）"}
+    evidence: {artifact: "Backup/mtp_off_clean/res_2026-09-29c.json", value: 11.703, metric: tps,
+               quote_verdict: QUOTABLE, met: false,
+               note: "§51 已把 decode ≥25 記回判死（缺口 45.45 ms）；本層 6 格沒有一格在 25 上成立 ⇒ 綠燈無資料可亮"}
     targets:
       - id: L25-1
         title: "第六條軸：改「每 token 的 bytes 或 steps」"
@@ -382,15 +390,15 @@ layers:
         nodes: [mtp-2x, mtp-caliper, mtp-instrument, mtp-accept]
         expect_ms: "不需再追 2×（已判不成立）；改沿 m／acc 立判準"
         expect_tps: "m ≤0.30 ⇒ 上限 24.59"
-        now: "「加速比 2」<b>已判不成立</b>（k 加到多大都不到 2×；現況每產出 token 成本 45.6–56.4 vs baseline 48.2 ⇒ 攤薄 ≈ 0）。caliper：<b>同 launch ×1.06、生產 ×0.695（方向相反）</b>。<br><b>09-29 改到交付口徑重測（prod-new ＋ harness bench、k=1）</b>：cell 口徑通過、<code>k_eff=gen_tok_per_round=1.000</code> 見證到 ⇒ 配方成立；但<b>臂被驅動中止（arm-timeout 420 s）</b>、窗口劣化（頁入 +8.4 M、swap）⇒ 只有 <b>1 行</b> <code>CGC-MTP-PERF</code>（累計均值，無法差分）⇒ 只能給<b>上界</b>：<code>t_draft=703.1 ms／32 輪 ＝ 21.97 ms/輪</code> ÷ 錨點 85.45 ⇒ <b>m ≤ 0.257</b>。"
-        action: "沿 m／acc 兩條目標各自立準；<b>量測要點已改</b>：交付口徑（prod-new ＋ harness bench）＋ k=1 ＋ <code>CGC_MTP_PERF=1</code>，且要跑到**至少 2 行**才能差分"
-        accept: "m ≤0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）"
+        now: "「加速比 2」<b>已判不成立</b>（k 加到多大都不到 2×；現況每產出 token 成本 45.6–56.4 vs baseline 48.2 ⇒ 攤薄 ≈ 0）。caliper：<b>同 launch ×1.06、生產 ×0.695（方向相反）</b>。<br><b>09-29 判準兩半都有答案了</b>：① <b>m ≈ 0.10</b>（k=1，差分 6 行：T_draft <b>8.41–9.45 ms/輪</b> ÷ 錨點 85.45；同趟分母讀法 0.153）② <b>主項＝draft 流量</b>：T_draft 對 k <b>線性</b>（k=1..4 ⇒ 8.4–9.5／15.6–16.5／22.8–24.2／30.3–31.2 ms/輪），斜率 ≈ <b>7.3 ms per draft token</b>、截距 ≈1.5 ⇒ 主導項是「每個 draft token 一次 forward」。<br>⚠ 那批是 09-24 <code>s1_ksweep</code>（同 cell、pool 3 GiB＋soft pool、build 0.0.578）⇒ <b>證據、非認證</b>；今晚 prod-new ＋ harness bench 兩趟都落劣化窗（B2 <code>attribution=both</code>、頁入 +12.9 M）⇒ 同臂 T_draft 變 <b>24.7 ms/輪</b>（<b>m ≤ 0.289</b>，上界）。"
+        action: "① <b>結案只差一趟</b>：同 cell、<b>pool 8 GiB</b>、<code>attribution=none</code> 的 k=1 一趟（把 8.4 ms/輪 在今天的配置上複核）；② <b>下一個該量的不是 m，是 E</b>（<code>acc_rate</code> 同 k=4 跨場次讀到 <b>0.489～0.945</b>，2× 不穩）"
+        accept: "m ≤0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）—— <b>已達成：m ≈ 0.10、主項＝draft 流量</b>；規則上的結案另需上面那一趟"
         falsify: "主項壓不下來 ⇒ M 軸在交付口徑無增益"
         stage: 2
-        badge: {text: "上界 m≤0.257", tone: warn}
+        badge: {text: "m≈0.10・主項draft流量", tone: info}
         charter: scripts/check/charters/e-mtp-m-acc-2026-09-29.yaml
-        state: "未結案（<b>交付口徑第一次量到、但窗劣化＋逾時中斷</b> ⇒ 只有單邊上界 <b>m ≤0.257</b>，不是判詞）"
-        evidence: {profile: prod-new, entry: "harness bench", value: "k_eff=1.000（見證）；t_draft=703.1 ms/32 輪 ⇒ <b>m ≤0.257</b>（上界；窗劣化 ⇒ 不可當定值）；arm aborted at 420 s", metric: "m_upper_bound", meets: false, source: "Backup/mtp_m_prodnew_2026-09-29/runB.stderr.log"}
+        state: "未結案（<b>判準兩半已答</b>：m ≈ 0.10、主項＝draft 流量；缺的是同一配置下一趟乾淨的複核）"
+        evidence: {profile: prod-new, entry: "harness bench（今晚）＋ s1_ksweep（09-24，同 cell）", value: "k=1 差分 T_draft <b>8.41–9.45 ms/輪</b> ⇒ <b>m ≈ 0.10</b>（對錨點）／0.153（對同趟 step）；今晚劣化窗上界 <b>m ≤ 0.289</b>；k 曲線斜率 7.3 ms/draft token", metric: "m", meets: true, source: "docs/MISSHIST_REVIVAL_GATE_2026-09-29.md §9；Backup/s1_ksweep/2026*/0*_k*.stderr.log；Backup/mtp_m_prodnew_2026-09-29/runB2.stderr.log"}
         options:
           profile: prod-new
           arms: ["prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1"]
