@@ -99,3 +99,86 @@ MEASUREMENT`、`G4.work_order` 的 `RETRACTED`、`G7.from` 的就地更正都在
 **誠實邊界**：(1) 本輪沒有跑任何需要 server 的閘門（沒有 GPU 工作、零 build）；(2) 第 2 節那 5 筆
 的「superseded」判定是**讀出來的**，不是機檢的 —— 掃描只把它們列成候選；(3) 第 3 節那 5 筆仍是
 照字面讀會錯的狀態，這是**刻意留下**的，因為它們要的是決策而不是標記。
+
+
+---
+
+## 6. 十天後複查（2026-09-30，零 GPU）：本輪的 6 筆**一筆都沒落地**，而目標層從來不在掃描範圍
+
+**起因**：有人問「既然 decode ≥25 判死，為什麼 `targets.json` 還在認為 25 可行？」
+
+### 6.1 第 1／2 節那 6 筆：從未進入任何 commit
+
+| 檢查（可重跑） | 結果 |
+|---|---|
+| `grep -c '<marker>' agent_harness/portal/targets.json`，marker ∈ {`ANSWER FIRST`, `SUPERSEDED THE SAME DAY`, `SUPERSEDED IN PREMISE`, `WHICH BRANCH GOVERNS`, `READ measurement_floor FIRST`, `REGIME CAVEAT`} | **各 0** |
+| `git log -S'<marker>' --oneline -- agent_harness/portal/targets.json` | **各 0 個 commit** |
+| 重跑 `Backup/patch_g1_premise_b_unify_20260920.py`（dry run） | **8 錨點仍全部唯一、6 個欄位仍會被改** ⇒ 腳本本身有效，也證明**沒有套用過** |
+| `git status --porcelain -- agent_harness/portal/targets.json` | 乾淨（＝與 `9489b99b5` 一致，70031 bytes） |
+
+§5 寫著「`--apply` 寫入成功；JSON 仍合法」，而 §0 寫著「**全部改動未 commit**」。
+兩句合起來只有一個可能：**改在 worktree 裡發生過、沒有 commit、後來被還原或覆寫掉**
+（`targets.json` 的歷史裡從來沒有這些標記）。⇒ **十天後的淨效果＝沒有套用。**
+沒有任何東西能區分「已套用但未 commit」與「從未套用」—— 除了這份複查。
+
+**§3 那 5 筆「只清點未動」的欄位**（`G1.from`／`G1.evidence`／`G4.from`／`G6.evidence`／`G3.stage_a`）
+**全部仍在原狀**，也就是說它們現在仍然「照字面讀就會得到錯答案」。
+
+### 6.2 ★ 本輪新增的範圍：目標層（`targets[]`）從未被納入
+
+§4 的方法只掃**閘門層**的 45 個長欄位。而 `decode-25` 這一格（`targets[]` 的第 2 筆，
+自稱「兩個數字目標的**單一真相來源**」）現在寫的是：
+
+```
+updated: 2026-09-18
+current: 12.62
+gap:     2.07×（要 25、現在 12.62）。★「已判掉的三條路…⇒ 到不了」已被量測推翻。
+         零改碼上界探針 CGC_SUBMIT_AHEAD=1 量到 ×1.702 … ⇒ t/s 上界 = 24.15 …
+         跨過 25 只需 mean_len ≥ 2.485（+3.5%）。
+status:  not-met
+```
+
+那四個數字逐條對現在的判定：
+
+| 欄位裡的數字 | 現況 | 出處 |
+|---|---|---|
+| `current: 12.62` | 屬 **MTP-on 輸出 ⇒ 另一個輸出函數** ⇒ 不可作交付讀數；board 的 `C6` 已寫「12.62 已作廢」 | `docs/ABBA_MEASUREMENT_PROTOCOL_2026-09-23.md:4`／`ACCEPTMOE_ADAPTATION_2026-09-24.md:4`／`ANCHOR_12_57_REPRODUCIBILITY_2026-09-28.md:4`／`BITIDENTITY_…:4` 的共同 banner；board `necessary_conditions.C6` |
+| `×1.702` | 唯一來源是**故意寫錯**的探針（GPU 讀 stale remap）⇒「**dead by race, NOT by arithmetic**」 | `docs/G1_G7_SWEEP_2026-09-20.md:36`、`docs/DECODE_STEP_BUDGET_2026-09-19.md:639`，以及本檔 §2 的 `G4.necessity` |
+| `24.15`（上界） | 建在上面那個探針上 ⇒ 前提不成立 | 本檔 §2 `G4.necessity`（「只在故意錯的探針下存在（全 NaN dump、殺 MTP）」） |
+| `2.485` | `G6.to` 的**第一分支已死**；有效門檻是 **3.479** | 本檔 §2 `G6.to` |
+
+⇒ **「25 可行」不是一個立場，是一組沒有 regime 標籤的舊數字**（12.62／×1.702／24.15／2.485）
+**＋ 一組從未落地的標記**。
+
+### 6.3 另一邊已經重新定價（本線 09-29）
+
+`docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md` §37（「空轉減半 −7 ms」沒有實測支撐）、
+§39（四塊**各自放在已量上界**相加 ＝ `19.5＋12.0＋5.8＋3.9` ＝ **41.2 ms ＝ 24.3 t/s ＞ 40.0**）、
+§51／§52（B 半補丁：備援重算 8.09 ms ⇒ 淨回收為負）⇒ **decode ≥25 判死**。
+
+而且**對方自己的新產物同意判死**：`scripts/check/charters/e-decode25-blocks-2026-09-29.yaml` 的
+`verdict_decode25_20260929`（「以現有軸加總到不了…唯一的正面讀數是 **20+**，天花板 19.2」）
+與 `docs/NEXT_ACTIONS_2026-09-29.md:53`（「`m-decode25` 維持**判死**，力氣轉 `m-total`」）。
+
+### 6.4 缺的不是判斷，是對帳
+
+兩個「單一真相來源」（`agent_harness/portal/targets.json` 的**目標層** ↔
+`scripts/check/decode_board_2026-09-29.yaml` 的 L25 判定）之間**沒有任何閘門**。
+`build_portal.py --check` 驗的是「指針可解析、綁定完整」，不驗「這一格的數字有沒有被另一邊取代」。
+
+**最小改動清單（給該檔的業主，3 個欄位）**：
+- `updated`：`2026-09-18` → 實際更新日；
+- `current`：`12.62` → 交付口徑的值（board 的 `C3` ＝ **11.703**），或直接改成指向 board 而不自持數值；
+- `gap`：改寫成「**判死** ＋ 那四個已作廢數字的出處」，並把「已被量測推翻」這句標成
+  *SUPERSEDED BY §37／§39／§51（2026-09-29）*。
+
+⚠ 依 §3 的慣例，本輪**不代改**：這是**值**的決策（哪個 regime 的數值才算這一格的數值）。
+
+### 6.5 教訓（本檔自己就是案例）
+
+§1 把 `G1.premise_b` 的 `NOT APPLIED` 改成 `APPLIED` —— 方向完全正確：**寫狀態，不寫步驟**。
+但**這份文件的自身修改沒有做到同一件事**：它寫「已修」而沒有把修改 commit，
+於是十天後沒有人能分辨「套用了但沒 commit」與「從未套用」。
+
+⇒ **「我修好了」如果沒有 commit，等於沒修。** 產生器／補丁的記錄要能回答
+**applied? committed?** 這兩個問題，否則它只是另一則跑馬燈。
