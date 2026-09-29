@@ -596,7 +596,12 @@ def selftest() -> bool:
 
     board = load_board()
     sgs = subgoals(board)
-    chk("看板有 15 個子目標", len(sgs) == 15)
+    # ⚠ 不寫死總數：看板是**共用檔**，別條線會加格（2026-09-29 23:0x 就多了一格 L20-10）。
+    #    寫死 15 會讓「別人加了一格」變成紅色鬧鐘，而那不是缺陷。改成驗「既有的 15 格都還在」。
+    want = {f"L20-{i}" for i in range(1, 10)} | {f"L25-{i}" for i in range(1, 7)}
+    got = {s["id"] for s in sgs}
+    chk(f"看板含既有的 15 格（現有 {len(sgs)} 格）", want <= got)
+    chk("子目標 id 不重複", len(got) == len(sgs))
     chk("每一格都有 options", all(s["options"] for s in sgs))
     chk("每一格都有 knobs 或 no_knob",
         all(s["options"].get("knobs") or s["options"].get("no_knob") for s in sgs))

@@ -137,7 +137,7 @@
       "theme": "交付里程碑",
       "tier": "4",
       "crit": "25 ⇔ 40.0 ms/token",
-      "res": "**判詞改記「未判定」（2026-09-29 §50 更正 §41）**：可交付 = **11.703 t/s ＝ 85.45 ms**（到 40.0 缺 45.45 ms）。§41 原本把越線的三格綁成同一個機制（無 fill、池凍結、41.8%），**但那一格是錯的**：27.17／24.88 確實是**池凍結**；而 **25.64 t/s ＝ 39.0 ms（`fillahead` A 半）的池是活的**——`prefetch=2854/0`、`feeds=1560`、`CGC-RB-FEED` 有印、**`file_reads>0`**、miss **42.9% → 6.1%**（P0 五項驗收全過），且 **6.1% 已過 G4 的 ≤25% 閘**。它缺的不是填池，是**沒重算**（≈19 個 (layer,expert)/步）。⇒ 修正後的算式：`39.0 ms ＋ B 半重算 1.60–3.20 ms（§35 已定價）＝ 40.6–42.2 ms ＝ 23.7–24.6 t/s` ⇒ **差 0.6–2.2 ms 到 40.0**；**邊界就是 B 半那一支補丁**（靜態 `ggml_acc` 累加器／`e-b-accpatch-feasibility`），不是別的塊。而這個 margin 落在本文件已量到的窗口／底漂移（§49：同日控制臂 88.29 vs 認證 85.45 ＝ +3.3%）之內，也小於節點 `exp-caliber-calibration` 記的 **16.4% 未認證飄移** ⇒ 依 §39 §三，**25 應記為「未判定」而非「判死」**。舊行「交付 12.57＝79.6 ms ⇒ 要砍 49.6%」**仍作廢**（12.57 是 MTP-on 口徑）。從未量過的交叉格：**`fillahead` × 交付 cell**（§0 自記「交付 cell 同一個量測尚未跑完」）——它決定 39.0 是 39.0 還是 36.8 那一側。 **§51（09-29，唯讀尖兵）撤回 §50 的復活路**：B 補丁的價目**定錯了對象**——被定價的是**散佈**（320 op × 5–10 µs，且那個單價在自己文件裡標明是**推算**），**沒被定價的是「把 320 列備援專家算出來」**：靜態寬度被**正確性**逼成 `k=8`（一層的 8 個選取可能全數不在池）⇒ 每步**一定**計算 `40×8=320` 列 ⇒ 依**同儀器實測**（T=1 MoE 家族 **8.09 ms/步**）＝**再跑一次完整 MoE** ⇒ 合計 `+9.7~13.8 ms`，而它要取代的 fill 只有 **3.955** ⇒ **淨回收 −5.7 ~ −9.9 ms（負）**。⇒ `39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms ＝ 18.9–20.5 t/s` ⇒ **§50 的「未判定」撤回，decode ≥25 在已知軸上回到「判死」**（依據是**實測單價 × 靜態寬度的結構限制**，不是假設）。唯一未動的是 **L25-1（第六條軸）**。**唯一還可能救 B 的量**＝「一層最多錯幾個」（逐層 miss 直方圖）：若 ≤2 則 k=2 ⇒ 重算降到 1.0–2.0 ms ⇒ B 復活；而那個量**樹上沒有**（權威產物只有逐步總量與「有 miss 的層數」）⇒ 缺的是**一行儀器**，不是 300 行補丁。 **§52（09-29）底座更正**：交付 cell、**池活著**（`instrument=BOUND`）的 fillahead step 實測 **37.81 ms（26.45 t/s）**⇒ §51 的算式底座由 39.0 換成 37.81：`37.81 ＋ 9.7~13.8 ＝ 47.5–51.6 ms ＝ 19.4–21.1 t/s` ⇒ **仍差 7.5–11.6 ms 到 40.0**（判死成立）。兩臂皆 `swap` ⇒ 37.81 **不可引用**，只作同窗口診斷。",
+      "res": "**判詞改記「未判定」（2026-09-29 §50 更正 §41）**：可交付 = **11.703 t/s ＝ 85.45 ms**（到 40.0 缺 45.45 ms）。§41 原本把越線的三格綁成同一個機制（無 fill、池凍結、41.8%），**但那一格是錯的**：27.17／24.88 確實是**池凍結**；而 **25.64 t/s ＝ 39.0 ms（`fillahead` A 半）的池是活的**——`prefetch=2854/0`、`feeds=1560`、`CGC-RB-FEED` 有印、**`file_reads>0`**、miss **42.9% → 6.1%**（P0 五項驗收全過），且 **6.1% 已過 G4 的 ≤25% 閘**。它缺的不是填池，是**沒重算**（≈19 個 (layer,expert)/步）。⇒ 修正後的算式：`39.0 ms ＋ B 半重算 1.60–3.20 ms（§35 已定價）＝ 40.6–42.2 ms ＝ 23.7–24.6 t/s` ⇒ **差 0.6–2.2 ms 到 40.0**；**邊界就是 B 半那一支補丁**（靜態 `ggml_acc` 累加器／`e-b-accpatch-feasibility`），不是別的塊。而這個 margin 落在本文件已量到的窗口／底漂移（§49：同日控制臂 88.29 vs 認證 85.45 ＝ +3.3%）之內，也小於節點 `exp-caliber-calibration` 記的 **16.4% 未認證飄移** ⇒ 依 §39 §三，**25 應記為「未判定」而非「判死」**。舊行「交付 12.57＝79.6 ms ⇒ 要砍 49.6%」**仍作廢**（12.57 是 MTP-on 口徑）。從未量過的交叉格：**`fillahead` × 交付 cell**（§0 自記「交付 cell 同一個量測尚未跑完」）——它決定 39.0 是 39.0 還是 36.8 那一側。 **§51（09-29，唯讀尖兵）撤回 §50 的復活路**：B 補丁的價目**定錯了對象**——被定價的是**散佈**（320 op × 5–10 µs，且那個單價在自己文件裡標明是**推算**），**沒被定價的是「把 320 列備援專家算出來」**：靜態寬度被**正確性**逼成 `k=8`（一層的 8 個選取可能全數不在池）⇒ 每步**一定**計算 `40×8=320` 列 ⇒ 依**同儀器實測**（T=1 MoE 家族 **8.09 ms/步**）＝**再跑一次完整 MoE** ⇒ 合計 `+9.7~13.8 ms`，而它要取代的 fill 只有 **3.955** ⇒ **淨回收 −5.7 ~ −9.9 ms（負）**。⇒ `39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms ＝ 18.9–20.5 t/s` ⇒ **§50 的「未判定」撤回，decode ≥25 在已知軸上回到「判死」**（依據是**實測單價 × 靜態寬度的結構限制**，不是假設）。唯一未動的是 **L25-1（第六條軸）**。**唯一還可能救 B 的量**＝「一層最多錯幾個」（逐層 miss 直方圖）：若 ≤2 則 k=2 ⇒ 重算降到 1.0–2.0 ms ⇒ B 復活；而那個量**樹上沒有**（權威產物只有逐步總量與「有 miss 的層數」）⇒ 缺的是**一行儀器**，不是 300 行補丁。 **§52（09-29）底座更正**：交付 cell、**池活著**（`instrument=BOUND`）的 fillahead step 實測 **37.81 ms（26.45 t/s）**⇒ §51 的算式底座由 39.0 換成 37.81：`37.81 ＋ 9.7~13.8 ＝ 47.5–51.6 ms ＝ 19.4–21.1 t/s` ⇒ **仍差 7.5–11.6 ms 到 40.0**（判死成立）。兩臂皆 `swap` ⇒ 37.81 **不可引用**，只作同窗口診斷。 **§55（09-29）引用閘門**：本輪 5 場交付 cell 讀數**全部不可引用**（4 場 `swap`；唯一 `none` 的那場 `UNSTABLE`，逐 rep [10.45, 10.44, 3.88] ⇒ 2.691）⇒ 錨點 11.703 至今**未被複現**，而「複現」的門檻現在有機器判準（`scripts/check/quote_gate.py`；看板 D7 會在 build 時複判）。閘門是**逐 row** 判的：同一場的 prefill 與 decode 可以一個過、一個不過。",
       "evid": "DECODE25_FINAL_VERDICT_2026-09-21／DECODE_25TPS_VERDICT_2026-09-23／docs/IO_AXIS_VERDICT_2026-09-25.md",
       "docs": [
         "DECODE25_*",
@@ -517,7 +517,7 @@
         "cli": [],
         "no_knob": "",
         "note": "控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。",
-        "state": "未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是乾淨窗口）",
+        "state": "未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是穩定窗口 —— 該讀數經引用閘門判 DIRTY：逐 rep 1.015 合格，但 attribution=swap）",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -680,15 +680,17 @@
         "layer": "L20",
         "profile": "prod-new",
         "arm_strings": [
-          "prod-new"
+          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_MISS_MASK_HIST=1"
         ],
         "options": [],
-        "instruments": [],
+        "instruments": [
+          "CGC_MISS_MASK_HIST=1"
+        ],
         "candidates": [],
         "cli": [],
-        "no_knob": "本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置是先補一行儀器印逐層 miss 直方圖（CGC-MISSMASK-STEP 目前不存在），確認每層最大 ≤ k 才考慮實作。",
-        "note": "§51 尖兵已量：被定價的是散佈（320 op），沒被定價的是備援重算 320 列 ＝ 8.09 ms ⇒ 淨回收為負，decode ≥25 回到判死。<br>★ <b>本格是 B 的唯一復活門</b>：那一行逐層 miss 直方圖若證「每層最大 ≤2」，重算即由 8.09 掉到 1.0–2.0 ms、B 轉正回收（L25-2 才可能有出處）。「k 必須 8」目前只是<b>最壞情形</b>論證，平均 0.49/層（19/39）尚未量。",
-        "state": "未結案（尖兵已跑（唯讀）⇒ 價目不成立；缺的那個量＝逐層 miss 直方圖，一行儀器）",
+        "no_knob": "本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置的儀器已經跑完（見上）⇒ <b>前置否證，不必再印</b>。",
+        "note": "§51 尖兵已量：被定價的是散佈（320 op），沒被定價的是備援重算 320 列 ＝ 8.09 ms ⇒ 淨回收為負，decode ≥25 回到判死。<br>★ <b>復活門已關閉（09-29 實測）</b>：穩態每層峰值 <b>6</b>（不是 2）⇒ 要用 k≤3 才可能正回收，而那會讓 10.6% 的穩態步算錯（靜態圖不能按步改寬度）。均值 0.470 與板上原本寫的 0.49 相符 —— <b>k 由尾部決定，不由均值決定</b>。",
+        "state": "未結案（前置已量、不成立：穩態每層峰值 6；連把設計點降到峰值 6，重算 6.07 ms 都 > 它要取代的 fill 3.955）",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -849,7 +851,7 @@
         "candidates": [],
         "cli": [],
         "no_knob": "已結案（CLOSED — 不做）：收益 +2.6~4.6% < MDD 8.5%，且要動 M1/M2/M3 護欄 ⇒ 本格沒有要跑的臂，只留登記。",
-        "note": "重開條件：盒子 ≥32 GB 且重測 fill ≥ 8.5% × step 預算（兩條同時）。",
+        "note": "重開條件：盒子 ≥32 GB 且重測 fill ≥ 8.5% × step 預算（兩條同時）。<br>★ <b>09-29 補：它與 L20-3 共用的那個 blocker 已經量過了</b>（逐層 miss 峰值 <b>6</b>，見 <code>docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</code>）：兩者都按「靜態寬度 k」計價 ⇒ 這條不再只是「跟 B 綁在一起」，而是<b>與 B 共用同一個已否證的前提</b>。",
         "state": "結案（排除）",
         "also": [],
         "source": "board",
@@ -885,21 +887,24 @@
         "subgoal": "L25-5",
         "title": "MTP 的產品化上限",
         "layer": "L25",
-        "profile": "prod25",
+        "profile": "prod-new",
         "arm_strings": [
-          "prod25"
+          "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1"
         ],
         "options": [
-          "CGC_SERVER_MTP_N_MAX=1"
+          "CGC_SERVER_MTP=1"
         ],
         "instruments": [
           "CGC_MTP_PERF=1"
         ],
         "candidates": [],
-        "cli": [],
+        "cli": [
+          "--spec-type draft-mtp",
+          "--spec-draft-n-max 1"
+        ],
         "no_knob": "",
-        "note": "判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。",
-        "state": "未結案（已判、未立新判準）",
+        "note": "★ 09-29 起本格的量測口徑改為 <b>prod-new ＋ harness bench</b>（唯一認可入口），不再是 prod25／server ABBA。判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。⚠ 單邊性：窗劣化只把 wall 吹大 ⇒ 實測 <code>t_draft</code> ≥ 真值 ⇒ 由它算出的 m 是<b>上界</b>。",
+        "state": "未結案（交付口徑第一次量到、但窗劣化＋逾時中斷 ⇒ 只有單邊上界 m ≤0.257，不是判詞）",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -937,21 +942,24 @@
         "subgoal": "L25-5",
         "title": "MTP 的產品化上限",
         "layer": "L25",
-        "profile": "prod25",
+        "profile": "prod-new",
         "arm_strings": [
-          "prod25"
+          "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1"
         ],
         "options": [
-          "CGC_SERVER_MTP_N_MAX=1"
+          "CGC_SERVER_MTP=1"
         ],
         "instruments": [
           "CGC_MTP_PERF=1"
         ],
         "candidates": [],
-        "cli": [],
+        "cli": [
+          "--spec-type draft-mtp",
+          "--spec-draft-n-max 1"
+        ],
         "no_knob": "",
-        "note": "判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。",
-        "state": "未結案（已判、未立新判準）",
+        "note": "★ 09-29 起本格的量測口徑改為 <b>prod-new ＋ harness bench</b>（唯一認可入口），不再是 prod25／server ABBA。判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。⚠ 單邊性：窗劣化只把 wall 吹大 ⇒ 實測 <code>t_draft</code> ≥ 真值 ⇒ 由它算出的 m 是<b>上界</b>。",
+        "state": "未結案（交付口徑第一次量到、但窗劣化＋逾時中斷 ⇒ 只有單邊上界 m ≤0.257，不是判詞）",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -1038,21 +1046,24 @@
         "subgoal": "L25-5",
         "title": "MTP 的產品化上限",
         "layer": "L25",
-        "profile": "prod25",
+        "profile": "prod-new",
         "arm_strings": [
-          "prod25"
+          "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1"
         ],
         "options": [
-          "CGC_SERVER_MTP_N_MAX=1"
+          "CGC_SERVER_MTP=1"
         ],
         "instruments": [
           "CGC_MTP_PERF=1"
         ],
         "candidates": [],
-        "cli": [],
+        "cli": [
+          "--spec-type draft-mtp",
+          "--spec-draft-n-max 1"
+        ],
         "no_knob": "",
-        "note": "判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。",
-        "state": "未結案（已判、未立新判準）",
+        "note": "★ 09-29 起本格的量測口徑改為 <b>prod-new ＋ harness bench</b>（唯一認可入口），不再是 prod25／server ABBA。判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。⚠ 單邊性：窗劣化只把 wall 吹大 ⇒ 實測 <code>t_draft</code> ≥ 真值 ⇒ 由它算出的 m 是<b>上界</b>。",
+        "state": "未結案（交付口徑第一次量到、但窗劣化＋逾時中斷 ⇒ 只有單邊上界 m ≤0.257，不是判詞）",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -1167,21 +1178,24 @@
         "subgoal": "L25-5",
         "title": "MTP 的產品化上限",
         "layer": "L25",
-        "profile": "prod25",
+        "profile": "prod-new",
         "arm_strings": [
-          "prod25"
+          "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1"
         ],
         "options": [
-          "CGC_SERVER_MTP_N_MAX=1"
+          "CGC_SERVER_MTP=1"
         ],
         "instruments": [
           "CGC_MTP_PERF=1"
         ],
         "candidates": [],
-        "cli": [],
+        "cli": [
+          "--spec-type draft-mtp",
+          "--spec-draft-n-max 1"
+        ],
         "no_knob": "",
-        "note": "判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。",
-        "state": "未結案（已判、未立新判準）",
+        "note": "★ 09-29 起本格的量測口徑改為 <b>prod-new ＋ harness bench</b>（唯一認可入口），不再是 prod25／server ABBA。判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。⚠ 單邊性：窗劣化只把 wall 吹大 ⇒ 實測 <code>t_draft</code> ≥ 真值 ⇒ 由它算出的 m 是<b>上界</b>。",
+        "state": "未結案（交付口徑第一次量到、但窗劣化＋逾時中斷 ⇒ 只有單邊上界 m ≤0.257，不是判詞）",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -1764,19 +1778,19 @@
       "theme": "系統／記憶體",
       "tier": "3b",
       "crit": "窗口是否乾淨（thermal ＋ 進程 ＋ swap）",
-      "res": "BOX_ADMISSION_SINGLE_SOURCE 定為單一來源；SERVER_WINDOW_LEDGER 記錄逐次窗口。**09-29 21:29 實測：`admits=False`（need 8000 MB、reclaimable 7362 MB、缺口 ~638 MB）** ⇒ 交付 cell 的乾淨窗口**現在拿不到**（依 L25-3 的 on_fail：不降 NEED_MB、不換 cell）。 **09-29 21:33–21:36 實跑一對（prod-new 控制 ＋ S1）**：共用探針 `admits=False`（need 8000／reclaimable 7245 MB、binding=harness、與 launcher **DISAGREE**），但 bench 的起跑閘全過、`refused_preflight=False`；結果兩臂都換頁（swap growth **+1768／+851 MiB**）⇒ `attribution=swap`。⇒ 沒有乾淨窗口的代價已被量到，不是推測。",
+      "res": "BOX_ADMISSION_SINGLE_SOURCE 定為單一來源；SERVER_WINDOW_LEDGER 記錄逐次窗口。**09-29 21:29 實測：`admits=False`（need 8000 MB、reclaimable 7362 MB、缺口 ~638 MB）** ⇒ 交付 cell 的乾淨窗口**現在拿不到**（依 L25-3 的 on_fail：不降 NEED_MB、不換 cell）。 **09-29 21:33–21:36 實跑一對（prod-new 控制 ＋ S1）**：共用探針 `admits=False`（need 8000／reclaimable 7245 MB、binding=harness、與 launcher **DISAGREE**），但 bench 的起跑閘全過、`refused_preflight=False`；結果兩臂都換頁（swap growth **+1768／+851 MiB**）⇒ `attribution=swap`。⇒ 沒有乾淨窗口的代價已被量到，不是推測。 **§53（09-29 22:0x–22:36）窗口攻堅**：`reclaimable` 的定義是 `(free+purgeable+inactive)×16 KiB ≥ 8000 MB`。三個槓桿都量過：**idle 回收往下跌**（6596→6482／30 s）、**`purge` 反效果**（6482→4376 MB，因 file cache 正是被量的 `Pages inactive`，`free` 66→63 不動）、**關掉 app 有效**（→8006，稍後 **9736 MB**）。第 3、4 場**無 override 起跑** ⇒ 記憶體項**已過**；但 4 場全非 `attribution=none`（`swap growth` 338／1394／2401／4830 MiB）⇒ 剩下的 blocker 是**超額配置**（13.6 GB 模型＋8 GiB 池／16 GB 盒），不是時機。 **§54（09-29 22:40）第一場 `attribution=none` 達成**（8 GiB、交付 cell、無 override：`swap_growth=356.44 MiB`、`thermal=NOMINAL 126/126`、起跑 reclaimable 8083 MB）——**但該場 tg = 8.26 ± 3.79 t/s（121.1 ms）**，比錨點 11.703 慢 **29%** 且離散 **46%** ⇒ **`attribution=none` 是必要不充分**（乾淨標籤不保證同一個東西）。同時：**「縮池」在三層都不通**——env 送不到引擎（driver rc=1）、`expert_cache 8589934592` 是 cell 的**宣告機器不變量**（不符 ⇒ fail-closed）、且樹上已有「縮 pool 方向否決／4 GiB 會製造假的 treatment 效果」的裁決。 **§55（09-29）引用閘門**：窗口標籤（`attribution`）**必要但不充分** —— 交付 cell 唯一一場 `none`（22:40）的逐 rep 是 [10.45, 10.44, **3.88**]，第 3 個 rep 慢 **2.7×**。判準改由 `scripts/check/quote_gate.py` 持有（逐 rep 離散 `max/min ≤ 1.10` ＋ reps≥3 ＋ 窗口 ＋ 選配參考帶），且**看板 build（D7）會當場複判**：宣告的可引用性與閘門判定不符就失敗。⇒ 本節點要的窗口現在定義得更嚴：**`none` ∧ thermal NOMINAL ∧ 逐 rep 一致（全落在 1.10 內）**。",
       "evid": "docs/BOX_ADMISSION_SINGLE_SOURCE_2026-09-20.md／SERVER_WINDOW_LEDGER_2026-09-19.md",
       "docs": [
         "BOX_ADMISSION_*",
         "SERVER_WINDOW_LEDGER_*"
       ],
-      "note": "與本線的 gate 規格同源（契約 §3）",
+      "note": "與本線的 gate 規格同源（契約 §3） **§53**：門檻 500 MiB 低於這支臂自己的成長分布（550–2984）⇒ 原文自陳「拒或不拒有一半是抽籤」。",
       "sub": "na",
       "goal": "建立 <b>server 窗口／box 准入的單一來源閘門</b>，避免兩條線同時搶 GPU 而互相蓋掉對方的 build。",
       "subgoal_binding": {
-        "subgoal": "L25-3",
-        "title": "乾淨窗口（C7）",
-        "layer": "L25",
+        "subgoal": "L20-10",
+        "title": "格子判別：量測起點 vs batch",
+        "layer": "L20",
         "profile": "prod-new",
         "arm_strings": [
           "prod-new"
@@ -1785,10 +1799,12 @@
         "instruments": [],
         "candidates": [],
         "cli": [],
-        "no_knob": "窗口條件不是旋鈕：attribution=none ∧ thermal NOMINAL ∧ reps≥3。CGC_WINDOW_OVERRIDE 是繞過閘門的開關，不能當本格的 option。",
-        "note": "產物＝一場可引用的成對錨點（交付 cell、prod-new、harness bench）。",
-        "state": "未結案（09-29 實跑兩臂皆 attribution=swap；缺的是這台盒子的餘裕）",
-        "also": [],
+        "no_knob": "本格沒有既有旋鈕可動：<code>batch</code>／<code>prompt</code>／<code>warm_skip</code> 都是測試卡 §2.5 的<b>嚴格維度</b>（改了 fail-closed 拒跑），現有孿生機制只開放 <code>reps</code>／<code>rep_split</code> ⇒ 這是一個 <b>cell 定義的決定</b>，不是一次跑得動的實驗。",
+        "note": "判別句互斥：B1（起點）⇒ 加大 warm-skip 的 delivery 升到 ~11.5；B3（batch）⇒ (default) 的 batch-512 孿生掉到 ~9.7。",
+        "state": "未結案（§56 於 09-29 立項：跨格子不可比已確定；兩個候選尚未分離）",
+        "also": [
+          "L25-3"
+        ],
         "source": "board",
         "confidence": "high"
       },
@@ -1797,8 +1813,14 @@
           "kind": "subgoal",
           "ref": "L25-3",
           "why": "box 准入單一來源閘門 —— 乾淨窗口那一格就是它"
+        },
+        {
+          "kind": "subgoal",
+          "ref": "L20-10",
+          "why": "量測起點（同一行程裡 pp 測試的有無）屬於窗口條件"
         }
-      ]
+      ],
+      "no_throughput_claim": "本節點**不主張任何吞吐**：res 裡的 6.11／8.26／9.70／10.64／10.69／11.703（t/s）全部是**轉引**，其中 §54 那場雖為 `attribution=none`，但 `±3.79`（離散 46%）⇒ 連它也不可引用。本節點只記**窗口事實**（`swap_growth`／thermal 直方圖／起跑 `reclaimable`）與判詞。 **§55 之後更嚴**：不只看標籤 —— 本節點引的每一場都被引用閘門判過（22:40 那場 ＝ **UNSTABLE**；其餘四場 ＝ **DIRTY**）⇒ 本節點仍然**一個可引用的吞吐數字都沒有**。"
     },
     {
       "id": "m3",
@@ -2144,7 +2166,7 @@
         "cli": [],
         "no_knob": "",
         "note": "控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。",
-        "state": "未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是乾淨窗口）",
+        "state": "未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是穩定窗口 —— 該讀數經引用閘門判 DIRTY：逐 rep 1.015 合格，但 attribution=swap）",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -2783,7 +2805,7 @@
       "tier": "3a",
       "goal": "★ **2026-09-28 收斂後的結論：這是唯一還可量測的那一個問題。**\n見 docs/CONTRADICTION_CONVERGENCE_2026-09-28.md：擋住 25 的三個候選理由——\nIO（`io-shape` 2.9% < 3%，且 E-A 實測那條路只佔 f≈1.5%）、dispatch（`k3-price` 0.0195%/次，\n舊融合算術全作廢）、密集 kernel 頻寬（`c-bandwidth` 打滿 100% 也只省 2.42%）——**都已被量過並否定**；\n剩下的是 **`k3-swing` 的 16.4% 未認證飄移**。\n\n而**每一個「還差多少到 25」的數字都小於 16.4%**：S2 誠實天花板 +8.7%、\n「最後 3.5% acceptance」+3.5%、io-shape +2.9%、c-bandwidth +2.42%。\n⇒ **在 16.4% 被配對認證關掉之前，「我們離 25 多遠」在度量上不可回答。**\n\n所以要回答的是：「交付口徑 12.57 t/s」與「DECPROF/round 口徑 207.8 ms step」之間的校準，\n以及那個 1.43× 飄移是視窗機械還是真訊號（n=5 時 t=2.08 未達 df=4 的 2.776）。",
       "crit": "配對 n 加大到能認證：1.43× 飄移的配對 t 檢定達 df 對應的臨界值（關掉它）**或** 證明它是視窗機械造成的；並寫出交付口徑 ↔ DECPROF 口徑的換算（含不確定度）",
-      "res": "**未跑（有卡、無讀數）**：本節點的產出是**口徑校準**——記錄裡至少有四個不同的「步」（DECPROF work-row **167.81** ms／實付週期 step_round **207.8** ms／E2b 暖 total **139.46** ms／D0 探針 **99.39** ms），而 t/s 的恆等式用 step_round ⇒ 它決定 19.25／22.9／24.15／18.7 哪一個才是**同一個口徑**下的 25 差距。 **09-29 §50 的一個尖例**：判死的 margin 現在縮到 **0.6–2.2 ms**（40.6–42.2 ms），佔 40.0 ms 的 **1.5–5.5%** ⇒ **小於**本節點記的 `k3-swing` **16.4% 未認證飄移**。也就是說：**連「25 死不死」這件事本身都落在未校準的口徑帶內** ⇒ 本節點的優先序更高，不是更低。 **§51（09-29）**：本節點記的 16.4% 未認證飄移，現在多了一個同族實例——「25 的 margin」在 §50 曾是 0.6–2.2 ms，在 §51 重定價後是 **8.7–12.8 ms（反方向）**；**兩次都在同一個未校準帶裡換結論** ⇒ 校準（本節點）是所有這些判詞的前置，不是並行項。",
+      "res": "**未跑（有卡、無讀數）**：本節點的產出是**口徑校準**——記錄裡至少有四個不同的「步」（DECPROF work-row **167.81** ms／實付週期 step_round **207.8** ms／E2b 暖 total **139.46** ms／D0 探針 **99.39** ms），而 t/s 的恆等式用 step_round ⇒ 它決定 19.25／22.9／24.15／18.7 哪一個才是**同一個口徑**下的 25 差距。 **09-29 §50 的一個尖例**：判死的 margin 現在縮到 **0.6–2.2 ms**（40.6–42.2 ms），佔 40.0 ms 的 **1.5–5.5%** ⇒ **小於**本節點記的 `k3-swing` **16.4% 未認證飄移**。也就是說：**連「25 死不死」這件事本身都落在未校準的口徑帶內** ⇒ 本節點的優先序更高，不是更低。 **§51（09-29）**：本節點記的 16.4% 未認證飄移，現在多了一個同族實例——「25 的 margin」在 §50 曾是 0.6–2.2 ms，在 §51 重定價後是 **8.7–12.8 ms（反方向）**；**兩次都在同一個未校準帶裡換結論** ⇒ 校準（本節點）是所有這些判詞的前置，不是並行項。 **§55（09-29）**：本節點管的是「同一個步／同一個口徑」，引用閘門管的是「這一場的 reps 是不是同一個量」——兩者互補，而閘門抓到的第一件事正好是口徑問題：09-27 的「舊基線 9.311」其 rep 1 ＝ **4.12**（其餘 12.01／11.80）⇒ kept 半邊 ＝ **11.905** ≈ 認證錨點 11.703 ⇒ §15 的「**+25.7% 進步**」主要是**冷啟 rep** 造成的，不是機器變快。⇒ 本節點的換算必須同時報 **avg（含 rep 1）與 kept 半邊**，並註明用哪一個。",
       "evid": "docs/DECODE25_CEILING_2026-09-20.md",
       "sub": "na",
       "note": "假設：記錄裡至少有四個不同的「步」：DECPROF 的 work-row median（167.81 ms）、實付週期\nstep_round = mean_len / tps（207.8 ms）、E2b 暖 total（139.46 ms）、以及 D0 探針的\n99.39 ms。t/s 的恆等式用的是 step_round，而「還差多少」的推算常誤用其他三個。\n⇒ 校準缺失本身就是一個可交付物：它決定 19.25 / 22.9 / 24.15 / 18.7 這四個天花板\n哪一個才是同一個口徑下的 25 差距。\n",
@@ -2849,9 +2871,9 @@
         }
       ],
       "subgoal_binding": {
-        "subgoal": "L25-1",
-        "title": "第六條軸：改「每 token 的 bytes 或 steps」",
-        "layer": "L25",
+        "subgoal": "L20-10",
+        "title": "格子判別：量測起點 vs batch",
+        "layer": "L20",
         "profile": "prod-new",
         "arm_strings": [
           "prod-new"
@@ -2860,10 +2882,12 @@
         "instruments": [],
         "candidates": [],
         "cli": [],
-        "no_knob": "新軸尚未命名：本格要問的是「每 token 的 bytes 或 steps 有沒有可改的乘數」⇒ 仍在立卡階段，沒有既有旋鈕可綁。",
-        "note": "驗收：需要一個新乘數，≤ 40.0 ms 且 M1 bit-identical。",
-        "state": "未結案（本輪立項）",
-        "also": [],
+        "no_knob": "本格沒有既有旋鈕可動：<code>batch</code>／<code>prompt</code>／<code>warm_skip</code> 都是測試卡 §2.5 的<b>嚴格維度</b>（改了 fail-closed 拒跑），現有孿生機制只開放 <code>reps</code>／<code>rep_split</code> ⇒ 這是一個 <b>cell 定義的決定</b>，不是一次跑得動的實驗。",
+        "note": "判別句互斥：B1（起點）⇒ 加大 warm-skip 的 delivery 升到 ~11.5；B3（batch）⇒ (default) 的 batch-512 孿生掉到 ~9.7。",
+        "state": "未結案（§56 於 09-29 立項：跨格子不可比已確定；兩個候選尚未分離）",
+        "also": [
+          "L25-1"
+        ],
         "source": "board",
         "confidence": "high"
       },
@@ -2872,6 +2896,11 @@
           "kind": "subgoal",
           "ref": "L25-1",
           "why": "口徑＋k=3 飄移認證；第六條軸要用的量測基準"
+        },
+        {
+          "kind": "subgoal",
+          "ref": "L20-10",
+          "why": "§56：跨 cell 的兩個數字不可互比 ⇒ 判別子目標（口徑本身就是這一格）"
         }
       ]
     },
@@ -3032,7 +3061,7 @@
       "tier": "3a",
       "goal": "在**認可入口**（`harness bench`、`prod-new`、`delivery` cell、MTP off）上跑\n**single-submit 臂**（`CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1`）並開\nmiss-mask 插樁：每一步「被選中但不在池」的 (layer, expert) 有多少？\n換句話說，**G4 的每步重算工作清單有多大比例**？\n\n判定的門檻（跑前定好，見 acceptance）：\n  * miss 比例（misses / nsel）**≤ 25%** ⇒ 正確版 20+ 有路：預測+重算只付 1/4 的層，\n    而 28 t/s 的臂 vs 9.3 t/s 的臂差 3×，付掉一部分仍有 20+ 的空間。\n  * **≥ 60%** ⇒ 該機制在交付上沒有 headroom，力氣轉 shape/IO。",
       "crit": "一次 `harness bench`、`delivery` cell、`prod-new`，臂為\n`{CGC_SEG_BATCH=1, CGC_B_SCHEME=1, CGC_SLOT_TABLE_GPU=1, CGC_MISS_MASK=1,\nCGC_MISS_MASK_DBG=1, CGC_MISS_MASK_COST=1}`，且**同時**滿足：\n  ① 插樁活著：stderr 出現 **≥10 行** `CGC-MISSMASK-STEP`，且 `nsel` > 0\n     （= 有量到被選中的專家；只有 `MISSMASK ... misses=nsel` 全層系列不算，\n     那正是 09-26 文件記的「publisher 沒到位」指紋）；\n  ② 報**分布**：per-step 的 `misses/nsel` 給中位數與四分位，**不得**只報一個純量；\n  ③ 分開記：本臂的 t/s 一律標 VOID（wrong-output 臂），只把 `CGC-MISSMASK-COST` 的\n     `sync_usec/total_usec` 當**代價**報，不當速率報。\n",
-      "res": "**閘已過**（09-29 權威 cell）：重算工作清單中位 **6.09%**（19.0/step、IQR 3.85–8.65）、`mm_pub_n_leaf=39/39`、`instrument_gate=BOUND`，閘檻是 **≤25%** ⇒ 通過。**仍不主張吞吐**（單段提交架構如此：錯輸出臂）。（引用者注意：`Backup/mtp_off_clean/res.json` 是這個節點的**舊**產物、`attribution=swap`；權威讀數在 §34。） **§50**：越線的三格裡，**只有本節點的機制（`SEG_BATCH+B_SCHEME+SLOT_TABLE_GPU`＋餵料）那條路是池活著**的（`fillahead` A 半：39.0 ms／25.64 t/s、miss **6.1%**、`file_reads>0`）；它缺的是**重算**那 6.1%，價格 **1.60–3.20 ms**（§35）⇒ `39.0 ＋ x ＝ 40.6–42.2 ms ＝ 23.7–24.6 t/s` ⇒ **25 的 margin 0.6–2.2 ms**。 **§51（09-29）**：本節點量到的 6.09% 是**逐步總量**（19/312），**不是逐層**。而「每層 miss 的上界」正是決定 B（重算補丁）可行性的唯一空缺：靜態寬度 k 由**正確性**決定（一層可能 8 個全缺）⇒ 預設 k=8 ⇒ 備援重算 **8.09 ms/步**（實測）⇒ B 淨回收為負。**建議本節點的既有一行加印逐層直方圖**（`CGC-MISSMASK-STEP ... misses=[l1..l39]`）：一行儀器、一趟既有臂，直接決定 k=1／2／8。",
+      "res": "**閘已過**（09-29 權威 cell）：重算工作清單中位 **6.09%**（19.0/step、IQR 3.85–8.65）、`mm_pub_n_leaf=39/39`、`instrument_gate=BOUND`，閘檻是 **≤25%** ⇒ 通過。**仍不主張吞吐**（單段提交架構如此：錯輸出臂）。（引用者注意：`Backup/mtp_off_clean/res.json` 是這個節點的**舊**產物、`attribution=swap`；權威讀數在 §34。） **§50**：越線的三格裡，**只有本節點的機制（`SEG_BATCH+B_SCHEME+SLOT_TABLE_GPU`＋餵料）那條路是池活著**的（`fillahead` A 半：39.0 ms／25.64 t/s、miss **6.1%**、`file_reads>0`）；它缺的是**重算**那 6.1%，價格 **1.60–3.20 ms**（§35）⇒ `39.0 ＋ x ＝ 40.6–42.2 ms ＝ 23.7–24.6 t/s` ⇒ **25 的 margin 0.6–2.2 ms**。 **§51（09-29）**：本節點量到的 6.09% 是**逐步總量**（19/312），**不是逐層**。而「每層 miss 的上界」正是決定 B（重算補丁）可行性的唯一空缺：靜態寬度 k 由**正確性**決定（一層可能 8 個全缺）⇒ 預設 k=8 ⇒ 備援重算 **8.09 ms/步**（實測）⇒ B 淨回收為負。**建議本節點的既有一行加印逐層直方圖**（`CGC-MISSMASK-STEP ... misses=[l1..l39]`）：一行儀器、一趟既有臂，直接決定 k=1／2／8。 **§54**：交付 cell 的認證錨點 11.703 至今**未被複現**（本輪 5 場：6.11／**8.26（`none`）**／9.70／10.64／10.69）。",
       "evid": "Backup/mtp_off_clean/res.json",
       "sub": "S",
       "note": "假設：三件事在同一個機制上（single-submit 的必然後果），逐條寫死：\n\n(a) **錯誤的來源不是 bug，是結構**：正常路徑在每層的 hook 裡做 `ensure_batch`\n    （拉缺的專家進池），而 `CGC_SEG_BATCH=1` 一次提交所有層 ⇒ 提交時池是「上一次\n    提交之後的狀態」⇒ 本步被選中但不在池的專家沒有機會被拉進來。\n(b) **G3 把錯誤有界化**：那些位置從「映射到另一個真專家的權重」（無界錯誤）變成\n    寫進保留零槽 ⇒ 貢獻恰為 0（`llama-context.cpp:3765-3772`）。所以臂能跑完 128 token\n    而不是死在 ~8 token，但輸出仍是錯的。\n(c) **G4 的工作清單 = miss 集合**：`CGC-MISSMASK-STEP misses=<n> layers=<n>` 報的\n    正是「有幾個被選中的 (layer, expert) 在提交時不在池」。\n\n預期比例（兩個方向都寫死）：池在 decode 逐步之間幾乎不動（09-28 實測 consumed churn\npublish 級 19.8-20.2%），且 prod-new 的池命中率 ~96%（anchor 卡的 baseline）⇒\n被選中卻不在池的**暫時** miss 應該遠小於全部選中數。\n",
@@ -3514,7 +3543,7 @@
         "cli": [],
         "no_knob": "",
         "note": "控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。",
-        "state": "未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是乾淨窗口）",
+        "state": "未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是穩定窗口 —— 該讀數經引用閘門判 DIRTY：逐 rep 1.015 合格，但 attribution=swap）",
         "also": [
           "L20-2",
           "L20-3"

@@ -21,6 +21,7 @@
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
+  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   ul,ol { margin:8px 0 12px 22px; } li { margin-bottom:5px; font-size:13.5px; }
@@ -37,10 +38,10 @@
   footer { margin-top:40px; padding-top:14px; border-top:1px solid #e5e7eb; font-size:12.5px; color:#6b7280; }
   .kv { width:100%; } .kv th { width:150px; background:#fff; font-size:13px; }
   .verdict { font-size:15px; font-weight:600; }</style></head><body>
-<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（15）</a></nav>
+<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container">
 <h1>L20-1 ｜ 底（S1 的 step）校準</h1>
-<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是乾淨窗口）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
+<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是<b>穩定</b>窗口 —— 該讀數經引用閘門判 <b>DIRTY</b>：逐 rep 1.015 合格，但 <code>attribution=swap</code>）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>口徑差 12.4 ms（49.18 vs 36.80）要收斂或被指名</td></tr>
 <tr><th>預期（t/s）</th><td>24.5（底在 36.8 側）／19.2（底在 49.18 側）</td></tr>
@@ -52,6 +53,7 @@
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
 <tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td>S1 **36.33 ms**（27.526±0.228 t/s）vs 控制 **88.29 ms**（11.327±0.349）——**兩臂皆 attribution=swap（+851／+1768 MiB）⇒ 不可引用**</td><td>ms_per_step</td><td>❌</td></tr>
 </tbody></table>
+<div class="warning"><b>引用閘門：DIRTY</b>（判準＝<code>scripts/check/quote_gate.py</code>，逐 rep 離散 ＋ 樣本數 ＋ 窗口 ＋ 參考帶）<br>產物 <a href="../../../Backup/clean_window_2026-09-29/s1_1.json"><code>Backup/clean_window_2026-09-29/s1_1.json</code></a><br>逐 rep [27.26, 27.65, 27.67] ⇒ max/min 1.015（合格）；被擋在窗口項：attribution=swap</div>
 <h3>立項（charter）</h3>
 <ul>
 <li><a href="../../../scripts/check/charters/e-s1-base-calibrate-2026-09-29.yaml"><code>scripts/check/charters/e-s1-base-calibrate-2026-09-29.yaml</code></a></li>

@@ -30,12 +30,15 @@ subgoals:
   how: 同 cell 下 op 計數與 step 時間的配對
 arms:
 - prod-new
+- prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_MISS_MASK_HIST=1
 
 # ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-3 同步；勿手改，改看板）】──
 options:
   subgoal: L20-3
   profile: prod-new
   arms:
-    - "prod-new"
-  no_knob: "本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置是先補一行儀器印逐層 miss 直方圖（CGC-MISSMASK-STEP 目前不存在），確認每層最大 ≤ k 才考慮實作。"
-  note: "§51 尖兵已量：被定價的是散佈（320 op），沒被定價的是備援重算 320 列 ＝ 8.09 ms ⇒ 淨回收為負，decode ≥25 回到判死。<br>★ <b>本格是 B 的唯一復活門</b>：那一行逐層 miss 直方圖若證「每層最大 ≤2」，重算即由 8.09 掉到 1.0–2.0 ms、B 轉正回收（L25-2 才可能有出處）。「k 必須 8」目前只是<b>最壞情形</b>論證，平均 0.49/層（19/39）尚未量。"
+    - "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_MISS_MASK_HIST=1"
+  knobs:
+    - {name: CGC_MISS_MASK_HIST, value: "1", role: instrument, why: "逐層 miss 直方圖（決定靜態寬度 k 的唯一量）", source: "docs/MISSHIST_REVIVAL_GATE_2026-09-29.md；runA.stderr.log"}
+  no_knob: "本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置的儀器已經跑完（見上）⇒ <b>前置否證，不必再印</b>。"
+  note: "§51 尖兵已量：被定價的是散佈（320 op），沒被定價的是備援重算 320 列 ＝ 8.09 ms ⇒ 淨回收為負，decode ≥25 回到判死。<br>★ <b>復活門已關閉（09-29 實測）</b>：穩態每層峰值 <b>6</b>（不是 2）⇒ 要用 k≤3 才可能正回收，而那會讓 10.6% 的穩態步算錯（靜態圖不能按步改寬度）。均值 0.470 與板上原本寫的 0.49 相符 —— <b>k 由尾部決定，不由均值決定</b>。"

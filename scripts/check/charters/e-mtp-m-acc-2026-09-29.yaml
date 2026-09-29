@@ -30,15 +30,19 @@ subgoals:
   how: prod25 成對；交付口徑另計
 arms:
 - prod25
+- prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1
 non_prod_reason: MTP 只存在於 prod25（交付口徑 MTP off）⇒ 這張卡問的是 M 軸的內部結構，只能在 prod25 上回答。
 
 # ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L25-5 同步；勿手改，改看板）】──
 options:
   subgoal: L25-5
-  profile: prod25
+  profile: prod-new
   arms:
-    - "prod25"
+    - "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1"
+  cli:
+    - "--spec-type draft-mtp"
+    - "--spec-draft-n-max 1"
   knobs:
-    - {name: CGC_MTP_PERF, value: "1", role: instrument, why: "量 m 的儀器（ms_per_round 是累計均值，必須差分相鄰行）", source: "charters/e-mtp-m-acc arms[]；node mtp-2x／mtp-caliper"}
-    - {name: CGC_SERVER_MTP_N_MAX, value: "1", role: subject, why: "k 端點（配 --spec-draft-n-max 一起用；m 不得外推別的 k）", source: "docs/MTP_K_SWEEP_2026-09-22.md"}
-  note: "判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。"
+    - {name: CGC_SERVER_MTP, value: "1", role: subject, why: "開 MTP（也是 CGC_MTP_PERF 得以進 allowlist 的那把鑰匙）", source: "存活配方 09-29；run_server.sh SERVER_MTP 區塊"}
+    - {name: CGC_MTP_PERF, value: "1", role: instrument, why: "量 m 的儀器（ms_per_round 是累計均值，必須差分相鄰行；只有一行時只能取下界方向的上界）", source: "charters/e-mtp-m-acc arms[]；common/speculative.cpp:3179"}
+  note: "★ 09-29 起本格的量測口徑改為 <b>prod-new ＋ harness bench</b>（唯一認可入口），不再是 prod25／server ABBA。判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。⚠ 單邊性：窗劣化只把 wall 吹大 ⇒ 實測 <code>t_draft</code> ≥ 真值 ⇒ 由它算出的 m 是<b>上界</b>。"

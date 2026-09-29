@@ -1528,7 +1528,8 @@ SERVER_ENV=(
 for _v in LLAMA_EXPERT_CACHE_NOHOOK LLAMA_EXPERT_CACHE_NOGATHER LLAMA_EXPERT_CACHE_L3_NGL \
           LLAMA_EXPERT_CACHE_STEP_DBG CGC_PHASE_DBG CGC_SEQ_RM_TYPE CGC_PREFIX_REUSE_CKPT \
           CGC_S1_OUT_CAP CGC_S1_OUT_LAYERS CGC_S1_TABLE_CHURN CGC_S1_CLAMP_ABORT \
-          CGC_LOGITS_ORACLE_TOPN CGC_LOGITS_ORACLE_FIRST_N; do
+          CGC_LOGITS_ORACLE_TOPN CGC_LOGITS_ORACLE_FIRST_N CGC_DRAFT_CTX_ALIGN \
+          CGC_DRAFT_SMALL_BATCH; do
     if [ -n "${!_v:-}" ]; then
         SERVER_ENV+=("$_v=${!_v}")
     fi
@@ -1748,6 +1749,18 @@ fi
 if [ -n "${CGC_MISS_MASK_COST:-}" ]; then
     SERVER_ENV+=(CGC_MISS_MASK_COST="$CGC_MISS_MASK_COST")
 fi
+# [CGC 2026-09-29 per-layer miss histogram] CGC_MISS_MASK_HIST=1 (needs CGC_MISS_MASK_DBG=1) prints a
+# THIRD line per step, `CGC-MISSMASK-HIST: step=.. nrec=.. max=.. il_max=.. unknown=.. per=..`.
+#
+# Why it matters: the static-width `ggml_acc` recompute (L20-3) is priced at k=8 ONLY because a layer's
+# 8 selections can all miss (worst case) and a static graph cannot narrow per step -- that is 8.09
+# ms/step and the patch's net recovery is NEGATIVE. The average is 0.49 misses/layer, so if no layer
+# ever exceeds 2 the recompute costs 1.0-2.0 ms and the patch turns positive. One arm decides it.
+# Like every other instrument here it MUST be listed: an unlisted CGC_* is dropped silently and the
+# run then looks exactly like "the instrument has nothing to print".
+if [ -n "${CGC_MISS_MASK_HIST:-}" ]; then
+    SERVER_ENV+=(CGC_MISS_MASK_HIST="$CGC_MISS_MASK_HIST")
+fi
 if [ -n "${CGC_ZERO_SLOT:-}" ]; then
     SERVER_ENV+=(CGC_ZERO_SLOT="$CGC_ZERO_SLOT")
 fi
@@ -1879,6 +1892,48 @@ fi
 # recovered offline by least squares instead of guessed by node count. Needs CGC_GPU_NODES=1.
 if [ -n "${CGC_GPU_NODES_MATRIX:-}" ]; then
     SERVER_ENV+=(CGC_GPU_NODES_MATRIX="$CGC_GPU_NODES_MATRIX")
+fi
+# [CGC 2026-09-29 dispatch census] CGC_DISPATCH_CENSUS=1 prints one `CGC-DISPATCH:` line per graph:
+# how many encode_node calls (= dispatches) it took, how many graph nodes they covered, and how many
+# the fuser collapsed. It answers the ONE question no existing table can: the op tables (CGC-GPUOPS
+# / CGC-GPUNODE) split BUFFER TIME, and a buffer can hold several ops, so "how many dispatches does
+# a decode step issue, and is the 8-expert MoE already ONE of them" is invisible in all of them.
+# The instrument lives in ggml-metal-ops.cpp (add-only, silent when unset). It was written on
+# 2026-09-20 but never added here -- passing it through this launcher did nothing, the same
+# silent-drop trap this file documents at CGC_GRPH_DBG and CGC_VERIFY_OP_TIMING.
+#
+# [CGC 2026-09-29 census v2] The same switch also emits `CGC-DISPATCH2:` lines, which fix the
+# column v1 could not produce. v1 counts one "dispatch" per ENCODE CALL; the GPU launches
+# kernels, and 15 of the 61 op encoders in ggml-metal-ops.cpp contain more than one dispatch
+# call site (on decode: flash_attn_ext 7, mul_mat 4, mul_mat_id 4, mul_mat_id_glu_fused 3,
+# bin 2, unary 2). Every kernel launched from INSIDE an op's own body was invisible.
+# v2 counts every ggml_metal_encoder_dispatch_threadgroups() call by wrapping it in a macro in
+# ggml-metal-ops.cpp, plus the ONE dispatch that bypasses the encoder (the raw
+# `dispatchThreads:` in ggml_metal_spec_decode_verify, which reports itself). Per slice:
+#   kernels     = what the GPU actually launched      (was invisible before)
+#   enc_launch  = encode calls that launched >= 1 kernel
+#   nested      = kernels - enc_launch - direct       (the blind spot, now measured)
+#   direct      = kernels launched outside any op encode (the spec-decode path)
+# followed by ops ranked by extra kernels, then the kernels BY NAME ranked by `nested` -- which
+# is what makes a nested dispatch identifiable instead of merely counted.
+# Two traps this instrument had, both fixed on 2026-09-29 and both worth NOT reintroducing:
+#   (a) the encode loop is CONCURRENT (dispatch_apply over n_cb slices), so the accumulators
+#       must stay thread_local or the counts lose updates;
+#   (b) v1's own `dispatches=` column is pooled across those concurrent slices and is NOT a
+#       per-slice partition -- it can print fewer dispatches than v2's enc_launch, which is
+#       impossible for a superset. Do not build a per-slice claim on v1 alone.
+if [ -n "${CGC_DISPATCH_CENSUS:-}" ]; then
+    SERVER_ENV+=(CGC_DISPATCH_CENSUS="$CGC_DISPATCH_CENSUS")
+fi
+# [CGC 2026-09-29 census window] How many slices the census PRINTS. MUST be listed here: the launch
+# line runs `env "${SERVER_ENV[@]}"`, an allowlist, so an unlisted CGC_* is dropped silently -- and
+# a dropped window knob is the worst kind, because the census still prints a plausible 48-slice
+# window and every reader would take it for the whole run.
+# Default (unset) = 48, which 2026-09-29 measured to be a PREFILL-ONLY window: in a prod-new run the
+# last census row lands at stderr line 746 and DECPROF's first ntok=1 decode step is at line 1244.
+# To census DECODE, pass e.g. 400. Knob name is CGC_DISPATCH_CENSUS_MAX.
+if [ -n "${CGC_DISPATCH_CENSUS_MAX:-}" ]; then
+    SERVER_ENV+=(CGC_DISPATCH_CENSUS_MAX="$CGC_DISPATCH_CENSUS_MAX")
 fi
 # [CGC 2026-09-18 per-NODE command buffers] CGC_CB_N_MAIN overrides the Metal encoder's
 # `n_main = MAX(64, 0.1*n_nodes)` floor, i.e. how many of a segment's FIRST nodes go into the
@@ -2246,6 +2301,13 @@ fi
 if [ -n "${CGC_SPAC_K:-}" ]; then
     SERVER_ENV+=(CGC_SPAC_K="$CGC_SPAC_K")
 fi
+# [CGC 2026-09-28] CGC_SPAC_DBG=1 prints `CGC-SPAC: feeds= queued= n_prefetch= dropped=` every
+# refresh. Added because the single-submit arm (CGC_SEG_BATCH=1) skips the per-layer hook, which is
+# the ONLY feeder of the SpAc utility EMA -- so "is the membership driver actually running?" became
+# the gate for the correct-single-submit work, and it needs a counter rather than an assumption.
+if [ -n "${CGC_SPAC_DBG:-}" ]; then
+    SERVER_ENV+=(CGC_SPAC_DBG="$CGC_SPAC_DBG")
+fi
 # CGC SPAC: EMA refresh interval (for tuning). Pass through if externally set.
 if [ -n "${CGC_SPAC_REFRESH:-}" ]; then
     SERVER_ENV+=(CGC_SPAC_REFRESH="$CGC_SPAC_REFRESH")
@@ -2257,6 +2319,51 @@ fi
 # CGC MMV: original GEMV kernel threadgroup size (for tuning). Pass through if externally set.
 if [ -n "${CGC_MMV_NSG:-}" ]; then
     SERVER_ENV+=(CGC_MMV_NSG="$CGC_MMV_NSG")
+fi
+# [CGC 2026-09-29] CGC_MMV_FUSE=1 enables the fused gate+up+SwiGLU MUL_MAT_ID dispatch
+# (ggml-metal-ops.cpp:ggml_metal_op_mul_mat_id_glu_fused). The block near the top of this file
+# records that it was NOT in the allowlist, so `CGC_MMV_FUSE=1 ./run_server.sh` did nothing and the
+# [perf] banner printed `glu_fused_down=1` for a knob that was inert.
+#
+# IT IS ADDED HERE SO IT CAN BE MEASURED, AND IT IS NOW MEASURED. CLOSED -- do not adopt:
+#
+#   COST  (measured 2026-09-29, delivery cell, both arms `attribution=none`, paired probes):
+#     * dispatches per layer segment 30.9 -> 28.0 (-9%; a decode token drops from ~1240 to ~1120),
+#       i.e. the flag does exactly what it claims: gate+up+SwiGLU collapse into ONE dispatch, and a
+#       single MoE dispatch goes from 2.56 MiB to 5.12 MiB of expert weights.
+#     * the STEP gets SLOWER: 90.41 -> 93.56 ms (+3.5%; wait/union/gap all worse), and the MoE
+#       family's own GPU time does not move (3.48+2.32 -> 3.41+2.27 ms). Effective bandwidth stays
+#       ~60 GB/s on both sides.
+#     * => bigger fewer dispatches buy NOTHING here; the family already runs at 56-108 GB/s.
+#       Artifacts: Backup/stepbudget_2026-09-29/{delivery_base,delivery_fuse}.{json,stderr.log}.
+#
+#   CORRECTNESS (m123_oracle_gate.py, 2026-09-29, profile prefill250, same build/tree):
+#     * control (production config, no env change): M1 9/9 PASS, M2 9/9 PASS -- the reference
+#       oracle is bit-identical on this build, so the comparison below is valid.
+#     * CGC_MMV_FUSE=1 alone:                    M1 4/9 FAIL, M2 9/9 (informational).
+#       5 of 9 rows are numerically different and NOT at ULP scale (logit sums differ by ~1e5,
+#       mean shifted by ~0.7) -- this is not an accumulation-order artifact. The gate withheld a
+#       verdict (INVALID COMPARISON: undeclared numerics-determining config change) and the control
+#       above is what makes the 4/9 attributable to this flag rather than to the build.
+#     * => it is neither faster nor bit-identical. Sealed: leave it unset. To ever reopen, the
+#       certified path is minting a fresh reference under the fused config (`--write-ref`), not
+#       citing the historical "declared bit-identical" claim, which two independent measurements
+#       now contradict (docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md §17).
+if [ -n "${CGC_MMV_FUSE:-}" ]; then
+    SERVER_ENV+=(CGC_MMV_FUSE="$CGC_MMV_FUSE")
+fi
+# [CGC 2026-09-29 · §35 P2] CGC_PREFETCH_SRC pass-through. It left the allowlist on 2026-09-13
+# (see the :1482 block: the routing oracle bounded ALL placement work at +0.2pp), which made it
+# UNREACHABLE from run_server.sh -- setting it in the shell looks like it worked while the arm
+# quietly reran the control (the exact trap the bit-identical-arm comment warns about). §35's P2
+# needs it back for one reason: the step/prev/hist union feeders are DORMANT while CGC_SPAC=1
+# (`llama-context.cpp:2181` -- `if (spac_on) ... else if (pf_hist) ... else ...`), so on the
+# single-submit arm the only live membership feeder is the SpAc EMA. Running `CGC_SPAC=0` +
+# `CGC_PREFETCH_SRC=hist` routes the same single-submit feed into the rolling-window feeder instead.
+# Push the value only when it is set; absent = the engine default ("step"), which is exactly what
+# every existing profile already gets, so this line cannot move a profile that does not ask for it.
+if [ -n "${CGC_PREFETCH_SRC:-}" ]; then
+    SERVER_ENV+=(CGC_PREFETCH_SRC="$CGC_PREFETCH_SRC")
 fi
 # CGC PREFETCH: rolling window size for hist prefetch source (for tuning). Pass through if externally set.
 if [ -n "${CGC_PREFETCH_WINDOW:-}" ]; then

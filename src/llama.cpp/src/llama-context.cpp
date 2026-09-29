@@ -3987,9 +3987,34 @@ ggml_status llama_context::graph_compute(
     // scripts/check/miss_rate_summary.py and by the BATCHDBG pairing (llama-expert-cache.cpp), so it
     // must not grow a field. This adds a SEPARATE line instead.
     static const bool cgc_mm_cost = getenv("CGC_MISS_MASK_COST") != nullptr;
+    // [CGC 2026-09-29 · per-layer miss histogram] THE MISSING MEASUREMENT.
+    //
+    // `sg-b-cost` (docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md §51) prices the static-width
+    // `ggml_acc` recompute at `k = 8` because a layer's 8 selections can ALL miss and a static graph
+    // cannot narrow its width per step. That is a WORST-CASE argument: the only per-layer numbers on
+    // the tree are step totals (`CGC-MISSMASK-STEP: step=1 misses=139 layers=39` / `step=2 misses=95
+    // layers=3`), whose implied average is 0.49/layer. If no layer ever exceeds 2, the recompute
+    // falls from 8.09 ms to 1.0-2.0 ms and the patch turns positive -- i.e. ONE arm decides whether
+    // B is worth writing at all. This prints that distribution.
+    //
+    // A SEPARATE line on purpose: every existing consumer (`miss_mask_check.py`,
+    // `miss_rate_summary.py`, the BATCHDBG pairing in llama-expert-cache.cpp) parses the two shapes
+    // above, so the step line must not grow a field. `per=` is the recorded layers in `il` order; a
+    // layer the graph guards skipped is reported as unknown rather than as a 0 (a guard-skipped layer
+    // is missing data, and printing it as "no misses" is exactly how a max gets understated).
+    static const bool cgc_mm_hist = getenv("CGC_MISS_MASK_HIST") != nullptr;
     if (cgc_miss_mask_dbg) {
         static int cgc_mm_step = 0;
         static int cgc_mm_warn = 0;
+        // [CGC 2026-09-28 · single-submit membership feed] see the block below. Two statics:
+        // the gate (CGC_SEG_BATCH) and a printed counter, because 「旗標在 env 裡」 was twice
+        // mistaken for 「機制跑了」in this repo -- the feeder needs its own proof of life.
+        static const bool cgc_rb_seg_batch = getenv("CGC_SEG_BATCH") != nullptr;
+        static uint64_t cgc_rb_feeds = 0;
+        // [CGC 2026-09-29] ids the union feeder drops for being outside [0, n_expert). Counted,
+        // never printed by default: the sibling feeder (spac_update) and the consumer
+        // (prefetch_slot) both reject the same id, so this is bookkeeping, not a behaviour switch.
+        static uint64_t cgc_rb_oob = 0;
         const int64_t mm_t0 = cgc_mm_cost ? ggml_time_us() : 0;
         int mm_gets = 0;
         if (!cgc_miss_mask && cgc_mm_warn++ == 0) {
@@ -4005,8 +4030,10 @@ ggml_status llama_context::graph_compute(
         // shape is reported as the first captured layer's element count, which is
         // `n_expert_used * n_tokens` (the same quantity the `nsel=` field of MISSMASK prints).
         int64_t mm_nsel0 = -1;
+        std::map<int, int> mm_per;   // il -> misses (-1 = captured but the graph guards skipped it)
         for (const auto & kv : cache_missmask_tensors) {
             const int il = kv.first;
+            if (cgc_mm_hist) { mm_per[il] = -1; }
             ggml_tensor * mk  = kv.second;
             ggml_tensor * idc = cache_ids_cont_tensors.count(il) ? cache_ids_cont_tensors[il] : nullptr;
             if (mk == nullptr || mk->data == nullptr || idc == nullptr || idc->data == nullptr) {
@@ -4028,6 +4055,73 @@ ggml_status llama_context::graph_compute(
             std::vector<int32_t> ibuf((size_t) ntot);
             ggml_backend_tensor_get(mk,  mbuf.data(), 0, (size_t) ntot * sizeof(int32_t));
             ggml_backend_tensor_get(idc, ibuf.data(), 0, (size_t) ntot * sizeof(int32_t));
+            // [CGC 2026-09-28 · single-submit membership feed] EVERY pool-membership feeder lives in
+            // the PER-LAYER HOOK, and `CGC_SEG_BATCH=1` SKIPS THE HOOK. Two of them:
+            //   (1) `llama_expert_cache_spac_update` (:6357) -- the SpAc utility EMA that
+            //       `spac_prefetch` re-targets the pool from (CGC_SPAC_K default 8 per layer, which
+            //       is exactly the hot-set size measured on 2026-09-28);
+            //   (2) `cache_step_union[il] = uni` (:7866) -- the feed for the step/prev/hist prefetch.
+            // With neither running, the pool stays at whatever the prefill left behind and is never
+            // re-centred on decode's working set: measured submit-time residency 57.1% (arm) vs
+            // 96.3% (honest, per-layer fills). This readback ALREADY has the step's routed ids in
+            // `ibuf` -- it reads them to count placeholders -- so it can feed (1) and (2) with no
+            // hook and no extra sync. Gated on CGC_SEG_BATCH so the honest path keeps its own feeder
+            // and stays byte-identical.
+            if (cgc_rb_seg_batch) {
+                llama_expert_cache * ec_rb = model.expert_cache;
+                if (ec_rb != nullptr && llama_expert_cache_pool_active(ec_rb)) {
+                    std::vector<uint32_t> routed((size_t) ntot);
+                    for (int64_t i = 0; i < ntot; ++i) {
+                        routed[(size_t) i] = (uint32_t) ibuf[(size_t) i];
+                    }
+                    if (cgc_spac_on()) {
+                        llama_expert_cache_spac_update(ec_rb, (uint32_t) il, routed.data(), routed.size());
+                        if (++cgc_rb_feeds % 2000 == 0) {
+                            fprintf(stderr, "CGC-RB-FEED: feeds=%llu il=%d n=%lld (spac_update without the hook)\n",
+                                    (unsigned long long) cgc_rb_feeds, il, (long long) ntot);
+                        }
+                    }
+                    if ((size_t) il < cache_step_union.size()) {
+                        auto & u = cache_step_union[(size_t) il];
+                        // [CGC 2026-09-29] O(nsel) membership. This loop was
+                        //   `if (std::find(u.begin(), u.end(), e) == u.end()) u.push_back(e);`
+                        // -- O(nsel * |u|) with |u| <= n_expert, i.e. ~5M `_wmemchr` calls per
+                        // layer at nsel=24576, and it is the whole of the 135.3 s/layer stall the
+                        // stack sample pinned to this one source line (graph_compute+6388 -> :4066;
+                        // the same code costs 315 us for all 39 layers at decode shape, nsel=8).
+                        // A bitmap is O(nsel) and, because it only suppresses an id already present
+                        // in `u`, it reproduces the old first-seen order exactly -- the union handed
+                        // to the prefetch is unchanged for every in-range id.
+                        // Ids outside [0, n_expert) are DROPPED rather than deduped into `u`. That
+                        // matches the sibling feeder two lines up, whose own loop is
+                        // `if (experts[i] < ne)`, and the consumer llama_expert_cache_prefetch_slot,
+                        // which guard-rejects the same id -- so no prefetch action changes; only the
+                        // recorded union stops carrying an id that can never resolve.
+                        const uint32_t nexp_rb = ec_rb->n_expert != 0
+                                ? ec_rb->n_expert : (uint32_t) model.hparams.n_expert;
+                        static thread_local std::vector<uint8_t> rb_seen;
+                        if (rb_seen.size() < (size_t) nexp_rb) {
+                            rb_seen.assign((size_t) nexp_rb, 0);
+                        } else {
+                            std::fill(rb_seen.begin(), rb_seen.begin() + nexp_rb, 0);
+                        }
+                        for (uint32_t e : routed) {
+                            if (e >= nexp_rb) {
+                                if (cgc_rb_oob++ < 8 && getenv("CGC_RB_FEED_DBG") != nullptr) {
+                                    fprintf(stderr, "CGC-RB-FEED-OOB: il=%d e=%u n_expert=%u "
+                                                    "(dropped from the union)\n",
+                                            il, e, nexp_rb);
+                                }
+                                continue;
+                            }
+                            if (rb_seen[e] == 0) {
+                                rb_seen[e] = 1;
+                                u.push_back(e);
+                            }
+                        }
+                    }
+                }
+            }
             if (cgc_mm_cost) { mm_gets += 2; }
             if (mm_nsel0 < 0) { mm_nsel0 = ntot; }   // == n_expert_used * n_tokens for this step
             int misses = 0;
@@ -4043,6 +4137,7 @@ ggml_status llama_context::graph_compute(
             // (llama-expert-cache.cpp), so skipping is what keeps the two per-layer sequences the
             // same length. It is also why a log of this shape must never be split into steps by
             // monotonicity -- the trap miss_mask_check.py §2 records.
+            if (cgc_mm_hist) { mm_per[il] = misses; }   // before the zero-skip: 0 is a datum, not absence
             if (misses == 0) {
                 continue;
             }
@@ -4052,6 +4147,22 @@ ggml_status llama_context::graph_compute(
             mm_layers++;
         }
         fprintf(stderr, "CGC-MISSMASK-STEP: step=%d misses=%d layers=%d\n", cgc_mm_step, mm_tot, mm_layers);
+        if (cgc_mm_hist) {
+            // max over RECORDED layers only; `unknown` counts the guards' skips so a partially read
+            // step cannot masquerade as an all-zero one (which is how a max gets understated).
+            int mm_max = -1, mm_il_max = -1, mm_unknown = 0, mm_nrec = 0;
+            std::string mm_per_s;
+            for (const auto & kv : mm_per) {
+                if (kv.second < 0) { mm_unknown++; continue; }
+                mm_nrec++;
+                if (kv.second > mm_max) { mm_max = kv.second; mm_il_max = kv.first; }
+                if (!mm_per_s.empty()) { mm_per_s += ","; }
+                mm_per_s += std::to_string(kv.second);
+            }
+            fprintf(stderr, "CGC-MISSMASK-HIST: step=%d nrec=%d max=%d il_max=%d unknown=%d per=%s\n",
+                    cgc_mm_step, mm_nrec, mm_max, mm_il_max, mm_unknown,
+                    mm_per_s.empty() ? "-" : mm_per_s.c_str());
+        }
         if (cgc_mm_cost) {
             // G1b's reading. `total_usec` is what G1b prices (the whole readback block, drain
             // included). It is split so the two halves can be attacked separately:
@@ -7598,6 +7709,42 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
         }
         static int cgc_pre_post_n = 0;
         const bool cgc_pp = cgc_pre_post_n < 24 && il <= 2;
+        // [CGC 2026-09-29 §30] 這三行診斷（CGC-PRE / CGC-POST / CGC-SLOT）用**原始的 top-k id**
+        // 直接下標 host 的 slot table：`st[ids[j]]`。那個 id 的來源是 top-k 節點自己的輸出緩衝，
+        // 而它只在 interlock 成立時才保證裝著「這一步的路由」（hook 必須在消費它的 segment 被
+        // commit 之前跑完 —— ggml-backend.cpp:2114-2118 的原話是 "racy submit-ahead order"）。
+        //
+        // 實測 2026-09-29：`CGC_SUBMIT_AHEAD=1` 之下會來一個野 id，`st[id]` 越界讀，行程就在
+        // CGC-PRE 那一行 SIGSEGV（10/10 臂；崩點指令 `ldr w14, [x8, x12, lsl #2]` 位於
+        // libllama+205344，far = st0 + ids[3]*4，`.ips` 的 far 一分不差）。
+        //
+        // 一條診斷**不可以**有能力做這件事：它會殺掉整個行程，把後面所有量測一起吃掉，而那和
+        // 「沒東西可報」在帳面上長得一模一樣（本 repo 反覆在付的那筆學費）。這個 id 的**每一個
+        // 真消費端都已經有護欄**（remap 寫入 :7847、SLOT-SEL :7805），只有印的那三處沒有 ⇒
+        // 補護欄是修 bug，不是改行為：落在 [0, n_expert) 之外本來就沒有 slot 可報。計數器則讓
+        // 這個失效模式**可數而不再致命**，而「野 id 出現幾次、值域在哪」正是用來分辨
+        // 「(a) 緩衝被搶（偶發越界 id）」與「(b) 只是舊的合法映射（沒有越界 id，但值是錯的）」
+        // 的那一個量 —— 這兩者對 E2 的結論完全不同。
+        static int64_t cgc_id_oob_n = 0;
+        static int32_t cgc_id_oob_min = 0, cgc_id_oob_max = 0;
+        auto cgc_st_or = [&](const int32_t * tab, int32_t e, int32_t fallback) -> int32_t {
+            if (tab == nullptr) {
+                return fallback;
+            }
+            if (e < 0 || (int64_t) e >= (int64_t) cache->n_expert) {
+                cgc_id_oob_n++;
+                cgc_id_oob_min = (cgc_id_oob_n == 1 || e < cgc_id_oob_min) ? e : cgc_id_oob_min;
+                cgc_id_oob_max = (cgc_id_oob_n == 1 || e > cgc_id_oob_max) ? e : cgc_id_oob_max;
+                if (cgc_id_oob_n <= 8 || (cgc_id_oob_n % 64) == 0) {
+                    fprintf(stderr, "CGC-S1: OOB-ID n=%lld il=%d id=%d n_expert=%lld min=%d max=%d"
+                                    " (index rejected -- an unguarded st[id] here reads out of bounds)\n",
+                            (long long) cgc_id_oob_n, il, e, (long long) cache->n_expert,
+                            cgc_id_oob_min, cgc_id_oob_max);
+                }
+                return fallback;
+            }
+            return tab[e];
+        };
         // [CGC Exact Path Debug 2026-09-08] detailed prefill/exact-path tracing: dump every
         // selected expert's slot_table value before/after ensure_batch, and the remap values
         // written. Enabled by CGC_EXACT_PATH_DBG=1; limited to prefill (n_tokens>1) + first
@@ -7609,10 +7756,10 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
             cgc_pre_post_n++;
             const int32_t * st0 = llama_expert_cache_slot_table(cache, (uint32_t) il);
             fprintf(stderr, "CGC-PRE: il=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d\n",
-                    il, ids[0], st0 ? st0[ids[0]] : -2, ids[1], st0 ? st0[ids[1]] : -2,
-                    ids[2], st0 ? st0[ids[2]] : -2, ids[3], st0 ? st0[ids[3]] : -2,
-                    ids[4], st0 ? st0[ids[4]] : -2, ids[5], st0 ? st0[ids[5]] : -2,
-                    ids[6], st0 ? st0[ids[6]] : -2, ids[7], st0 ? st0[ids[7]] : -2);
+                    il, ids[0], cgc_st_or(st0, ids[0], -2), ids[1], cgc_st_or(st0, ids[1], -2),
+                    ids[2], cgc_st_or(st0, ids[2], -2), ids[3], cgc_st_or(st0, ids[3], -2),
+                    ids[4], cgc_st_or(st0, ids[4], -2), ids[5], cgc_st_or(st0, ids[5], -2),
+                    ids[6], cgc_st_or(st0, ids[6], -2), ids[7], cgc_st_or(st0, ids[7], -2));
         }
         if (cgc_ep) {
             const int32_t * st0 = llama_expert_cache_slot_table(cache, (uint32_t) il);
@@ -7793,10 +7940,10 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
             const int32_t * st = llama_expert_cache_slot_table(cache, (uint32_t) il);
             if (cgc_pp) {
                 fprintf(stderr, "CGC-POST: il=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d\n",
-                        il, ids[0], st ? st[ids[0]] : -2, ids[1], st ? st[ids[1]] : -2,
-                        ids[2], st ? st[ids[2]] : -2, ids[3], st ? st[ids[3]] : -2,
-                        ids[4], st ? st[ids[4]] : -2, ids[5], st ? st[ids[5]] : -2,
-                        ids[6], st ? st[ids[6]] : -2, ids[7], st ? st[ids[7]] : -2);
+                        il, ids[0], cgc_st_or(st, ids[0], -2), ids[1], cgc_st_or(st, ids[1], -2),
+                        ids[2], cgc_st_or(st, ids[2], -2), ids[3], cgc_st_or(st, ids[3], -2),
+                        ids[4], cgc_st_or(st, ids[4], -2), ids[5], cgc_st_or(st, ids[5], -2),
+                        ids[6], cgc_st_or(st, ids[6], -2), ids[7], cgc_st_or(st, ids[7], -2));
             }
             int32_t * rd = (int32_t *) remap->data;
             for (int64_t j = 0; j < n_tokens; ++j) {
@@ -7817,8 +7964,8 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
             if (cgc_slot_dbg && cgc_slot_dbg_n < 40) {
                 cgc_slot_dbg_n++;
                 fprintf(stderr, "CGC-SLOT: il=%d st[%d]=%d st[%d]=%d st[%d]=%d st[%d]=%d remap=[%d %d %d %d %d %d %d %d]\n",
-                        il, ids[0], st ? st[ids[0]] : -1, ids[1], st ? st[ids[1]] : -1,
-                        ids[2], st ? st[ids[2]] : -1, ids[3], st ? st[ids[3]] : -1,
+                        il, ids[0], cgc_st_or(st, ids[0], -1), ids[1], cgc_st_or(st, ids[1], -1),
+                        ids[2], cgc_st_or(st, ids[2], -1), ids[3], cgc_st_or(st, ids[3], -1),
                         rd[0], rd[1], rd[2], rd[3], rd[4], rd[5], rd[6], rd[7]);
             }
             // [CGC Exact Path Debug] dump every remap value written for prefill chunks

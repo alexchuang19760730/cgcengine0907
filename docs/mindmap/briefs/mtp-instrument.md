@@ -31,14 +31,15 @@
 
 - **子目標**：`L25-5`　MTP 的產品化上限
 - **來源**：子目標看板（唯一來源）　·　置信度 `high`
-- **profile**：`prod25`
-- **被測 option**：`CGC_SERVER_MTP_N_MAX=1`
+- **profile**：`prod-new`
+- **被測 option**：`CGC_SERVER_MTP=1`
 - **儀器開關**（不是被測 option）：`CGC_MTP_PERF=1`
-- **arm 1（可複製）**：`prod25`
-- **結案狀態**：未結案（已判、未立新判準）
+- **CLI**：`--spec-type draft-mtp`；`--spec-draft-n-max 1`
+- **arm 1（可複製）**：`prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1`
+- **結案狀態**：未結案（交付口徑第一次量到、但窗劣化＋逾時中斷 ⇒ 只有單邊上界 m ≤0.257，不是判詞）
 - **逐條處置**：整合進子目標　→ `L25-5`　—　MTP 儀器化（接進 llama-bench）—— 沒有它，L25-5 的 m 量不出來
 - **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
-- 判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。
+- ★ 09-29 起本格的量測口徑改為 prod-new ＋ harness bench（唯一認可入口），不再是 prod25／server ABBA。判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。⚠ 單邊性：窗劣化只把 wall 吹大 ⇒ 實測 t_draft ≥ 真值 ⇒ 由它算出的 m 是上界。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

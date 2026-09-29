@@ -1,0 +1,51 @@
+# 立項卡（2026-09-29 §56）：跨 cell 的兩個數字不可互比 ⇒ 本卡把「格子（batch）」與「量測起點」分開
+id: e-cell-discriminate
+owner: freebuff
+created: '2026-09-29'
+axis: S
+question: §56 指的差（11.703 在 (default)、8.26~10.7 在 delivery）是「量測起點（有沒有先做過 2048-token
+  prefill）」造成的，還是「-b/-ub 5632 ↔ 512」造成的？
+baseline:
+  metric: 同 cell 內的盒子效應只有 −3.2%（(default) 今天 11.327 vs 06:56 的 11.703）；兩 cell 的 row 只差
+    n_batch/n_ubatch 5632↔512 ＋ cell.prompt 2048↔0；default 臂的 fill_batch 是 delivery 的 5.3×、file_reads
+    3.1×；delivery 的 reps 出現單調上升（+21%／+11%）、末 rep 到 11.65／11.16
+  cell: (default) 與 delivery（兩者按 cell_contract 不可互比）
+  source: docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md
+hypothesis:
+  mechanism: 矩陣自註「ONE launch here measures TWO rows (a 2048-token prefill and a 64-token decode)」⇒ default
+    cell 的 tg 測試在同一個行程裡排在 pp2048 之後，它的 decode 是在一個剛被 2048-token 工作流掃過的池子上量的；
+    delivery cell（-p 0）只有 tg 一列 ⇒ 起點較冷。反向證據：default 的 tg 窗較晚較熱卻反而快 ⇒ 熱不是主因。
+  expected: B1（delivery 孿生加大 warm-skip）⇒ level 升到 11.3–11.7 且 reps 變平；B3（(default) 孿生用 batch
+    512）⇒ 若 batch 是主因則該格掉到 ~9.7，若起點是主因則維持 ~11.5。兩者預測互斥。
+  basis: §56 第一～四節（逐欄對照＋cache 5× ＋reps 形狀＋反向證據）
+acceptance:
+  success: B1 與 B3 的 tg level 至少一邊明顯靠近 11.5 或 9.7（差 ≥10%），且兩臂都過引用閘門（QUOTABLE）
+  falsify: 兩臂 level 落在同一帶（10.5 ± 5%）⇒ 起點與 batch 都不是主因
+  on_fail: 維持未結案，並在 exp-caliber-calibration／sys-window 註記「已試、兩者皆非主因」
+targets:
+  decode_tps: 20.0
+  prefill_tps: 250.0
+subgoals:
+- id: sg-cell-declare
+  text: 依測試卡 §2.5 宣告孿生 cell（現有機制只開放 reps／rep_split ⇒ 新增一格並寫理由）
+  expect: 測試卡新增一格且 cell_contract 放行（不是繞過閘門）
+  how: 唯讀閱讀 cell_contract.py ＋ PROD_NEW_TEST_CARD §2.5
+- id: sg-cell-b1
+  text: B1（delivery 孿生、warm_skip 加大）的 tg level 與 reps 形狀
+  expect: 收斂到 11.3–11.7 且 reps 由「上升」變「平」
+  how: prod-new ＋ harness bench，同一窗口成對
+- id: sg-cell-b3
+  text: B3（(default) 孿生、batch 512、保留 p2048）的 tg level
+  expect: 若 batch 是主因 ⇒ ~9.7；若起點是主因 ⇒ ~11.5
+  how: 同 B1、同一窗口
+arms:
+- prod-new
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-10 同步；勿手改，改看板）】──
+options:
+  subgoal: L20-10
+  profile: prod-new
+  arms:
+    - "prod-new"
+  no_knob: "本格沒有既有旋鈕可動：<code>batch</code>／<code>prompt</code>／<code>warm_skip</code> 都是測試卡 §2.5 的<b>嚴格維度</b>（改了 fail-closed 拒跑），現有孿生機制只開放 <code>reps</code>／<code>rep_split</code> ⇒ 這是一個 <b>cell 定義的決定</b>，不是一次跑得動的實驗。"
+  note: "判別句互斥：B1（起點）⇒ 加大 warm-skip 的 delivery 升到 ~11.5；B3（batch）⇒ (default) 的 batch-512 孿生掉到 ~9.7。"

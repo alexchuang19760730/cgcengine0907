@@ -21,6 +21,7 @@
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
+  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   ul,ol { margin:8px 0 12px 22px; } li { margin-bottom:5px; font-size:13.5px; }
@@ -35,24 +36,25 @@
   nav { background:#fff; border-bottom:1px solid #e5e7eb; padding:10px 20px; font-size:13.5px; margin-bottom:0; }
   nav a { color:#2563eb; text-decoration:none; margin-right:16px; }
   footer { margin-top:40px; padding-top:14px; border-top:1px solid #e5e7eb; font-size:12.5px; color:#6b7280; }</style></head><body>
-<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（15）</a></nav>
+<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container"><h1>逐子目標頁：L20（8 格）／L25（6 格）</h1>
 <p class="subtitle">每個子目標一頁：預期 ms/step 與 t/s、現況、驗收／否證、立項卡、結案判準（profile／入口／實測）。看板：<a href="../prefill250decode20.html">prefill250decode20.html</a>。全部由 YAML ＋ mindmap.json 生成。</p>
 <table><thead><tr><th>id</th><th>子目標</th><th>預期 ms/step</th><th>預期 t/s</th><th>立項</th><th>結案</th></tr></thead><tbody>
-<tr><td><b><a href="L20-1.html">L20-1</a></b></td><td>底（S1 的 step）校準</td><td>口徑差 12.4 ms（49.18 vs 36.80）要收斂或被指名</td><td>24.5（底在 36.8 側）／19.2（底在 49.18 側）</td><td><code>e-s1-base-calibrate-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是乾淨窗口）</span></td></tr>
+<tr><td><b><a href="L20-1.html">L20-1</a></b></td><td>底（S1 的 step）校準</td><td>口徑差 12.4 ms（49.18 vs 36.80）要收斂或被指名</td><td>24.5（底在 36.8 側）／19.2（底在 49.18 側）</td><td><code>e-s1-base-calibrate-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是<b>穩定</b>窗口 —— 該讀數經引用閘門判 <b>DIRTY</b>：逐 rep 1.015 合格，但 <code>attribution=swap</code>）</span></td></tr>
 <tr><td><b><a href="L20-2.html">L20-2</a></b></td><td>武裝 G3（<code>CGC_ZERO_SLOT</code>）</td><td>0（主端點是<b>計數器翻轉</b>，不是 ms）</td><td>—（它是 L20-3 的前置）</td><td><code>e-s1-g3-zeroslot-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（卡已立、未跑）</span></td></tr>
-<tr><td><b><a href="L20-3.html">L20-3</a></b></td><td>重算本體 B（靜態 <code>ggml_acc</code>）</td><td>−0.76 ~ −2.36（＝還回去的 fill 3.96 − op 1.60~3.20）</td><td>+0.2 ~ +0.6（在 19.2 的天花板上位移；底在 36.8 側則 +0.7 ~ +2.0）</td><td><code>e-b-accpatch-feasibility-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（<b>尖兵已跑（唯讀）⇒ 價目不成立</b>；缺的那個量＝逐層 miss 直方圖，一行儀器）</span></td></tr>
+<tr><td><b><a href="L20-3.html">L20-3</a></b></td><td>重算本體 B（靜態 <code>ggml_acc</code>）</td><td>−0.76 ~ −2.36（＝還回去的 fill 3.96 − op 1.60~3.20）</td><td>+0.2 ~ +0.6（在 19.2 的天花板上位移；底在 36.8 側則 +0.7 ~ +2.0）</td><td><code>e-b-accpatch-feasibility-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（<b>前置已量、不成立</b>：穩態每層峰值 <b>6</b>；連把設計點降到峰值 6，重算 <b>6.07 ms</b> 都 > 它要取代的 fill <b>3.955</b>）</span></td></tr>
 <tr><td><b><a href="L20-4.html">L20-4</a></b></td><td>fill 那一個 term 的定價</td><td>把 <b>1.60／3.955／5.41／8.3</b>（5× 口徑差）收斂成<b>一個數字 ± 不確定度</b></td><td>—（它決定 L20-3 的回收值）</td><td><code>e-fill-term-price-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（數字齊、口徑未裁）</span></td></tr>
 <tr><td><b><a href="L20-5.html">L20-5</a></b></td><td>餵料搬家（P1）</td><td>0（搬家本身）；連帶讓 debug 回讀可刪 ⇒ <b>−0.46 ms/step</b></td><td>0（價值在於允許後續優化，不在於本身）；§52 實測的代價 ≈ +1.5–2.5 ms/步（39.0 vs 36.x，同預設 cell）</td><td><code>exp-singlesubmit-fillahead.yaml</code></td><td><span class="badge b-warn">未結案（P0 成立、P1 未做）</span></td></tr>
 <tr><td><b><a href="L20-6.html">L20-6</a></b></td><td>替代機制：非同步 fill ＋ 只補算</td><td>20.8（E1 裁決後的 fill 可引用值）</td><td>14.5（節點自算，已排除）</td><td><code>e-asyncfill-recompute-2026-09-28.yaml</code></td><td><span class="badge b-ok">結案（排除）</span></td></tr>
 <tr><td><b><a href="L20-7.html">L20-7</a></b></td><td>prefetch 的兩個前置分支</td><td>先壓掉前置的 <b>4.76 ms/step</b> GPU 插入，才談收益</td><td>—（判活但不可用）</td><td><code>e-prefetch-prereq-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（有前置）</span></td></tr>
 <tr><td><b><a href="L20-8.html">L20-8</a></b></td><td>churn 判詞在交付口徑的重檢</td><td>—</td><td>—（前提題：churn 是不是交付口徑的驅動項）</td><td><code>exp-churn-delivery-630.yaml</code></td><td><span class="badge b-warn">未結案（未跑）</span></td></tr>
 <tr><td><b><a href="L20-9.html">L20-9</a></b></td><td>C 軸唯一「活著」的一格</td><td>—（先量邊界，才有數字）</td><td>—</td><td><code>e-shape-knobs-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（本輪立項）</span></td></tr>
+<tr><td><b><a href="L20-10.html">L20-10</a></b></td><td>格子判別：量測起點 vs batch</td><td>兩個候選各給一個可判的 level：起點 ⇒ ~11.5（11.3–11.7）；batch ⇒ ~9.7</td><td>11.5 / 9.7 —— 判別句是「哪一邊」，不是「多少」</td><td><code>e-cell-discriminate-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（§56 於 09-29 立項：跨格子不可比已確定；兩個候選尚未分離）</span></td></tr>
 <tr><td><b><a href="L25-1.html">L25-1</a></b></td><td>第六條軸：改「每 token 的 bytes 或 steps」</td><td>缺口 45.45 ms ⇒ 需要一個能動 <b>bytes 或 steps</b> 的乘數</td><td>≥25.0（在 ≤40.0 ms 下）</td><td><code>e-sixth-axis-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（本輪立項）</span></td></tr>
 <tr><td><b><a href="L25-2.html">L25-2</a></b></td><td>讓某一格超過自己的已量上界</td><td>41.2 → ≤40.0（四塊各自的已量上界目前相加為 41.2）</td><td>24.3 → ≥25.0</td><td><code>e-beyond-ceiling-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（<b>§51 撤回唯一被指名的機制 B</b>；本格等**新**機制，25 維持判死）</span></td></tr>
-<tr><td><b><a href="L25-3.html">L25-3</a></b></td><td>乾淨窗口（C7）</td><td>—（它保護的是任何新讀數）</td><td>讓 <b>36.33 ms／27.53 t/s</b>（09-29 成對實測）在 <code>attribution=none</code> 重現</td><td><code>e-clean-window-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（09-29 實跑兩臂皆 attribution=swap；缺的是這台盒子的餘裕）</span></td></tr>
+<tr><td><b><a href="L25-3.html">L25-3</a></b></td><td>乾淨窗口（C7）</td><td>—（它保護的是任何新讀數）</td><td>讓 <b>36.33 ms／27.53 t/s</b>（09-29 成對實測）在 <code>attribution=none</code> 重現</td><td><code>e-clean-window-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（<b>§54 第一場 <code>none</code> 已達成</b>；<b>§55 建了判準</b>，而該場被判 <b>UNSTABLE</b>：逐 rep [10.45, 10.44, 3.88] ⇒ max/min <b>2.691</b>。缺的是<b>穩定</b>窗口，不是窗口本身）</span></td></tr>
 <tr><td><b><a href="L25-4.html">L25-4</a></b></td><td>MTP（C6）：唯一「乘」的軸</td><td>S0 與 m 兩個主項（k→∞ 的極限 1000/(S0·m) ＝ 24.59）</td><td>k=3 即使 a=1.0 也只 19.25；k→∞ 24.59</td><td><code>exp-m-draft-cost.yaml</code>／<code>e-mtp-k-bracket-2026-09-28.yaml</code></td><td><span class="badge b-warn">未結案（待產品決策）</span></td></tr>
-<tr><td><b><a href="L25-5.html">L25-5</a></b></td><td>MTP 的產品化上限</td><td>不需再追 2×（已判不成立）；改沿 m／acc 立判準</td><td>m ≤0.30 ⇒ 上限 24.59</td><td><code>e-mtp-m-acc-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（已判、未立新判準）</span></td></tr>
+<tr><td><b><a href="L25-5.html">L25-5</a></b></td><td>MTP 的產品化上限</td><td>不需再追 2×（已判不成立）；改沿 m／acc 立判準</td><td>m ≤0.30 ⇒ 上限 24.59</td><td><code>e-mtp-m-acc-2026-09-29.yaml</code></td><td><span class="badge b-warn">未結案（<b>交付口徑第一次量到、但窗劣化＋逾時中斷</b> ⇒ 只有單邊上界 <b>m ≤0.257</b>，不是判詞）</span></td></tr>
 <tr><td><b><a href="L25-6.html">L25-6</a></b></td><td>口徑認證</td><td>—</td><td>把 16.4% 的底噪認證或關掉；並讓「目前最好」只剩一個定義</td><td><code>exp-k3-pair-cert.yaml</code></td><td><span class="badge b-warn">未結案（未認證）</span></td></tr>
 </tbody></table>
 <div class="warning"><b>結案規則</b>：一個子目標只有在 <b>prod-new profile</b> ＋ <b>harness bench</b>（唯一認可入口）上跑通、且達到它<b>跑前寫死的預期值</b>，才算<b>結案</b>。其餘一律記為未結案，並寫明現在的狀態與缺什麼。</div>

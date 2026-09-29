@@ -21,6 +21,7 @@
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
+  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   ul,ol { margin:8px 0 12px 22px; } li { margin-bottom:5px; font-size:13.5px; }
@@ -37,21 +38,22 @@
   footer { margin-top:40px; padding-top:14px; border-top:1px solid #e5e7eb; font-size:12.5px; color:#6b7280; }
   .kv { width:100%; } .kv th { width:150px; background:#fff; font-size:13px; }
   .verdict { font-size:15px; font-weight:600; }</style></head><body>
-<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（15）</a></nav>
+<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container">
 <h1>L25-3 ｜ 乾淨窗口（C7）</h1>
-<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（09-29 實跑兩臂皆 attribution=swap；缺的是這台盒子的餘裕）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
+<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（<b>§54 第一場 <code>none</code> 已達成</b>；<b>§55 建了判準</b>，而該場被判 <b>UNSTABLE</b>：逐 rep [10.45, 10.44, 3.88] ⇒ max/min <b>2.691</b>。缺的是<b>穩定</b>窗口，不是窗口本身）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>—（它保護的是任何新讀數）</td></tr>
 <tr><th>預期（t/s）</th><td>讓 <b>36.33 ms／27.53 t/s</b>（09-29 成對實測）在 <code>attribution=none</code> 重現</td></tr>
-<tr><th>現況（已量）</th><td>§33–§46 <b>全部 <code>attribution=swap</code></b>；09-29 自己跑的一對<b>也一樣</b>（+851／+1768 MiB）⇒ <b>不是操作失誤，是這台盒子當下的餘裕</b>：共用探針要 8000 MB 可回收、實得 7245 MB。</td></tr>
+<tr><th>現況（已量）</th><td>§33–§46 <b>全部 <code>attribution=swap</code></b>；09-29 <b>§53 四場錨點嘗試</b>：記憶體項已拿下（reclaimable <b>9736</b>、無 override 起跑），但 swap growth = <b>338／1394／2401／4830 MiB</b> ⇒ 沒有一場 <code>none</code>；門檻 500 MiB <b>低於這支臂自己的成長分布</b>（550–2984，原文自陳「拒或不拒有一半是抽籤」）。</td></tr>
 <tr><th>action</th><td>找一場 <code>attribution=none</code> ∧ NOMINAL ∧ reps≥3 的窗口，跑交付 cell 錨點（prod-new ＋ harness bench）</td></tr>
 <tr><th>驗收</th><td>一場<b>可引用的成對</b>錨點</td></tr>
 <tr><th>否證</th><td>拿不到乾淨窗口 ⇒ 所有新讀數維持 VOID</td></tr>
 </table></div>
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
-<tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td>共用探針 <code>admits=False</code>（need 8000／reclaimable 7245）＋<b>22:0x 起跑閘實質不過</b>（壓縮機在 0↔240 MiB/s 跳動、<code>available 3057–3593 &lt; 4000 MB</code>）⇒ 兩道逃生口照跑記錄 ⇒ **兩臂皆 attrib=swap（+6511.8／+1379.3 MiB）**</td><td>tps</td><td>❌</td></tr>
+<tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td><b>§54 22:40 交付 cell、8 GiB、無 override：<code>attribution=none</code></b>（swap +356.44 MiB、NOMINAL 126/126）——但 <b>8.26 ± 3.79 t/s</b>（離散 46%）≠ 錨點 11.703（85.45 ms）；本輪 5 場無一重現錨點</td><td>tps</td><td>❌</td></tr>
 </tbody></table>
+<div class="warning"><b>引用閘門：UNSTABLE</b>（判準＝<code>scripts/check/quote_gate.py</code>，逐 rep 離散 ＋ 樣本數 ＋ 窗口 ＋ 參考帶）<br>產物 <a href="../../../Backup/pool_window_2026-09-29/anchor8g.json"><code>Backup/pool_window_2026-09-29/anchor8g.json</code></a><br>逐 rep [10.45, 10.44, 3.88]：第 3 個 rep 慢 2.7× ⇒ max/min 2.691；窗口 none 但量到的不是同一個東西</div>
 <h3>立項（charter）</h3>
 <ul>
 <li><a href="../../../scripts/check/charters/e-clean-window-2026-09-29.yaml"><code>scripts/check/charters/e-clean-window-2026-09-29.yaml</code></a></li>

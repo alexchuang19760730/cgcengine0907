@@ -5,8 +5,8 @@
 
 ## 統計
 
-- 子目標 **15** 格；52 條裡歸屬到某一格的 **25** 條，未歸屬 **27** 條。
-- 有被測 option 的子目標 **9** 格；明寫「沒有旋鈕」的 **6** 格。
+- 子目標 **16** 格；52 條裡歸屬到某一格的 **25** 條，未歸屬 **27** 條。
+- 有被測 option 的子目標 **10** 格；明寫「沒有旋鈕」的 **7** 格。
 - 機械缺口：**0**
 
 ## 逐格對照（子目標 → options → 立項卡 → 節點）
@@ -15,18 +15,19 @@
 |---|---|---|---|---|---|---|---|
 | **L20-1**<br>底（S1 的 step）校準 | `prod-new` | `CGC_SEG_BATCH=1`；`CGC_B_SCHEME=1`；`CGC_SLOT_TABLE_GPU=1` | `CGC_MISS_MASK=1`；`CGC_MISS_MASK_DBG=1`；`CGC_MISS_MASK_COST=1` | — | `prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1` | `e-s1-base-calibrate-2026-09-29.yaml` | [exp-prodnew-decode20-g4miss](briefs/exp-prodnew-decode20-g4miss.md)<br>[s1-segbatch](briefs/s1-segbatch.md)<br>[exp-s-retro](briefs/exp-s-retro.md) |
 | **L20-2**<br>武裝 G3（CGC_ZERO_SLOT） | `prod-new` | `CGC_ZERO_SLOT=1`；`CGC_SEG_BATCH=1`；`CGC_SLOT_TABLE_GPU=1` | — | — | `prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1`<br>`prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1` | `e-s1-g3-zeroslot-2026-09-29.yaml` | [exp-prodnew-decode20-g4miss](briefs/exp-prodnew-decode20-g4miss.md)<br>[miss-3a](briefs/miss-3a.md)<br>[s1-probe](briefs/s1-probe.md) |
-| **L20-3**<br>重算本體 B（靜態 ggml_acc） | `prod-new` | —<br>⚠ 本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置是先補一行儀器印逐層 miss 直方圖（CGC-MISSMASK-STEP 目前不存在），確認每層最大 ≤ k 才考慮實作。 | — | — | `prod-new` | `e-b-accpatch-feasibility-2026-09-29.yaml` | [exp-prodnew-decode20-g4miss](briefs/exp-prodnew-decode20-g4miss.md)<br>[miss-3c](briefs/miss-3c.md) |
+| **L20-3**<br>重算本體 B（靜態 ggml_acc） | `prod-new` | —<br>⚠ 本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置的儀器已經跑完（見上）⇒ <b>前置否證，不必再印</b>。 | `CGC_MISS_MASK_HIST=1` | — | `prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_MISS_MASK_HIST=1` | `e-b-accpatch-feasibility-2026-09-29.yaml` | [exp-prodnew-decode20-g4miss](briefs/exp-prodnew-decode20-g4miss.md)<br>[miss-3c](briefs/miss-3c.md) |
 | **L20-4**<br>fill 那一個 term 的定價 | `prod-new` | `CGC_EB_NOFILL=1` | `CGC_EB_TIMER=1` | — | `prod-new:CGC_EB_NOFILL=1` | `e-fill-term-price-2026-09-29.yaml` | [io-nofill](briefs/io-nofill.md) |
 | **L20-5**<br>餵料搬家（P1） | `prod-new` | `CGC_SPAC_DBG=1`；`CGC_PREFETCH_SRC=hist`；`CGC_PREFETCH_WINDOW=4` | — | — | `prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1`<br>`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_PREFETCH_SRC=hist;CGC_PREFETCH_WINDOW=4` | `exp-singlesubmit-fillahead.yaml` | [exp-singlesubmit-fillahead](briefs/exp-singlesubmit-fillahead.md)<br>[miss-3b](briefs/miss-3b.md) |
 | **L20-6**<br>替代機制：非同步 fill ＋ 只補算 | `prod-new` | —<br>⚠ 已結案（CLOSED — 不做）：收益 +2.6~4.6% < MDD 8.5%，且要動 M1/M2/M3 護欄 ⇒ 本格沒有要跑的臂，只留登記。 | — | — | `prod-new` | `e-asyncfill-recompute-2026-09-28.yaml` | [s1-asyncgather](briefs/s1-asyncgather.md) |
 | **L20-7**<br>prefetch 的兩個前置分支 | `prod-new` | `CGC_RHO_PROBE=1`；`CGC_PREBIND_PROBE=1` | `CGC_PREBIND_PROBE_VERBOSE=1`；`CGC_RHO_PROBE_LATE=1` | — | `prod-new:CGC_RHO_PROBE=1`<br>`prod-new:CGC_PREBIND_PROBE=1` | `e-prefetch-prereq-2026-09-29.yaml` | [cache-rho](briefs/cache-rho.md)<br>[cache-prebind](briefs/cache-prebind.md) |
 | **L20-8**<br>churn 判詞在交付口徑的重檢 | `prod-new` | `CGC_S1_TABLE_CHURN=1`；`CGC_SLOT_TABLE_GPU=1` | `CGC_GPU_TIMING=1`；`CGC_DECODE_PROFILE=1` | — | `prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1;CGC_GPU_TIMING=1;CGC_DECODE_PROFILE=1` | `exp-churn-delivery-630.yaml` | [exp-churn-delivery-630](briefs/exp-churn-delivery-630.md) |
 | **L20-9**<br>C 軸唯一「活著」的一格 | `prod-new` | — | `CGC_MMV_NSG=8`；`CGC_MMV_FUSE=1` | — | `prod-new` | `e-shape-knobs-2026-09-29.yaml` | [shape-knobs](briefs/shape-knobs.md) |
+| **L20-10**<br>格子判別：量測起點 vs batch | `prod-new` | —<br>⚠ 本格沒有既有旋鈕可動：<code>batch</code>／<code>prompt</code>／<code>warm_skip</code> 都是測試卡 §2.5 的<b>嚴格維度</b>（改了 fail-closed 拒跑），現有孿生機制只開放 <code>reps</code>／<code>rep_split</code> ⇒ 這是一個 <b>cell 定義的決定</b>，不是一次跑得動的實驗。 | — | — | `prod-new` | `e-cell-discriminate-2026-09-29.yaml` | [exp-caliber-calibration](briefs/exp-caliber-calibration.md)<br>[sys-window](briefs/sys-window.md) |
 | **L25-1**<br>第六條軸：改「每 token 的 bytes 或 steps」 | `prod-new` | —<br>⚠ 新軸尚未命名：本格要問的是「每 token 的 bytes 或 steps 有沒有可改的乘數」⇒ 仍在立卡階段，沒有既有旋鈕可綁。 | — | — | `prod-new` | `e-sixth-axis-2026-09-29.yaml` | [m-decode25](briefs/m-decode25.md)<br>[exp-caliber-calibration](briefs/exp-caliber-calibration.md) |
-| **L25-2**<br>讓某一格超過自己的已量上界 | `prod-new` | —<br>⚠ 本格沒有自己的旋鈕，而<b>唯一被指名過的機制（B 半補丁）已被 §51 量死</b>：價目漏掉備援重算 320 列 ＝ <b>8.09 ms</b>（同儀器實測；靜態寬度被正確性逼成 k=8）⇒ <code>39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms</code>。⇒ 要嘛**新的**上界外機制，要嘛維持判死。<br>⚠ B 的<b>唯一復活門不在本格</b>，在 <b>L20-3</b>：先補那一行逐層 miss 直方圖儀器（<code>CGC-MISSMASK-STEP</code>），若每層最大 ≤2 則重算掉到 1.0–2.0 ms、B 才可能正回收。 | — | — | `prod-new` | `e-beyond-ceiling-2026-09-29.yaml` | [m-decode25](briefs/m-decode25.md) |
+| **L25-2**<br>讓某一格超過自己的已量上界 | `prod-new` | —<br>⚠ 本格沒有自己的旋鈕，而<b>唯一被指名過的機制（B 半補丁）已被量死</b>：價目漏掉備援重算 320 列 ＝ <b>8.09 ms</b>（同儀器實測；靜態寬度被正確性逼成 k=8）⇒ <code>39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms</code>。⇒ 要嘛**新的**上界外機制，要嘛維持判死。<br>★ <b>它的復活門（那行逐層直方圖）09-29 已經跑過，且已關閉</b>：交付 cell 穩態每層峰值 <b>6</b>（不是 2）、≤2 只覆蓋 64% 的步；連把設計點降到峰值 6，重算 <b>6.07 ms</b> 都 > fill <b>3.955</b> ⇒ <b>不是「還沒量」，是量了、不成立</b>（<code>docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</code>）。 | — | — | `prod-new` | `e-beyond-ceiling-2026-09-29.yaml` | [m-decode25](briefs/m-decode25.md) |
 | **L25-3**<br>乾淨窗口（C7） | `prod-new` | —<br>⚠ 窗口條件不是旋鈕：attribution=none ∧ thermal NOMINAL ∧ reps≥3。CGC_WINDOW_OVERRIDE 是繞過閘門的開關，不能當本格的 option。 | — | — | `prod-new` | `e-clean-window-2026-09-29.yaml` | [sys-window](briefs/sys-window.md) |
 | **L25-4**<br>MTP（C6）：唯一「乘」的軸 | `prod-new` | `CGC_SERVER_MTP=1`；`CGC_SERVER_LAYER_CAPS=40-40:16`；`CGC_DRAFT_CTX_ALIGN=1`；`CGC_DRAFT_SMALL_BATCH=1` | `CGC_MTP_PERF=1` | `--spec-type draft-mtp`；`--spec-draft-n-max 1` | `prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1` | `exp-m-draft-cost.yaml`<br>`e-mtp-k-bracket-2026-09-28.yaml` | [exp-m-draft-cost](briefs/exp-m-draft-cost.md)<br>[mtp-ksweep](briefs/mtp-ksweep.md) |
-| **L25-5**<br>MTP 的產品化上限 | `prod25` | `CGC_SERVER_MTP_N_MAX=1` | `CGC_MTP_PERF=1` | — | `prod25` | `e-mtp-m-acc-2026-09-29.yaml` | [mtp-2x](briefs/mtp-2x.md)<br>[mtp-caliper](briefs/mtp-caliper.md)<br>[mtp-instrument](briefs/mtp-instrument.md)<br>[mtp-accept](briefs/mtp-accept.md) |
+| **L25-5**<br>MTP 的產品化上限 | `prod-new` | `CGC_SERVER_MTP=1` | `CGC_MTP_PERF=1` | `--spec-type draft-mtp`；`--spec-draft-n-max 1` | `prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1` | `e-mtp-m-acc-2026-09-29.yaml` | [mtp-2x](briefs/mtp-2x.md)<br>[mtp-caliper](briefs/mtp-caliper.md)<br>[mtp-instrument](briefs/mtp-instrument.md)<br>[mtp-accept](briefs/mtp-accept.md) |
 | **L25-6**<br>口徑認證 | `prod-new` | —<br>⚠ 沒有新旋鈕：本格要的是加大配對 n（-r）到能認證 16.4% 的飄移，或證明飄移是視窗機械造成。 | — | — | `prod-new` | `exp-k3-pair-cert.yaml` | [k3-swing](briefs/k3-swing.md)<br>[score-leaderboard](briefs/score-leaderboard.md) |
 
 ## 52 條逐條處置（每條都要落在子目標／已認證／已定案／已作廢之一）
@@ -63,6 +64,7 @@
 | [prebind／方案 A（預指派 slot）](briefs/cache-prebind.md) | 3a | 整合進子目標 | `L20-7` | prebind／方案 A（預指派 slot）—— 另一條前置分支 |
 | [ρ 路線（按層批次化 prefetch）](briefs/cache-rho.md) | 3a | 整合進子目標 | `L20-7` | ρ 按層批次化 prefetch（覆蓋 0.849、每步付 4.76 ms） |
 | [口徑＋k=3 飄移認證（16.4% 噪聲底）](briefs/exp-caliber-calibration.md) | 3a | 整合進子目標 | `L25-1` | 口徑＋k=3 飄移認證；第六條軸要用的量測基準 |
+| [口徑＋k=3 飄移認證（16.4% 噪聲底）](briefs/exp-caliber-calibration.md) | 3a | 整合進子目標 | `L20-10` | §56：跨 cell 的兩個數字不可互比 ⇒ 判別子目標（口徑本身就是這一格） |
 | [在**今天的交付口徑**上（`prod-new` profile、`…](briefs/exp-churn-delivery-630.md) | 3a | 整合進子目標 | `L20-8` | 在交付口徑上重檢 churn；L20-8 的產物 |
 | [M：攤薄係數 m 0.474 → ≤0.073](briefs/exp-m-draft-cost.md) | 3a | 整合進子目標 | `L25-4` | 攤薄係數 m 的成本曲線；MTP 決策的價格表 |
 | [在**認可入口**（`harness bench`、`prod-ne…](briefs/exp-prodnew-decode20-g4miss.md) | 3a | 整合進子目標 | `L20-1` | L20 的主節點；G4 閘的權威讀數（中位 6.09%）就是它的產物 |
@@ -87,6 +89,7 @@
 | [成績排行榜（最高配置＋檢驗檔）](briefs/score-leaderboard.md) | 2 | 已認證 | `C3` | 「目前最好」＝交付錨點 11.703 t/s（三扇門全過） |
 | [shape／knob 世界模型（14–15 個旋鈕的邊界）](briefs/shape-knobs.md) | 3b | 整合進子目標 | `L20-9` | shape／knob 世界模型：C 軸唯一還活著的一格 |
 | [server 窗口／box 准入（單一來源閘門）](briefs/sys-window.md) | 3b | 整合進子目標 | `L25-3` | box 准入單一來源閘門 —— 乾淨窗口那一格就是它 |
+| [server 窗口／box 准入（單一來源閘門）](briefs/sys-window.md) | 3b | 整合進子目標 | `L20-10` | 量測起點（同一行程裡 pp 測試的有無）屬於窗口條件 |
 
 ## 未歸屬任何子目標的條目（＝已認證／已定案／已作廢）
 
