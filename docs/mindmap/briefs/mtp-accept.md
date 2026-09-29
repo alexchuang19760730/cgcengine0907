@@ -25,14 +25,23 @@ k→∞ 上界 a/m ＋ dynamic-k oracle
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod-new:CGC_MTP_REJECTION=1`　（profile `prod-new`；被測 option：`CGC_MTP_REJECTION=1`）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **測試 log**：[mtp_rule_ab_g6_r2.json](../../../Backup/cgc_logs/mtp_rule_ab_g6_r2.json)　[mtp_rule_ab_g6.json](../../../Backup/cgc_logs/mtp_rule_ab_g6.json)　[joint_step_accept_g6.json](../../../Backup/cgc_logs/joint_step_accept_g6.json)
+- **測試 log（檔案不在工作區，`Backup/` 未進版控）**：`mtp_suite_accept_g6.json`
+- **證據報告**：[MTP_ACCEPT_RULE_G6_2026-09-20.md](../../MTP_ACCEPT_RULE_G6_2026-09-20.md)　[MTP_ROUND_COST_OPT_BACKLOG_2026-09-19.md](../../MTP_ROUND_COST_OPT_BACKLOG_2026-09-19.md)
+- 從證據文件掃到的 arm 字串（2 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
 | [RSL-MTP（draft top-8 ⊆ 已付費並集）＋ 練 draft head](mtp-rsl.md) | 4 | 被自己的數據否決：0.70–0.97×，無一格 ≥1.0；m=0.474 下即使 a→1 也不可能 2× |
 | [verify residency thrash ／ 池配額 ／ prefetch 開關](mtp-verify-opt.md) | 4 | 降到次要：彈性只有 0.10–0.17（k=1/3 甚至 −0.38）；k_eff 單變數解釋 84%；修 residency 上界只剩 ~15%；m 的機械解釋是「每 draft |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

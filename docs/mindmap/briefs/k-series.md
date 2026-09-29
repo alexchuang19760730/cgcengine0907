@@ -27,14 +27,21 @@ K1 不做（G2 禁區）、K4 主機側否證（gpu_union 占步時 92%）、K5 
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod25`　（profile `prod25`；無自己的 option）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **儀器開關**（不是被測 option）：`CGC_GPU_NODES_MATRIX=1`
+- **證據報告**：[K5_GRID_HYPOTHESIS_2026-09-21.md](../../K5_GRID_HYPOTHESIS_2026-09-21.md)　[K5_VERDICT_2026-09-21.md](../../K5_VERDICT_2026-09-21.md)　[M_K5_SHAPE_2026-09-21.md](../../M_K5_SHAPE_2026-09-21.md)
+- 證據文件裡只有出現 1 次的 option（—）⇒ 置信度壓到 low，需人工確認
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
 | [G4：元素級融合 kernel](g4.md) | 4 | 判 0 ⇒ 不寫融合 kernel（回歸斜率 0.0132 µs/numel ⇒ 融合的 gain 是 0） |
-| [OMLX verify kernel ／ 其他 verify 路線](misc-omlx.md) | 4 | 判死（見 OMLX_VERIFY_KERNEL_VERDICT） |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

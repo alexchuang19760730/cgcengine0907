@@ -27,16 +27,24 @@
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod25`　（profile `prod25`；無自己的 option）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **儀器開關**（不是被測 option）：`CGC_DECODE_PROFILE=1`
+- **證據報告**：[CB_DELIVERY_SETTLED_2026-09-23.md](../../CB_DELIVERY_SETTLED_2026-09-23.md)
+- 證據文件裡只有出現 1 次的 option（—）⇒ 置信度壓到 low，需人工確認
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
-| [池大小掃描（8→4→2 GiB）](io-poolsize.md) | 3b | 4 GiB 10.60 vs 8 GiB 10.28＝+3.1%（噪音內）；4 GiB miss 1.91×、capacity miss 3.15× 而 t/s 不動 |
+| [池大小掃描（8→4→2 GiB）](io-poolsize.md) | 3b | **仲裁（09-29）：矛盾是「儀器」造成的，不是效應。** 交付 regime（server／HTTP，`decode_sweep.py`）同場配對、**臂序相反的兩輪**：8  |
 | [S1 探針臂：slot table 放 GPU（數值身分）](s1-probe.md) | 3b | 576/576 全同；answer_md5 相同 |
-| [3a：未填充 expert 貢獻歸零（MISS_MASK / ZERO_MISS）](miss-3a.md) | 3b | 兩條都過（38 層/421 元素/0 差異；Δ = −0.95 ± 2.01 ms） |
+| [3a：未填充 expert 貢獻歸零（MISS_MASK / ZERO_MISS）](miss-3a.md) | 3b | 正確性 **PASS**／成本 **UNRESOLVED**。正確性：38 層／421 元素、0 差異（M1 9/9）；成本：mean Δ = **−0.948 ms**、SE * |
 | [expert cache 血統設計（09-05~09-09 期）](na-design.md) | 3b | HYBRID_DESIGN／INVARIANTS／INTEGRATION_DIFF／COMMIT_DIGEST：血統進了生產的 expert cache（現行 pool 即其後代） |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

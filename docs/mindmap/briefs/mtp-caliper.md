@@ -27,14 +27,22 @@
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod25:CGC_SERVER_MTP=0`　（profile `prod25`；被測 option：`CGC_SERVER_MTP=0`）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **測試 log**：[aligned_nail_vs_ornith_fwd.json](../../../Backup/phase_decomp/aligned_nail_vs_ornith_fwd.json)　[summary_en-orn-ab.json](../../../Backup/m123_oracle_gate/summary_en-orn-ab.json)　[aligned_nail_vs_ornith_rev.json](../../../Backup/phase_decomp/aligned_nail_vs_ornith_rev.json)
+- **證據報告**：[MTP3_25TPS_ARITHMETIC_2026-09-18.md](../../MTP3_25TPS_ARITHMETIC_2026-09-18.md)　[MTP_ABBA_RECHECK_2026-09-18.md](../../MTP_ABBA_RECHECK_2026-09-18.md)　[MTP_K_AB_2026-09-18.md](../../MTP_K_AB_2026-09-18.md)　[MTP_NET_EFFECT_PAIRED_2026-09-18.md](../../MTP_NET_EFFECT_PAIRED_2026-09-18.md)
+- 從證據文件掃到的 arm 字串（8 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
 | [MTP 儀器化（接進 llama-bench）](mtp-instrument.md) | 3b | 接通（真因＝test_gen_spec 的 n_past 初始化）；此後 MTP 不再跨儀器比較 |
 | [MTP 到 2× 的邊界（攤薄算術）](mtp-2x.md) | 3b | k 加到多大都不到 2×（server a/m=1.445、bench 0.982）；現況每產出 token 成本 45.6~56.4 vs baseline 48.2 ⇒ 攤薄  |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

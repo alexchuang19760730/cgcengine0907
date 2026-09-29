@@ -1,0 +1,70 @@
+# C：有效帶寬 13.65 → ≥29 GB/s（16／25 t/s） — 技術白皮書　·　3a ③a 實驗目標達成（階段性）
+
+> **一句話**：⚠ 本節點與 `c-bandwidth`（tier 3a）**必須先對齊口徑**，否則會重複一次已完成的量測： `c-bandwidth` 已測到 dense GEMV 該族實跑 **56–108 GB/s**（DRAM 峰值 108.8）， 且「就算全部打滿 100% 峰值也只省 1.92 ms = **2.42% step** ⇒ 低於 3% 門檻」，該族已結案。 本節點問的不是 kernel 的 achieved bandwidth，而是 **§7 那個 13.65 GB/s 的分子與分母**： 它是 `1.171 GB ÷ 85.8 ms`（整 token 權重讀取 ÷ S0），而 E-A 已證其中僅 ~2% 落到磁碟。 ⇒ 因此第一步不是攻帶寬，是回答：**如果 kernel 已跑到 56–108 GB/s，那 85.8 ms 裡 「不是帶寬」的那部分是什麽？**（dequant／dispatch／scatter／metal 排程） 若那一部分是主項，本節點應該把結論回填 `c-bandwidth` 並結案，而不是自己開一條新路。
+
+- 主題：實驗　·　子目標：**C kernel／頻寬效率**（天花板軸（不是活躍攻關軸）：受模型形狀與 kernel 物理約束，已知槓桿多半已證偽 ⇒ 持續證偽、只當背景約束與上界；但不能在分類裡消失，否則最大的時間塊無人認領）
+- 階段：實驗階段（階段性）　·　③a —— 機制／量測成立，但產物還不能進生產
+
+---
+
+## 1. 目標
+
+⚠ 本節點與 `c-bandwidth`（tier 3a）**必須先對齊口徑**，否則會重複一次已完成的量測： `c-bandwidth` 已測到 dense GEMV 該族實跑 **56–108 GB/s**（DRAM 峰值 108.8）， 且「就算全部打滿 100% 峰值也只省 1.92 ms = **2.42% step** ⇒ 低於 3% 門檻」，該族已結案。 本節點問的不是 kernel 的 achieved bandwidth，而是 **§7 那個 13.65 GB/s 的分子與分母**： 它是 `1.171 GB ÷ 85.8 ms`（整 token 權重讀取 ÷ S0），而 E-A 已證其中僅 ~2% 落到磁碟。 ⇒ 因此第一步不是攻帶寬，是回答：**如果 kernel 已跑到 56–108 GB/s，那 85.8 ms 裡 「不是帶寬」的那部分是什麽？**（dequant／dispatch／scatter／metal 排程） 若那一部分是主項，本節點應該把結論回填 `c-bandwidth` 並結案，而不是自己開一條新路。
+
+## 2. 判準
+
+同一 run 內量到有效帶寬 ≥23 GB/s（⇒ ≥16 t/s），且 zero_mapped / verify_refused / inv_viol 全為 0
+
+## 3. 結果
+
+**背景（不再獨立跑）**：問的是 13.65 GB/s 的分子與分母；E-A 已把「20% 掉到 SSD」否掉（f≈1.5%）⇒ 失效項是**達到的帶寬本身**。卡在（targets 16.0），**無讀數 ⇒ 不主張任何值**。
+
+## 4. 判定
+
+**3a · ③a 實驗目標達成（階段性）** — 達成實驗設計目的（機制／量測成立），但產物還不能放進生產級設置
+
+> C 軸背景：依定義**不是槓桿**（見看板的 C 軸表）；本節點只作為帶寬分析的落腳處。
+
+---
+
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod25`　（profile `prod25`；無自己的 option）
+- **來源**：② charter arms[]　·　置信度 `high`
+- **證據報告**：[DECODE25_CEILING_2026-09-20.md](../../DECODE25_CEILING_2026-09-20.md)
+- 取自 `scripts/check/charters/exp-c-eff-bandwidth.yaml` 的 `arms[]`
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
+
+| 條目 | 級 | 結果（摘） |
+|---|---|---|
+| [device span 歸因（最大一塊時間）](c-device-span.md) | 3a | 成立：57% 住在 MoE 區（層內節點 0–39）、42% 住在 attention／GDN 區（40–89）；邊際 verify token +26.3 ms 裡 MoE +1 |
+| [頻寬屋頂／dense GEMV 上界](c-bandwidth.md) | 3a | dense GEMV 每步 13.39 ms（13.7–16.8%），實測已跑 56–108 GB/s（DRAM 峰值 108.8）；就算全部打滿 100% 峰值也只省 1.92  |
+| [G1：可達上界 / G1-G7 sweep](g1.md) | 3a | 串行且空轉 19.2% 是「可恢復」的形狀，但 G1 已判定不可達（下界 9.0% > 5%）⇒ 「多少」目前不可引用（44/45 份非零 ⇒ 表內容會動） |
+| [C：讀取發行開銷（重驗 io-shape）](exp-c-read-issue.md) | 3a | **已由同題判詞結清**：`io-shape`（已結）量過同一問題——收益 **2.9% < 3%** 門檻 ⇒ 判為背景。卡在（targets 14.0），**不再獨立跑**。 |
+
+## 7. 子目標分解（持續更新；1/6 完成）
+
+- [x] 跑前立項（現狀/目標/假設/驗收） [證](../../../scripts/check/charters/exp-c-eff-bandwidth.yaml)
+- [~] 用生產級腳本 prod-new ＋ 自己 option 跑實驗臂，留存 log
+- [ ] 驗收：同一 run 內量到有效帶寬 ≥23 GB/s（⇒ ≥16 t/s），且 zero_mapped / verify_refused / inv_viol 全為 0
+- [ ] 否證條件：把 85.8 ms 拆成（i）讀取發行、（ii）dequant、（iii）dispatch 三項後，若三者可動部分加總 <20%，則 C 軸判否，25 只能在 S/M 軸上求
+- [ ] RAM 路徑效率：峰值帶寬的 11.4% → ≥24%（13.65 → ≥29 GB/s）
+- [ ] 移除『SSD 是主項』這個假設：所有帶寬結論都必須附 E-A 式的 OS pageins 交叉檢查
+
+## 8. 依據 · 備註 · 對應報告
+
+| 項目 | 內容 |
+|---|---|
+| 依據 | `docs/DECODE25_CEILING_2026-09-20.md` |
+| 備註 | C 軸背景：依定義**不是槓桿**（見看板的 C 軸表）；本節點只作為帶寬分析的落腳處。 |
+| 軸性質 | 天花板軸（不是活躍攻關軸）：受模型形狀與 kernel 物理約束，已知槓桿多半已證偽 ⇒ 持續證偽、只當背景約束與上界；但不能在分類裡消失，否則最大的時間塊無人認領 |
+| 對應報告 | 0 份 |
+
+- （無）
+
+---
+
+← [成績排行榜（最高配置＋檢驗檔）](score-leaderboard.md)　·　[總目錄](index.md)　·　[HTML 版](exp-c-eff-bandwidth.html)　·　[C：讀取發行開銷（重驗 io-shape） →](exp-c-read-issue.md)
+
+本檔由 `scripts/check/mindmap_brief_build.py` 從 `docs/mindmap/mindmap.json` 機械生成；改內容請改 JSON 後重跑，勿直接編輯本檔。

@@ -27,14 +27,21 @@
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod-new:LLAMA_BENCH_SPEC_NOTRIM=1`　（profile `prod-new`；被測 option：`LLAMA_BENCH_SPEC_NOTRIM=1`）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **證據報告**：[MTP_HEAD_PROVENANCE_GATE_2026-09-14.md](../../MTP_HEAD_PROVENANCE_GATE_2026-09-14.md)　[MTP_INSTRUMENT_PLAN_2026-09-17.md](../../MTP_INSTRUMENT_PLAN_2026-09-17.md)　[MTP_IN_LLAMA_BENCH_2026-09-18.md](../../MTP_IN_LLAMA_BENCH_2026-09-18.md)　[MTP_LAUNCH_REQUIRED_PARAMS_2026-09-18.md](../../MTP_LAUNCH_REQUIRED_PARAMS_2026-09-18.md)
+- 從證據文件掃到的 arm 字串（6 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
 | [MTP 口徑與混淆定位（pool／跨啟動／順序）](mtp-caliper.md) | 3b | 定案：任何單點 MTP 數字不可引用；pool 4 vs 8 GiB 是一階混淆；同 launch 配對 ×1.06、生產 server 路徑 ×0.695（方向相反） |
 | [MTP 到 2× 的邊界（攤薄算術）](mtp-2x.md) | 3b | k 加到多大都不到 2×（server a/m=1.445、bench 0.982）；現況每產出 token 成本 45.6~56.4 vs baseline 48.2 ⇒ 攤薄  |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

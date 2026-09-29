@@ -1,5 +1,10 @@
-<html style="margin:0;padding:0;">
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
 <title>K3 邊際單價（dispatch 成本） — 技術白皮書（3b ③b 實驗目標達成（可放生產））</title>
+</head>
+<body style="margin:0;padding:0;">
 <div style="width:100%;box-sizing:border-box;padding:18px;font-family:-apple-system,'PingFang TC',sans-serif;color:#1a1a1a;">
   <h2 style="margin:0 0 4px;font-size:19px;">K3 邊際單價（dispatch 成本）</h2>
   <div style="font-size:12px;color:#666;margin-bottom:14px;line-height:1.6;">量出 K3 的邊際單價（多一次 dispatch 要付多少），判斷把 k 從 2 加到 3 划不划算。
@@ -13,6 +18,13 @@
   <div style="font-size:13px;font-weight:600;margin-bottom:6px;">與其它條目的關係（同軸 C kernel／頻寬效率／同階段，自動對照）</div><table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px;"><tr style="background:#f1f5f9;"><td style="padding:6px 8px;font-weight:600;">條目</td><td style="padding:6px 8px;font-weight:600;">級</td><td style="padding:6px 8px;font-weight:600;">結果（摘）</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;"><a href="shape-knobs.html">shape／knob 世界模型（14–15 個旋鈕的邊界）</a></td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><b style="color:#0d9488">3b</b></td><td style="padding:6px 8px;border-bottom:1px solid #eee;">SHAPE_KNOB_LANDED 證實落地；SHAPE_ROOFLINE 抓到「down 是 IQ3_S 不是 IQ3_XXS」等量測事實；BANDWIDTH_CEILING 1</td></tr></table>
   
   
+  
+  
+  
+  
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Profile 綁定與測試 Log 報告</div><table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px;"><tr style="background:#f1f5f9;"><td style="padding:6px 8px;font-weight:600;">項目</td><td style="padding:6px 8px;font-weight:600;">內容</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">profile</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>prod25</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">arm（可複製）</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>prod25</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">被測 option</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><span style="color:#94a3b8;">（無自己的 option）</span></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">來源</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">③ 證據文件掃描　·　置信度 <code>med</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">測試 log</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><a href="../../../Backup/m123_oracle_gate/summary_en-k3pair-cert.json" target="_blank" rel="noopener">summary_en-k3pair-cert.json</a></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">證據報告</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><a href="../../../docs/K3_CEILING_REAUDIT_2026-09-21.md" target="_blank" rel="noopener">K3_CEILING_REAUDIT_2026-09-21.md</a>　<a href="../../../docs/K3_PRICE_MEASURED_2026-09-21.md" target="_blank" rel="noopener">K3_PRICE_MEASURED_2026-09-21.md</a>　<a href="../../../docs/KNOB_FULL_MAP_15_2026-09-22.md" target="_blank" rel="noopener">KNOB_FULL_MAP_15_2026-09-22.md</a>　<a href="../../../docs/KNOB_INVENTORY_VERIFIED_2026-09-22.md" target="_blank" rel="noopener">KNOB_INVENTORY_VERIFIED_2026-09-22.md</a></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">備註</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">從證據文件掃到的 arm 字串（5 份文件）</td></tr></table>
+  
+  
   <div style="font-size:13px;font-weight:600;margin-bottom:6px;">依據 · 備註 · 軸性質</div><table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px;"><tr style="background:#f1f5f9;"><td style="padding:6px 8px;font-weight:600;">項目</td><td style="padding:6px 8px;font-weight:600;">內容</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">依據</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>docs/K3_PRICE_MEASURED_2026-09-21.md</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">備註</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">★ KNOB_INVENTORY 自記：那晚的 budget sweep 無效（撤回）</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">軸性質</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><span style="color:#38bdf8">●</span> 天花板軸（不是活躍攻關軸）：受模型形狀與 kernel 物理約束，已知槓桿多半已證偽 ⇒ 持續證偽、只當背景約束與上界；但不能在分類裡消失，否則最大的時間塊無人認領</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">階段</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">生產（可放生產／已交付）　·　① ② ③b —— 已進生產、或已是生產決策依據</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">對應報告</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">5 份</td></tr></table>
   <div style="font-size:13px;font-weight:600;margin-bottom:6px;">對應報告（5 份）</div><ol style="margin:0;padding-left:20px;font-size:12px;line-height:1.7;"><li><a href="../../K3_CEILING_REAUDIT_2026-09-21.md" target="_blank" rel="noopener">K3_CEILING_REAUDIT_2026-09-21.md</a></li><li><a href="../../K3_FOOTPRINT_AND_SHAPEKNOB_20260923_0659.html" target="_blank" rel="noopener">K3_FOOTPRINT_AND_SHAPEKNOB_20260923_0659.html</a></li><li><a href="../../K3_PRICE_MEASURED_2026-09-21.md" target="_blank" rel="noopener">K3_PRICE_MEASURED_2026-09-21.md</a></li><li><a href="../../KNOB_FULL_MAP_15_2026-09-22.md" target="_blank" rel="noopener">KNOB_FULL_MAP_15_2026-09-22.md</a></li><li><a href="../../KNOB_INVENTORY_VERIFIED_2026-09-22.md" target="_blank" rel="noopener">KNOB_INVENTORY_VERIFIED_2026-09-22.md</a></li></ol>
 
@@ -24,4 +36,5 @@
     機械生成；改內容請改 JSON 後重跑，勿直接編輯本頁。</div>
   <div style="margin-top:16px;padding-top:10px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;gap:10px;font-size:12px;"><a href="cache-cb.html">← cb 口徑定讞（42 vs 74）</a><span><a href="index.html">總目錄</a>　·　<a href="k3-price.md">MD 版</a></span><a href="k3-swing.html">k=3 的 1.43× 飄移定位 ＋ 配對認證 →</a></div>
 </div>
+</body>
 </html>

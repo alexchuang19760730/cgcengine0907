@@ -17,31 +17,39 @@
 
 ## 3. 結果
 
-兩條都過（38 層/421 元素/0 差異；Δ = −0.95 ± 2.01 ms）
+正確性 **PASS**／成本 **UNRESOLVED**。正確性：38 層／421 元素、0 差異（M1 9/9）；成本：mean Δ = **−0.948 ms**、SE **1.027**、95% CI **[−2.96, +1.06]**、median **+0.585**（點估計連符號都相反）、門檻 **0.2 ms** ⇒ **不可引用為「−0.95 ms」**（CI 半寬 ±2.01 是門檻的 10 倍）。
 
 ## 4. 判定
 
 **3b · ③b 實驗目標達成（可放生產）** — 產物已可放進生產級設置：不破壞正確性 ∧ 成本可接受 ∧ 無前置條件
 
-> 零成本且逐位正確；但零 fill 下無正確性收益（3c 的前置）
+> 零成本且逐位正確的**使能項**；零 fill 下無正確性收益（3c 的前置）。生產價值上限 **≤0.23%**：權威 cell 的 `CGC-MISSMASK-COST` 是 464 µs/step，其中 read 462（77.8 次 `tensor_get`）、sync 1.9（0.40%）⇒ 成本形狀是「次數 × 固定開銷」，可優化對象是**次數**（§42）。
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod-new:CGC_SERVER_STRICT_BUDGET=1`　（profile `prod-new`；被測 option：`CGC_SERVER_STRICT_BUDGET=1`）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **測試 log**：[miss_axis_res.json](../../../Backup/miss_axis_mtpoff_ws64_r3/miss_axis_res.json)
+- **證據報告**：[GAP_VS_MISS_2026-09-20.md](../../GAP_VS_MISS_2026-09-20.md)　[MISS_PATH_COST_AUDIT_2026-09-13.md](../../MISS_PATH_COST_AUDIT_2026-09-13.md)　[SWAP_MISS_LINK_2026-09-24.md](../../SWAP_MISS_LINK_2026-09-24.md)
+- 從證據文件掃到的 arm 字串（3 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
-| [池大小掃描（8→4→2 GiB）](io-poolsize.md) | 3b | 4 GiB 10.60 vs 8 GiB 10.28＝+3.1%（噪音內）；4 GiB miss 1.91×、capacity miss 3.15× 而 t/s 不動 |
+| [池大小掃描（8→4→2 GiB）](io-poolsize.md) | 3b | **仲裁（09-29）：矛盾是「儀器」造成的，不是效應。** 交付 regime（server／HTTP，`decode_sweep.py`）同場配對、**臂序相反的兩輪**：8  |
 | [S1 探針臂：slot table 放 GPU（數值身分）](s1-probe.md) | 3b | 576/576 全同；answer_md5 相同 |
 | [cb 口徑定讞（42 vs 74）](cache-cb.md) | 3b | 定讞 42~51 ms；74.18 撤回 |
 | [expert cache 血統設計（09-05~09-09 期）](na-design.md) | 3b | HYBRID_DESIGN／INVARIANTS／INTEGRATION_DIFF／COMMIT_DIGEST：血統進了生產的 expert cache（現行 pool 即其後代） |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|
 | 依據 | `Backup/miss_axis_mtpoff_ws64_r3/miss_axis_res.json` |
-| 備註 | 零成本且逐位正確；但零 fill 下無正確性收益（3c 的前置） |
+| 備註 | 零成本且逐位正確的**使能項**；零 fill 下無正確性收益（3c 的前置）。生產價值上限 **≤0.23%**：權威 cell 的 `CGC-MISSMASK-COST` 是 464 µs/step，其中 read 462（77.8 次 `tensor_get`）、sync 1.9（0.40%）⇒ 成本形狀是「次數 × 固定開銷」，可優化對象是**次數**（§42）。 |
 | 軸性質 | 活躍攻關軸：41 段提交的同步／資料搬運，主項可被工程手段消掉 |
 | 對應報告 | 3 份 |
 

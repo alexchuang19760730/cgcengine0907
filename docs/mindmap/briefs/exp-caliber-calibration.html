@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>口徑＋k=3 飄移認證（16.4% 噪聲底） — 技術白皮書（3a ③a 實驗目標達成（階段性））</title>
+</head>
+<body style="margin:0;padding:0;">
+<div style="width:100%;box-sizing:border-box;padding:18px;font-family:-apple-system,'PingFang TC',sans-serif;color:#1a1a1a;">
+  <h2 style="margin:0 0 4px;font-size:19px;">口徑＋k=3 飄移認證（16.4% 噪聲底）</h2>
+  <div style="font-size:12px;color:#666;margin-bottom:14px;line-height:1.6;">★ **2026-09-28 收斂後的結論：這是唯一還可量測的那一個問題。** 見 docs/CONTRADICTION_CONVERGENCE_2026-09-28.md：擋住 25 的三個候選理由—— IO（`io-shape` 2.9% &lt; 3%，且 E-A 實測那條路只佔 f≈1.5%）、dispatch（`k3-price` 0.0195%/次， 舊融合算術全作廢）、密集 kernel 頻寬（`c-bandwidth` 打滿 100% 也只省 2.42%）——**都已被量過並否定**； 剩下的是 **`k3-swing` 的 16.4% 未認證飄移**。 而**每一個「還差多少到 25」的數字都小於 16.4%**：S2 誠實天花板 +8.7%、 「最後 3.5% acceptance」+3.5%、io-shape +2.9%、c-bandwidth +2.42%。 ⇒ **在 16.4% 被配對認證關掉之前，「我們離 25 多遠」在度量上不可回答。** 所以要回答的是：「交付口徑 12.57 t/s」與「DECPROF/round 口徑 207.8 ms step」之間的校準， 以及那個 1.43× 飄移是視窗機械還是真訊號（n=5 時 t=2.08 未達 df=4 的 2.776）。
+　｜　主題 實驗　｜　子目標 <span style="color:#94a3b8">●</span> 不適用</div>
+
+  <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;"><div style="flex:1;min-width:180px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;"><div style="font-size:12.5px;font-weight:600;margin-bottom:6px;color:#991b1b;">目標 · 判準（要達成什麼、怎麼算達成）</div><div style="font-size:11.5px;line-height:1.7;">★ **2026-09-28 收斂後的結論：這是唯一還可量測的那一個問題。**
+見 docs/CONTRADICTION_CONVERGENCE_2026-09-28.md：擋住 25 的三個候選理由——
+IO（`io-shape` 2.9% < 3%，且 E-A 實測那條路只佔 f≈1.5%）、dispatch（`k3-price` 0.0195%/次，
+舊融合算術全作廢）、密集 kernel 頻寬（`c-bandwidth` 打滿 100% 也只省 2.42%）——**都已被量過並否定**；
+剩下的是 **`k3-swing` 的 16.4% 未認證飄移**。
+
+而**每一個「還差多少到 25」的數字都小於 16.4%**：S2 誠實天花板 +8.7%、
+「最後 3.5% acceptance」+3.5%、io-shape +2.9%、c-bandwidth +2.42%。
+⇒ **在 16.4% 被配對認證關掉之前，「我們離 25 多遠」在度量上不可回答。**
+
+所以要回答的是：「交付口徑 12.57 t/s」與「DECPROF/round 口徑 207.8 ms step」之間的校準，
+以及那個 1.43× 飄移是視窗機械還是真訊號（n=5 時 t=2.08 未達 df=4 的 2.776）。<br><span style="color:#64748b;">判準：配對 n 加大到能認證：1.43× 飄移的配對 t 檢定達 df 對應的臨界值（關掉它）**或** 證明它是視窗機械造成的；並寫出交付口徑 ↔ DECPROF 口徑的換算（含不確定度）</span></div></div><div style="flex:1;min-width:180px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:12px;"><div style="font-size:12.5px;font-weight:600;margin-bottom:6px;color:#1e40af;">結果（實測／推算，依據見下）</div><div style="font-size:11.5px;line-height:1.7;">**未跑（有卡、無讀數）**：本節點的產出是**口徑校準**——記錄裡至少有四個不同的「步」（DECPROF work-row **167.81** ms／實付週期 step_round **207.8** ms／E2b 暖 total **139.46** ms／D0 探針 **99.39** ms），而 t/s 的恆等式用 step_round ⇒ 它決定 19.25／22.9／24.15／18.7 哪一個才是**同一個口徑**下的 25 差距。 **09-29 §50 的一個尖例**：判死的 margin 現在縮到 **0.6–2.2 ms**（40.6–42.2 ms），佔 40.0 ms 的 **1.5–5.5%** ⇒ **小於**本節點記的 `k3-swing` **16.4% 未認證飄移**。也就是說：**連「25 死不死」這件事本身都落在未校準的口徑帶內** ⇒ 本節點的優先序更高，不是更低。 **§51（09-29）**：本節點記的 16.4% 未認證飄移，現在多了一個同族實例——「25 的 margin」在 §50 曾是 0.6–2.2 ms，在 §51 重定價後是 **8.7–12.8 ms（反方向）**；**兩次都在同一個未校準帶裡換結論** ⇒ 校準（本節點）是所有這些判詞的前置，不是並行項。</div><div style="margin-top:8px;font-size:22px;font-weight:700;color:#1e40af;">5.5%</div></div><div style="flex:1;min-width:180px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px;"><div style="font-size:12.5px;font-weight:600;margin-bottom:6px;color:#166534;">判定（契約 §5 四級）</div><div style="font-size:11.5px;line-height:1.7;">③a 實驗目標達成（階段性）<br><span style="color:#64748b;">達成實驗設計目的（機制／量測成立），但產物還不能放進生產級設置</span></div><div style="margin-top:8px;font-size:22px;font-weight:700;color:#166534;">3a</div></div></div>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">四段：目標 → 判準 → 結果 → 判定</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:stretch;"><div style="flex:1;min-width:170px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;"><div style="font-size:12px;font-weight:600;margin-bottom:4px;">1 目標</div><div style="font-size:11px;line-height:1.65;color:#334155;">★ **2026-09-28 收斂後的結論：這是唯一還可量測的那一個問題。**
+見 docs/CONTRADICTION_CONVERGENCE_2026-09-28.md：擋住 25 的三個候選理由——
+IO（`io-shape` 2.9% < 3%，且 E-A 實測那條路只佔 f≈1.5%）、dispatch（`k3-price` 0.0195%/次，
+舊融合算術全作廢）、密集 kernel 頻寬（`c-bandwidth` 打滿 100% 也只省 2.42%）——**都已被量過並否定**；
+剩下的是 **`k3-swing` 的 16.4% 未認證飄移**。
+
+而**每一個「還差多少到 25」的數字都小於 16.4%**：S2 誠實天花板 +8.7%、
+「最後 3.5% acceptance」+3.5%、io-shape +2.9%、c-bandwidth +2.42%。
+⇒ **在 16.4% 被配對認證關掉之前，「我們離 25 多遠」在度量上不可回答。**
+
+所以要回答的是：「交付口徑 12.57 t/s」與「DECPROF/round 口徑 207.8 ms step」之間的校準，
+以及那個 1.43× 飄移是視窗機械還是真訊號（n=5 時 t=2.08 未達 df=4 的 2.776）。</div></div><div style="display:flex;align-items:center;color:#94a3b8;font-size:18px;">→</div><div style="flex:1;min-width:170px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;"><div style="font-size:12px;font-weight:600;margin-bottom:4px;">2 判準</div><div style="font-size:11px;line-height:1.65;color:#334155;">配對 n 加大到能認證：1.43× 飄移的配對 t 檢定達 df 對應的臨界值（關掉它）**或** 證明它是視窗機械造成的；並寫出交付口徑 ↔ DECPROF 口徑的換算（含不確定度）</div></div><div style="display:flex;align-items:center;color:#94a3b8;font-size:18px;">→</div><div style="flex:1;min-width:170px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;"><div style="font-size:12px;font-weight:600;margin-bottom:4px;">3 結果</div><div style="font-size:11px;line-height:1.65;color:#334155;">**未跑（有卡、無讀數）**：本節點的產出是**口徑校準**——記錄裡至少有四個不同的「步」（DECPROF work-row **167.81** ms／實付週期 step_round **207.8** ms／E2b 暖 total **139.46** ms／D0 探針 **99.39** ms），而 t/s 的恆等式用 step_round ⇒ 它決定 19.25／22.9／24.15／18.7 哪一個才是**同一個口徑**下的 25 差距。 **09-29 §50 的一個尖例**：判死的 margin 現在縮到 **0.6–2.2 ms**（40.6–42.2 ms），佔 40.0 ms 的 **1.5–5.5%** ⇒ **小於**本節點記的 `k3-swing` **16.4% 未認證飄移**。也就是說：**連「25 死不死」這件事本身都落在未校準的口徑帶內** ⇒ 本節點的優先序更高，不是更低。 **§51（09-29）**：本節點記的 16.4% 未認證飄移，現在多了一個同族實例——「25 的 margin」在 §50 曾是 0.6–2.2 ms，在 §51 重定價後是 **8.7–12.8 ms（反方向）**；**兩次都在同一個未校準帶裡換結論** ⇒ 校準（本節點）是所有這些判詞的前置，不是並行項。</div></div><div style="display:flex;align-items:center;color:#94a3b8;font-size:18px;">→</div><div style="flex:1;min-width:170px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;"><div style="font-size:12px;font-weight:600;margin-bottom:4px;">4 判定</div><div style="font-size:11px;line-height:1.65;color:#334155;"><b style="color:#d97706">3a · ③a 實驗目標達成（階段性）</b><br>假設：記錄裡至少有四個不同的「步」：DECPROF 的 work-row median（167.81 ms）、實付週期
+step_round = mean_len / tps（207.8 ms）、E2b 暖 total（139.46 ms）、以及 D0 探針的
+99.39 ms。t/s 的恆等式用的是 step_round，而「還差多少」的推算常誤用其他三個。
+⇒ 校準缺失本身就是一個可交付物：它決定 19.25 / 22.9 / 24.15 / 18.7 這四個天花板
+哪一個才是同一個口徑下的 25 差距。
+</div></div></div>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">與其它條目的關係（同軸 不適用／同階段，自動對照）</div><table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px;"><tr style="background:#f1f5f9;"><td style="padding:6px 8px;font-weight:600;">條目</td><td style="padding:6px 8px;font-weight:600;">級</td><td style="padding:6px 8px;font-weight:600;">結果（摘）</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;"><a href="k3-swing.html">k=3 的 1.43× 飄移定位 ＋ 配對認證</a></td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><b style="color:#d97706">3a</b></td><td style="padding:6px 8px;border-bottom:1px solid #eee;">飄移已定位；配對認證 n=5 時 t=2.08 未達 df=4 的 2.776 ⇒ 16.4% 仍未認證；上一輪「bench 配對 sd 更小」被自我撤回</td></tr></table>
+  
+  
+  
+  
+  
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">目前最佳配置 vs 目標（每跑一臂自動更新）</div><div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;"><div style="flex:1;min-width:210px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:11px 13px;font-size:12px;color:#64748b;">🏆 尚無讀數（跑完第一臂後自動出現最佳配置）</div><div style="flex:2;min-width:270px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:11px 13px;"><div style="font-size:12.5px;font-weight:700;color:#334155;margin-bottom:4px;">🎯 要達成的目標與差距</div><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;flex-wrap:wrap;font-size:12px;"><span style="font-weight:600;color:#334155;min-width:96px;">Decode 目標</span><span style="flex:1;"><span style="color:#94a3b8;">尚無讀數</span></span><div style="background:#e2e8f0;border-radius:5px;height:8px;width:104px;overflow:hidden;display:inline-block;vertical-align:middle;"><div style="background:#cbd5e1;height:100%;width:0%;"></div></div></div><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;flex-wrap:wrap;font-size:12px;"><span style="font-weight:600;color:#334155;min-width:96px;">Prefill 目標</span><span style="flex:1;"><span style="color:#94a3b8;">尚無讀數</span></span><div style="background:#e2e8f0;border-radius:5px;height:8px;width:104px;overflow:hidden;display:inline-block;vertical-align:middle;"><div style="background:#cbd5e1;height:100%;width:0%;"></div></div></div></div></div>
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Profile 綁定與測試 Log 報告</div><table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px;"><tr style="background:#f1f5f9;"><td style="padding:6px 8px;font-weight:600;">項目</td><td style="padding:6px 8px;font-weight:600;">內容</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">profile</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>prod25</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">arm（可複製）</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>prod25</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">被測 option</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><span style="color:#94a3b8;">（無自己的 option）</span></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">來源</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">② charter arms[]　·　置信度 <code>high</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">證據報告</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><a href="../../../docs/DECODE25_CEILING_2026-09-20.md" target="_blank" rel="noopener">DECODE25_CEILING_2026-09-20.md</a></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">備註</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">取自 `scripts/check/charters/exp-caliber-calibration.yaml` 的 `arms[]`</td></tr></table>
+  
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">子目標分解（持續更新；1/6 完成）</div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#16a34a;font-weight:700;">☑</span> 跑前立項（現狀/目標/假設/驗收） <a href="../../../scripts/check/charters/exp-caliber-calibration.yaml" target="_blank" rel="noopener" style="font-size:11px;color:#1d4ed8;">證 ↗</a> </div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#d97706;font-weight:700;">◔</span> 用生產級腳本 prod-new ＋ 自己 option 跑實驗臂，留存 log </div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#94a3b8;font-weight:700;">☐</span> 驗收：在同一 run 內同時得到 t/s 與 step_round，並寫出交付口徑 ↔ DECPROF 口徑的換算（含不確定度） </div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#94a3b8;font-weight:700;">☐</span> 否證條件：若同一 run 內始終無法同時取得兩者（例如 DECPROF 在交付 cell 上不可用），則記錄為『不可校準』並在所有跨口徑算術上強制加註 </div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#94a3b8;font-weight:700;">☐</span> 同一 run 內同時取得 t/s 與 step_round（交付 cell） <span style="color:#64748b;font-size:11px;">預期 0（這是量測能力，不是速度）</span> <span style="color:#94a3b8;font-size:11px;">— 量法：prod_matrix / decode_sweep 的單一入口；warm-skip 段與 measured 段不可混用</span></div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#94a3b8;font-weight:700;">☐</span> §6 的推翻測試：t/s ≥ 12.57 ∧ step_round ≤ 160 ms 是否可能 <span style="color:#64748b;font-size:11px;">預期 若成立 ⇒ k=3 天花板由 19.25 上修；若不成立 ⇒ 判決維持</span> <span style="color:#94a3b8;font-size:11px;">— 量法：同 run 配對；逐位元相同的 accept/mean_len 作為對照</span></div>
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">依據 · 備註 · 軸性質</div><table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px;"><tr style="background:#f1f5f9;"><td style="padding:6px 8px;font-weight:600;">項目</td><td style="padding:6px 8px;font-weight:600;">內容</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">依據</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>docs/DECODE25_CEILING_2026-09-20.md</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">備註</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">假設：記錄裡至少有四個不同的「步」：DECPROF 的 work-row median（167.81 ms）、實付週期
+step_round = mean_len / tps（207.8 ms）、E2b 暖 total（139.46 ms）、以及 D0 探針的
+99.39 ms。t/s 的恆等式用的是 step_round，而「還差多少」的推算常誤用其他三個。
+⇒ 校準缺失本身就是一個可交付物：它決定 19.25 / 22.9 / 24.15 / 18.7 這四個天花板
+哪一個才是同一個口徑下的 25 差距。
+</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">軸性質</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><span style="color:#94a3b8">●</span> 非攻關軸：約束／帳本／上界算術／入口索引／跨線產品</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">階段</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">實驗階段（階段性）　·　③a —— 機制／量測成立，但產物還不能進生產</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">對應報告</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">0 份</td></tr></table>
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">對應報告</div><div style="font-size:12px;color:#94a3b8;">（無）</div>
+
+  <div style="padding:11px 13px;background:#fffbeb;border:1px solid #fcd34d;border-radius:7px;font-size:12px;color:#78350f;line-height:1.65;margin-top:12px;">
+    <b>關鍵結論：</b>判定 <b style="color:#d97706">3a · ③a 實驗目標達成（階段性）</b>（達成實驗設計目的（機制／量測成立），但產物還不能放進生產級設置）　—　假設：記錄裡至少有四個不同的「步」：DECPROF 的 work-row median（167.81 ms）、實付週期
+step_round = mean_len / tps（207.8 ms）、E2b 暖 total（139.46 ms）、以及 D0 探針的
+99.39 ms。t/s 的恆等式用的是 step_round，而「還差多少」的推算常誤用其他三個。
+⇒ 校準缺失本身就是一個可交付物：它決定 19.25 / 22.9 / 24.15 / 18.7 這四個天花板
+哪一個才是同一個口徑下的 25 差距。
+　｜　本條目屬 <b>不適用</b>（非攻關軸：約束／帳本／上界算術／入口索引／跨線產品）。
+  </div>
+  <div style="margin-top:8px;font-size:11px;color:#94a3b8;">本頁由
+    <code>scripts/check/mindmap_brief_build.py</code> 從 <code>docs/mindmap/mindmap.json</code>
+    機械生成；改內容請改 JSON 後重跑，勿直接編輯本頁。</div>
+  <div style="margin-top:16px;padding-top:10px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;gap:10px;font-size:12px;"><a href="exp-m-draft-cost.html">← M：攤薄係數 m 0.474 → ≤0.073</a><span><a href="index.html">總目錄</a>　·　<a href="exp-caliber-calibration.md">MD 版</a></span><a href="exp-churn-delivery-630.html">在**今天的交付口徑**上（`prod-new` profile、`… →</a></div>
+</div>
+</body>
+</html>

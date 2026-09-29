@@ -27,14 +27,24 @@ dense GEMV 每步 13.39 ms（13.7–16.8%），實測已跑 56–108 GB/s（DRAM
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod-new:CGC_MMV_NSG=8`　（profile `prod-new`；被測 option：`CGC_MMV_NSG=8`）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **測試 log**：[nsg_dense_lmhead.json](../../../Backup/phase_decomp/L3/shape_probe/nsg_dense_lmhead.json)
+- **證據報告**：[DENSE_GEMV_INSTRUMENT_2026-09-22.md](../../DENSE_GEMV_INSTRUMENT_2026-09-22.md)　[DENSE_NSG_RESCAN_2026-09-23.md](../../DENSE_NSG_RESCAN_2026-09-23.md)
+- 從證據文件掃到的 arm 字串（2 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
 | [device span 歸因（最大一塊時間）](c-device-span.md) | 3a | 成立：57% 住在 MoE 區（層內節點 0–39）、42% 住在 attention／GDN 區（40–89）；邊際 verify token +26.3 ms 裡 MoE +1 |
 | [G1：可達上界 / G1-G7 sweep](g1.md) | 3a | 串行且空轉 19.2% 是「可恢復」的形狀，但 G1 已判定不可達（下界 9.0% > 5%）⇒ 「多少」目前不可引用（44/45 份非零 ⇒ 表內容會動） |
+| [C：有效帶寬 13.65 → ≥29 GB/s（16／25 t/s）](exp-c-eff-bandwidth.md) | 3a | **背景（不再獨立跑）**：問的是 13.65 GB/s 的分子與分母；E-A 已把「20% 掉到 SSD」否掉（f≈1.5%）⇒ 失效項是**達到的帶寬本身**。卡在（targe |
+| [C：讀取發行開銷（重驗 io-shape）](exp-c-read-issue.md) | 3a | **已由同題判詞結清**：`io-shape`（已結）量過同一問題——收益 **2.9% < 3%** 門檻 ⇒ 判為背景。卡在（targets 14.0），**不再獨立跑**。 |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

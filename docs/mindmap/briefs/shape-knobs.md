@@ -23,24 +23,33 @@ SHAPE_KNOB_LANDED 證實落地；SHAPE_ROOFLINE 抓到「down 是 IQ3_S 不是 I
 
 **3b · ③b 實驗目標達成（可放生產）** — 產物已可放進生產級設置：不破壞正確性 ∧ 成本可接受 ∧ 無前置條件
 
-> ★ BEST_SHAPE 標「唯一沒被結論覆蓋、還活著的方向」（一處 switch case）
+> ★ BEST_SHAPE 標「唯一沒被結論覆蓋、還活著的方向」（一處 switch case）。**該 switch case 的指名與邊界量測已立項**（`e-shape-knobs-2026-09-29.yaml`，C 軸、targets 16.0）。
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prefill250`　（profile `prefill250`；無自己的 option）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **儀器開關**（不是被測 option）：`CGC_GPU_TIMING=1`
+- **測試 log**：[autotune_nsg.json](../../../Backup/phase_decomp/L3/autotune_nsg.json)　[summary_p2_rebased.json](../../../Backup/m123_oracle_gate/summary_p2_rebased.json)
+- **證據報告**：[BEST_SHAPE_IQ3XXS_M4_2026-09-22.md](../../BEST_SHAPE_IQ3XXS_M4_2026-09-22.md)　[FP_ORDER_SHAPE_2026-09-22.md](../../FP_ORDER_SHAPE_2026-09-22.md)　[FP_ORDER_TARGETS_2026-09-22.md](../../FP_ORDER_TARGETS_2026-09-22.md)　[GPU_CEILING_STEP2_2026-09-22.md](../../GPU_CEILING_STEP2_2026-09-22.md)
+- 從證據文件掃到的 arm 字串（16 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
 | [K3 邊際單價（dispatch 成本）](k3-price.md) | 3b | 45.6（平均）作廢 → 邊際 0.0195%/dispatch/步（17.9 µs）⇒ 所有舊「融合能省 X%」的算術全部作廢 |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|
 | 依據 | `docs/SHAPE_WORLD_MODEL_2026-09-23.md（已判死與 3% 軸並存）` |
-| 備註 | ★ BEST_SHAPE 標「唯一沒被結論覆蓋、還活著的方向」（一處 switch case） |
+| 備註 | ★ BEST_SHAPE 標「唯一沒被結論覆蓋、還活著的方向」（一處 switch case）。**該 switch case 的指名與邊界量測已立項**（`e-shape-knobs-2026-09-29.yaml`，C 軸、targets 16.0）。 |
 | 軸性質 | 天花板軸（不是活躍攻關軸）：受模型形狀與 kernel 物理約束，已知槓桿多半已證偽 ⇒ 持續證偽、只當背景約束與上界；但不能在分類裡消失，否則最大的時間塊無人認領 |
-| 對應報告 | 15 份 |
+| 對應報告 | 16 份 |
 
 - [BANDWIDTH_CEILING_100PCT_2026-09-23.html](../../BANDWIDTH_CEILING_100PCT_2026-09-23.html)
 - [BEST_SHAPE_IQ3XXS_M4_2026-09-22.md](../../BEST_SHAPE_IQ3XXS_M4_2026-09-22.md)
@@ -50,6 +59,7 @@ SHAPE_KNOB_LANDED 證實落地；SHAPE_ROOFLINE 抓到「down 是 IQ3_S 不是 I
 - [IDEAL_SHAPE_THEORETICAL_2026-09-23.html](../../IDEAL_SHAPE_THEORETICAL_2026-09-23.html)
 - [MMAP_CACHE_KERNEL_25_2026-09-21.md](../../MMAP_CACHE_KERNEL_25_2026-09-21.md)
 - [SHAPE_FOR_25_2026-09-22.md](../../SHAPE_FOR_25_2026-09-22.md)
+- [SHAPE_GAP_TO_TARGETS_2026-09-24.md](../../SHAPE_GAP_TO_TARGETS_2026-09-24.md)
 - [SHAPE_KNOB_LANDED_2026-09-22.md](../../SHAPE_KNOB_LANDED_2026-09-22.md)
 - [SHAPE_OVERLAP_INSIGHT_2026-09-23.html](../../SHAPE_OVERLAP_INSIGHT_2026-09-23.html)
 - [SHAPE_PARAMETER_MAP_2026-09-23.html](../../SHAPE_PARAMETER_MAP_2026-09-23.html)

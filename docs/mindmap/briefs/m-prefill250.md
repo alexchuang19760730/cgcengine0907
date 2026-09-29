@@ -17,7 +17,7 @@
 
 ## 3. 結果
 
-9 次 launch ≥250，最高 296.24；乾淨視窗 283.01；同期 decode 11.49~12.20
+**已認證（C1）**：9 次 launch ≥250，最高 **296.24**；乾淨視窗 **283.01**；同期 decode 11.49~12.20。（結案規則下，這是本頁唯一符合「prod-new ＋ harness bench ＋ 達標」的里程碑。）
 
 ## 4. 判定
 
@@ -27,15 +27,23 @@
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prefill250:CGC_PREFILL_PROTECT=1`　（profile `prefill250`；被測 option：`CGC_PREFILL_PROTECT=1`）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **測試 log**：[prefill_certifiability_20260916.json](../../../Backup/llama_bench/prefill_certifiability_20260916.json)　[prefill_certifiability_warm_20260916.json](../../../Backup/llama_bench/prefill_certifiability_warm_20260916.json)　[powermetrics_parse_145506.json](../../../Backup/cgc_logs/powermetrics_parse_145506.json)
+- **證據報告**：[PREFILL250_CONDITIONAL_DELIVERY_20260916.md](../../PREFILL250_CONDITIONAL_DELIVERY_20260916.md)　[PREFILL250_CONDITIONAL_DELIVERY_20260916.html](../../PREFILL250_CONDITIONAL_DELIVERY_20260916.html)　[PREFILL250_DECODE25_VERDICT_2026-09-20.md](../../PREFILL250_DECODE25_VERDICT_2026-09-20.md)　[PREFILL250_MET_AND_S1_REJUDGE_2026-09-24.md](../../PREFILL250_MET_AND_S1_REJUDGE_2026-09-24.md)
+- 從證據文件掃到的 arm 字串（19 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
-| [① 攻關成功（pp≥250 ∧ tg>12.57）](m-total.md) | 1 | ⛔ 空 —— 最接近的一次是同 cell pp 260.41 ＋ tg 12.195（差 3%） |
+| [① 攻關成功（pp≥250 ∧ tg>12.57）](m-total.md) | 1 | ⛔ 空 —— 最接近的一次是同 cell pp **260.41** ＋ tg **12.195**（差 3%）。 |
 | [swap 結構修復（L0–L4 + P0/P1/P2）](sys-swap.md) | 3b | launch swap 0、decode 11.49、thermal NOMINAL（commit efba7c1d5） |
-| [server 窗口／box 准入（單一來源閘門）](sys-window.md) | 3b | BOX_ADMISSION_SINGLE_SOURCE 定為單一來源；SERVER_WINDOW_LEDGER 記錄逐次窗口 |
+| [server 窗口／box 准入（單一來源閘門）](sys-window.md) | 3b | BOX_ADMISSION_SINGLE_SOURCE 定為單一來源；SERVER_WINDOW_LEDGER 記錄逐次窗口。**09-29 21:29 實測：`admits=Fa |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

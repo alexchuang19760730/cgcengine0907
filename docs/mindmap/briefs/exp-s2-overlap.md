@@ -1,0 +1,74 @@
+# S2：段邊界免等（天花板 18.7 t/s） — 技術白皮書　·　3a ③a 實驗目標達成（階段性）
+
+> **一句話**：⚠ 先對齊既有的兩個判詞，不要把它們當作沒發生： ① `io-constraint`（tier 4）：「S2：**建議不做完**（段邊界／drain）」 （docs/S2_RESIDENCY_AND_DRAIN_VERDICT_2026-09-20.md）； ② `s1-segbatch`（tier 3a）：「單段提交（41 段 → 1 段）」——那是 S3，已因前提 B（churn 42.3%）無前提。 本節點問的是**剩下那一支**，而且帶一個以前沒有過的量化格： 把 39 個段邊界的等待中的**可免部分**（只有零 miss 的 31.9%）拿掉 ⇒ 11.04 ms／步 ⇒ 17.2 → ≈18.7 t/s（引擎內部口徑，×1.087），且 union 不動。 新條件：其合法化前提（leaf 由 GPU 算，S1）已於 2026-09-28 首度量到成立 （ids_src_valid=1 × 78、gather_vs_table=[0] × 78）——那正是 io-constraint 判「不做完」時還沒有的東西。
+
+- 主題：實驗　·　子目標：**S 序列化消減**（活躍攻關軸：41 段提交的同步／資料搬運，主項可被工程手段消掉）
+- 階段：實驗階段（階段性）　·　③a —— 機制／量測成立，但產物還不能進生產
+
+---
+
+## 1. 目標
+
+⚠ 先對齊既有的兩個判詞，不要把它們當作沒發生： ① `io-constraint`（tier 4）：「S2：**建議不做完**（段邊界／drain）」 （docs/S2_RESIDENCY_AND_DRAIN_VERDICT_2026-09-20.md）； ② `s1-segbatch`（tier 3a）：「單段提交（41 段 → 1 段）」——那是 S3，已因前提 B（churn 42.3%）無前提。 本節點問的是**剩下那一支**，而且帶一個以前沒有過的量化格： 把 39 個段邊界的等待中的**可免部分**（只有零 miss 的 31.9%）拿掉 ⇒ 11.04 ms／步 ⇒ 17.2 → ≈18.7 t/s（引擎內部口徑，×1.087），且 union 不動。 新條件：其合法化前提（leaf 由 GPU 算，S1）已於 2026-09-28 首度量到成立 （ids_src_valid=1 × 78、gather_vs_table=[0] × 78）——那正是 io-constraint 判「不做完」時還沒有的東西。
+
+## 2. 判準
+
+(a) gap 塌向 ~0、(b) wait 下降量 ≈ Σcb + 被移掉的延遲、(c) union 不動——三條同時成立，且 bit-identical M1/M2/M3 全過、zero_mapped/n_fast_cold 不升
+
+## 3. 結果
+
+**已結（FAIL 附機制）**。segment／gap 部分：段界是**資料依賴**（每層 argsort 一個邊界把 top-k 拿回 host 寫 remap leaf，L+1 層依賴 L 層輸出）⇒ 段數推不動；段界窗殘差那 42% 已量到是 **Metal 側延遲**（0.1545 ms/邊界、CV **0.11**、與 CPU 編碼時間 **r = −0.00**，§38），不是「缺的那段 CPU 切分」。名目 gap 14.0 ms/step，已量到的可開採上界只有 **~2 ms**（§19 tier 2 的 −16.9 是**錯輸出臂**：拿掉 13.07 的 gap 同時加回 11.14 的 union ⇒ 淨 −1.93）。
+
+## 4. 判定
+
+**3a · ③a 實驗目標達成（階段性）** — 達成實驗設計目的（機制／量測成立），但產物還不能放進生產級設置
+
+> 原假設：gap_L = 1.00·cb_{L−1} + 0.29–0.35 ms（r 0.94–0.999）⇒ 段邊界的等待就是 host 的 top-k hook；可免等的只有零 miss 的層（by_m.0.n = 31.9%）⇒ 名目 11.04 ms。**該名目已作廢**（見 res）：邊界窗不是空的 GPU 時間，是被挪動位置的 CPU 工作，「降 gap」≠「加速」。
+
+---
+
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod25:CGC_SLOT_TABLE_GPU=1`　（profile `prod25`；被測 option：`CGC_SLOT_TABLE_GPU=1`）
+- **來源**：② charter arms[]　·　置信度 `high`
+- **測試 log**：[f1_cb_miss_regression_report.json](../../../Backup/cgc_logs/f1_cb_miss_regression_report.json)　[s2a_policy_census.json](../../../Backup/phase_decomp/s2a_policy_census.json)
+- **證據報告**：[S2_PROBE2_AND_CEILING_2026-09-20.md](../../S2_PROBE2_AND_CEILING_2026-09-20.md)
+- 取自 `scripts/check/charters/exp-s2-overlap.yaml` 的 `arms[]`（取有 option 的那一臂；對照臂是裸 profile）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
+
+| 條目 | 級 | 結果（摘） |
+|---|---|---|
+| [CGC_EB_NOFILL 診斷臂（fill 成本）](io-nofill.md) | 3a | fill 3.955 → 0.206 ms/step（−95%）⇒ 機制證；生產口徑同步 fill 僅占 step 4.7% |
+| [單段提交（41 段 → 1 段）](s1-segbatch.md) | 3a | 判詞：41 段→1 段的 A/B **作廢**（兩端都不可引用）。本節點不主張吞吐。**補（09-29）**：它的**可交付上界**＝序列化 − 必須還回去的 fill ⇒ **1 |
+| [異步 gather 流水線（單段＋miss 後台補＋局部重算）](s1-asyncgather.md) | 3a | E0 已給出決定性答案：前提成立——S1（暖池 8 GiB）輸出 文摘文摘… 且 logits 全非有限（引擎自蓋 INVALID），同一輪的分段臂是 42 ⇒ 異步 fill＋補 |
+| [ρ 路線（按層批次化 prefetch）](cache-rho.md) | 3a | 判活，但本節點**不主張吞吐**：覆蓋 0.849、視窗 1.30~1.59 ms、每步付 4.76 ms GPU 插入 ⇒ 有前置條件。 |
+| [prebind／方案 A（預指派 slot）](cache-prebind.md) | 3a | 判活，但本節點**不主張吞吐**：qu2/qu3 全過、qu1 邊緣（預指派 slot，提前一整步發起 ⇒ 視窗 ≈ 一步）。 |
+| [G0–G7 序列化／調度消減（41 段→1 段、縮 union、藏 …](exp-s-retro.md) | 3a | 判詞：11.97 那一族**作廢**（該臂 9 個 run 全部非乾淨）。本節點不主張吞吐。 |
+
+## 7. 子目標分解（持續更新；1/7 完成）
+
+- [x] 跑前立項（現狀/目標/假設/驗收） [證](../../../scripts/check/charters/exp-s2-overlap.yaml)
+- [~] 用生產級腳本 prod-new ＋ 自己 option 跑實驗臂，留存 log
+- [ ] 驗收：(a) gap 塌向 ~0、(b) wait 下降量 ≈ Σcb + 被移掉的延遲、(c) union 不動——三條同時成立，且 bit-identical M1/M2/M3 全過、zero_mapped/n_fast_cold 不升
+- [ ] 否證條件：任一條不成立（尤其 busy/union 掉到 ~1.0 ⇒ 用並行換空窗、總時間守恆）即為 null result
+- [ ] 段邊界 gap：步表頭 gap_sum 中位 21.43 ms → ≤10 ms
+- [ ] 護欄：busy/union 不得由 1.41 掉到 ~1.0
+- [ ] bit-identical：S1 × 分段的組合必須在 M1/M2/M3 全過
+
+## 8. 依據 · 備註 · 對應報告
+
+| 項目 | 內容 |
+|---|---|
+| 依據 | `docs/S2_PROBE2_AND_CEILING_2026-09-20.md` |
+| 備註 | 原假設：gap_L = 1.00·cb_{L−1} + 0.29–0.35 ms（r 0.94–0.999）⇒ 段邊界的等待就是 host 的 top-k hook；可免等的只有零 miss 的層（by_m.0.n = 31.9%）⇒ 名目 11.04 ms。**該名目已作廢**（見 res）：邊界窗不是空的 GPU 時間，是被挪動位置的 CPU 工作，「降 gap」≠「加速」。 |
+| 軸性質 | 活躍攻關軸：41 段提交的同步／資料搬運，主項可被工程手段消掉 |
+| 對應報告 | 0 份 |
+
+- （無）
+
+---
+
+← [C：讀取發行開銷（重驗 io-shape）](exp-c-read-issue.md)　·　[總目錄](index.md)　·　[HTML 版](exp-s2-overlap.html)　·　[M：攤薄係數 m 0.474 → ≤0.073 →](exp-m-draft-cost.md)
+
+本檔由 `scripts/check/mindmap_brief_build.py` 從 `docs/mindmap/mindmap.json` 機械生成；改內容請改 JSON 後重跑，勿直接編輯本檔。

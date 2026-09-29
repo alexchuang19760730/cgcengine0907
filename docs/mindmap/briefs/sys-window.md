@@ -17,7 +17,7 @@
 
 ## 3. 結果
 
-BOX_ADMISSION_SINGLE_SOURCE 定為單一來源；SERVER_WINDOW_LEDGER 記錄逐次窗口
+BOX_ADMISSION_SINGLE_SOURCE 定為單一來源；SERVER_WINDOW_LEDGER 記錄逐次窗口。**09-29 21:29 實測：`admits=False`（need 8000 MB、reclaimable 7362 MB、缺口 ~638 MB）** ⇒ 交付 cell 的乾淨窗口**現在拿不到**（依 L25-3 的 on_fail：不降 NEED_MB、不換 cell）。 **09-29 21:33–21:36 實跑一對（prod-new 控制 ＋ S1）**：共用探針 `admits=False`（need 8000／reclaimable 7245 MB、binding=harness、與 launcher **DISAGREE**），但 bench 的起跑閘全過、`refused_preflight=False`；結果兩臂都換頁（swap growth **+1768／+851 MiB**）⇒ `attribution=swap`。⇒ 沒有乾淨窗口的代價已被量到，不是推測。
 
 ## 4. 判定
 
@@ -27,15 +27,24 @@ BOX_ADMISSION_SINGLE_SOURCE 定為單一來源；SERVER_WINDOW_LEDGER 記錄逐�
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod-new`　（profile `prod-new`；無自己的 option）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **儀器開關**（不是被測 option）：`CGC_WINDOW_OVERRIDE=1`
+- **測試 log**：[server_window_audit.json](../../../Backup/phase_decomp/server_window_audit.json)
+- **證據報告**：[BOX_ADMISSION_SINGLE_SOURCE_2026-09-20.md](../../BOX_ADMISSION_SINGLE_SOURCE_2026-09-20.md)　[SERVER_WINDOW_LEDGER_2026-09-19.md](../../SERVER_WINDOW_LEDGER_2026-09-19.md)
+- 證據文件裡只有出現 1 次的 option（—）⇒ 置信度壓到 low，需人工確認
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
-| [prefill ≥ 250（交付 cell）](m-prefill250.md) | 2 | 9 次 launch ≥250，最高 296.24；乾淨視窗 283.01；同期 decode 11.49~12.20 |
-| [① 攻關成功（pp≥250 ∧ tg>12.57）](m-total.md) | 1 | ⛔ 空 —— 最接近的一次是同 cell pp 260.41 ＋ tg 12.195（差 3%） |
+| [prefill ≥ 250（交付 cell）](m-prefill250.md) | 2 | **已認證（C1）**：9 次 launch ≥250，最高 **296.24**；乾淨視窗 **283.01**；同期 decode 11.49~12.20。（結案規則下，這是本 |
+| [① 攻關成功（pp≥250 ∧ tg>12.57）](m-total.md) | 1 | ⛔ 空 —— 最接近的一次是同 cell pp **260.41** ＋ tg **12.195**（差 3%）。 |
 | [swap 結構修復（L0–L4 + P0/P1/P2）](sys-swap.md) | 3b | launch swap 0、decode 11.49、thermal NOMINAL（commit efba7c1d5） |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

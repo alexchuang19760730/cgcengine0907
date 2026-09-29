@@ -113,6 +113,61 @@ _STATUS = {
 }
 
 
+def leaderboard_panel_html(e: dict) -> str:
+    """成績排行榜：每指標先列穩態生產口徑（可信），全部實驗口徑折疊（防異常讀數誤導）。"""
+    lb = e.get("leaderboard") or {}
+
+    def one_tbl(rows):
+        if not rows:
+            return '<div style="color:#94a3b8;font-size:11.5px;padding:4px 0;">（無讀數）</div>'
+        trs = []
+        for i, r in enumerate(rows):
+            badge = ('<span style="background:#dcfce7;color:#166534;border-radius:4px;'
+                     'padding:1px 6px;font-size:10px;font-weight:600;">穩態</span>'
+                     if r.get("steady") else
+                     '<span style="background:#f1f5f9;color:#94a3b8;border-radius:4px;'
+                     'padding:1px 6px;font-size:10px;">非穩態</span>')
+            std = f' <span style="color:#94a3b8;font-size:10.5px;">±{r["std"]}</span>' \
+                if r.get("std") is not None else ""
+            src = r.get("src")
+            href, ok = rel_link(src, BRIEF_DIR) if src else ("", False)
+            check = (f'<a href="{href}" target="_blank" rel="noopener" '
+                     f'style="color:#1d4ed8;font-size:11px;white-space:nowrap;">檢驗檔 ↗</a>'
+                     if ok else f'<span style="color:#94a3b8;font-size:10.5px;">{esc(str(src))}</span>')
+            trs.append(
+                "<tr>"
+                '<td style="padding:7px 8px;font-weight:700;color:#475569;">'
+                f'{i + 1}</td>'
+                '<td style="padding:7px 8px;white-space:nowrap;">'
+                f'<b style="color:#0f172a;font-size:13.5px;">{r["v"]}</b>{std}</td>'
+                f'<td style="padding:7px 8px;">{badge}</td>'
+                '<td style="padding:7px 8px;font-size:11px;color:#334155;max-width:250px;">'
+                f'{esc(str(r["arm"])[:50])}<br><span style="color:#94a3b8;font-size:10.5px;">'
+                f'{esc(str(r["prof"]))} · n={r["n"]} · th={r["th"]} · {esc(str(r["spec"]))}</span></td>'
+                f'<td style="padding:7px 8px;">{check}</td>'
+                "</tr>")
+        head = "".join('<td style="padding:7px 8px;font-weight:600;color:#64748b;">'
+                       f'{h}</td>'
+                       for h in ["#", "成績 t/s", "口徑",
+                                 "配置（arm／profile·n·th·spec）", "檢驗檔"])
+        return ('<table style="width:100%;border-collapse:collapse;font-size:11.5px;">'
+                f'<tr style="background:#f8fafc;">{head}</tr>{"".join(trs)}</table>')
+
+    labels = {"decode": "Decode", "prefill": "Prefill"}
+    out = ""
+    for key in ("decode", "prefill"):
+        b = lb.get(key) or {}
+        out += (
+            '<div style="margin-bottom:4px;">'
+            + section_title(f"\U0001f3c6 {labels[key]}｜穩態生產口徑排名（可信最高；點檢驗檔複核）")
+            + one_tbl(b.get("steady") or []) + "</div>"
+            f'<details style="margin-bottom:16px;"><summary style="font-size:11.5px;color:#94a3b8;'
+            f'cursor:pointer;">顯示 {labels[key]} 全部口徑（含實驗變體；非穩態、未驗正確性，'
+            f'非生產能力）</summary><div style="margin-top:6px;">'
+            + one_tbl(b.get("all") or []) + "</div></details>")
+    return out
+
+
 def best_panel_html(e: dict) -> str:
     """🏆 目前成績最高配置 + 🎯 量化目標差距／進度條（資料來自 mindmap.json 的 best/target_gap）。"""
     best = e.get("best")
@@ -214,6 +269,89 @@ def runs_html(e: dict) -> str:
             + '</div>')
     return section_title("運行設置與 Log（生產級腳本 prod-new ＋ 自己 option；點 Log 查原始數據）") \
         + "".join(blocks)
+
+
+SRC_LABEL = {"run": "① 實跑 arm（有 log）", "charter": "② charter arms[]",
+             "scan": "③ 證據文件掃描", "default": "④ 預設臂（無證據）",
+             "n_a": "⑤ 非實驗結論"}
+
+
+def _binding_rows_md(e: dict) -> list:
+    """Profile 綁定 ＋ 測試 log／報告（md 用；綁定由 mindmap_profile_audit.py 寫入）。"""
+    b = e.get("arm_binding") or {}
+    if not b:
+        return [f'- ⚠ **尚未綁定**：本條沒有 `arm_binding`，跑 '
+                f'`python3 scripts/check/mindmap_profile_audit.py --apply` 補。']
+    out = [f'- **arm**：`{b.get("arm", "—")}`'
+           + (f'　（profile `{b.get("profile")}`；被測 option：'
+              + "；".join(f"`{o}`" for o in (b.get("options") or [])) + "）"
+              if b.get("options") else f'　（profile `{b.get("profile")}`；無自己的 option）'),
+           f'- **來源**：{SRC_LABEL.get(b.get("source", ""), b.get("source", "—"))}'
+           f'　·　置信度 `{b.get("confidence", "—")}`']
+    if b.get("instruments"):
+        out.append("- **儀器開關**（不是被測 option）："
+                   + "；".join(f"`{i}`" for i in b["instruments"]))
+    logs = b.get("logs") or []
+    if logs:
+        out.append("- **測試 log**："
+                   + "　".join(f'[{Path(l).name}]({_repo_relpath(l)})' for l in logs))
+    if b.get("logs_missing"):
+        out.append("- **測試 log（檔案不在工作區，`Backup/` 未進版控）**："
+                   + "　".join(f'`{Path(l).name}`' for l in b["logs_missing"]))
+    reps = b.get("reports") or []
+    if reps:
+        out.append("- **證據報告**："
+                   + "　".join(f'[{Path(p).name}]({_repo_relpath(p)})' for p in reps))
+    if not (logs or reps):
+        out.append("- ⚠ **無可點的測試 log／報告**（缺口：這條的判詞目前只能靠「依據」欄的字串）")
+    if b.get("note"):
+        out.append(f'- {plain(str(b["note"]))}')
+    return out
+
+
+def profile_binding_md_lines(e: dict, sec: int) -> tuple[list, int]:
+    rows = _binding_rows_md(e)
+    return [f"## {sec}. Profile 綁定與測試 Log 報告"] + [""] + rows + [""], sec + 1
+
+
+def profile_binding_html(e: dict) -> str:
+    """同上，HTML 版（brief 的表格化呈現）。"""
+    b = e.get("arm_binding") or {}
+    if not b:
+        return section_title("Profile 綁定與測試 Log 報告") + (
+            '<div style="font-size:12px;color:#dc2626;">⚠ 尚未綁定：跑 '
+            '<code>python3 scripts/check/mindmap_profile_audit.py --apply</code> 補。</div>')
+    opts = ("；".join(f'<code>{esc(o)}</code>' for o in (b.get("options") or []))
+            if b.get("options") else '<span style="color:#94a3b8;">（無自己的 option）</span>')
+    rows = [["profile", f'<code>{esc(b.get("profile", "—"))}</code>'],
+            ["arm（可複製）", f'<code>{esc(b.get("arm", "—"))}</code>'],
+            ["被測 option", opts],
+            ["來源", f'{SRC_LABEL.get(b.get("source", ""), b.get("source", "—"))}'
+                     f'　·　置信度 <code>{esc(b.get("confidence", "—"))}</code>']]
+    if b.get("instruments"):
+        rows.append(["儀器開關（非被測）",
+                     "；".join(f'<code>{esc(i)}</code>' for i in b["instruments"])])
+    logs = b.get("logs") or []
+    reps = b.get("reports") or []
+    if logs:
+        rows.append(["測試 log", "　".join(
+            f'<a href="{repo_href(l)}" target="_blank" rel="noopener">{esc(Path(l).name)}</a>'
+            for l in logs)])
+    if b.get("logs_missing"):
+        rows.append(["測試 log（不在工作區）",
+                     '<span style="color:#94a3b8;">'
+                     + "　".join(f'<code>{esc(Path(l).name)}</code>'
+                                for l in b["logs_missing"]) + "</span>"])
+    if reps:
+        rows.append(["證據報告", "　".join(
+            f'<a href="{repo_href(p)}" target="_blank" rel="noopener">{esc(Path(p).name)}</a>'
+            for p in reps)])
+    if not (logs or reps):
+        rows.append(["測試 log／報告",
+                     '<span style="color:#dc2626;">⚠ 無（缺口）</span>'])
+    if b.get("note"):
+        rows.append(["備註", esc(plain(str(b["note"])))])
+    return section_title("Profile 綁定與測試 Log 報告") + table(["項目", "內容"], rows)
 
 
 def subtasks_html(items: list, depth: int = 0) -> str:
@@ -376,7 +514,11 @@ def render_brief_html(e: dict, data: dict, mapping: dict[str, str],
              for t in e["tests"]])
 
     # 表 3d/3e（可選）：實際運行設置＋log、子目標分解（持續更新）
+    leader_panel = leaderboard_panel_html(e) if e.get("leaderboard") else ""
     best_panel = best_panel_html(e)
+    # 每一條都要能回答「它掛在哪個 profile 的哪個 option 上、log 在哪一份」
+    # ⇒ 這一節不能是可選的（`e.get(...)` 有值才出）：52 條全出，缺的那一條由本節自己標缺口。
+    profile_tbl = profile_binding_html(e)
     runs_tbl = runs_html(e)
     subtasks_tbl = subtasks_section_html(e)
 
@@ -452,7 +594,9 @@ def render_brief_html(e: dict, data: dict, mapping: dict[str, str],
   {risk_tbl}
   {prod_tbl}
   {test_tbl}
+  {leader_panel}
   {best_panel}
+  {profile_tbl}
   {runs_tbl}
   {subtasks_tbl}
   {meta_tbl}
@@ -562,8 +706,11 @@ def render_brief_md(e: dict, data: dict, mapping: dict[str, str],
              and MB.STAGE_OF.get(x["tier"]) == stage_id][:6]
     # 節號從 5 起**遞增**（不是硬寫）：可選區塊（diff／risks／prod_setup／tests）缺席時，
     # 舊版會留下跳號（5 → 8）或重號（兩個 ## 8）—— 一份自己編號對不上的文件，讀者就沒法引用它。
-    sec = 5
-    out += ["---", "", f"## {sec}. 與其它條目的關係（同軸／同階段，自動對照）", "",
+    # §5 是 Profile 綁定（52 條全出，不是可選）：讀者要先知道這條掛在哪個臂上，才讀得懂下面的數字。
+    out += ["---", ""]
+    bind_lines, sec = profile_binding_md_lines(e, 5)
+    out += bind_lines
+    out += [f"## {sec}. 與其它條目的關係（同軸／同階段，自動對照）", "",
             "| 條目 | 級 | 結果（摘） |", "|---|---|---|"]
     sec += 1
     if peers:

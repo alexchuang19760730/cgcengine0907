@@ -25,13 +25,21 @@
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod25:CGC_SERVER_MTP_N_MAX=2`　（profile `prod25`；被測 option：`CGC_SERVER_MTP_N_MAX=2`）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **測試 log**：[prod_profile_20260920_1230.json](../../../Backup/prod_profile/prod_profile_20260920_1230.json)
+- **證據報告**：[K3_PAIR_CERT_2026-09-23.md](../../K3_PAIR_CERT_2026-09-23.md)　[K3_PAIR_CERT_V2_BENCH_2026-09-23.md](../../K3_PAIR_CERT_V2_BENCH_2026-09-23.md)　[K3_SWING_ANALYSIS_2026-09-23.md](../../K3_SWING_ANALYSIS_2026-09-23.md)
+- 從證據文件掃到的 arm 字串（3 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
-| （本軸／本階段沒有其它條目） | — | — |
+| [口徑＋k=3 飄移認證（16.4% 噪聲底）](exp-caliber-calibration.md) | 3a | **未跑（有卡、無讀數）**：本節點的產出是**口徑校準**——記錄裡至少有四個不同的「步」（DECPROF work-row **167.81** ms／實付週期 step_ro |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

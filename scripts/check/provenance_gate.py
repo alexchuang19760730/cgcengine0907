@@ -157,6 +157,28 @@ REPORT_EXEMPT: dict[str, str] = {
     "scripts/check/void_number_check.py":
         "the docs/*.html paths in it are ARCHIVE_GLOBS / citation-scan globs it READS to find voided "
         "numbers; it writes no report at all (a grep-style checker, exit code is its product)",
+    # 2026-09-29: 子目標看板與它的逐子目標頁。它們寫 docs/*.html，但**不含任何自己量到的數字**：
+    # 全部欄位（預期／現況／立項／結案判準）都是從 decode_board_2026-09-29.yaml 與 mindmap.json
+    # 機械生成的轉引視圖，而結案規則要求實測值必須在 prod-new ＋ harness bench 上另有產物
+    # （D6 會 fail-closed）。向它索討 sidecar ＝ 向一個構造上不量測的產物要證明。
+    "scripts/check/decode_board_build.py":
+        "it generates docs/prefill250decode20.html + docs/mindmap/subgoals/*.html from the board YAML and "
+        "mindmap.json only; it measures nothing, and any number it shows is a citation whose certification "
+        "is enforced separately by the D6 closure gate (prod-new + harness bench + meets)",
+    "scripts/check/formula_audit.py":
+        "the docs/*.html paths in it are SCAN_TARGETS it READS to enforce that voided inferences stay "
+        "out of the conclusion section; it writes no measured report (it re-derives numbers from an "
+        "existing Backup/*.json product and its exit code is its product)",
+    # 2026-09-29（52 條 × profile option 對照表）：它寫 docs/mindmap/PROFILE_OPTION_MAP_*.html，
+    # 但那一頁**不量任何數字** —— arm／option／log 路徑全部是從 mindmap.json 與既有證據文件
+    # 讀出來的轉引視圖（跟 mindmap_build.py 同一類）。它自己量的是「有沒有綁定、有沒有 log」
+    # 這種布林，而產品是 exit code。向它索討 sidecar（量測產物的出處）＝ 向一個構造上
+    # 不量測的產物要證明 —— 正是本檔註解點名的缺陷類。
+    "scripts/check/mindmap_profile_audit.py":
+        "it writes docs/mindmap/PROFILE_OPTION_MAP_*.{md,html}, a citation view generated from "
+        "mindmap.json + existing evidence docs (same class as mindmap_build.py): it measures no "
+        "throughput, only booleans (is this row bound to an arm / is there a log), and its product "
+        "is the --check exit code",
 }
 DOCS_HTML_PATH = re.compile(r"(?:os\.path\.join\s*\([^)]*[\"']docs[\"']|ROOT\s*/\s*[\"']docs[\"']"
                             r"|[\"']docs/)")

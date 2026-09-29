@@ -27,14 +27,21 @@ k 加到多大都不到 2×（server a/m=1.445、bench 0.982）；現況每產�
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod-new:CGC_P_ROUTE=1`　（profile `prod-new`；被測 option：`CGC_P_ROUTE=1`）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **證據報告**：[MTP_2X_BOUNDARY_2026-09-19.md](../../MTP_2X_BOUNDARY_2026-09-19.md)　[REUSE_DISTANCE_MTPON_CONFIRM_2026-09-20.md](../../REUSE_DISTANCE_MTPON_CONFIRM_2026-09-20.md)
+- 從證據文件掃到的 arm 字串（2 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
 | [MTP 儀器化（接進 llama-bench）](mtp-instrument.md) | 3b | 接通（真因＝test_gen_spec 的 n_past 初始化）；此後 MTP 不再跨儀器比較 |
 | [MTP 口徑與混淆定位（pool／跨啟動／順序）](mtp-caliper.md) | 3b | 定案：任何單點 MTP 數字不可引用；pool 4 vs 8 GiB 是一階混淆；同 launch 配對 ×1.06、生產 server 路徑 ×0.695（方向相反） |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

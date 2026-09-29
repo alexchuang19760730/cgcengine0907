@@ -25,7 +25,15 @@
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod-new`　（profile `prod-new`；無自己的 option）
+- **來源**：③ 證據文件掃描　·　置信度 `low`
+- **測試 log**：[abba_212809.json](../../../Backup/seg_batch_s1_pairs/abba_212809.json)　[nf_fill.json](../../../Backup/nofill_prod/nf_fill.json)　[s1_ksweep.json](../../../Backup/s1_ksweep/20260924_225548/s1_ksweep.json)
+- **證據報告**：[DIAGNOSTIC_ARMS_LEDGER_2026-09-25.md](../../DIAGNOSTIC_ARMS_LEDGER_2026-09-25.md)
+- 證據文件裡只有出現 1 次的 option（—）⇒ 置信度壓到 low，需人工確認
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
@@ -36,7 +44,7 @@
 | [S1 早期診斷系列（09-16/17）](s1-refuted.md) | 4 | 多輪被自己否證：slot owner 推論被推翻、時序推論被推翻、09-16 那七輪「第一個分歧」全部不可引用（同時踩三個盲點） |
 | [3c：per-expert 重算 kernel](miss-3c.md) | 4 | 不做（依賴鏈斷；上限同受 ~5% 約束；舊估 +13~18% 來自已作廢的非生產 cell） |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

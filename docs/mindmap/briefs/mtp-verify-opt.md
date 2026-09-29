@@ -27,14 +27,22 @@
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod25:CGC_NO_PREFETCH=1`　（profile `prod25`；被測 option：`CGC_NO_PREFETCH=1`）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **測試 log**：[k_sweep.json](../../../Backup/phase_decomp/spec_onoff/k_sweep.json)　[spec_cost_curve_20260918_2030.json](../../../Backup/phase_decomp/spec_cost_curve_20260918_2030.json)
+- **證據報告**：[EXPERT_CACHE_THRASH_2026-09-19.md](../../EXPERT_CACHE_THRASH_2026-09-19.md)　[MTP_VERIFY_COST_2026-09-21.md](../../MTP_VERIFY_COST_2026-09-21.md)　[MTP_VERIFY_OPT_2026-09-18.md](../../MTP_VERIFY_OPT_2026-09-18.md)
+- 從證據文件掃到的 arm 字串（3 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
 | [RSL-MTP（draft top-8 ⊆ 已付費並集）＋ 練 draft head](mtp-rsl.md) | 4 | 被自己的數據否決：0.70–0.97×，無一格 ≥1.0；m=0.474 下即使 a→1 也不可能 2× |
 | [accept rule／dynamic-k／n_max 調整](mtp-accept.md) | 4 | 不做：dynamic-k oracle 只 1.035×；n_max 3→5 作廢；greedy 下 accept 不可由 accept rule 移動（是 (base,head) |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

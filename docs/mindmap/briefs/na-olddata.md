@@ -27,16 +27,22 @@
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod25:CGC_SERVER_SKIP0=1`　（profile `prod25`；被測 option：`CGC_SERVER_SKIP0=1`）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **證據報告**：[Gemma4_Final_Report.md](../../archive/pre-consistency-metrics-2026-09-11/Gemma4_Final_Report.md)　[Gemma4_Performance_Report.md](../../archive/pre-consistency-metrics-2026-09-11/Gemma4_Performance_Report.md)　[M4_SETUP_GUIDE.md](../../archive/pre-consistency-metrics-2026-09-11/M4_SETUP_GUIDE.md)　[MTP_BENCHMARK_WIN8GB.md](../../archive/pre-consistency-metrics-2026-09-11/MTP_BENCHMARK_WIN8GB.md)
+- 從證據文件掃到的 arm 字串（5 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
 | [M3／M4／M5 離開條件（09-17 期）](m3.md) | 4 | M3 未達（9.82 vs 門檻 15）；M4 靠一個本身壞掉的量測被否決、修好後才關閉 —— 而那個量測現已作廢 |
 | [入口／索引／決策頁（非實驗）](na-entry.md) | na | 不進四級：它們是入口與索引 |
 | [跨線／其他產品（Wan2.2、HarmonyOS、Windows client、Colibri、Unified IR…）](na-crossline.md) | na | 本線無實測權或非本線主題 ⇒ 不塞進四級 |
-| [softpool／L4 v1v2／doublebuffer spike（09-05~09-06 期）](na-softpool.md) | 4 | 推定被 hybrid 路線取代（37/41 份零外部引用 ⇒ 已孤立） |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|
@@ -59,6 +65,6 @@
 
 ---
 
-← [softpool／L4 v1v2／doublebuffer spike（09-05~09-06 期）](na-softpool.md)　·　[總目錄](index.md)　·　[HTML 版](na-olddata.html)
+← [expert cache 血統設計（09-05~09-09 期）](na-design.md)　·　[總目錄](index.md)　·　[HTML 版](na-olddata.html)　·　[G0–G7 序列化／調度消減（41 段→1 段、縮 union、藏 … →](exp-s-retro.md)
 
 本檔由 `scripts/check/mindmap_brief_build.py` 從 `docs/mindmap/mindmap.json` 機械生成；改內容請改 JSON 後重跑，勿直接編輯本檔。

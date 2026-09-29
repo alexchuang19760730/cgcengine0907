@@ -27,13 +27,21 @@
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod25`　（profile `prod25`；無自己的 option）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **測試 log**：[summary_en-k3pair-cert.json](../../../Backup/m123_oracle_gate/summary_en-k3pair-cert.json)
+- **證據報告**：[K3_CEILING_REAUDIT_2026-09-21.md](../../K3_CEILING_REAUDIT_2026-09-21.md)　[K3_PRICE_MEASURED_2026-09-21.md](../../K3_PRICE_MEASURED_2026-09-21.md)　[KNOB_FULL_MAP_15_2026-09-22.md](../../KNOB_FULL_MAP_15_2026-09-22.md)　[KNOB_INVENTORY_VERIFIED_2026-09-22.md](../../KNOB_INVENTORY_VERIFIED_2026-09-22.md)
+- 從證據文件掃到的 arm 字串（5 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
 | [shape／knob 世界模型（14–15 個旋鈕的邊界）](shape-knobs.md) | 3b | SHAPE_KNOB_LANDED 證實落地；SHAPE_ROOFLINE 抓到「down 是 IQ3_S 不是 IQ3_XXS」等量測事實；BANDWIDTH_CEILING 1 |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

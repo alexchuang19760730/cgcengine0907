@@ -25,16 +25,22 @@
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod-new`　（profile `prod-new`；無自己的 option）
+- **來源**：⑤ 非實驗結論　·　置信度 `n/a`
+- **證據報告**：[CGC_COLIBRI_HERMES_ROUTEPOLICY_V2_INTEGRATION.md](../../archive/pre-consistency-metrics-2026-09-11/CGC_COLIBRI_HERMES_ROUTEPOLICY_V2_INTEGRATION.md)　[CGC_COLIBRI_SINGLE_NODE_PRODUCTION_MATRIX.md](../../archive/pre-consistency-metrics-2026-09-11/CGC_COLIBRI_SINGLE_NODE_PRODUCTION_MATRIX.md)　[CGC_COMPUTE_SHARING_ARCHITECTURE.md](../../archive/pre-consistency-metrics-2026-09-11/CGC_COMPUTE_SHARING_ARCHITECTURE.md)　[CGC_CROSS_PLATFORM_ARCHITECTURE.md](../../archive/pre-consistency-metrics-2026-09-11/CGC_CROSS_PLATFORM_ARCHITECTURE.md)
+- 非實驗結論（約束／帳本／上界算術／入口索引／跨線）⇒ 無待測 option；其數字全部來自 prod-new 預設臂
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
 | [M3／M4／M5 離開條件（09-17 期）](m3.md) | 4 | M3 未達（9.82 vs 門檻 15）；M4 靠一個本身壞掉的量測被否決、修好後才關閉 —— 而那個量測現已作廢 |
 | [入口／索引／決策頁（非實驗）](na-entry.md) | na | 不進四級：它們是入口與索引 |
-| [softpool／L4 v1v2／doublebuffer spike（09-05~09-06 期）](na-softpool.md) | 4 | 推定被 hybrid 路線取代（37/41 份零外部引用 ⇒ 已孤立） |
 | [舊口徑數據報告（Gemma4／MTP_BENCHMARK_WIN8GB／TPOT 路線圖）](na-olddata.md) | 4 | 作廢：09-17 起 decode 一律 llama-bench、warm-skip 口徑（`MEMORY_PERF.md` 裁定），且 MTP_BENCHMARK_WIN8GB  |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

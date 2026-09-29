@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>在**今天的交付口徑**上（`prod-new` profile、`… — 技術白皮書（3a ③a 實驗目標達成（階段性））</title>
+</head>
+<body style="margin:0;padding:0;">
+<div style="width:100%;box-sizing:border-box;padding:18px;font-family:-apple-system,'PingFang TC',sans-serif;color:#1a1a1a;">
+  <h2 style="margin:0 0 4px;font-size:19px;">在**今天的交付口徑**上（`prod-new` profile、`…</h2>
+  <div style="font-size:12px;color:#666;margin-bottom:14px;line-height:1.6;">在**今天的交付口徑**上（`prod-new` profile、`harness bench`、**MTP off**、`delivery` cell、 **`ntok=1` 主 context**），一步 decode 之內／之間，**被消費者實際讀到的 expert→slot 映射** 會不會移動？ 這不是「再量一次 churn」，是**判詞的重新檢驗**：S3（41 段收成 1 段）被判無前提， 依據是 42.3%，而那是 `ntok=4` verify 桶、MTP-on 形狀的讀數。 兩個口徑是**不同的輸出函數**（`MTP_CALIBER_REDEFINE_2026-09-28`），數字不可互相推論。 若主 context 的 `ntok=1` churn 是 **0** ⇒ 表在逐步之間是常數 ⇒ 發布冗餘 ⇒ **S3 復活**， 而 S3 是唯一在認可形狀上越過 20 的實測路徑。 若它不是 0 ⇒ S3 的前提**在今天的口徑上也確實不存在**，22.2 那條路關閉， 力氣轉向 shape／IO（其絕對天花板 20.49／16.31，見下）。
+　｜　主題 實驗　｜　子目標 <span style="color:#ec4899">●</span> S 序列化消減</div>
+
+  <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;"><div style="flex:1;min-width:180px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;"><div style="font-size:12.5px;font-weight:600;margin-bottom:6px;color:#991b1b;">目標 · 判準（要達成什麼、怎麼算達成）</div><div style="font-size:11.5px;line-height:1.7;">在**今天的交付口徑**上（`prod-new` profile、`harness bench`、**MTP off**、`delivery` cell、
+**`ntok=1` 主 context**），一步 decode 之內／之間，**被消費者實際讀到的 expert→slot 映射**
+會不會移動？
+
+這不是「再量一次 churn」，是**判詞的重新檢驗**：S3（41 段收成 1 段）被判無前提，
+依據是 42.3%，而那是 `ntok=4` verify 桶、MTP-on 形狀的讀數。
+兩個口徑是**不同的輸出函數**（`MTP_CALIBER_REDEFINE_2026-09-28`），數字不可互相推論。
+
+若主 context 的 `ntok=1` churn 是 **0** ⇒ 表在逐步之間是常數 ⇒ 發布冗餘 ⇒ **S3 復活**，
+而 S3 是唯一在認可形狀上越過 20 的實測路徑。
+若它不是 0 ⇒ S3 的前提**在今天的口徑上也確實不存在**，22.2 那條路關閉，
+力氣轉向 shape／IO（其絕對天花板 20.49／16.31，見下）。<br><span style="color:#64748b;">判準：一次 `harness bench`、`delivery` cell、`prod-new` ＋ `{CGC_S1_TABLE_CHURN=1, CGC_SLOT_TABLE_GPU=1,
+CGC_GPU_TIMING=1, CGC_DECODE_PROFILE=1}`，熱啟動暖機、量測期 thermal NOMINAL，
+且**同時**滿足：
+  ① **量具活著**：teardown 印出 per-width 那一行，且
+     `python3 scripts/check/premise_b_read.py -v &lt;log&gt;` 報
+     **`delivery_ntok1_measured = True`**（即 `ntok=1` 被歸屬到主 context，不是 draft 的 0/612）。
+     這個欄位是 2026-09-28 加的：它把「量具活著」從一句話變成一個布林，
+     因為 `ntok=1` 的 draft 與主 context **在計數器上長得一樣**（`_by_ntok` 無 `is_draft` 守衛）；
+  ② 報**分布**：churn 報 per-publish 的 changed/total ＋ 逐 (step, layer) 的散布，
+     **不得**只報一個純量（登記明文禁止把 42.3% 當常數，同理由）；
+  ③ 品質閘同時綠：`clamped_selected=0`、`zero_mapped_selected=0`、`n_fast_cold` 不上升。
+</span></div></div><div style="flex:1;min-width:180px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:12px;"><div style="font-size:12.5px;font-weight:600;margin-bottom:6px;color:#1e40af;">結果（實測／推算，依據見下）</div><div style="font-size:11.5px;line-height:1.7;">主 context ntok=1 的 churn 非 0（publish 級 3026/14976、entry 級 4014/119808，兩筆獨立 run）——本實驗不報吞吐：tg 為 swap-void，不得引用</div></div><div style="flex:1;min-width:180px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px;"><div style="font-size:12.5px;font-weight:600;margin-bottom:6px;color:#166534;">判定（契約 §5 四級）</div><div style="font-size:11.5px;line-height:1.7;">③a 實驗目標達成（階段性）<br><span style="color:#64748b;">達成實驗設計目的（機制／量測成立），但產物還不能放進生產級設置</span></div><div style="margin-top:8px;font-size:22px;font-weight:700;color:#166534;">3a</div></div></div>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">四段：目標 → 判準 → 結果 → 判定</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:stretch;"><div style="flex:1;min-width:170px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;"><div style="font-size:12px;font-weight:600;margin-bottom:4px;">1 目標</div><div style="font-size:11px;line-height:1.65;color:#334155;">在**今天的交付口徑**上（`prod-new` profile、`harness bench`、**MTP off**、`delivery` cell、
+**`ntok=1` 主 context**），一步 decode 之內／之間，**被消費者實際讀到的 expert→slot 映射**
+會不會移動？
+
+這不是「再量一次 churn」，是**判詞的重新檢驗**：S3（41 段收成 1 段）被判無前提，
+依據是 42.3%，而那是 `ntok=4` verify 桶、MTP-on 形狀的讀數。
+兩個口徑是**不同的輸出函數**（`MTP_CALIBER_REDEFINE_2026-09-28`），數字不可互相推論。
+
+若主 context 的 `ntok=1` churn 是 **0** ⇒ 表在逐步之間是常數 ⇒ 發布冗餘 ⇒ **S3 復活**，
+而 S3 是唯一在認可形狀上越過 20 的實測路徑。
+若它不是 0 ⇒ S3 的前提**在今天的口徑上也確實不存在**，22.2 那條路關閉，
+力氣轉向 shape／IO（其絕對天花板 20.49／16.31，見下）。</div></div><div style="display:flex;align-items:center;color:#94a3b8;font-size:18px;">→</div><div style="flex:1;min-width:170px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;"><div style="font-size:12px;font-weight:600;margin-bottom:4px;">2 判準</div><div style="font-size:11px;line-height:1.65;color:#334155;">一次 `harness bench`、`delivery` cell、`prod-new` ＋ `{CGC_S1_TABLE_CHURN=1, CGC_SLOT_TABLE_GPU=1,
+CGC_GPU_TIMING=1, CGC_DECODE_PROFILE=1}`，熱啟動暖機、量測期 thermal NOMINAL，
+且**同時**滿足：
+  ① **量具活著**：teardown 印出 per-width 那一行，且
+     `python3 scripts/check/premise_b_read.py -v <log>` 報
+     **`delivery_ntok1_measured = True`**（即 `ntok=1` 被歸屬到主 context，不是 draft 的 0/612）。
+     這個欄位是 2026-09-28 加的：它把「量具活著」從一句話變成一個布林，
+     因為 `ntok=1` 的 draft 與主 context **在計數器上長得一樣**（`_by_ntok` 無 `is_draft` 守衛）；
+  ② 報**分布**：churn 報 per-publish 的 changed/total ＋ 逐 (step, layer) 的散布，
+     **不得**只報一個純量（登記明文禁止把 42.3% 當常數，同理由）；
+  ③ 品質閘同時綠：`clamped_selected=0`、`zero_mapped_selected=0`、`n_fast_cold` 不上升。
+</div></div><div style="display:flex;align-items:center;color:#94a3b8;font-size:18px;">→</div><div style="flex:1;min-width:170px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;"><div style="font-size:12px;font-weight:600;margin-bottom:4px;">3 結果</div><div style="font-size:11px;line-height:1.65;color:#334155;">主 context ntok=1 的 churn 非 0（publish 級 3026/14976、entry 級 4014/119808，兩筆獨立 run）——本實驗不報吞吐：tg 為 swap-void，不得引用</div></div><div style="display:flex;align-items:center;color:#94a3b8;font-size:18px;">→</div><div style="flex:1;min-width:170px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px;"><div style="font-size:12px;font-weight:600;margin-bottom:4px;">4 判定</div><div style="font-size:11px;line-height:1.65;color:#334155;"><b style="color:#d97706">3a · ③a 實驗目標達成（階段性）</b><br>假設：計數點是**宿主側的發布路徑**，不是讀回路徑：
+  `prev` = 該 (context, layer) 上一次發布的 table 快照；
+  `now  = (const int32_t *) table->data`；
+  比較對象是 `ids[j]`（hook 自己發布的 top-k），逐 publish 累計
+  （`llama-context.cpp:5655-5686`，桶為 `*_by_ntok[n_tokens]`）。
+⇒ 它與 09-27 的 leaf 讀回修復無關（那修的是區域指標 `rm`/`tb` 被釘 `nullptr`，
+整塊在 `CGC_S1_DBG` 之下，檔自陳對預設臂零行為影響）。
+⇒ 所以 42.3% **沒有被汙染**，它只是**另一個口徑、另一個 build、單一 run**。
+
+本卡的機制預測（兩個方向都寫死，**跑前**）：
+  (a) MTP off ⇒ 每步一個 token ⇒ 主 context 的 `ntok=1` 桶就是交付步；
+  (b) 若池在那一步內是凍結的（`prev == now` 對所有被消費的 id）⇒ churn = 0；
+  (c) 反之若映射逐步在動 ⇒ churn > 0，與 42.3% 同號（因為兩者問的是同一件事，
+      只是一個在 verify 圖、一個在 decode 圖）。
+</div></div></div>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">與其它條目的關係（同軸 S 序列化消減／同階段，自動對照）</div><table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px;"><tr style="background:#f1f5f9;"><td style="padding:6px 8px;font-weight:600;">條目</td><td style="padding:6px 8px;font-weight:600;">級</td><td style="padding:6px 8px;font-weight:600;">結果（摘）</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;"><a href="io-nofill.html">CGC_EB_NOFILL 診斷臂（fill 成本）</a></td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><b style="color:#d97706">3a</b></td><td style="padding:6px 8px;border-bottom:1px solid #eee;">fill 3.955 → 0.206 ms/step（−95%）⇒ 機制證；生產口徑同步 fill 僅占 step 4.7%</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;"><a href="s1-segbatch.html">單段提交（41 段 → 1 段）</a></td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><b style="color:#d97706">3a</b></td><td style="padding:6px 8px;border-bottom:1px solid #eee;">判詞：41 段→1 段的 A/B **作廢**（兩端都不可引用）。本節點不主張吞吐。**補（09-29）**：它的**可交付上界**＝序列化 − 必須還回去的 fill ⇒ **1</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;"><a href="s1-asyncgather.html">異步 gather 流水線（單段＋miss 後台補＋局部重算）</a></td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><b style="color:#d97706">3a</b></td><td style="padding:6px 8px;border-bottom:1px solid #eee;">E0 已給出決定性答案：前提成立——S1（暖池 8 GiB）輸出 文摘文摘… 且 logits 全非有限（引擎自蓋 INVALID），同一輪的分段臂是 42 ⇒ 異步 fill＋補</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;"><a href="cache-rho.html">ρ 路線（按層批次化 prefetch）</a></td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><b style="color:#d97706">3a</b></td><td style="padding:6px 8px;border-bottom:1px solid #eee;">判活，但本節點**不主張吞吐**：覆蓋 0.849、視窗 1.30~1.59 ms、每步付 4.76 ms GPU 插入 ⇒ 有前置條件。</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;"><a href="cache-prebind.html">prebind／方案 A（預指派 slot）</a></td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><b style="color:#d97706">3a</b></td><td style="padding:6px 8px;border-bottom:1px solid #eee;">判活，但本節點**不主張吞吐**：qu2/qu3 全過、qu1 邊緣（預指派 slot，提前一整步發起 ⇒ 視窗 ≈ 一步）。</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;"><a href="exp-s-retro.html">G0–G7 序列化／調度消減（41 段→1 段、縮 union、藏 …</a></td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><b style="color:#d97706">3a</b></td><td style="padding:6px 8px;border-bottom:1px solid #eee;">判詞：11.97 那一族**作廢**（該臂 9 個 run 全部非乾淨）。本節點不主張吞吐。</td></tr></table>
+  
+  
+  
+  
+  
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">目前最佳配置 vs 目標（每跑一臂自動更新）</div><div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;"><div style="flex:1;min-width:210px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:11px 13px;font-size:12px;color:#64748b;">🏆 尚無讀數（跑完第一臂後自動出現最佳配置）</div><div style="flex:2;min-width:270px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:11px 13px;"><div style="font-size:12.5px;font-weight:700;color:#334155;margin-bottom:4px;">🎯 要達成的目標與差距</div><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;flex-wrap:wrap;font-size:12px;"><span style="font-weight:600;color:#334155;min-width:96px;">Decode 目標</span><span style="flex:1;"><span style="color:#94a3b8;">尚無讀數</span></span><div style="background:#e2e8f0;border-radius:5px;height:8px;width:104px;overflow:hidden;display:inline-block;vertical-align:middle;"><div style="background:#cbd5e1;height:100%;width:0%;"></div></div></div><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;flex-wrap:wrap;font-size:12px;"><span style="font-weight:600;color:#334155;min-width:96px;">Prefill 目標</span><span style="flex:1;"><span style="color:#94a3b8;">尚無讀數</span></span><div style="background:#e2e8f0;border-radius:5px;height:8px;width:104px;overflow:hidden;display:inline-block;vertical-align:middle;"><div style="background:#cbd5e1;height:100%;width:0%;"></div></div></div></div></div>
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Profile 綁定與測試 Log 報告</div><table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px;"><tr style="background:#f1f5f9;"><td style="padding:6px 8px;font-weight:600;">項目</td><td style="padding:6px 8px;font-weight:600;">內容</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">profile</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>prod-new</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">arm（可複製）</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">被測 option</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>CGC_S1_TABLE_CHURN=1</code>；<code>CGC_SLOT_TABLE_GPU=1</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">來源</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">① 實跑 arm（有 log）　·　置信度 <code>high</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">儀器開關（非被測）</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>CGC_GPU_TIMING=1</code>；<code>CGC_DECODE_PROFILE=1</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">測試 log</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><a href="../../../Backup/churn_delivery_630_2026-09-28/churn.json" target="_blank" rel="noopener">churn.json</a></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">備註</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">節點自帶實跑 arm（2 筆 run，log 可點）</td></tr></table>
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">運行設置與 Log（生產級腳本 prod-new ＋ 自己 option；點 Log 查原始數據）</div><div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin-bottom:8px;background:#f8fafc;"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px;margin-bottom:5px;align-items:center;"><span><b>Run 1</b>　<span style="color:#64748b;">2026-09-28 23:08</span></span><span style="display:flex;gap:8px;align-items:center;"><span class="pill" style="background:#64748b;">NOMINAL</span><span style="color:#64748b;font-size:11px;">swap 3909 MiB→7755 MiB</span><a href="../../../Backup/churn_delivery_630_2026-09-28/churn.json" target="_blank" rel="noopener" style="color:#1d4ed8;font-weight:600;">Log／產物 ↗</a></span></div><div style="font-size:11.5px;margin-bottom:4px;">arm：<code>prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1;CGC_GPU_TIMING=1;CGC_DECODE_PROFILE=1</code></div><div style="font-size:11px;color:#334155;word-break:break-all;line-height:1.6;"><code>llama-bench（prod-new）-p 0 -n 64 --warm-skip 64（由產物參數重建）</code></div><div style="margin-top:6px;"><span style="font-size:11.5px;"><b>tg</b> 9.07</span></div><div style="margin-top:5px;font-size:11.5px;color:#475569;">swap：swap_growth=3877.69 MiB, max_swap=8074.75 MiB</div></div><div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin-bottom:8px;background:#f8fafc;"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:12px;margin-bottom:5px;align-items:center;"><span><b>Run 2</b>　<span style="color:#64748b;">2026-09-28 23:12</span></span><span style="display:flex;gap:8px;align-items:center;"><span class="pill" style="background:#64748b;">NOMINAL</span><span style="color:#64748b;font-size:11px;">swap 5924 MiB→7503 MiB</span><a href="../../../Backup/exp_runs/exp-churn-delivery-630_20260928_231234.json" target="_blank" rel="noopener" style="color:#1d4ed8;font-weight:600;">Log／產物 ↗</a></span></div><div style="font-size:11.5px;margin-bottom:4px;">arm：<code>prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1;CGC_GPU_TIMING=1;CGC_DECODE_PROFILE=1</code></div><div style="font-size:11px;color:#334155;word-break:break-all;line-height:1.6;"><code>llama-bench（prod-new）-p 0 -n 64 --warm-skip 64（由產物參數重建）</code></div><div style="margin-top:6px;"><span style="font-size:11.5px;"><b>tg</b> 9.94</span></div><div style="margin-top:5px;font-size:11.5px;color:#475569;">swap：swap_growth=1579.0 MiB, max_swap=7543.06 MiB</div></div>
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">子目標分解（持續更新；2/7 完成）</div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#16a34a;font-weight:700;">☑</span> 跑前立項（現狀/目標/假設/驗收） <a href="../../../scripts/check/charters/exp-churn-delivery-630.yaml" target="_blank" rel="noopener" style="font-size:11px;color:#1d4ed8;">證 ↗</a> </div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#16a34a;font-weight:700;">☑</span> 用生產級腳本 prod-new ＋ 自己 option 跑實驗臂，留存 log </div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#94a3b8;font-weight:700;">☐</span> 驗收：一次 `harness bench`、`delivery` cell、`prod-new` ＋ `{CGC_S1_TABLE_CHURN=1, CGC_SLOT_TABLE_GPU=1,
+CGC_GPU_TIMING=1, CGC_DECODE_PROFILE=1}`，熱啟動暖機、量測期 thermal NOMINAL，
+且**同時**滿足：
+  ① **量具活著**：teardown 印出 per-width 那一行，且
+     `python3 scripts/check/premise_b_read.py -v &lt;log&gt;` 報
+     **`delivery_ntok1_measured = True`**（即 `ntok=1` 被歸屬到主 context，不是 draft 的 0/612）。
+     這個欄位是 2026-09-28 加的：它把「量具活著」從一句話變成一個布林，
+     因為 `ntok=1` 的 draft 與主 context **在計數器上長得一樣**（`_by_ntok` 無 `is_draft` 守衛）；
+  ② 報**分布**：churn 報 per-publish 的 changed/total ＋ 逐 (step, layer) 的散布，
+     **不得**只報一個純量（登記明文禁止把 42.3% 當常數，同理由）；
+  ③ 品質閘同時綠：`clamped_selected=0`、`zero_mapped_selected=0`、`n_fast_cold` 不上升。
+ </div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#94a3b8;font-weight:700;">☐</span> 否證條件：① teardown 印 **`not instrumented`**（旋鈕沒生效）或 `premise_b_read` 報
+   `delivery_ntok1_measured = False`（只有 draft 桶／桶被標成 mixed）⇒
+   這是「**沒有讀數**」，不是「churn=0」。⇒ 先照 §5.1 的分類查是哪一種
+   （`capture is not a node`／`not int32s`／`gather=null`），**不得**記成結果。
+② 若 `delivery` cell 的步根本不進那條 gate（`cgc_is_decode_graph` 未涵蓋）⇒
+   口徑不成立，改記為「主 context 的 churn 在本 cell 上不可量」，並說明為什麼。
+ </div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#94a3b8;font-weight:700;">☐</span> 在 build 630 上第一次證明這個量具活著（全 repo 220 個帶該旋鈕的產物全部落在 09-16/09-17） <span style="color:#64748b;font-size:11px;">預期 teardown 印出 per-width 行，且桶存在；`not instrumented` 與「量到的 0」分得開</span> <span style="color:#94a3b8;font-size:11px;">— 量法：讀 stderr 的 `llama_expert_cache: S1 slot-table: ... consumed_changed=...` 與 per-ntok rate 行</span></div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#94a3b8;font-weight:700;">☐</span> 主 context `ntok=1` 的 churn（today's delivery shape） <span style="color:#64748b;font-size:11px;">預期 0 或 &gt;0；報分布，不報純量</span> <span style="color:#94a3b8;font-size:11px;">— 量法：per-ntok 分桶，用 `is_draft` 的 key（`il + 100000`）把 draft 桶排除</span></div><div style="margin:4px 0 0 0px;font-size:12.5px;line-height:1.5;"><span style="color:#94a3b8;font-weight:700;">☐</span> 用 ②的結果裁決 S3 的前提在今日口徑上成不成立 <span style="color:#64748b;font-size:11px;">預期 0 ⇒ S3 復活並寫成可判定的下一步；&gt;0 ⇒ 關閉 S3 並把力氣轉 shape/IO</span> <span style="color:#94a3b8;font-size:11px;">— 量法：對照 42.3% 的口徑差異（MTP-on verify vs MTP-off decode）逐條寫清</span></div>
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">依據 · 備註 · 軸性質</div><table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px;"><tr style="background:#f1f5f9;"><td style="padding:6px 8px;font-weight:600;">項目</td><td style="padding:6px 8px;font-weight:600;">內容</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">依據</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>agent_harness/portal/targets.json</code></td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">備註</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">假設：計數點是**宿主側的發布路徑**，不是讀回路徑：
+  `prev` = 該 (context, layer) 上一次發布的 table 快照；
+  `now  = (const int32_t *) table->data`；
+  比較對象是 `ids[j]`（hook 自己發布的 top-k），逐 publish 累計
+  （`llama-context.cpp:5655-5686`，桶為 `*_by_ntok[n_tokens]`）。
+⇒ 它與 09-27 的 leaf 讀回修復無關（那修的是區域指標 `rm`/`tb` 被釘 `nullptr`，
+整塊在 `CGC_S1_DBG` 之下，檔自陳對預設臂零行為影響）。
+⇒ 所以 42.3% **沒有被汙染**，它只是**另一個口徑、另一個 build、單一 run**。
+
+本卡的機制預測（兩個方向都寫死，**跑前**）：
+  (a) MTP off ⇒ 每步一個 token ⇒ 主 context 的 `ntok=1` 桶就是交付步；
+  (b) 若池在那一步內是凍結的（`prev == now` 對所有被消費的 id）⇒ churn = 0；
+  (c) 反之若映射逐步在動 ⇒ churn > 0，與 42.3% 同號（因為兩者問的是同一件事，
+      只是一個在 verify 圖、一個在 decode 圖）。
+</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">軸性質</td><td style="padding:6px 8px;border-bottom:1px solid #eee;"><span style="color:#ec4899">●</span> 活躍攻關軸：41 段提交的同步／資料搬運，主項可被工程手段消掉</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">階段</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">實驗階段（階段性）　·　③a —— 機制／量測成立，但產物還不能進生產</td></tr><tr><td style="padding:6px 8px;border-bottom:1px solid #eee;">對應報告</td><td style="padding:6px 8px;border-bottom:1px solid #eee;">0 份</td></tr></table>
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">對應報告</div><div style="font-size:12px;color:#94a3b8;">（無）</div>
+
+  <div style="padding:11px 13px;background:#fffbeb;border:1px solid #fcd34d;border-radius:7px;font-size:12px;color:#78350f;line-height:1.65;margin-top:12px;">
+    <b>關鍵結論：</b>判定 <b style="color:#d97706">3a · ③a 實驗目標達成（階段性）</b>（達成實驗設計目的（機制／量測成立），但產物還不能放進生產級設置）　—　假設：計數點是**宿主側的發布路徑**，不是讀回路徑：
+  `prev` = 該 (context, layer) 上一次發布的 table 快照；
+  `now  = (const int32_t *) table->data`；
+  比較對象是 `ids[j]`（hook 自己發布的 top-k），逐 publish 累計
+  （`llama-context.cpp:5655-5686`，桶為 `*_by_ntok[n_tokens]`）。
+⇒ 它與 09-27 的 leaf 讀回修復無關（那修的是區域指標 `rm`/`tb` 被釘 `nullptr`，
+整塊在 `CGC_S1_DBG` 之下，檔自陳對預設臂零行為影響）。
+⇒ 所以 42.3% **沒有被汙染**，它只是**另一個口徑、另一個 build、單一 run**。
+
+本卡的機制預測（兩個方向都寫死，**跑前**）：
+  (a) MTP off ⇒ 每步一個 token ⇒ 主 context 的 `ntok=1` 桶就是交付步；
+  (b) 若池在那一步內是凍結的（`prev == now` 對所有被消費的 id）⇒ churn = 0；
+  (c) 反之若映射逐步在動 ⇒ churn > 0，與 42.3% 同號（因為兩者問的是同一件事，
+      只是一個在 verify 圖、一個在 decode 圖）。
+　｜　本條目屬 <b>S 序列化消減</b>（活躍攻關軸：41 段提交的同步／資料搬運，主項可被工程手段消掉）。
+  </div>
+  <div style="margin-top:8px;font-size:11px;color:#94a3b8;">本頁由
+    <code>scripts/check/mindmap_brief_build.py</code> 從 <code>docs/mindmap/mindmap.json</code>
+    機械生成；改內容請改 JSON 後重跑，勿直接編輯本頁。</div>
+  <div style="margin-top:16px;padding-top:10px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;gap:10px;font-size:12px;"><a href="exp-caliber-calibration.html">← 口徑＋k=3 飄移認證（16.4% 噪聲底）</a><span><a href="index.html">總目錄</a>　·　<a href="exp-churn-delivery-630.md">MD 版</a></span><a href="exp-prodnew-decode20-g4miss.html">在**認可入口**（`harness bench`、`prod-ne… →</a></div>
+</div>
+</body>
+</html>

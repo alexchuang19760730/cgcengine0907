@@ -18,7 +18,7 @@
 
 ## 3. 結果
 
-E0 已給出決定性答案：前提成立——S1（暖池 8 GiB）輸出 文摘文摘… 且 logits 全非有限（引擎自蓋 INVALID），同一輪的分段臂是 42 ⇒ 異步 fill＋補算（C/D）是把 ×1.42–1.83 變成可交付的唯一路徑，不是可選項。E2 被自身結構擋下（S1 跳過 41 段迴圈 ⇒ 逐層儀器不在路徑上）；E1 裁決 fill 的可引用值是 20.8 ms/step（殘差 3.955 不得當輸入）；E4 的比值（decode ×1.42／prefill ×0.80）只能當診斷價（兩臂 thermal HEAVY＋起跑 swap 8 GiB）⇒ 仍無任何吞吐可宣稱。
+E0 已給出決定性答案：前提成立——S1（暖池 8 GiB）輸出 文摘文摘… 且 logits 全非有限（引擎自蓋 INVALID），同一輪的分段臂是 42 ⇒ 異步 fill＋補算（C/D）是把 ×1.42–1.83 變成可交付的唯一路徑，不是可選項。E2 被自身結構擋下（S1 跳過 41 段迴圈 ⇒ 逐層儀器不在路徑上）；E1 裁決 fill 的可引用值是 20.8 ms/step（殘差 3.955 不得當輸入）；E4 的比值（decode ×1.42／prefill ×0.80）只能當診斷價（兩臂 thermal HEAVY＋起跑 swap 8 GiB）⇒ 仍無任何吞吐可宣稱。 **§50（09-29）**：本節點的構想（**異步 fill ＋ 只補算 miss**）與 `fillahead` A 半的實測**合流**——fillahead 已把池餵活並過 G4 閘（miss 6.1%、39.0 ms），缺的正是「補算那 6.1%」。⚠ 兩個估價差很大：本節點 **~14.5 t/s**（用 **20.8 ms/step** 的可引用 fill 價，E1 裁決）vs §50 的 **23.7–24.6 t/s**（用 39.0 ＋ 1.60–3.20，兩者都建在「填池在步時上幾乎不花錢」的觀察上）⇒ **差別在「填池的可引用價」還沒定**（`io-nofill`／L20-4）。⇒ 在 L20-4 定價之前，不要把 25 的成敗押在本節點的 14.5 上。 **§51（09-29）**：本節點的估價（**只補算 miss** ⇒ ~14.5 t/s）**與 B 共用同一個 blocker**：在**靜態圖（本 build 的 decode 確實重用圖：`can_reuse`／`LLAMA_GRAPH_REUSE_DISABLE`，且有 CGC 2026-09-08 的修正註解說『固定形狀的 context 會永遠重用它的圖』）**下，補算的寬度**不能逐步變**，只能取最壞情形 `k=8/層` ⇒ 備援重算＝**+8.09 ms/步**（同儀器實測）⇒ 「只補算 miss」的那個便宜價**只在動態寬度下成立**。⇒ 兩條機制必須**一起重定價**，不能只換機制。
 
 ## 4. 判定
 
@@ -28,16 +28,27 @@ E0 已給出決定性答案：前提成立——S1（暖池 8 GiB）輸出 文�
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod-new`　（profile `prod-new`；無自己的 option）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **儀器開關**（不是被測 option）：`CGC_DECODE_PROFILE=1`
+- **測試 log**：[nf_fill.json](../../../Backup/nofill_prod/nf_fill.json)　[summary.json](../../../Backup/eseries/E4/summary.json)
+- **證據報告**：[S1_ASYNC_GATHER_PIPELINE_2026-09-25.md](../../S1_ASYNC_GATHER_PIPELINE_2026-09-25.md)　[S1_ASYNC_GATHER_PIPELINE_2026-09-25.html](../../S1_ASYNC_GATHER_PIPELINE_2026-09-25.html)
+- 從證據文件掃到的 arm 字串（2 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
 | [CGC_EB_NOFILL 診斷臂（fill 成本）](io-nofill.md) | 3a | fill 3.955 → 0.206 ms/step（−95%）⇒ 機制證；生產口徑同步 fill 僅占 step 4.7% |
-| [單段提交（41 段 → 1 段）](s1-segbatch.md) | 3a | A 11.30 → B 20.73 t/s；−40.3 ms/token（45.5%），其中序列化 ~36 ms、fill 僅 3.96 ms |
-| [ρ 路線（按層批次化 prefetch）](cache-rho.md) | 3a | 判活：覆蓋 0.849，單獨做 14.36 t/s（+14.2%）；但視窗只有 1.30~1.59 ms，且要付 4.76 ms/步 GPU 插入 ⇒ 有前置條件 |
-| [prebind／方案 A（預指派 slot）](cache-prebind.md) | 3a | 判活：qu2/qu3 全過、qu1 邊緣 ⇒ 14.33 t/s（+14.0%）；提前一整步發起 ⇒ 視窗 ≈ 一步 |
+| [單段提交（41 段 → 1 段）](s1-segbatch.md) | 3a | 判詞：41 段→1 段的 A/B **作廢**（兩端都不可引用）。本節點不主張吞吐。**補（09-29）**：它的**可交付上界**＝序列化 − 必須還回去的 fill ⇒ **1 |
+| [ρ 路線（按層批次化 prefetch）](cache-rho.md) | 3a | 判活，但本節點**不主張吞吐**：覆蓋 0.849、視窗 1.30~1.59 ms、每步付 4.76 ms GPU 插入 ⇒ 有前置條件。 |
+| [prebind／方案 A（預指派 slot）](cache-prebind.md) | 3a | 判活，但本節點**不主張吞吐**：qu2/qu3 全過、qu1 邊緣（預指派 slot，提前一整步發起 ⇒ 視窗 ≈ 一步）。 |
+| [G0–G7 序列化／調度消減（41 段→1 段、縮 union、藏 …](exp-s-retro.md) | 3a | 判詞：11.97 那一族**作廢**（該臂 9 個 run 全部非乾淨）。本節點不主張吞吐。 |
+| [S2：段邊界免等（天花板 18.7 t/s）](exp-s2-overlap.md) | 3a | **已結（FAIL 附機制）**。segment／gap 部分：段界是**資料依賴**（每層 argsort 一個邊界把 top-k 拿回 host 寫 remap leaf，L+ |
 
-## 6. 與其它路線的關鍵差異
+## 7. 與其它路線的關鍵差異
 
 | 對象 | 它的做法／結果 | 本條目差別 |
 |---|---|---|
@@ -46,7 +57,7 @@ E0 已給出決定性答案：前提成立——S1（暖池 8 GiB）輸出 文�
 | miss-3b | 讓同步 fill 變便宜（合併 pread）、收益 ~2.9% 判死 | 讓 fill 離開同步路徑（異步）、不是變便宜 |
 | miss-3c | per-expert 重算、自寫依賴 3b、舊估 +13–18% 作廢 | 異步 drain＋雙緩衝補依賴、重算只為加回、收益重測 |
 
-## 7. 成敗點（風險 → 驗證）
+## 8. 成敗點（風險 → 驗證）
 
 | # | 風險 | 驗證 |
 |---|---|---|
@@ -55,7 +66,7 @@ E0 已給出決定性答案：前提成立——S1（暖池 8 GiB）輸出 文�
 | 3 | 異步 bit-exact：MASK＋補算要 M1 逐位相同 | 對 host BATCHDBG、M1 oracle |
 | 4 | bg 爭用：背景 fill 搶 IO／頻寬 | 對照 bg on/off |
 
-## 8. 生產設置（要進生產必須滿足什麼）
+## 9. 生產設置（要進生產必須滿足什麼）
 
 | 項目 | 驗收條件（可否證） | 現況 |
 |---|---|---|
@@ -67,7 +78,7 @@ E0 已給出決定性答案：前提成立——S1（暖池 8 GiB）輸出 文�
 | 交付載體接得上 | S1 的三個開關必須在 SERVER_ENV 白名單內，否則 server 路徑會靜默丟掉 | 2026-09-25 已補 CGC_SEG_BATCH（presence-based ⇒ 只傳非 0 值）；CGC_B_SCHEME／CGC_SLOT_TABLE_GPU 已在 |
 | 產物可指紋 | 每次量測帶 engine digest ＋ cell ＋ thermal／swap（窗口條件） | harness bench 已帶（base_check／cell／box_gate） |
 
-## 9. 驗收測試（完整 test cases：E 系列）
+## 10. 驗收測試（完整 test cases：E 系列）
 
 | # | 測什麼 | 通過條件（先寫死） | 成本／指令 | 結果 |
 |---|---|---|---|---|
@@ -77,7 +88,7 @@ E0 已給出決定性答案：前提成立——S1（暖池 8 GiB）輸出 文�
 | **E3** | 兩個 make-or-break 的離線結論：補算的逐位元等價寫法、以及異步 fill 的寫入面 | ① 寫死「重跑該層該 token 的融合 combine」而不是「加回部分和」（依據：combine 熔在 kernel_mul_mv_id_down_combine_*；CGC_ADD_ORDER=rev 已證結合序會移動 anchor md5）② 指認 pool_ext_buf[layer][kind] 與 in-flight command buffer 的關係（否則就是 codebase 自己註記的 UB） | `讀碼（llama-graph.cpp／llama-expert-cache.h／ggml-backend.cpp）＋ grep 指紋`（0 GPU） | 已裁決（0 GPU 讀碼）：① kernel_mul_mv_id_down_combine_* 確實存在於 Metal kernel（ggml-metal.metal:11744）⇒ 補算不能「加回部分和」，唯一逐位元寫法是用同一顆 kernel 重跑該層該 token 的融合 combine；② pool_ext_buf[layer][kind] 是 pool 的非擁有視圖（llama-expert-cache.h:172-174，被 llama-expert-cache.cpp:2099 逐層指派）⇒ 異步 fill 直接寫它就是寫「in-flight command buffer 正在讀的 buffer」；必須經 staging＋copy-in 雙緩衝 |
 | **E4** | 交付 cell 配對：分段臂 vs S1 臂（同 cell、同 pool、同 build），prefill 與 decode 同報 | 比值可引用、絕對值不外推；帶 thermal／swap／binary md5；S1 產物按台帳規則報比值而非獨立 t/s | `python3 scripts/check/harness.py bench --arm prod-new --arm 'prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1' --json /tmp/E4/summary.json`（同一輪 2 臂 × r3） | 已跑（21:26–21:29，同輪 AB r3）：分段臂 pp 233.29±20.83／tg 11.40±0.04（hit 96.2%）；S1 臂 pp 187.03±10.38／tg 16.14±1.66（hit 100.0%、misses 0、reads 0）⇒ decode ×1.42、prefill ×0.80。⚠ 比值亦不可引用：兩臂 worst thermal 皆 HEAVY、起跑 swap 7.7–8.1 GiB、非交錯；且 S1 臂按 E0 屬「NaN 級輸出」⇒ 只能當診斷價（S 軸形狀上界）。prefill 方向與 09-24 k-sweep 相反 ⇒ 盒況主宰，待乾淨窗口。產物 Backup/eseries/E4/summary.json |
 
-## 10. 依據 · 備註 · 對應報告
+## 11. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

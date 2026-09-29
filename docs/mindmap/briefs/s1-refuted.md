@@ -27,7 +27,14 @@
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prod-new:CGC_S1_TABLE_CHURN=1`　（profile `prod-new`；被測 option：`CGC_S1_TABLE_CHURN=1`）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **證據報告**：[S1_SLOT_OWNER_REFUTED_20260917.html](../../S1_SLOT_OWNER_REFUTED_20260917.html)　[S1_TIMING_REFUTED_20260917.html](../../S1_TIMING_REFUTED_20260917.html)
+- 從證據文件掃到的 arm 字串（2 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
@@ -38,7 +45,7 @@
 | [3b：fill 觸發點搬出 hook ＋ batch 化](miss-3b.md) | 4 | 判死：合併邏輯早已存在、幾何 182.6×、生產口徑上界 ~9% ⇒ 收益 ~2.9% |
 | [3c：per-expert 重算 kernel](miss-3c.md) | 4 | 不做（依賴鏈斷；上限同受 ~5% 約束；舊估 +13~18% 來自已作廢的非生產 cell） |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|

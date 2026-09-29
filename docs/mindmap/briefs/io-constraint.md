@@ -25,7 +25,16 @@ IOCACHE：#6 沒做之前 #3 的 async 版本不可達（且不可並列相加�
 
 ---
 
-## 5. 與其它條目的關係（同軸／同階段，自動對照）
+## 5. Profile 綁定與測試 Log 報告
+
+- **arm**：`prefill250:CGC_SUBMIT_AHEAD=1`　（profile `prefill250`；被測 option：`CGC_SUBMIT_AHEAD=1`）
+- **來源**：③ 證據文件掃描　·　置信度 `med`
+- **測試 log**：[l3prize_off.json](../../../Backup/phase_decomp/l3prize_off.json)　[joint_step_accept_g6.json](../../../Backup/cgc_logs/joint_step_accept_g6.json)　[f1_cb_miss_regression_report.json](../../../Backup/cgc_logs/f1_cb_miss_regression_report.json)
+- **測試 log（檔案不在工作區，`Backup/` 未進版控）**：`summary_l3_prize_submit_ahead.json`
+- **證據報告**：[IOCACHE_CONSTRAINT_ADMISSION_2026-09-22.md](../../IOCACHE_CONSTRAINT_ADMISSION_2026-09-22.md)　[L3_M1_BLOCKED_STRUCTURAL_2026-09-20.md](../../L3_M1_BLOCKED_STRUCTURAL_2026-09-20.md)　[L3_M1_GAP_LEDGER_2026-09-20.md](../../L3_M1_GAP_LEDGER_2026-09-20.md)　[S2_PROBE2_AND_CEILING_2026-09-20.md](../../S2_PROBE2_AND_CEILING_2026-09-20.md)
+- 從證據文件掃到的 arm 字串（5 份文件）
+
+## 6. 與其它條目的關係（同軸／同階段，自動對照）
 
 | 條目 | 級 | 結果（摘） |
 |---|---|---|
@@ -36,7 +45,7 @@ IOCACHE：#6 沒做之前 #3 的 async 版本不可達（且不可並列相加�
 | [S1 早期診斷系列（09-16/17）](s1-refuted.md) | 4 | 多輪被自己否證：slot owner 推論被推翻、時序推論被推翻、09-16 那七輪「第一個分歧」全部不可引用（同時踩三個盲點） |
 | [3b：fill 觸發點搬出 hook ＋ batch 化](miss-3b.md) | 4 | 判死：合併邏輯早已存在、幾何 182.6×、生產口徑上界 ~9% ⇒ 收益 ~2.9% |
 
-## 8. 依據 · 備註 · 對應報告
+## 7. 依據 · 備註 · 對應報告
 
 | 項目 | 內容 |
 |---|---|
