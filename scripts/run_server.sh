@@ -1529,12 +1529,24 @@ for _v in LLAMA_EXPERT_CACHE_NOHOOK LLAMA_EXPERT_CACHE_NOGATHER LLAMA_EXPERT_CAC
           LLAMA_EXPERT_CACHE_STEP_DBG CGC_PHASE_DBG CGC_SEQ_RM_TYPE CGC_PREFIX_REUSE_CKPT \
           CGC_S1_OUT_CAP CGC_S1_OUT_LAYERS CGC_S1_TABLE_CHURN CGC_S1_CLAMP_ABORT \
           CGC_LOGITS_ORACLE_TOPN CGC_LOGITS_ORACLE_FIRST_N CGC_DRAFT_CTX_ALIGN \
-          CGC_DRAFT_SMALL_BATCH; do
+          CGC_DRAFT_SMALL_BATCH \
+          LLAMA_BENCH_SPEC_DBG CGC_MTP_PERF; do
     if [ -n "${!_v:-}" ]; then
         SERVER_ENV+=("$_v=${!_v}")
     fi
 done
 unset _v
+# [CGC 2026-09-30 allowlist fix] The two names just added are the speculative framework's, not
+# MTP's, and both used to be unreachable from a non-MTP arm:
+#   * `LLAMA_BENCH_SPEC_DBG` (llama-bench.cpp:3123, PRESENCE-based) prints
+#     `SPECDBG round: n_done=.. n_past=.. draft=..`, i.e. the per-round commit count. That is the
+#     ONLY witness for E on a non-MTP speculative arm, and it had no allowlist entry at all.
+#   * `CGC_MTP_PERF` prints the generic `CGC-MTP-PERF type=<t> ... emit_tok_per_round=..` line, but
+#     its only entry sat inside the `if [ "$SERVER_MTP" = "1" ]` block (:2477) -> for an ngram arm
+#     (SERVER_MTP=0) the whole block does not run and the var was silently dropped.
+# Both failures are the same shape: a knob that looks set, is not, and the run then looks exactly
+# like "the instrument had nothing to report". The MTP-block copy of CGC_MTP_PERF is left in place
+# (harmless duplicate) rather than deleted, so that block keeps working on its own.
 # [CGC 2026-09-13 FIX] CGC_FORCE_TEMP0 used to be exported unconditionally. The C++ side
 # tests PRESENCE, not value --  static const bool cgc_force_temp0 = getenv("CGC_FORCE_TEMP0") ? true : false;
 # (tools/server/server-common.cpp:1356) -- so exporting the default "0" still ENABLED the

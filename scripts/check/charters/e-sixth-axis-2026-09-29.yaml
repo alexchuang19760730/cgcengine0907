@@ -26,7 +26,10 @@ question: |
 baseline:
   metric: "現有軸（ms、段數、kernel、IO）全量完；交付 85.45 ms、缺口 45.45 ms；P(25)<3%"
   cell: "prod-new 交付 cell（`-p 2048 -n 128 -d 512 -r 3 -b/-ub 5632 --warm-skip 64`）"
-  source: "docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md §39（C1–C7 ＋ 四級槓桿清單）"
+  # ⚠ `source:` 要是**一個存在的路徑**（charter gate 會 os.path.exists 它）；節號與說明放 `source_note`。
+  #   2026-09-30 第一版把「§39（C1–C7…）」寫進 source ⇒ 閘門拒跑（rc=2），兩臂都發不出去。
+  source: "docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md"
+  source_note: "§39：C1–C7 的條件清單 ＋ 把「已量到」按可回收性分四級的槓桿清單"
   known: |
     - §39 §三 C1：把四塊各自推到**自己的已量上界**相加 = 41.2 ms = 24.3 t/s < 25
       ⇒ 「以現有的軸加總到不了」。C6 明寫：「若要靠每步多 token 攤薄固定成本，必須先把 MTP-on
@@ -53,8 +56,11 @@ inventory:
       magnitude: "攤薄固定成本，係數由 E（accept rate）決定；E≥1 才正"
       identity: "★★ `need_n_rs_seq()` 回 **0**（common.h:395 只列 MTP／EAGLE3／DFLASH／DSPARK）⇒ **結構上不觸發 M2 的輸出函數改變**"
       source: "common/speculative.cpp:1998（impl_ngram_simple，need_embd=false）；common.h:395；CLI `--spec-ngram-simple-size-n/-size-m/-min-hits`"
-      status: CANDIDATE_PRIMARY
-      why_first: "唯一同時「改乘數」且「有機會保持同一個輸出函數」的候選。bytes 類的候選只對 33% 那一半有效；steps 類對兩半都有效。"
+      status: FALSIFIED          # 2026-09-30 00:5x 實測
+      measured: "E ＝ 63 token／64 輪 ＝ **0.984**（6/6 rep 完全一致）；draft 寬度 {1:32, 3:32}、192 輪提交 0 個 ⇒ **每輪平均產出比 plain 的 1.0 還少**，而每輪成本更高。"
+      measured_crosscheck: "archive 的 `ngram-map-k`（另一型別、另一 cell、09-20）＝ 128 輪／127 token ⇒ **0.992**。兩種 ngram 型別、兩個 cell、兩套儀器，E 都 ≈ 1.0。"
+      why_first: "唯一同時「改乘數」且「有機會保持同一個輸出函數」的候選。bytes 類的候選只對 33% 那一半有效；steps 類對兩半都有效。（**這條排序規則仍然成立** —— 被否證的是這個候選的**量**，不是排序。）"
+      why_it_failed: "★ 不在結構，在**命中率**：draft 寬度只有 1 或 3、且 32 個起草輪各只被接受 1 個 ⇒ 一邊付 verify 的寬度、一邊沒有拿到對應的 token。⚠ 而且**參數在 bench 上不可掃**（見 knobs 的三個 candidate）⇒ 「換個 size_n/size_m 會不會好」在唯一認可入口上量不了。"
     - id: load-mode
       changes: bytes/token（等效）
       mechanism: "`CGC_SERVER_LOAD_MODE=mmap`：dense 段由匿名頁變成可回收的檔案頁 ⇒ 降低落到 SSD 的比例 f"
@@ -135,10 +141,17 @@ subgoals:
     text: "量 `--spec-type ngram-simple`：E 與輸出同一性"
     expect: "`E > 1` ∧ `answer_md5` 與對照臂相同 ∧ ON 自身重跑 identical"
     how: |
-      同 cell 三趟（**A 對照＝裸 prod-new、B＝`--spec-type ngram-simple`、C＝B 重跑取 identical）。
-      先查 `CGC-MTP-PERF`（或等價的每輪計數器）取 E；再 diff `answer_md5`。
-      ⛔ `--spec-type` **不是 env**，不能寫進 arm 的 env 段（會被 allowlist 靜默丟掉）。
-    state: TODO
+      同 cell 兩趟（**A 對照＝裸 prod-new、B＝`--spec-type ngram-simple`**）＋兩臂都帶
+      `LLAMA_BENCH_SPEC_DBG=1`（每輪見證）／`CGC_MTP_PERF=1`／`CGC_LOGITS_ORACLE_DUMP=<各自的路徑>`。
+      ⛔ `--spec-type` **不是 env**（走 CLI），且**三顆 `--spec-ngram-simple-*` 在 bench 上會被拒**
+      ⇒ 只能跑編譯期預設。
+    state: DONE
+    result: |
+      ② **不成立：E ＝ 0.984**（6/6 rep 一致；archive 的 map-k 0.992）⇒ 依否證條款，這個乘數不攤薄。
+      ③ 未量到、且不改變判決：`cgc_logits_oracle_compare.py` 兩種對齊都不成立
+      （step：common 390／only_B 768；pos：keys_common 4）⇒ 那 39% 的 M2 **不能**讀成「輸出不同」
+      （dump 是每次 context decode 落一筆，而投機臂的 forward 份數本來就不同）。
+      全文 `docs/SIXTH_AXIS_NGRAM_2026-09-30.md`。
   - id: sg-6th-loadmode
     text: "量 `CGC_SERVER_LOAD_MODE=mmap` 的等效 bytes/step（不改乘數，改 f）"
     expect: "A/B 各一趟：`answer_md5` 相同，且 IO 側觀察到落 SSD 比例的變化"
@@ -155,9 +168,9 @@ options:
   arms:
     - "prod-new"
   knobs:
-    - {name: --spec-type, value: "ngram-simple", role: subject, why: "被測 PRIMARY：用上下文自己的 n-gram 起草，**不需要 draft head**；且 `need_n_rs_seq()` 對它回 **0** ⇒ 結構上不觸發 M2 的輸出函數改變（那正是 MTP 被判產品決策的原因）", source: "common/speculative.cpp:1998（need_embd=false）；common.h:395"}
-    - {name: --spec-ngram-simple-size-n, value: "4", role: subject, why: "lookup n-gram 長度（E 對它敏感 ⇒ 要掃）", source: "src/llama.cpp/common/arg.cpp:4129"}
-    - {name: --spec-ngram-simple-size-m, value: "8", role: subject, why: "draft m-gram 長度", source: "同上 :4139"}
-    - {name: --spec-ngram-simple-min-hits, value: "2", role: subject, why: "最小命中數（直接決定 E）", source: "同上 :4149"}
+    - {name: --spec-type, value: "ngram-simple", role: subject, why: "被測 PRIMARY —— <b>已量、否證</b>：E ＝ <b>0.984</b>（＜1，不攤薄）。它本身合法且 llma-bench 真的會用它（`is_ngram_spec_type` 有三處消費）", source: "common/speculative.cpp:1998；common.h:395；docs/SIXTH_AXIS_NGRAM_2026-09-30.md"}
+    - {name: --spec-ngram-simple-size-n, value: "12（編譯期預設，不可覆寫）", role: candidate, why: "⛔ bench 拒絕此旗標 ⇒ 在唯一認可入口上**只能跑預設**；要掃參數得先改 `src/`（且改動會動到共用 binary）", source: "common.h:367-371；llama-bench.cpp:1330"}
+    - {name: --spec-ngram-simple-size-m, value: "48（同上）", role: candidate, why: "⛔ 同上（`--spec-ngram-simple-size-m` 也被 bench 的 arg 白名單拒）", source: "同上"}
+    - {name: --spec-ngram-simple-min-hits, value: "1（同上）", role: candidate, why: "⛔ 同上", source: "同上"}
     - {name: CGC_SERVER_LOAD_MODE, value: "mmap", role: candidate, why: "被測 SECONDARY：dense 段由匿名頁變可回收檔案頁 ⇒ 降落到 SSD 的比例 f（§7：f 20% ⇒ 85.9 ms；25 t/s 要 f ≤7.9%）", source: "scripts/run_server.sh:513-518（預設 none）；docs/DECODE25_CEILING_2026-09-20.md §7"}
   note: "⚠ 本格的 `knobs.name` 有兩種：`CGC_*`＝env；`--*`＝**CLI 旗標**（`--spec-type` 不是 env，寫成 env 會被 allowlist 靜默丟掉 —— 那正是 MTP 修復臂空轉一趟的原因）。三趟：A 對照＝裸 `prod-new`（不帶任何 spec 旗標）、B＝A ＋ 上面那串、C＝B 重跑（驗 ON 自身 identical）。驗收三條：**① `need_n_rs_seq()==0` ② `E>1` ③ `answer_md5` 與 A 相同**。⛔ 三趟的 t/s 一律先過引用閘門；本格的第一個產物是「有沒有乘數」，不是速度。"

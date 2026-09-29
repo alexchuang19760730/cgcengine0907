@@ -32,10 +32,10 @@
 - **子目標**：`L25-1`　第六條軸：改「每 token 的 bytes 或 steps」
 - **來源**：子目標看板（唯一來源）　·　置信度 `high`
 - **profile**：`prod-new`
-- **被測 option**：`--spec-type=ngram-simple`；`--spec-ngram-simple-size-n=4`；`--spec-ngram-simple-size-m=8`；`--spec-ngram-simple-min-hits=2`
-- **候選（待指名）**：`CGC_SERVER_LOAD_MODE=mmap`
+- **被測 option**：`--spec-type=ngram-simple`
+- **候選（待指名）**：`--spec-ngram-simple-size-n=12（編譯期預設，不可覆寫）`；`--spec-ngram-simple-size-m=48（同上）`；`--spec-ngram-simple-min-hits=1（同上）`；`CGC_SERVER_LOAD_MODE=mmap`
 - **arm 1（可複製）**：`prod-new`
-- **結案狀態**：未結案（唯讀盤點完成：7 候選、1 PRIMARY；下一步＝量 ngram 的 E 與輸出同一性）
+- **結案狀態**：未結案（PRIMARY 候選已量、否證：ngram 的 E 0.984（6/6 rep 一致；archive 的 map-k 0.992）⇒ steps/token 這條無 draft-head 的路不攤薄；下一步＝SECONDARY CGC_SERVER_LOAD_MODE）
 - （同條另掛：`L25-2`）
 - **逐條處置**：整合進子目標　→ `L25-1`　—　decode ≥25 的主節點（tier 4）；§51 之後只剩 L25-1 一條活路（L25-2 唯一被指名的機制 B 已被量死）
 - **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）

@@ -37,7 +37,7 @@ reading: |
   <b>閘門抓到的第一件事</b>：09-27 的「舊基線 9.311」其 rep 1 是 4.12（其餘 12.01／11.80）⇒ kept 半邊＝<b>11.905</b>，與 11.703 幾乎相同 ⇒ §15 的「+25.7% 進步」主要是<b>冷啟 rep 的產物</b>，不是機器變快。
   <br>⑦ <b>§56（09-29）「同一個格子但差 29%」的前提不成立</b>：11.703 是 <code>(default)</code> cell（<code>-b/-ub 5632</code>、<code>-p 2048</code>、一次 launch 兩列），8.26／9.7／10.7 是 <code>delivery</code> cell（<code>-b/-ub 512</code>、<code>-p 0</code>、只有 tg 一列）——按 <code>cell_contract</code> 兩格<b>不可互比</b>。可量的那一項只有盒子（同 (default) 格 −<b>3.2%</b>）；最大候選是<b>量測起點</b>：default 的 tg 在同一行程裡排在 pp2048 之後（整臂 <code>fill_batch</code> <b>5×</b>、<code>file_reads</code> 82k vs 26k），delivery 的 reps 則出現單調上升、末 rep 落在 default 的平台高度。已立項 <b>L20-10</b>（互斥的 B1／B3），但它需要<b>測試卡 §2.5 新增一格</b>才能跑。
 
-  <br>⑧ <b>§58（09-29）交付 cell 的第一列可引用讀數，以及一個差點變成假綠燈的 27.3</b>：全語料掃描（1061 列）只有 <b>4</b> 列可引用，而 <code>delivery</code> cell 的 30 列裡<b>只有 1 列</b>——<code>stepbudget_2026-09-29/delivery_fuse.json</code> <b>9.377 t/s</b>（逐 rep [8.83, 9.59, 9.70] ⇒ 1.099／kept 1.011、<code>none</code>、<code>contract.ok</code>、有成對 log）。它的孿生 <code>delivery_base</code>（同 cell、只差 <code>CGC_MMV_FUSE</code>）9.909 被<b>冷啟 rep</b> 擋下（kept 10.31 ⇒ 同帶）。<b>同一輪掃描的另一列才是重點</b>：SPAC K sweep 的 <code>k_sweep_T4_K4</code> 在<b>交付 cell</b> 上報 <b>27.338 t/s</b>（逐 rep 1.005）、<code>attribution=none</code> ⇒ <b>R1–R4 全過</b>，而 27.338 同時 ≥20 與 ≥25。但它的臂上掛著 <code>CGC_MISS_MASK_DBG</code>／<code>_COST</code>／<code>CGC_SPAC_DBG</code>，原始碼自己寫「<b>Never quote throughput from an arm with this on</b>」（<code>llama-context.cpp:3962</code>：每步多一次 synchronize）⇒ 沒有新規則時，只要有人把 L20／L25 的 evidence 指過去，<b>兩個主節點會一起變綠</b>。因此引用閘門補上 <b>R5 臂身分</b>（清單＝原始碼明文 never-quote 的 6 個旗標，附出處）⇒ 該列 <b>DIRTY</b>、全語料可引用數 5 → 4。這條與 §57 的綠燈規則是同一件事的兩面：<b>先把「可引用」判對，再讓綠燈跟著它走</b>。
+  <br>⑧ <b>§58（09-29）交付 cell 的第一列可引用讀數，以及一個差點變成假綠燈的 27.3</b>：全語料掃描（1061 列）只有 <b>4</b> 列可引用，而 <code>delivery</code> cell 的 30 列裡<b>只有 1 列</b>——<code>stepbudget_2026-09-29/delivery_fuse.json</code> <b>9.377 t/s</b>（逐 rep [8.83, 9.59, 9.70] ⇒ 1.099／kept 1.011、<code>none</code>、<code>contract.ok</code>、有成對 log）。它的孿生 <code>delivery_base</code>（同 cell、只差 <code>CGC_MMV_FUSE</code>）9.909 被<b>冷啟 rep</b> 擋下（kept 10.31 ⇒ 同帶）。<b>同一輪掃描的另一列才是重點</b>：SPAC K sweep 的 <code>k_sweep_T4_K4</code> 在<b>交付 cell</b> 上報 <b>27.338 t/s</b>（逐 rep 1.005）、<code>attribution=none</code> ⇒ <b>R1–R4 全過</b>，而 27.338 同時 ≥20 與 ≥25。但它的臂上掛著 <code>CGC_MISS_MASK_DBG</code>／<code>_COST</code>／<code>CGC_SPAC_DBG</code>，原始碼自己寫「<b>Never quote throughput from an arm with this on</b>」（<code>llama-context.cpp:3962</code>：每步多一次 synchronize）⇒ 沒有新規則時，只要有人把 L20／L25 的 evidence 指過去，<b>兩個主節點會一起變綠</b>。因此引用閘門補上 <b>R5 臂身分</b>（清單＝原始碼明文 never-quote 的 6 個旗標，附出處）⇒ 該列 <b>DIRTY</b>、全語料可引用數 5 → 4。這條與 §57 的綠燈規則是同一件事的兩面：<b>先把「可引用」判對，再讓綠燈跟著它走</b>。<b>§58b（09-30 00:15）</b>：把那三個旗標<b>洗掉</b>、其餘逐欄不變地重跑一次（同 build <code>e5d1c0f14</code>、<code>harness bench</code>）⇒ <b>26.203 t/s</b>（逐 rep 1.010）⇒ <b>level 不是旗標的產物</b>；那一場的窗口是 swap（+4344 MiB）⇒ 判 DIRTY，但下一次抽到乾淨窗口就會出現「≥25 而<b>輸出未驗</b>」的讀數（該臂 stderr：decode 期 <code>gather (ensure) hits=0/0</code>、<code>prefetch=0/0</code> ⇒ 池是 prefill 填的）⇒ 閘門再補 <b>R6 輸出見證</b>：單次提交臂沒有 M1／answer-hash 見證就不得引用其 t/s（可解除，見 <code>UNVERIFIED_OUTPUT_ARMS</code>）。
 
 stage_legend: ["已量到判定", "卡／動作就緒", "已跑出讀數", "已認證（prod-new ＋ harness bench ＋ 達標）"]
 
@@ -311,22 +311,26 @@ layers:
         expect_ms: "缺口 45.45 ms ⇒ 需要一個能動 <b>bytes 或 steps</b> 的乘數"
         expect_tps: "≥25.0（在 ≤40.0 ms 下）"
         now: "現有軸（ms、段數、kernel、IO）<b>全量完</b>；缺口 <b>45.45 ms</b>（交付錨點 85.45 ms → 25 t/s 的 40.0 ms）。<b>§51 撤回 §50 的「未判定」</b>（B 半補丁的價目漏掉主項：備援重算 320 列 ＝ 8.09 ms；§52 用交付 cell 底座複核，仍差 7.5–11.6 ms）⇒ <b>decode ≥25 回到判死</b>，而<b>本格是全板唯一還沒被判死的一格</b>。<br><b>09-29 23:5x 唯讀盤點完成</b>（0 跑）：每 token <b>1.171 GB</b> 裡只有 <b>381 MB（33%）</b>的專家段會 miss，<b>790 MB（67%）</b>的 dense 段常駐 RAM ⇒ <b>bytes 類候選最多只能動那 33%</b>。<b>7 個候選盤完</b>：1 個 PRIMARY = <code>--spec-type ngram-*</code>（**不需要 draft head**，且 <code>need_n_rs_seq()</code> 對它回 <b>0</b> ⇒ 結構上不觸發 M2 的輸出函數改變 —— 那正是 MTP 被判「產品決策」的原因）、1 個 SECONDARY = <code>CGC_SERVER_LOAD_MODE=mmap</code>、5 個已判（bpw／top-k／砍 dense／MTP／池命中）。"
-        action: "① <b>先量 PRIMARY</b>：<code>--spec-type ngram-simple</code> 三趟（A 對照／B 處理／C 重跑）⇒ 取 <code>E</code> ＋ diff <code>answer_md5</code>；② 次量 <code>CGC_SERVER_LOAD_MODE=mmap</code> 的等效 bytes/step"
-        accept: "需要一個新乘數：≤40.0 ms 且 M1 bit-identical。★ 對 ngram 展開成三條：<b>① <code>need_n_rs_seq()==0</code>（源碼已得）② <code>E&gt;1</code> ③ <code>answer_md5</code> 與對照臂相同</b>"
-        falsify: "① 若 ③ 不成立（輸出不同）⇒ ngram 與 MTP 同類＝<b>產品決策</b>，不是本線槓桿；② 若 ② 不成立（E ≤1）⇒ 這個乘數不產生攤薄，回到「以現有軸加總到不了」（維持<b>判死</b>）"
+        action: "① ~~量 PRIMARY~~ <b>已做、否證</b>（E 0.984）；② 接著量 SECONDARY＝<code>CGC_SERVER_LOAD_MODE=mmap</code> 的等效 bytes/step（A/B 各一趟，比 <code>answer_md5</code> 與 IO 側讀數）"
+        accept: "需要一個新乘數：≤40.0 ms 且 M1 bit-identical。★ 對 ngram 展開成三條：① <code>need_n_rs_seq()==0</code>（✅ 源碼已得）② <code>E&gt;1</code>（<b>⛔ 0.984</b>）③ <code>answer_md5</code> 與對照臂相同（量不到，見 <code>docs/SIXTH_AXIS_NGRAM_2026-09-30.md</code> §4）"
+        falsify: "<b>② 已觸發</b>（E ≤1）⇒ 這個乘數不產生攤薄，回到「以現有軸加總到不了」；③ 仍 UNDECIDABLE 但<b>不改變判決</b>（沒有攤薄就沒有「要不要接受它的輸出」這個問題）"
         stage: 1
-        badge: {text: "盤點完・1 個 PRIMARY", tone: ok}
+        badge: {text: "PRIMARY 否證（E=0.98）", tone: dead}
         charter: scripts/check/charters/e-sixth-axis-2026-09-29.yaml
-        state: "未結案（<b>唯讀盤點完成</b>：7 候選、1 PRIMARY；下一步＝量 ngram 的 E 與輸出同一性）"
-        evidence: {profile: "—", entry: "—（唯讀盤點，0 跑）", value: "bytes/token 1.171 GB ＝ 專家 381 MB（33%，會 miss）＋ dense 790 MB（67%，常駐）；7 候選中 1 個 PRIMARY", metric: tps, meets: false}
+        state: "未結案（<b>PRIMARY 候選已量、否證</b>：ngram 的 E <b>0.984</b>（6/6 rep 一致；archive 的 map-k 0.992）⇒ steps/token 這條無 draft-head 的路<b>不攤薄</b>；下一步＝SECONDARY <code>CGC_SERVER_LOAD_MODE</code>）"
+        evidence: {profile: prod-new, entry: "harness bench", value: "<b>A 對照 vs B ngram-simple</b>：E ＝ 63 token／64 輪 ＝ <b>0.984</b>（6 rep 全同）；draft 寬度 {1:32, 3:32}、192 輪提交 0 個 ⇒ <b>不攤薄</b>", metric: "tokens_per_round", meets: false, source: "Backup/ngram_simple_ab_2026-09-30/{A,B}.json ＋ {A,B}.stderr.log"}
+        quote_note: "端點是<b>計數器</b>（per-round 見證 <code>SPECDBG round: n_done=</code>）⇒ 髒窗可判、不含 t/s；⚠ <code>CGC-MTP-PERF</code> 的 <code>gen_tok_per_round=3.0</code> <b>不是 E</b>（它是 draft 寬度）—— 照字面讀會得 3× 的相反結論"
         options:
           profile: prod-new
           arms: ["prod-new"]
           knobs:
-          - {name: "--spec-type", value: "ngram-simple", role: subject, why: "被測 PRIMARY：用上下文自己的 n-gram 起草，**不需要 draft head**；且 `need_n_rs_seq()` 對它回 **0** ⇒ 結構上不觸發 M2 的輸出函數改變（那正是 MTP 被判產品決策的原因）", source: "common/speculative.cpp:1998（need_embd=false）；common.h:395"}
-          - {name: "--spec-ngram-simple-size-n", value: "4", role: subject, why: "lookup n-gram 長度（E 對它敏感 ⇒ 要掃）", source: "src/llama.cpp/common/arg.cpp:4129"}
-          - {name: "--spec-ngram-simple-size-m", value: "8", role: subject, why: "draft m-gram 長度", source: "同上 :4139"}
-          - {name: "--spec-ngram-simple-min-hits", value: "2", role: subject, why: "最小命中數（直接決定 E）", source: "同上 :4149"}
+          - {name: "--spec-type", value: "ngram-simple", role: subject, why: "被測 PRIMARY —— <b>已量、否證</b>：E ＝ <b>0.984</b>（＜1，不攤薄）。它本身合法且 llma-bench 真的會用它（`is_ngram_spec_type` 有三處消費）", source: "common/speculative.cpp:1998；common.h:395；docs/SIXTH_AXIS_NGRAM_2026-09-30.md"}
+          # ⛔ 這三顆**在 bench 上不可用**（2026-09-30 實測）：llama-bench 有一份**自己的手寫 arg 迴圈**
+          #   （llama-bench.cpp:1330 `else { invalid_param = true; }`），`--spec-type` 有列進去、這三個沒有
+          #   ⇒ 一律 `error: invalid parameter for argument`（值 1..1024 都一樣）。留在這裡是為了記「不可達」。
+          - {name: "--spec-ngram-simple-size-n", value: "12（編譯期預設，不可覆寫）", role: candidate, why: "⛔ bench 拒絕此旗標 ⇒ 在唯一認可入口上**只能跑預設**；要掃參數得先改 `src/`（且改動會動到共用 binary）", source: "common.h:367-371；llama-bench.cpp:1330"}
+          - {name: "--spec-ngram-simple-size-m", value: "48（同上）", role: candidate, why: "⛔ 同上（`--spec-ngram-simple-size-m` 也被 bench 的 arg 白名單拒）", source: "同上"}
+          - {name: "--spec-ngram-simple-min-hits", value: "1（同上）", role: candidate, why: "⛔ 同上", source: "同上"}
           - {name: CGC_SERVER_LOAD_MODE, value: "mmap", role: candidate, why: "被測 SECONDARY：dense 段由匿名頁變可回收檔案頁 ⇒ 降落到 SSD 的比例 f（§7：f 20% ⇒ 85.9 ms；25 t/s 要 f ≤7.9%）", source: "scripts/run_server.sh:513-518（預設 none）；docs/DECODE25_CEILING_2026-09-20.md §7"}
           note: "⚠ 本格的 `knobs.name` 有兩種：`CGC_*`＝env；`--*`＝**CLI 旗標**（`--spec-type` 不是 env，寫成 env 會被 allowlist 靜默丟掉 —— 那正是 MTP 修復臂空轉一趟的原因）。三趟：A 對照＝裸 `prod-new`（不帶任何 spec 旗標）、B＝A ＋ 上面那串、C＝B 重跑（驗 ON 自身 identical）。驗收三條：**① `need_n_rs_seq()==0` ② `E>1` ③ `answer_md5` 與 A 相同**。⛔ 三趟的 t/s 一律先過引用閘門；本格的第一個產物是「有沒有乘數」，不是速度。"
       - id: L25-2
@@ -450,7 +454,7 @@ order:
   - "L20-8（前提題）與 L20-5（搬家）可並行；L20-9 是背景題。"
   - "L25 六格裡唯一不需新機制的一格是 <b>L25-3 乾淨窗口</b>；<b>L25-4／L25-5 是產品決策</b>，L25-6 要加大配對 n。"
   - "~~最便宜且唯一能翻盤的一件事：多印一個逐層 miss 直方圖~~ → <b>09-29 已做，結果是「不成立」</b>：交付 cell 穩態每層峰值 <b>6</b>（≤2 只覆蓋 64% 的步）；連用峰值 6 當設計點的重算 <b>6.07 ms</b> 都 > 它取代的 fill <b>3.955</b>。⇒ L20-3 <b>不實作</b>、L25-2 維持「機制撤回」、L20-6 一起維持判死（實測見 <code>docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</code>）。"
-  - "<b>下一步只剩一條</b>：<b>L25-1 第六條軸</b> —— <b>候選已盤完</b>（7 個、1 PRIMARY）⇒ 動作＝<b>量 <code>--spec-type ngram-simple</code> 的 <code>E</code> 與輸出同一性</b>（三趟：A 對照／B 處理／C 重跑；驗收 <code>need_n_rs_seq()==0</code> ∧ <code>E&gt;1</code> ∧ <code>answer_md5</code> 與 A 相同）；次量 <code>CGC_SERVER_LOAD_MODE=mmap</code>。其餘格不是等窗口（L20-1／L25-3 端點是<b>時間</b>，需可回收 ≥8 GB，今天只有 6.3 GB），就是要產品決策（L25-4／L25-5）。"
+  - "<b>L25-1 第六條軸</b>：PRIMARY <code>ngram-simple</code> <b>已量、否證</b>（E ＝ <b>0.984</b>＜1 ⇒ steps/token 這條無 draft-head 的路不攤薄；archive 的 <code>ngram-map-k</code> 同結果 0.992）⇒ <b>下一個＝SECONDARY <code>CGC_SERVER_LOAD_MODE=mmap</code></b>（bytes 半邊；A/B 各一趟比 <code>answer_md5</code> 與 IO 讀數）。★ 兩個儀器坑已修：<code>LLAMA_BENCH_SPEC_DBG</code> 與 <code>CGC_MTP_PERF</code> 在非 MTP 臂上原本被 <b>靜默丟掉</b>。其餘格不是等窗口（L20-1／L25-3 端點是<b>時間</b>，需可回收 ≥8 GB，今天只有 5.9 GB），就是要產品決策（L25-4／L25-5）。"
 
 footer: "資料出處：<code>docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md</code> §34（G4 權威讀數）、§36（P2 否證）、§37／§38（gap／邊界窗）、§39–§41（盤點與「做到底」）、§42（MISS_MASK 成本）、§43–§46（19.2 的底、完備性稽核）、§47（結案規則與兩個帳目的仲裁）；<code>docs/CACHE_SIZE_AB_2026-09-23.md</code>（池大小）；<code>docs/K3_PAIR_CERT_VERDICT_2026-09-28.md</code>（17.669 重現）；<code>docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</code>（逐層 miss 直方圖 ⇒ L20-3/L25-2/L20-6 的實測依據）；<code>docs/mindmap/mindmap.json</code>；<code>scripts/check/charters/</code>。<br>本頁為<b>轉引</b>（0 跑、0 build）；除三格已認證（C1–C3）外，頁上任何 t/s 都不是成績。"
 

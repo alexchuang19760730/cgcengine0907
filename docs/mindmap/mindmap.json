@@ -163,19 +163,19 @@
           "prod-new"
         ],
         "options": [
-          "--spec-type=ngram-simple",
-          "--spec-ngram-simple-size-n=4",
-          "--spec-ngram-simple-size-m=8",
-          "--spec-ngram-simple-min-hits=2"
+          "--spec-type=ngram-simple"
         ],
         "instruments": [],
         "candidates": [
+          "--spec-ngram-simple-size-n=12（編譯期預設，不可覆寫）",
+          "--spec-ngram-simple-size-m=48（同上）",
+          "--spec-ngram-simple-min-hits=1（同上）",
           "CGC_SERVER_LOAD_MODE=mmap"
         ],
         "cli": [],
         "no_knob": "",
         "note": "⚠ 本格的 `knobs.name` 有兩種：`CGC_*`＝env；`--*`＝**CLI 旗標**（`--spec-type` 不是 env，寫成 env 會被 allowlist 靜默丟掉 —— 那正是 MTP 修復臂空轉一趟的原因）。三趟：A 對照＝裸 `prod-new`（不帶任何 spec 旗標）、B＝A ＋ 上面那串、C＝B 重跑（驗 ON 自身 identical）。驗收三條：**① `need_n_rs_seq()==0` ② `E>1` ③ `answer_md5` 與 A 相同**。⛔ 三趟的 t/s 一律先過引用閘門；本格的第一個產物是「有沒有乘數」，不是速度。",
-        "state": "未結案（唯讀盤點完成：7 候選、1 PRIMARY；下一步＝量 ngram 的 E 與輸出同一性）",
+        "state": "未結案（PRIMARY 候選已量、否證：ngram 的 E 0.984（6/6 rep 一致；archive 的 map-k 0.992）⇒ steps/token 這條無 draft-head 的路不攤薄；下一步＝SECONDARY CGC_SERVER_LOAD_MODE）",
         "also": [
           "L25-2"
         ],
