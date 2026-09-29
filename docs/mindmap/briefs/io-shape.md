@@ -27,13 +27,13 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_SPAC=0`　（profile `prod-new`；被測 option：`CGC_SPAC=0`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **測試 log**：[ab_nospac_prodnew.json](../../../Backup/phase_decomp/ab_nospac_prodnew.json)　[nf_fill.json](../../../Backup/nofill_prod/nf_fill.json)
-- **證據報告**：[EXPERT_CHANNEL_SHAPE_2026-09-23.md](../../EXPERT_CHANNEL_SHAPE_2026-09-23.md)　[EXPERT_IO_SHAPE_FIRST_PRINCIPLES_2026-09-23.md](../../EXPERT_IO_SHAPE_FIRST_PRINCIPLES_2026-09-23.md)　[IO_AXIS_VERDICT_2026-09-25.md](../../IO_AXIS_VERDICT_2026-09-25.md)
-- 從證據文件掃到的 arm 字串（3 份文件）
+- **子目標**：—（未歸屬看板 15 格中的任何一格）
+- ⚠ 本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。
+- **逐條處置**：作廢／判死／歷史　—　判死：IO 請求形狀（合併 pread）
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 判死：IO 請求形狀（合併 pread）
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

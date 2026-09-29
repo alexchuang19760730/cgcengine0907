@@ -523,3 +523,13 @@ subgoals:
 arms:
   - prod-new（控制／錨點 11.61）
   - prod-new + 本項新 env（D1；env 名於 P2 定，須先確認不進 numerics-determining 子集）
+  - prod-new
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-6 同步；勿手改，改看板）】──
+options:
+  subgoal: L20-6
+  profile: prod-new
+  arms:
+    - "prod-new"
+  no_knob: "已結案（CLOSED — 不做）：收益 +2.6~4.6% < MDD 8.5%，且要動 M1/M2/M3 護欄 ⇒ 本格沒有要跑的臂，只留登記。"
+  note: "重開條件：盒子 ≥32 GB 且重測 fill ≥ 8.5% × step 預算（兩條同時）。"

@@ -271,39 +271,60 @@ def runs_html(e: dict) -> str:
         + "".join(blocks)
 
 
-SRC_LABEL = {"run": "① 實跑 arm（有 log）", "charter": "② charter arms[]",
-             "scan": "③ 證據文件掃描", "default": "④ 預設臂（無證據）",
-             "n_a": "⑤ 非實驗結論"}
+SRC_LABEL = {"board": "子目標看板（唯一來源）"}
+KIND_LABEL = {"subgoal": "整合進子目標", "certified": "已認證", "settled": "已定案（約束／基準）",
+              "archived": "作廢／判死／歷史"}
 
 
 def _binding_rows_md(e: dict) -> list:
-    """Profile 綁定 ＋ 測試 log／報告（md 用；綁定由 mindmap_profile_audit.py 寫入）。"""
-    b = e.get("arm_binding") or {}
-    if not b:
-        return [f'- ⚠ **尚未綁定**：本條沒有 `arm_binding`，跑 '
-                f'`python3 scripts/check/mindmap_profile_audit.py --apply` 補。']
-    out = [f'- **arm**：`{b.get("arm", "—")}`'
-           + (f'　（profile `{b.get("profile")}`；被測 option：'
-              + "；".join(f"`{o}`" for o in (b.get("options") or [])) + "）"
-              if b.get("options") else f'　（profile `{b.get("profile")}`；無自己的 option）'),
-           f'- **來源**：{SRC_LABEL.get(b.get("source", ""), b.get("source", "—"))}'
-           f'　·　置信度 `{b.get("confidence", "—")}`']
-    if b.get("instruments"):
-        out.append("- **儀器開關**（不是被測 option）："
-                   + "；".join(f"`{i}`" for i in b["instruments"]))
-    logs = b.get("logs") or []
+    """子目標綁定 ＋ options ＋ 測試 log／報告（md 用）。
+
+    設定**不是**從文件掃描推導出來的：它由 `decode_board_2026-09-29.yaml` 的
+    `options:` 寫死，再由 `mindmap_subgoal_sync.py` 搬到這裡。所以這一節讀的是
+    `subgoal_binding`（看板），不是 `arm_binding`（舊的掃描推導，已整批刪除）。
+    """
+    b = e.get("subgoal_binding")
+    if b is None:
+        return ['- ⚠ **尚未綁定**：本條沒有 `subgoal_binding`，跑 '
+                '`python3 scripts/check/mindmap_subgoal_sync.py --apply` 補。']
+    sg = b.get("subgoal")
+    out = [f'- **子目標**：{f"`{sg}`　{b['title']}" if sg else "—（未歸屬看板 15 格中的任何一格）"}']
+    if sg:
+        out += [f'- **來源**：{SRC_LABEL.get(b.get("source", ""), b.get("source", "—"))}'
+                f'　·　置信度 `{b.get("confidence", "—")}`',
+                f'- **profile**：`{b.get("profile", "—")}`']
+        if b.get("options"):
+            out.append("- **被測 option**："
+                       + "；".join(f"`{o}`" for o in b["options"]))
+        if b.get("instruments"):
+            out.append("- **儀器開關**（不是被測 option）："
+                       + "；".join(f"`{i}`" for i in b["instruments"]))
+        if b.get("candidates"):
+            out.append("- **候選（待指名）**："
+                       + "；".join(f"`{c}`" for c in b["candidates"]))
+        if b.get("cli"):
+            out.append("- **CLI**：" + "；".join(f"`{c}`" for c in b["cli"]))
+        for i, a in enumerate(b.get("arm_strings") or [], 1):
+            out.append(f'- **arm {i}（可複製）**：`{a}`')
+        if b.get("no_knob"):
+            out.append(f'- ⚠ **本格沒有旋鈕**：{plain(str(b["no_knob"]))}')
+        if b.get("state"):
+            out.append(f'- **結案狀態**：{plain(str(b["state"]))}')
+        if b.get("also"):
+            out.append("- （同條另掛：" + "、".join(f"`{x}`" for x in b["also"]) + "）")
+    else:
+        out.append(f'- ⚠ {plain(str(b.get("no_knob", "")))}')
+    for d in (e.get("disposition") or []):
+        label = KIND_LABEL.get(d.get("kind"), d.get("kind", "—"))
+        ref = f'　→ `{d["ref"]}`' if d.get("ref") else ""
+        out.append(f'- **逐條處置**：{label}{ref}'
+                   + (f'　—　{plain(str(d["why"]))}' if d.get("why") else ""))
+    logs = [str(r.get("log")) for r in (e.get("runs") or []) if r.get("log")]
     if logs:
-        out.append("- **測試 log**："
+        out.append("- **測試 log（實跑）**："
                    + "　".join(f'[{Path(l).name}]({_repo_relpath(l)})' for l in logs))
-    if b.get("logs_missing"):
-        out.append("- **測試 log（檔案不在工作區，`Backup/` 未進版控）**："
-                   + "　".join(f'`{Path(l).name}`' for l in b["logs_missing"]))
-    reps = b.get("reports") or []
-    if reps:
-        out.append("- **證據報告**："
-                   + "　".join(f'[{Path(p).name}]({_repo_relpath(p)})' for p in reps))
-    if not (logs or reps):
-        out.append("- ⚠ **無可點的測試 log／報告**（缺口：這條的判詞目前只能靠「依據」欄的字串）")
+    else:
+        out.append("- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）")
     if b.get("note"):
         out.append(f'- {plain(str(b["note"]))}')
     return out
@@ -311,47 +332,59 @@ def _binding_rows_md(e: dict) -> list:
 
 def profile_binding_md_lines(e: dict, sec: int) -> tuple[list, int]:
     rows = _binding_rows_md(e)
-    return [f"## {sec}. Profile 綁定與測試 Log 報告"] + [""] + rows + [""], sec + 1
+    return [f"## {sec}. 子目標綁定 · options · 測試 Log 報告"] + [""] + rows + [""], sec + 1
 
 
 def profile_binding_html(e: dict) -> str:
-    """同上，HTML 版（brief 的表格化呈現）。"""
-    b = e.get("arm_binding") or {}
-    if not b:
-        return section_title("Profile 綁定與測試 Log 報告") + (
+    """同上，HTML 版（brief 的表格化呈現）。設定來自看板，不是文件掃描。"""
+    b = e.get("subgoal_binding")
+    if b is None:
+        return section_title("子目標綁定 · options · 測試 Log 報告") + (
             '<div style="font-size:12px;color:#dc2626;">⚠ 尚未綁定：跑 '
-            '<code>python3 scripts/check/mindmap_profile_audit.py --apply</code> 補。</div>')
-    opts = ("；".join(f'<code>{esc(o)}</code>' for o in (b.get("options") or []))
-            if b.get("options") else '<span style="color:#94a3b8;">（無自己的 option）</span>')
-    rows = [["profile", f'<code>{esc(b.get("profile", "—"))}</code>'],
-            ["arm（可複製）", f'<code>{esc(b.get("arm", "—"))}</code>'],
-            ["被測 option", opts],
-            ["來源", f'{SRC_LABEL.get(b.get("source", ""), b.get("source", "—"))}'
-                     f'　·　置信度 <code>{esc(b.get("confidence", "—"))}</code>']]
-    if b.get("instruments"):
-        rows.append(["儀器開關（非被測）",
-                     "；".join(f'<code>{esc(i)}</code>' for i in b["instruments"])])
-    logs = b.get("logs") or []
-    reps = b.get("reports") or []
+            '<code>python3 scripts/check/mindmap_subgoal_sync.py --apply</code> 補。</div>')
+    sg = b.get("subgoal")
+    rows = []
+    if sg:
+        rows.append(["子目標", f'<b>{esc(sg)}</b>　{esc(plain(b.get("title", "")))}'])
+        rows.append(["來源", f'{SRC_LABEL.get(b.get("source", ""), b.get("source", "—"))}'
+                             f'　·　置信度 <code>{esc(b.get("confidence", "—"))}</code>'])
+        rows.append(["profile", f'<code>{esc(b.get("profile", "—"))}</code>'])
+        rows.append(["被測 option",
+                     "；".join(f'<code>{esc(o)}</code>' for o in (b.get("options") or []))
+                     or '<span style="color:#94a3b8;">（本格沒有被測 option）</span>'])
+        if b.get("instruments"):
+            rows.append(["儀器開關（非被測）",
+                         "；".join(f'<code>{esc(i)}</code>' for i in b["instruments"])])
+        if b.get("candidates"):
+            rows.append(["候選（待指名）",
+                         "；".join(f'<code>{esc(c)}</code>' for c in b["candidates"])])
+        if b.get("cli"):
+            rows.append(["CLI", "；".join(f'<code>{esc(c)}</code>' for c in b["cli"])])
+        for i, a in enumerate(b.get("arm_strings") or [], 1):
+            rows.append([f"arm {i}（可複製）", f'<code>{esc(a)}</code>'])
+        if b.get("no_knob"):
+            rows.append(["⚠ 沒有旋鈕", esc(plain(str(b["no_knob"])))])
+        if b.get("state"):
+            rows.append(["結案狀態", esc(plain(str(b["state"])))])
+    else:
+        rows.append(["子目標", '<span style="color:#94a3b8;">未歸屬看板 15 格中的任何一格</span>'])
+        rows.append(["⚠ 沒有旋鈕", esc(plain(str(b.get("no_knob", ""))))])
+    for d in (e.get("disposition") or []):
+        label = KIND_LABEL.get(d.get("kind"), d.get("kind", "—"))
+        ref = f'　→ <code>{esc(d["ref"])}</code>' if d.get("ref") else ""
+        rows.append(["逐條處置", f'{label}{ref}<br><span style="color:#64748b;">'
+                                f'{esc(plain(str(d.get("why", ""))))}</span>'])
+    logs = [str(r.get("log")) for r in (e.get("runs") or []) if r.get("log")]
     if logs:
-        rows.append(["測試 log", "　".join(
+        rows.append(["測試 log（實跑）", "　".join(
             f'<a href="{repo_href(l)}" target="_blank" rel="noopener">{esc(Path(l).name)}</a>'
             for l in logs)])
-    if b.get("logs_missing"):
-        rows.append(["測試 log（不在工作區）",
-                     '<span style="color:#94a3b8;">'
-                     + "　".join(f'<code>{esc(Path(l).name)}</code>'
-                                for l in b["logs_missing"]) + "</span>"])
-    if reps:
-        rows.append(["證據報告", "　".join(
-            f'<a href="{repo_href(p)}" target="_blank" rel="noopener">{esc(Path(p).name)}</a>'
-            for p in reps)])
-    if not (logs or reps):
-        rows.append(["測試 log／報告",
-                     '<span style="color:#dc2626;">⚠ 無（缺口）</span>'])
+    else:
+        rows.append(["測試 log",
+                     '<span style="color:#94a3b8;">無實跑 log（證據＝本頁末的「對應報告」）</span>'])
     if b.get("note"):
         rows.append(["備註", esc(plain(str(b["note"])))])
-    return section_title("Profile 綁定與測試 Log 報告") + table(["項目", "內容"], rows)
+    return section_title("子目標綁定 · options · 測試 Log 報告") + table(["項目", "內容"], rows)
 
 
 def subtasks_html(items: list, depth: int = 0) -> str:

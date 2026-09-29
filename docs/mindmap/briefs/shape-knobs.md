@@ -27,14 +27,17 @@ SHAPE_KNOB_LANDED 證實落地；SHAPE_ROOFLINE 抓到「down 是 IQ3_S 不是 I
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prefill250`　（profile `prefill250`；無自己的 option）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **儀器開關**（不是被測 option）：`CGC_GPU_TIMING=1`
-- **測試 log**：[autotune_nsg.json](../../../Backup/phase_decomp/L3/autotune_nsg.json)　[summary_p2_rebased.json](../../../Backup/m123_oracle_gate/summary_p2_rebased.json)
-- **證據報告**：[BEST_SHAPE_IQ3XXS_M4_2026-09-22.md](../../BEST_SHAPE_IQ3XXS_M4_2026-09-22.md)　[FP_ORDER_SHAPE_2026-09-22.md](../../FP_ORDER_SHAPE_2026-09-22.md)　[FP_ORDER_TARGETS_2026-09-22.md](../../FP_ORDER_TARGETS_2026-09-22.md)　[GPU_CEILING_STEP2_2026-09-22.md](../../GPU_CEILING_STEP2_2026-09-22.md)
-- 從證據文件掃到的 arm 字串（16 份文件）
+- **子目標**：`L20-9`　C 軸唯一「活著」的一格
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **候選（待指名）**：`CGC_MMV_NSG=8`；`CGC_MMV_FUSE=1`
+- **arm 1（可複製）**：`prod-new`
+- **結案狀態**：未結案（本輪立項）
+- **逐條處置**：整合進子目標　→ `L20-9`　—　shape／knob 世界模型：C 軸唯一還活著的一格
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- C 軸唯一還活著的一格；背景題，邊界可量且與既有結論不衝突才算過。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

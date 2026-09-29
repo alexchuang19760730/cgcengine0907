@@ -27,13 +27,13 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod25:CGC_P_ROUTE=1`　（profile `prod25`；被測 option：`CGC_P_ROUTE=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **測試 log**：[reuse_distance_result.json](../../../Backup/phase_decomp/reuse_distance_result.json)　[spec_cost_curve_20260918_2030.json](../../../Backup/phase_decomp/spec_cost_curve_20260918_2030.json)
-- **證據報告**：[MOE_MTP_FEASIBILITY_2026-09-18.md](../../MOE_MTP_FEASIBILITY_2026-09-18.md)　[REUSE_DISTANCE_RESULT_2026-09-20.md](../../REUSE_DISTANCE_RESULT_2026-09-20.md)　[RSL_MTP_GAIN_2026-09-18.md](../../RSL_MTP_GAIN_2026-09-18.md)　[RSL_MTP_GAIN_ESTIMATE_2026-09-18.md](../../RSL_MTP_GAIN_ESTIMATE_2026-09-18.md)
-- 從證據文件掃到的 arm 字串（4 份文件）
+- **子目標**：—（未歸屬看板 15 格中的任何一格）
+- ⚠ 本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。
+- **逐條處置**：作廢／判死／歷史　—　判死（需要練 draft head；收益不成立）
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 判死（需要練 draft head；收益不成立）
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

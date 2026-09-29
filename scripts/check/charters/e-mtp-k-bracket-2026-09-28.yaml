@@ -85,3 +85,21 @@ arms:
   - prod-new
   - prod-new + draft-mtp (k=1)
   - prod-new + draft-mtp (k=3)
+  - prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L25-4 同步；勿手改，改看板）】──
+options:
+  subgoal: L25-4
+  profile: prod-new
+  arms:
+    - "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1"
+  cli:
+    - "--spec-type draft-mtp"
+    - "--spec-draft-n-max 1"
+  knobs:
+    - {name: CGC_SERVER_MTP, value: "1", role: subject, why: "開 MTP（allowlist 在 run_server.sh 的 SERVER_MTP 區塊，不是純 env）", source: "存活配方 09-29 定版；charters/exp-mtp-onfix-a arms[]"}
+    - {name: CGC_SERVER_LAYER_CAPS, value: "40-40:16", role: subject, why: "draft 層寬度", source: "同上"}
+    - {name: CGC_DRAFT_CTX_ALIGN, value: "1", role: subject, why: "draft ctx 對齊", source: "同上"}
+    - {name: CGC_DRAFT_SMALL_BATCH, value: "1", role: subject, why: "小批 draft", source: "同上"}
+    - {name: CGC_MTP_PERF, value: "1", role: instrument, why: "每輪 t_draft_ms／t_accept_ms／ms_per_round（在 common/speculative.cpp，不在 src/）", source: "docs/MTP_K_SWEEP_2026-09-22.md"}
+  note: "⛔ 必帶 --spec-draft-n-max 1：沒帶就是 k_eff≈2.33 必 thrash。且 MTP on/off 是不同輸出函數 ⇒ t/s 不可互比。"

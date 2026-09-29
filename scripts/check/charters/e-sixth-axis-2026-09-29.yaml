@@ -1,0 +1,41 @@
+# 立項卡（2026-09-29，由 operator 的結案規則而生）：結案 = prod-new ＋ harness bench ＋ 達標
+id: e-sixth-axis
+owner: freebuff
+created: '2026-09-29'
+axis: both
+question: 本步的 bytes 或 steps 有沒有可改的乘數（＝不是把 ms 變小，而是讓每 token 的份數變少）？
+baseline:
+  metric: 現有軸（ms、段數、kernel、IO）全量完；交付 85.45 ms、缺口 45.45 ms；P(25)<3%
+  cell: prod-new 交付 cell
+  source: docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md
+hypothesis:
+  mechanism: 25 需要的不是把某一段變快，而是改變乘數：每 token 的 bytes（權重/專家位元組）或 steps（每 token 的步數）。這張卡的第一個產出是「有無候選」的判定，不是實作。
+  expected: 缺口 45.45 ms 需要一個新乘數 ⇒ 目標 ≤40.0 ms／≥25.0 t/s；找不到就維持判死
+  basis: §39（兩條路：第六條軸或超過上界）
+acceptance:
+  success: 指名至少一個可改的乘數，且它落在 ≤40.0 ms 且 M1 bit-identical 的形狀上
+  falsify: 找不到候選乘數 ⇒ 25 維持判死（判詞不改）
+  on_fail: 維持判死；把「已找過哪些乘數、各為何不行」寫進卡片
+targets:
+  decode_tps: 25.0
+  prefill_tps: 250.0
+subgoals:
+- id: sg-6th-bytes
+  text: 每 token 的 bytes 有哪些可改項（含 MTP 攤薄）
+  expect: 候選清單 ＋ 各自的量級
+  how: 唯讀盤點（模型／pool／verify 形狀）
+- id: sg-6th-steps
+  text: 每 token 的 steps 有哪些可改項
+  expect: 候選清單 ＋ 各自量級
+  how: 唯讀盤點（投機／批次／接受鏈）
+arms:
+- prod-new
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L25-1 同步；勿手改，改看板）】──
+options:
+  subgoal: L25-1
+  profile: prod-new
+  arms:
+    - "prod-new"
+  no_knob: "新軸尚未命名：本格要問的是「每 token 的 bytes 或 steps 有沒有可改的乘數」⇒ 仍在立卡階段，沒有既有旋鈕可綁。"
+  note: "驗收：需要一個新乘數，≤ 40.0 ms 且 M1 bit-identical。"

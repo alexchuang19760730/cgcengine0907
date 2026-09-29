@@ -27,13 +27,18 @@ fill 3.955 → 0.206 ms/step（−95%）⇒ 機制證；生產口徑同步 fill 
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_PREFILL_STREAM=1`　（profile `prod-new`；被測 option：`CGC_PREFILL_STREAM=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **測試 log**：[nf_fill.json](../../../Backup/nofill_prod/nf_fill.json)
-- **證據報告**：[IO_AXIS_VERDICT_2026-09-25.md](../../IO_AXIS_VERDICT_2026-09-25.md)
-- 從證據文件掃到的 arm 字串（1 份文件）
+- **子目標**：`L20-4`　fill 那一個 term 的定價
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **被測 option**：`CGC_EB_NOFILL=1`
+- **儀器開關**（不是被測 option）：`CGC_EB_TIMER=1`
+- **arm 1（可複製）**：`prod-new:CGC_EB_NOFILL=1`
+- **結案狀態**：未結案（數字齊、口徑未裁）
+- **逐條處置**：整合進子目標　→ `L20-4`　—　CGC_EB_NOFILL 診斷臂：fill 那一個 term 的定價就靠它（3.955→0.206 ms/step）
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 本格要的是「哪一個 term 進 48.2 + x」的算式與不確定度，不是提速。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

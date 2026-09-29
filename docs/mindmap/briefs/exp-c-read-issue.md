@@ -27,12 +27,13 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod25`　（profile `prod25`；無自己的 option）
-- **來源**：② charter arms[]　·　置信度 `high`
-- **證據報告**：[S2_OVERLAP_EXPERIMENT_2026-09-28.md](../../S2_OVERLAP_EXPERIMENT_2026-09-28.md)
-- 取自 `scripts/check/charters/exp-c-read-issue.yaml` 的 `arms[]`
+- **子目標**：—（未歸屬看板 15 格中的任何一格）
+- ⚠ 本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。
+- **逐條處置**：已定案（約束／基準）　—　C：讀取發行開銷（重驗 io-shape）；同上，背景
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- C：讀取發行開銷（重驗 io-shape）；同上，背景
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

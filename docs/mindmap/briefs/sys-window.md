@@ -27,14 +27,17 @@ BOX_ADMISSION_SINGLE_SOURCE 定為單一來源；SERVER_WINDOW_LEDGER 記錄逐�
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new`　（profile `prod-new`；無自己的 option）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **儀器開關**（不是被測 option）：`CGC_WINDOW_OVERRIDE=1`
-- **測試 log**：[server_window_audit.json](../../../Backup/phase_decomp/server_window_audit.json)
-- **證據報告**：[BOX_ADMISSION_SINGLE_SOURCE_2026-09-20.md](../../BOX_ADMISSION_SINGLE_SOURCE_2026-09-20.md)　[SERVER_WINDOW_LEDGER_2026-09-19.md](../../SERVER_WINDOW_LEDGER_2026-09-19.md)
-- 證據文件裡只有出現 1 次的 option（—）⇒ 置信度壓到 low，需人工確認
+- **子目標**：`L25-3`　乾淨窗口（C7）
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **arm 1（可複製）**：`prod-new`
+- ⚠ **本格沒有旋鈕**：窗口條件不是旋鈕：attribution=none ∧ thermal NOMINAL ∧ reps≥3。CGC_WINDOW_OVERRIDE 是繞過閘門的開關，不能當本格的 option。
+- **結案狀態**：未結案（09-29 實跑兩臂皆 attribution=swap；缺的是這台盒子的餘裕）
+- **逐條處置**：整合進子目標　→ `L25-3`　—　box 准入單一來源閘門 —— 乾淨窗口那一格就是它
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 產物＝一場可引用的成對錨點（交付 cell、prod-new、harness bench）。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

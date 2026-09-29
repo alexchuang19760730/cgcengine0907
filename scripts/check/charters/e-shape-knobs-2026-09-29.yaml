@@ -1,0 +1,44 @@
+# 立項卡（2026-09-29，由 operator 的結案規則而生）：結案 = prod-new ＋ harness bench ＋ 達標
+id: e-shape-knobs
+owner: freebuff
+created: '2026-09-29'
+axis: C
+question: BANDWIDTH_CEILING 之外那個「還活著的 switch case」（BEST_SHAPE）到底動到什麼、邊界多大？
+baseline:
+  metric: SHAPE_KNOB_LANDED 證實落地；SHAPE_ROOFLINE 抓到 down 是 IQ3_S 不是 IQ3_XXS；MMAP_CACHE_KERNEL_25 判死（mmap 只作用在 host 側 66.42
+    ms）
+  cell: prod-new 交付 cell
+  source: docs/MILESTONE_MAP_RECHECK_2026-09-25.md
+hypothesis:
+  mechanism: C 軸依定義是天花板軸；但 BEST_SHAPE 是唯一沒被既有結論覆蓋的一格 ⇒ 先用一次乾淨量測把它的邊界定出來，才能判斷要不要投入。
+  expected: 先量邊界，才有數字；預期為 0 或噪音級（≤3% ⇒ 判為背景）
+  basis: shape-knobs 節點（★ BEST_SHAPE）
+acceptance:
+  success: 該旋鈕的邊界可量（含不確定度），且與既有結論不衝突
+  falsify: 量出來在噪音內 ⇒ C 軸維持純背景（不再投入）
+  on_fail: 維持未結案並在節點註記「已試、無槓桿」
+targets:
+  decode_tps: 16.0
+  prefill_tps: 250.0
+subgoals:
+- id: sg-shape-id
+  text: 指名那一處 switch case（檔案行號）
+  expect: 可指名
+  how: 源碼唯讀調查
+- id: sg-shape-bound
+  text: 它的邊界值與噪音
+  expect: ≤3% 或明確的邊界數字
+  how: prod-new ＋ harness bench 成對
+arms:
+- prod-new
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-9 同步；勿手改，改看板）】──
+options:
+  subgoal: L20-9
+  profile: prod-new
+  arms:
+    - "prod-new"
+  knobs:
+    - {name: CGC_MMV_NSG, value: "8", role: candidate, why: "GEMV 分組大小（待指名 board 說的那一處 switch case 並量它的邊界）", source: "docs/KNOB_INVENTORY_VERIFIED_2026-09-22.md；node shape-knobs"}
+    - {name: CGC_MMV_FUSE, value: "1", role: candidate, why: "融合開關（候選，未指名）", source: "同上"}
+  note: "C 軸唯一還活著的一格；背景題，邊界可量且與既有結論不衝突才算過。"

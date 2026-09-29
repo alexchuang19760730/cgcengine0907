@@ -27,12 +27,19 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod25`　（profile `prod25`；無自己的 option）
-- **來源**：② charter arms[]　·　置信度 `high`
-- **證據報告**：[DECODE25_CEILING_2026-09-20.md](../../DECODE25_CEILING_2026-09-20.md)
-- 取自 `scripts/check/charters/exp-m-draft-cost.yaml` 的 `arms[]`
+- **子目標**：`L25-4`　MTP（C6）：唯一「乘」的軸
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **被測 option**：`CGC_SERVER_MTP=1`；`CGC_SERVER_LAYER_CAPS=40-40:16`；`CGC_DRAFT_CTX_ALIGN=1`；`CGC_DRAFT_SMALL_BATCH=1`
+- **儀器開關**（不是被測 option）：`CGC_MTP_PERF=1`
+- **CLI**：`--spec-type draft-mtp`；`--spec-draft-n-max 1`
+- **arm 1（可複製）**：`prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1`
+- **結案狀態**：未結案（待產品決策）
+- **逐條處置**：整合進子目標　→ `L25-4`　—　攤薄係數 m 的成本曲線；MTP 決策的價格表
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- ⛔ 必帶 --spec-draft-n-max 1：沒帶就是 k_eff≈2.33 必 thrash。且 MTP on/off 是不同輸出函數 ⇒ t/s 不可互比。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

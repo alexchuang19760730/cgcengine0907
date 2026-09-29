@@ -27,13 +27,13 @@ us/job −11.1%、us_per_miss −14.7%，但 t/s −0.6% ⇒ 未分離（by-prod
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_SERVER_WORKERS=8`　（profile `prod-new`；被測 option：`CGC_SERVER_WORKERS=8`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **測試 log**：[mw_ctrl.json](../../../Backup/mw_ab/mw_ctrl.json)　[mw_w2.json](../../../Backup/mw_ab/mw_w2.json)
-- **證據報告**：[M_W_DELIVERY_VERDICT_2026-09-21.md](../../M_W_DELIVERY_VERDICT_2026-09-21.md)　[MW_WORKERS_VERDICT_2026-09-25.md](../../MW_WORKERS_VERDICT_2026-09-25.md)
-- 從證據文件掃到的 arm 字串（2 份文件）
+- **子目標**：—（未歸屬看板 15 格中的任何一格）
+- ⚠ 本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。
+- **逐條處置**：作廢／判死／歷史　—　判死：WORKERS 8→2
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 判死：WORKERS 8→2
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

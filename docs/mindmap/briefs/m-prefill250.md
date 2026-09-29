@@ -27,13 +27,13 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prefill250:CGC_PREFILL_PROTECT=1`　（profile `prefill250`；被測 option：`CGC_PREFILL_PROTECT=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **測試 log**：[prefill_certifiability_20260916.json](../../../Backup/llama_bench/prefill_certifiability_20260916.json)　[prefill_certifiability_warm_20260916.json](../../../Backup/llama_bench/prefill_certifiability_warm_20260916.json)　[powermetrics_parse_145506.json](../../../Backup/cgc_logs/powermetrics_parse_145506.json)
-- **證據報告**：[PREFILL250_CONDITIONAL_DELIVERY_20260916.md](../../PREFILL250_CONDITIONAL_DELIVERY_20260916.md)　[PREFILL250_CONDITIONAL_DELIVERY_20260916.html](../../PREFILL250_CONDITIONAL_DELIVERY_20260916.html)　[PREFILL250_DECODE25_VERDICT_2026-09-20.md](../../PREFILL250_DECODE25_VERDICT_2026-09-20.md)　[PREFILL250_MET_AND_S1_REJUDGE_2026-09-24.md](../../PREFILL250_MET_AND_S1_REJUDGE_2026-09-24.md)
-- 從證據文件掃到的 arm 字串（19 份文件）
+- **子目標**：—（未歸屬看板 15 格中的任何一格）
+- ⚠ 本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。
+- **逐條處置**：已認證　→ `C1`　—　prefill ≥250 的那個里程碑本體；9 次 launch ≥250、最高 296.24
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- prefill ≥250 的那個里程碑本體；9 次 launch ≥250、最高 296.24
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

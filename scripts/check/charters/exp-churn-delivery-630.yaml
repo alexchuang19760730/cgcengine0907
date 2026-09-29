@@ -1,0 +1,137 @@
+# 實驗立項卡：把「被殺掉的那條路的前提」在**今天的口徑**上量一次
+#
+# 為什麼需要這張卡：decode 20 t/s 只有**一個**在認可形狀上實測越過的讀數 ——
+# `Backup/seg_batch_s1_pairs/abba_212809.json` 的單段提交（40 段→1）：A 12.202 → B 22.222 t/s
+# （同 cell、同 build、ABBA；pp 275.39 → 296.24）。那條路就是 **S3（n_segs 40→1）**。
+# S3 被判「無前提」的唯一理由是前提 B 的 churn **42.3%**。
+#
+# 但那個 42.3% 是 **`ntok=4`（verify 桶）** 的讀數，而 `ntok=4` **只存在於 MTP-on 的 verify 圖**。
+# 今天（2026-09-28）的交付口徑是 **MTP off**（`MEASUREMENT_CONTRACT` §5.0／`MTP_CALIBER_REDEFINE` B3），
+# decode 是 **`ntok=1` 主 context** —— 那一**格**（主 context 的 ntok=1）從來沒有被量過。
+# `premise_b` 手上那個 `ntok=1 → 0/612 = 0.0%` 是 **draft** context（`key = il + 100000`，`is_draft`；
+# 原始碼自述 `draft = ctx_dft 1-token`，而分母 612/306 與 `draft: calls` 612/306 相等），
+# 不是主 context 的 decode 步。樹上三份有插樁的 log（皆 09-20）**全部是 MTP-on**
+# ⇒ 交付步那一格在樹上不存在，不只是不准。詳見 preflight §7。
+#
+# ⇒ 本卡問的是：**殺掉 22.2 t/s 那條路的數字，在今天的口徑上成立嗎？**
+#
+# 三個前置，兩個已經清掉（查證於 2026-09-28，`docs/PREMISE_B_REOPEN_PREFLIGHT_2026-09-28.md`）：
+#   ① 不用 build：那條 one-line gate 已經落地（`llama-context.cpp:5526` 用
+#      `cgc_is_decode_graph(n_tokens, cgc_pool_max_tokens())`；`:5501` 的註解記著舊閘是
+#      `n_tokens == 1`「fires on NO delivery step」）。`premise_b` 的「NOT APPLIED」已過期。
+#   ② 不用 S2 開關（`git grep CGC_S2` = 0）：churn 走的是 teardown 的分桶計數器，不是 S2。
+#   ③ 需要窗口（記憶體）——這是唯一的外部前置。
+
+id: exp-churn-delivery-630
+owner: lineA
+created: 2026-09-28
+
+# ── 【目標】──
+question: |
+  在**今天的交付口徑**上（`prod-new` profile、`harness bench`、**MTP off**、`delivery` cell、
+  **`ntok=1` 主 context**），一步 decode 之內／之間，**被消費者實際讀到的 expert→slot 映射**
+  會不會移動？
+
+  這不是「再量一次 churn」，是**判詞的重新檢驗**：S3（41 段收成 1 段）被判無前提，
+  依據是 42.3%，而那是 `ntok=4` verify 桶、MTP-on 形狀的讀數。
+  兩個口徑是**不同的輸出函數**（`MTP_CALIBER_REDEFINE_2026-09-28`），數字不可互相推論。
+
+  若主 context 的 `ntok=1` churn 是 **0** ⇒ 表在逐步之間是常數 ⇒ 發布冗餘 ⇒ **S3 復活**，
+  而 S3 是唯一在認可形狀上越過 20 的實測路徑。
+  若它不是 0 ⇒ S3 的前提**在今天的口徑上也確實不存在**，22.2 那條路關閉，
+  力氣轉向 shape／IO（其絕對天花板 20.49／16.31，見下）。
+
+# ── 【現狀】既有讀數，以及它們各自屬於哪個口徑 ──
+baseline:
+  metric: "delivery decode step 的 consumed churn = 42.3%（`ntok=4` 桶，3449/8160）"
+  cell: "**MTP on** 的 verify 形狀（k=3 ⇒ ntok=4）；build libllama=d91e432636d1（2026-09-20）；profile prod25"
+  source: "agent_harness/portal/targets.json"
+  # ⚠ 本卡要量的是**另一個口徑**：`prod-new` ＋ MTP off ＋ `ntok=1` 主 context。
+  # 既有的同族讀數（全部來自那一次 MTP-on run，只供對照，**不得當本卡的 baseline 推論**）：
+  #   ntok=1 → 0/612 = 0.0%（**draft context**，`key = il + 100000`）、
+  #   ntok=4 → 3449/8160 = 42.3%、ntok=8 → 3701/4159 = 89.0%、scalar 7150/12931 = 55.3%。
+  # 登記同時明文禁止把 42.3% 當常數：同一 signature 在 43 個舊 run 之間跨 **37.2%–84.4%**。
+  sources_extra: "docs/S2_OVERLAP_EXPERIMENT_2026-09-28.md; docs/PREMISE_B_REOPEN_PREFLIGHT_2026-09-28.md"
+
+# ── 【假設】──
+hypothesis:
+  mechanism: |
+    計數點是**宿主側的發布路徑**，不是讀回路徑：
+      `prev` = 該 (context, layer) 上一次發布的 table 快照；
+      `now  = (const int32_t *) table->data`；
+      比較對象是 `ids[j]`（hook 自己發布的 top-k），逐 publish 累計
+      （`llama-context.cpp:5655-5686`，桶為 `*_by_ntok[n_tokens]`）。
+    ⇒ 它與 09-27 的 leaf 讀回修復無關（那修的是區域指標 `rm`/`tb` 被釘 `nullptr`，
+    整塊在 `CGC_S1_DBG` 之下，檔自陳對預設臂零行為影響）。
+    ⇒ 所以 42.3% **沒有被汙染**，它只是**另一個口徑、另一個 build、單一 run**。
+
+    本卡的機制預測（兩個方向都寫死，**跑前**）：
+      (a) MTP off ⇒ 每步一個 token ⇒ 主 context 的 `ntok=1` 桶就是交付步；
+      (b) 若池在那一步內是凍結的（`prev == now` 對所有被消費的 id）⇒ churn = 0；
+      (c) 反之若映射逐步在動 ⇒ churn > 0，與 42.3% 同號（因為兩者問的是同一件事，
+          只是一個在 verify 圖、一個在 decode 圖）。
+  expected: "方向未定。**兩個結果都有用**：0 ⇒ S3 前提復活；>0 ⇒ 22.2 那條路在今日口徑上也關閉"
+  basis: "agent_harness/portal/targets.json 的 premise_b（(a)(b)(e) 三節）；llama-context.cpp:5501-5526, 5655-5686；docs/PREMISE_B_REOPEN_PREFLIGHT_2026-09-28.md §1-§3"
+
+# ── 【驗收】跑之前就定好 ──
+acceptance:
+  success: |
+    一次 `harness bench`、`delivery` cell、`prod-new` ＋ `{CGC_S1_TABLE_CHURN=1, CGC_SLOT_TABLE_GPU=1,
+    CGC_GPU_TIMING=1, CGC_DECODE_PROFILE=1}`，熱啟動暖機、量測期 thermal NOMINAL，
+    且**同時**滿足：
+      ① **量具活著**：teardown 印出 per-width 那一行，且
+         `python3 scripts/check/premise_b_read.py -v <log>` 報
+         **`delivery_ntok1_measured = True`**（即 `ntok=1` 被歸屬到主 context，不是 draft 的 0/612）。
+         這個欄位是 2026-09-28 加的：它把「量具活著」從一句話變成一個布林，
+         因為 `ntok=1` 的 draft 與主 context **在計數器上長得一樣**（`_by_ntok` 無 `is_draft` 守衛）；
+      ② 報**分布**：churn 報 per-publish 的 changed/total ＋ 逐 (step, layer) 的散布，
+         **不得**只報一個純量（登記明文禁止把 42.3% 當常數，同理由）；
+      ③ 品質閘同時綠：`clamped_selected=0`、`zero_mapped_selected=0`、`n_fast_cold` 不上升。
+  falsify: |
+    ① teardown 印 **`not instrumented`**（旋鈕沒生效）或 `premise_b_read` 報
+       `delivery_ntok1_measured = False`（只有 draft 桶／桶被標成 mixed）⇒
+       這是「**沒有讀數**」，不是「churn=0」。⇒ 先照 §5.1 的分類查是哪一種
+       （`capture is not a node`／`not int32s`／`gather=null`），**不得**記成結果。
+    ② 若 `delivery` cell 的步根本不進那條 gate（`cgc_is_decode_graph` 未涵蓋）⇒
+       口徑不成立，改記為「主 context 的 churn 在本 cell 上不可量」，並說明為什麼。
+  on_fail: |
+    維持 S2 為唯一路線（`exp-s2-overlap`），並把「S3 復活需要什麼」寫成一條可判定的條件；
+    **不要**因為一次 null result 就重開 S3。
+
+# ── 【量化目標】：這張卡服務的是 20，不是 25 ──
+targets:
+  decode_tps: 20.0
+  prefill_tps: 250.0
+
+# ── 【技術子目標】──
+subgoals:
+  - id: sg-instrument-alive
+    text:   "在 build 630 上第一次證明這個量具活著（全 repo 220 個帶該旋鈕的產物全部落在 09-16/09-17）"
+    expect: "teardown 印出 per-width 行，且桶存在；`not instrumented` 與「量到的 0」分得開"
+    how:    "讀 stderr 的 `llama_expert_cache: S1 slot-table: ... consumed_changed=...` 與 per-ntok rate 行"
+  - id: sg-ntok1-main-ctx
+    text:   "主 context `ntok=1` 的 churn（today's delivery shape）"
+    expect: "0 或 >0；報分布，不報純量"
+    how:    "per-ntok 分桶，用 `is_draft` 的 key（`il + 100000`）把 draft 桶排除"
+  - id: sg-verdict-s3
+    text:   "用 ②的結果裁決 S3 的前提在今日口徑上成不成立"
+    expect: "0 ⇒ S3 復活並寫成可判定的下一步；>0 ⇒ 關閉 S3 並把力氣轉 shape/IO"
+    how:    "對照 42.3% 的口徑差異（MTP-on verify vs MTP-off decode）逐條寫清"
+
+# ── 臂：只用 prod-new；B 臂只是把四個旋鈕加上去，不改 profile／cell ──
+arms:
+  - prod-new
+  - prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1;CGC_GPU_TIMING=1;CGC_DECODE_PROFILE=1
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-8 同步；勿手改，改看板）】──
+options:
+  subgoal: L20-8
+  profile: prod-new
+  arms:
+    - "prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1;CGC_GPU_TIMING=1;CGC_DECODE_PROFILE=1"
+  knobs:
+    - {name: CGC_S1_TABLE_CHURN, value: "1", role: subject, why: "被測：slot table 的 churn（消費端讀到的映射是否移動）", source: "node exp-churn-delivery-630 實跑 arm"}
+    - {name: CGC_SLOT_TABLE_GPU, value: "1", role: subject, why: "slot table 放 GPU（churn 的載體）", source: "同上"}
+    - {name: CGC_GPU_TIMING, value: "1", role: instrument, why: "GPU 節點計時", source: "同上"}
+    - {name: CGC_DECODE_PROFILE, value: "1", role: instrument, why: "decode 分段剖面", source: "同上"}
+  note: "要在 ntok=1 主 context 上重測（MTP-on 的 verify 形狀 k=3 與交付口徑不是同一個量）。"

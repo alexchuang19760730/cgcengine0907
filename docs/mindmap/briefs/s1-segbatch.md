@@ -17,7 +17,7 @@
 
 ## 3. 結果
 
-判詞：41 段→1 段的 A/B **作廢**（兩端都不可引用）。本節點不主張吞吐。**補（09-29）**：它的**可交付上界**＝序列化 − 必須還回去的 fill ⇒ **19.2–24.5 t/s**（底未裁：預設 cell 的 S1 step 同場讀 **49.18**，交付 cell 讀 **36.80**，差 12.4 ms；兩者只在同一組開關下才可比）。**09-29 21:3x 成對實測（交付 cell、(default)、MTP off、warm_skip 64、未開 `_DBG`/`_COST`）**：S1 **36.33 ms（27.526±0.228 t/s）** vs 控制 **88.29 ms（11.327±0.349）** ⇒ **36.80 ms 那一側重現**（差 0.5 ms），而舊的「49.18」是**不同 cell** 的另一支。⚠ 兩臂皆 `attribution=swap`（+851／+1768 MiB）⇒ 這些 t/s **不可引用**。 **§50**：越線且**池活著**的一格屬於 `fillahead` 族（39.0 ms），不是本節點（本節點是凍結簽名）；依 §50，decode ≥25 的判詞已由「判死」改記「**未判定**」，剩下的 **0.6–2.2 ms** 是 **B 半重算補丁**的邊界。
+判詞：41 段→1 段的 A/B **作廢**（兩端都不可引用）。本節點不主張吞吐。**補（09-29）**：它的**可交付上界**＝序列化 − 必須還回去的 fill ⇒ **19.2–24.5 t/s**（底未裁：預設 cell 的 S1 step 同場讀 **49.18**，交付 cell 讀 **36.80**，差 12.4 ms；兩者只在同一組開關下才可比）。**09-29 21:3x 成對實測（交付 cell、(default)、MTP off、warm_skip 64、未開 `_DBG`/`_COST`）**：S1 **36.33 ms（27.526±0.228 t/s）** vs 控制 **88.29 ms（11.327±0.349）** ⇒ **36.80 ms 那一側重現**（差 0.5 ms），而舊的「49.18」是**不同 cell** 的另一支。⚠ 兩臂皆 `attribution=swap`（+851／+1768 MiB）⇒ 這些 t/s **不可引用**。 **§50**：越線且**池活著**的一格屬於 `fillahead` 族（39.0 ms），不是本節點（本節點是凍結簽名）；依 §50，decode ≥25 的判詞已由「判死」改記「**未判定**」，剩下的 **0.6–2.2 ms** 是 **B 半重算補丁**的邊界。 **§52（09-29）**：同族的 **fillahead** 臂在**交付 cell** 上實測 **37.81 ms（26.45 t/s）**、`instrument_gate=BOUND`（池真的在餵）⇒ 交付 cell 的底座應記 **37.81**，而 §43 用的 39.0 是**預設 cell**。
 
 ## 4. 判定
 
@@ -27,13 +27,18 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_S1_TABLE_CHURN=1`　（profile `prod-new`；被測 option：`CGC_S1_TABLE_CHURN=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **測試 log**：[summary_s1-nodbg.json](../../../Backup/m123_oracle_gate/summary_s1-nodbg.json)　[summary_s1-dbg-fixed2.json](../../../Backup/m123_oracle_gate/summary_s1-dbg-fixed2.json)　[summary_s1-postfix.json](../../../Backup/m123_oracle_gate/summary_s1-postfix.json)
-- **證據報告**：[S1_DIAGNOSTIC_ABORT_ROOT_CAUSE_2026-09-20.md](../../S1_DIAGNOSTIC_ABORT_ROOT_CAUSE_2026-09-20.md)　[S1_FRONTIER_2026-09-18.md](../../S1_FRONTIER_2026-09-18.md)　[S1_LINE_VERDICT_2026-09-25.md](../../S1_LINE_VERDICT_2026-09-25.md)
-- 從證據文件掃到的 arm 字串（8 份文件）
+- **子目標**：`L20-1`　底（S1 的 step）校準
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **被測 option**：`CGC_SEG_BATCH=1`；`CGC_B_SCHEME=1`；`CGC_SLOT_TABLE_GPU=1`
+- **儀器開關**（不是被測 option）：`CGC_MISS_MASK=1`；`CGC_MISS_MASK_DBG=1`；`CGC_MISS_MASK_COST=1`
+- **arm 1（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1`
+- **結案狀態**：未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是乾淨窗口）
+- **逐條處置**：整合進子目標　→ `L20-1`　—　單段提交本體 —— L20-1 要校準的那個 step 就是它
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

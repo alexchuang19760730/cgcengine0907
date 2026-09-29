@@ -27,12 +27,18 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_MM_BITIDENT=1`　（profile `prod-new`；被測 option：`CGC_MM_BITIDENT=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **證據報告**：[S1_LINE_VERDICT_2026-09-25.md](../../S1_LINE_VERDICT_2026-09-25.md)
-- 從證據文件掃到的 arm 字串（7 份文件）
+- **子目標**：`L20-2`　武裝 G3（CGC_ZERO_SLOT）
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **被測 option**：`CGC_ZERO_SLOT=1`；`CGC_SEG_BATCH=1`；`CGC_SLOT_TABLE_GPU=1`
+- **arm 1（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1`
+- **arm 2（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1`
+- **結案狀態**：未結案（卡已立、未跑）
+- **逐條處置**：整合進子目標　→ `L20-2`　—　slot table 放 GPU 的數值身分（576/576）：讓 leaf 被建的前置，G3 的最小武裝就是它
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- A/B 兩臂只差 CGC_ZERO_SLOT，不動 src/；2 趟，主端點是計數器不是 t/s。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

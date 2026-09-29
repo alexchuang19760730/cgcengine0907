@@ -25,12 +25,17 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_POOL_MADVISE=1`　（profile `prod-new`；被測 option：`CGC_POOL_MADVISE=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **證據報告**：[STEP3_PER_EXPERT_RECOMPUTE_2026-09-24.md](../../STEP3_PER_EXPERT_RECOMPUTE_2026-09-24.md)
-- 從證據文件掃到的 arm 字串（1 份文件）
+- **子目標**：`L20-3`　重算本體 B（靜態 ggml_acc）
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **arm 1（可複製）**：`prod-new`
+- ⚠ **本格沒有旋鈕**：本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置是先補一行儀器印逐層 miss 直方圖（CGC-MISSMASK-STEP 目前不存在），確認每層最大 ≤ k 才考慮實作。
+- **結案狀態**：未結案（尖兵已跑（唯讀）⇒ 價目不成立；缺的那個量＝逐層 miss 直方圖，一行儀器）
+- **逐條處置**：整合進子目標　→ `L20-3`　—　per-expert 重算 kernel（已判 0）—— L20-3 的 B 是同一件事的靜態版本，判詞要一起讀
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- §51 尖兵已量：被定價的是散佈（320 op），沒被定價的是備援重算 320 列 ＝ 8.09 ms ⇒ 淨回收為負，decode ≥25 回到判死。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

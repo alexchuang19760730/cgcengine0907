@@ -27,13 +27,19 @@ qu gate（覆蓋率 ＋ 視窗）
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_SERVER_MTP=1`　（profile `prod-new`；被測 option：`CGC_SERVER_MTP=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **測試 log**：[f1_cb_miss_regression_report.json](../../../Backup/cgc_logs/f1_cb_miss_regression_report.json)
-- **證據報告**：[F1_CB_MISS_REGRESSION_RESULT_2026-09-20.md](../../F1_CB_MISS_REGRESSION_RESULT_2026-09-20.md)　[GAP_SPLIT_SWAP_BIAS_2026-09-20.md](../../GAP_SPLIT_SWAP_BIAS_2026-09-20.md)　[RHO_BATCH_REGRESSION_2026-09-24.md](../../RHO_BATCH_REGRESSION_2026-09-24.md)　[RHO_MAXQ_SETTLED_2026-09-23.md](../../RHO_MAXQ_SETTLED_2026-09-23.md)
-- 從證據文件掃到的 arm 字串（5 份文件）
+- **子目標**：`L20-7`　prefetch 的兩個前置分支
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **被測 option**：`CGC_RHO_PROBE=1`；`CGC_PREBIND_PROBE=1`
+- **儀器開關**（不是被測 option）：`CGC_PREBIND_PROBE_VERBOSE=1`；`CGC_RHO_PROBE_LATE=1`
+- **arm 1（可複製）**：`prod-new:CGC_RHO_PROBE=1`
+- **arm 2（可複製）**：`prod-new:CGC_PREBIND_PROBE=1`
+- **結案狀態**：未結案（有前置）
+- **逐條處置**：整合進子目標　→ `L20-7`　—　ρ 按層批次化 prefetch（覆蓋 0.849、每步付 4.76 ms）
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 前置題：先付 4.76 ms（藏掉或攤平）再談收益；前置成本 ≤ 收益且覆蓋不降才算過。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

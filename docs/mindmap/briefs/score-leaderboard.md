@@ -27,13 +27,18 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod25:CGC_PREFILL_STREAM=1`　（profile `prod25`；被測 option：`CGC_PREFILL_STREAM=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **測試 log**：[launch01.json](../../../Backup/k3_pair_cert_2026-09-28/logs/r4_b_k2/launch01.json)　[20260928_233550_launch01.json](../../../Backup/leaderboard/20260928_233550_launch01.json)　[launch01.json](../../../Backup/k3_pair_cert_2026-09-28/logs/r3_a_k2/launch01.json)
-- **證據報告**：[K3_PAIR_CERT_VERDICT_2026-09-28.md](../../K3_PAIR_CERT_VERDICT_2026-09-28.md)
-- 從證據文件掃到的 arm 字串（1 份文件）
+- **子目標**：`L25-6`　口徑認證
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **arm 1（可複製）**：`prod-new`
+- ⚠ **本格沒有旋鈕**：沒有新旋鈕：本格要的是加大配對 n（-r）到能認證 16.4% 的飄移，或證明飄移是視窗機械造成。
+- **結案狀態**：未結案（未認證）
+- **逐條處置**：整合進子目標　→ `L25-6`　—　成績排行榜；「目前最好」的定義衝突在這裡結清
+- **逐條處置**：已認證　→ `C3`　—　「目前最好」＝交付錨點 11.703 t/s（三扇門全過）
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 目前 n=5、t=2.08 < df=4 的 2.776 ⇒ 未認證；17.669 已降級為分布尾端一次抽樣。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

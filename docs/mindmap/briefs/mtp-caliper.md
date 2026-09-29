@@ -27,13 +27,18 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod25:CGC_SERVER_MTP=0`　（profile `prod25`；被測 option：`CGC_SERVER_MTP=0`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **測試 log**：[aligned_nail_vs_ornith_fwd.json](../../../Backup/phase_decomp/aligned_nail_vs_ornith_fwd.json)　[summary_en-orn-ab.json](../../../Backup/m123_oracle_gate/summary_en-orn-ab.json)　[aligned_nail_vs_ornith_rev.json](../../../Backup/phase_decomp/aligned_nail_vs_ornith_rev.json)
-- **證據報告**：[MTP3_25TPS_ARITHMETIC_2026-09-18.md](../../MTP3_25TPS_ARITHMETIC_2026-09-18.md)　[MTP_ABBA_RECHECK_2026-09-18.md](../../MTP_ABBA_RECHECK_2026-09-18.md)　[MTP_K_AB_2026-09-18.md](../../MTP_K_AB_2026-09-18.md)　[MTP_NET_EFFECT_PAIRED_2026-09-18.md](../../MTP_NET_EFFECT_PAIRED_2026-09-18.md)
-- 從證據文件掃到的 arm 字串（8 份文件）
+- **子目標**：`L25-5`　MTP 的產品化上限
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod25`
+- **被測 option**：`CGC_SERVER_MTP_N_MAX=1`
+- **儀器開關**（不是被測 option）：`CGC_MTP_PERF=1`
+- **arm 1（可複製）**：`prod25`
+- **結案狀態**：未結案（已判、未立新判準）
+- **逐條處置**：整合進子目標　→ `L25-5`　—　MTP 口徑與混淆定位：m 的每一個讀數都要先過它
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

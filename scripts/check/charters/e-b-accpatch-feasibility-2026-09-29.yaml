@@ -1,0 +1,41 @@
+# 立項卡（2026-09-29，由 operator 的結案規則而生）：結案 = prod-new ＋ harness bench ＋ 達標
+id: e-b-accpatch-feasibility
+owner: freebuff
+created: '2026-09-29'
+axis: S
+question: 靜態 acc 補丁（每層備 k 個 acc、固定 320 op/step）的 op 成本能不能落在 1.60–3.20 ms/step，且不隨 miss 縮放？
+baseline:
+  metric: 形狀：每層常備 k 個 acc、320 op/step 固定、與 miss 無關；成本區間 1.60–3.20 ms；src/ 內 ggml_acc( 0 命中（無範例）
+  cell: prod-new 交付 cell；可行性尖兵＝不進生產路徑的靜態建圖樣本
+  source: docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md
+hypothesis:
+  mechanism: 若補算是靜態圖（固定 op 數），它就能在編譯期排定、與本步 miss 無關 ⇒ 取代每步 3.955 ms 的同步 fill；回收 = 3.96 − op（1.60~3.20）＝ 0.76~2.36 ms/step。
+  expected: −0.76 ~ −2.36 ms/step（t/s：+0.2 ~ +0.6 在 19.2 天花板；底在 36.8 側則 +0.7 ~ +2.0）
+  basis: §35 §四（B 的形狀與價格）＋ e-s1-predict-recompute 的 sg-b-accpatch
+acceptance:
+  success: M1 9/9 ∧ M2 9/9、config_diffs==[]、op 增量 320 且不隨 miss 放大、生產路徑無新增 synchronize
+  falsify: 成本隨 miss 縮放 ⇒ 靜態圖論證不成立（量級不同）
+  on_fail: revert；（B）退回候選，改走 L20-6 的替代機制評估
+targets:
+  decode_tps: 19.2
+  prefill_tps: 250.0
+subgoals:
+- id: sg-b-alloc
+  text: ggml-alloc 的新 buffer／zero-fill 在既有 allocator 上可建
+  expect: 可行性：能建圖且不 OOM
+  how: 尖兵樣本的建圖與記憶體讀數
+- id: sg-b-cost
+  text: op 成本落在 1.60–3.20 ms/step 且不隨 miss 縮放
+  expect: op 增量 320/step 固定
+  how: 同 cell 下 op 計數與 step 時間的配對
+arms:
+- prod-new
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-3 同步；勿手改，改看板）】──
+options:
+  subgoal: L20-3
+  profile: prod-new
+  arms:
+    - "prod-new"
+  no_knob: "本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置是先補一行儀器印逐層 miss 直方圖（CGC-MISSMASK-STEP 目前不存在），確認每層最大 ≤ k 才考慮實作。"
+  note: "§51 尖兵已量：被定價的是散佈（320 op），沒被定價的是備援重算 320 列 ＝ 8.09 ms ⇒ 淨回收為負，decode ≥25 回到判死。"

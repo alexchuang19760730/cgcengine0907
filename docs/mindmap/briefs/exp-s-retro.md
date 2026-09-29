@@ -27,13 +27,18 @@ G0–G7 序列化／調度消減（41 段→1 段、縮 union、藏 gap、消 cb
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_HOOK_SPLIT=1;CGC_CB_N_MAIN=32`　（profile `prod-new`；被測 option：`CGC_HOOK_SPLIT=1`；`CGC_CB_N_MAIN=32`）
-- **來源**：① 實跑 arm（有 log）　·　置信度 `high`
-- **儀器開關**（不是被測 option）：`CGC_DECODE_PROFILE=1`；`CGC_GPU_TIMING=1`
-- **測試 log**：[bench.json](../../../Backup/phase_decomp/cbnmain_pair/on1/bench.json)
-- 節點自帶實跑 arm（3 筆 run，log 可點）
+- **子目標**：`L20-1`　底（S1 的 step）校準
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **被測 option**：`CGC_SEG_BATCH=1`；`CGC_B_SCHEME=1`；`CGC_SLOT_TABLE_GPU=1`
+- **儀器開關**（不是被測 option）：`CGC_MISS_MASK=1`；`CGC_MISS_MASK_DBG=1`；`CGC_MISS_MASK_COST=1`
+- **arm 1（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1`
+- **結案狀態**：未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是乾淨窗口）
+- **逐條處置**：整合進子目標　→ `L20-1`　—　G0–G7 的序列化回顧：同一條軸的歷史與作廢清單，決定 L20-1 只認哪一端
+- **測試 log（實跑）**：[bench.json](../../../Backup/phase_decomp/cbnmain_pair/on1/bench.json)　[bench.json](../../../Backup/phase_decomp/cbnmain_pair/off2/bench.json)　[bench.json](../../../Backup/phase_decomp/cbnmain_pair/on3/bench.json)
+- 控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

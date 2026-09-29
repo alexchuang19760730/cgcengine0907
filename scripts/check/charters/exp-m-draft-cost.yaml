@@ -1,0 +1,65 @@
+id: exp-m-draft-cost
+owner: shared
+created: 2026-09-28
+axis: M
+
+question: |
+  每 draft token 的攤薄係數 m 能不能從 0.474 降到 ≤0.073（k=3 的 25 t/s 門檻）？
+  m 的機械解釋是「每多一個 draft token 約 46–59 ms 的固定代價，pool budget 的主項」——
+  先確認它是不是 draft／verify 的流量把池預算吃掉。
+
+baseline:
+  metric: "m = 0.474（S0 = 85.8 ms，同 run 反推）；k=3 25 t/s 需 m ≤0.073"
+  cell: "prod25、k=3 交付配方（server argv 逐字 --spec-draft-n-max 3）"
+  source: "docs/DECODE25_CEILING_2026-09-20.md"
+
+hypothesis:
+  mechanism: |
+    t/s(k) = 1000·mean_len(k) / (S0·(1+m·k))，mean_len(k) ≤ k+1。k=3 即使 a=1.0 也只有 19.25；
+    k→∞ 的極限 1000/(S0·m) = 24.59。⇒ 25 的兩個門都指向 m 與 S0，而 m 被記為 pool budget 的主項。
+    待驗的關鍵：draft／verify 是不是把每 token 的等效慢速位元組（或等效慢速時間）推高。
+    ⚠ 2026-09-28 的 E-A 支臂自己的 draft 幾乎沒跑（fast calls=4366 但 draft calls=305），
+    所以那支臂對 m 沒有代表性；本節點必須先取一支 draft 真的在跑的臂。
+  expected: "若 m 主項是 draft／verify 流量 ⇒ MTP off 的每 token 等效成本應顯著低於 on；反過來則 m 來自別處"
+  basis: "docs/DECODE25_CEILING_2026-09-20.md §3/§4；docs/S2_OVERLAP_EXPERIMENT_2026-09-28.md §15.6"
+
+acceptance:
+  success: "同 run、同形狀下量到 m ≤0.30（第一里程碑）並指名它的主項（draft 流量 / verify 寬度 / pool 預算）"
+  falsify: "若 MTP off 與 on 的每 token 等效成本在扣除 mean_len 差異後無顯著差，則 m 不是 draft 造成的，本節點判否"
+  on_fail: "把 m 的構成寫進 CROSS_LINE_STATUS；不再用『加深 k』當槓桿（k=1→64 只 +8%，已證）"
+
+targets:
+  decode_tps: 19.25
+  prefill_tps: 250.0
+
+subgoals:
+  - id: sg-m-main-term
+    text: "指名 m 的主項：draft 流量 / verify 寬度 / pool 預算三選一（或給比例）"
+    expect: "0（這是歸因，不是貢獻）"
+    how: "同 run 形狀下 MTP on/off 配對 + 每 token 等效慢速成本；read shape 的 jobs/bytes"
+  - id: sg-m-value
+    text: "m：0.474 → ≤0.30（第一里程碑；終極 k=3 需 ≤0.073）"
+    expect: "Δ t/s = 1000·mean_len/(S0·(1+m·k)) 的差"
+    how: "同 run 反推 S0 與 m；不用跨 run 商數"
+
+arms:
+  - prod25
+  - prod-new
+  - prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L25-4 同步；勿手改，改看板）】──
+options:
+  subgoal: L25-4
+  profile: prod-new
+  arms:
+    - "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1"
+  cli:
+    - "--spec-type draft-mtp"
+    - "--spec-draft-n-max 1"
+  knobs:
+    - {name: CGC_SERVER_MTP, value: "1", role: subject, why: "開 MTP（allowlist 在 run_server.sh 的 SERVER_MTP 區塊，不是純 env）", source: "存活配方 09-29 定版；charters/exp-mtp-onfix-a arms[]"}
+    - {name: CGC_SERVER_LAYER_CAPS, value: "40-40:16", role: subject, why: "draft 層寬度", source: "同上"}
+    - {name: CGC_DRAFT_CTX_ALIGN, value: "1", role: subject, why: "draft ctx 對齊", source: "同上"}
+    - {name: CGC_DRAFT_SMALL_BATCH, value: "1", role: subject, why: "小批 draft", source: "同上"}
+    - {name: CGC_MTP_PERF, value: "1", role: instrument, why: "每輪 t_draft_ms／t_accept_ms／ms_per_round（在 common/speculative.cpp，不在 src/）", source: "docs/MTP_K_SWEEP_2026-09-22.md"}
+  note: "⛔ 必帶 --spec-draft-n-max 1：沒帶就是 k_eff≈2.33 必 thrash。且 MTP on/off 是不同輸出函數 ⇒ t/s 不可互比。"

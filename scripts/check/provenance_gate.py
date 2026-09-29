@@ -169,16 +169,17 @@ REPORT_EXEMPT: dict[str, str] = {
         "the docs/*.html paths in it are SCAN_TARGETS it READS to enforce that voided inferences stay "
         "out of the conclusion section; it writes no measured report (it re-derives numbers from an "
         "existing Backup/*.json product and its exit code is its product)",
-    # 2026-09-29（52 條 × profile option 對照表）：它寫 docs/mindmap/PROFILE_OPTION_MAP_*.html，
-    # 但那一頁**不量任何數字** —— arm／option／log 路徑全部是從 mindmap.json 與既有證據文件
-    # 讀出來的轉引視圖（跟 mindmap_build.py 同一類）。它自己量的是「有沒有綁定、有沒有 log」
-    # 這種布林，而產品是 exit code。向它索討 sidecar（量測產物的出處）＝ 向一個構造上
-    # 不量測的產物要證明 —— 正是本檔註解點名的缺陷類。
-    "scripts/check/mindmap_profile_audit.py":
-        "it writes docs/mindmap/PROFILE_OPTION_MAP_*.{md,html}, a citation view generated from "
-        "mindmap.json + existing evidence docs (same class as mindmap_build.py): it measures no "
-        "throughput, only booleans (is this row bound to an arm / is there a log), and its product "
-        "is the --check exit code",
+    # 2026-09-29（子目標 × options 對照表）：它寫 docs/mindmap/SUBGOAL_OPTION_MAP_*.html，
+    # 但那一頁**不量任何數字** —— 每一格的 profile／option／arm 全部是從子目標看板
+    # decode_board_2026-09-29.yaml 讀出來的轉引（跟 mindmap_build.py 同一類）。前一版用
+    # 「文件掃描推導」的 mindmap_profile_audit.py 已刪除（使用者要求從子目標重來）。
+    # 它量的是布林（有沒有綁定／有沒有 log），產品是 --check 的 exit code
+    # ⇒ 向它索討 sidecar ＝ 向一個構造上不量測的產物要證明。
+    "scripts/check/mindmap_subgoal_sync.py":
+        "it writes docs/mindmap/SUBGOAL_OPTION_MAP_*.{md,html}, a citation view generated from the "
+        "subgoal board decode_board_2026-09-29.yaml (same class as mindmap_build.py): it measures "
+        "no throughput, only booleans (is this row bound / is there a log), and its product is the "
+        "--check exit code",
 }
 DOCS_HTML_PATH = re.compile(r"(?:os\.path\.join\s*\([^)]*[\"']docs[\"']|ROOT\s*/\s*[\"']docs[\"']"
                             r"|[\"']docs/)")

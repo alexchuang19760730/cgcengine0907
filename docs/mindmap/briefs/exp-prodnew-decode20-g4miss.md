@@ -27,13 +27,20 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_COST=1`　（profile `prod-new`；被測 option：`CGC_SEG_BATCH=1`；`CGC_B_SCHEME=1`；`CGC_SLOT_TABLE_GPU=1`；`CGC_MISS_MASK=1`；`CGC_MISS_MASK_COST=1`）
-- **來源**：① 實跑 arm（有 log）　·　置信度 `high`
-- **儀器開關**（不是被測 option）：`CGC_MISS_MASK_DBG=1`
-- **測試 log**：[g4miss_delivery.json](../../../Backup/g4miss_2026-09-28/g4miss_delivery.json)
-- 節點自帶實跑 arm（15 筆 run，log 可點）
+- **子目標**：`L20-1`　底（S1 的 step）校準
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **被測 option**：`CGC_SEG_BATCH=1`；`CGC_B_SCHEME=1`；`CGC_SLOT_TABLE_GPU=1`
+- **儀器開關**（不是被測 option）：`CGC_MISS_MASK=1`；`CGC_MISS_MASK_DBG=1`；`CGC_MISS_MASK_COST=1`
+- **arm 1（可複製）**：`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1`
+- **結案狀態**：未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是乾淨窗口）
+- （同條另掛：`L20-2`、`L20-3`）
+- **逐條處置**：整合進子目標　→ `L20-1`　—　L20 的主節點；G4 閘的權威讀數（中位 6.09%）就是它的產物
+- **逐條處置**：已認證　→ `C2`　—　G4 重算工作清單中位 6.09% ≤25%，已認證
+- **測試 log（實跑）**：[g4miss_delivery.json](../../../Backup/g4miss_2026-09-28/g4miss_delivery.json)　[g4miss2_default.json](../../../Backup/g4miss_2026-09-28/g4miss2_default.json)　[exp-prodnew-decode20-g4miss_20260929_000557.json](../../../Backup/exp_runs/exp-prodnew-decode20-g4miss_20260929_000557.json)　[ctl_segmented_default.json](../../../Backup/g4miss_2026-09-28/ctl_segmented_default.json)　[exp-prodnew-decode20-g4miss_20260929_001516.json](../../../Backup/exp_runs/exp-prodnew-decode20-g4miss_20260929_001516.json)　[exp-prodnew-decode20-g4miss_20260929_002005.json](../../../Backup/exp_runs/exp-prodnew-decode20-g4miss_20260929_002005.json)　[exp-prodnew-decode20-g4miss_20260929_002452.json](../../../Backup/exp_runs/exp-prodnew-decode20-g4miss_20260929_002452.json)　[recency_usable8.json](../../../Backup/g4miss_2026-09-28/recency_usable8.json)　[recency_usable16.json](../../../Backup/g4miss_2026-09-28/recency_usable16.json)　[recency_usable64.json](../../../Backup/g4miss_2026-09-28/recency_usable64.json)　[exp-prodnew-decode20-g4miss_20260929_003011.json](../../../Backup/exp_runs/exp-prodnew-decode20-g4miss_20260929_003011.json)　[exp-prodnew-decode20-g4miss_20260929_003354.json](../../../Backup/exp_runs/exp-prodnew-decode20-g4miss_20260929_003354.json)　[delivery_ctl_143.json](../../../Backup/g4miss_2026-09-28/delivery_ctl_143.json)　[delivery_usable8.json](../../../Backup/g4miss_2026-09-28/delivery_usable8.json)　[g4miss_delivery_harness_fix4066.json](../../../Backup/g4miss_2026-09-29/g4miss_delivery_harness_fix4066.json)
+- 控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

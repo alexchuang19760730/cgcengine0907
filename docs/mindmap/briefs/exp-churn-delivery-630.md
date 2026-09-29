@@ -27,13 +27,18 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1`　（profile `prod-new`；被測 option：`CGC_S1_TABLE_CHURN=1`；`CGC_SLOT_TABLE_GPU=1`）
-- **來源**：① 實跑 arm（有 log）　·　置信度 `high`
+- **子目標**：`L20-8`　churn 判詞在交付口徑的重檢
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **被測 option**：`CGC_S1_TABLE_CHURN=1`；`CGC_SLOT_TABLE_GPU=1`
 - **儀器開關**（不是被測 option）：`CGC_GPU_TIMING=1`；`CGC_DECODE_PROFILE=1`
-- **測試 log**：[churn.json](../../../Backup/churn_delivery_630_2026-09-28/churn.json)
-- 節點自帶實跑 arm（2 筆 run，log 可點）
+- **arm 1（可複製）**：`prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1;CGC_GPU_TIMING=1;CGC_DECODE_PROFILE=1`
+- **結案狀態**：未結案（未跑）
+- **逐條處置**：整合進子目標　→ `L20-8`　—　在交付口徑上重檢 churn；L20-8 的產物
+- **測試 log（實跑）**：[churn.json](../../../Backup/churn_delivery_630_2026-09-28/churn.json)　[exp-churn-delivery-630_20260928_231234.json](../../../Backup/exp_runs/exp-churn-delivery-630_20260928_231234.json)
+- 要在 ntok=1 主 context 上重測（MTP-on 的 verify 形狀 k=3 與交付口徑不是同一個量）。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

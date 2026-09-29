@@ -1,0 +1,41 @@
+# 立項卡（2026-09-29，由 operator 的結案規則而生）：結案 = prod-new ＋ harness bench ＋ 達標
+id: e-beyond-ceiling
+owner: freebuff
+created: '2026-09-29'
+axis: both
+question: 四塊裡哪一塊能超過它自己的已量上界（41.2 ms ＝ 24.3 t/s 是上界相加）？
+baseline:
+  metric: 四塊代入各自已量上界＝19.5＋12.0＋5.8＋3.9＝41.2 ms；目標 40.0 ms
+  cell: prod-new 交付 cell
+  source: docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md
+hypothesis:
+  mechanism: 要嘛某塊的上界本身被推翻（新的機制），要嘛有一塊的已量上界我們過去量錯了（量測缺陷）。兩條都要指名，缺一不算。
+  expected: 41.2 → ≤40.0 ms/step（24.3 → ≥25.0 t/s）；指名哪一格、哪個上界、憑什麼超過
+  basis: §37（gap 上界修正）／§39（C1 為假）
+acceptance:
+  success: 該格出現超出上界的實測（prod-new ＋ harness bench、M1 過、乾淨歸因）
+  falsify: 指不出來 ⇒ 25 維持判死
+  on_fail: 維持判死；把「哪一格的哪個上界被檢查過、結論為何」寫進卡片
+targets:
+  decode_tps: 25.0
+  prefill_tps: 250.0
+subgoals:
+- id: sg-beyond-pick
+  text: 指名一格 ＋ 它上界以外的機制
+  expect: 可指名且可量
+  how: 唯讀對照 §16 §四 的四塊上界
+- id: sg-beyond-measure
+  text: 該機制的實測是否真的超過上界
+  expect: '>上界且 M1 過'
+  how: prod-new ＋ harness bench 成對
+arms:
+- prod-new
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L25-2 同步；勿手改，改看板）】──
+options:
+  subgoal: L25-2
+  profile: prod-new
+  arms:
+    - "prod-new"
+  no_knob: "本格沒有自己的旋鈕：它指向 L20-3 的 B 半補丁（同一個 src/ 改動），options 見 L20-3。"
+  note: "§51 已把 §50 的「未判定」撤回 ⇒ decode ≥25 回到判死；唯一未動的是本層 L25-1。"

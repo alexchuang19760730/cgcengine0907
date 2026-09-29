@@ -27,12 +27,17 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod25`　（profile `prod25`；無自己的 option）
-- **來源**：② charter arms[]　·　置信度 `high`
-- **證據報告**：[DECODE25_CEILING_2026-09-20.md](../../DECODE25_CEILING_2026-09-20.md)
-- 取自 `scripts/check/charters/exp-caliber-calibration.yaml` 的 `arms[]`
+- **子目標**：`L25-1`　第六條軸：改「每 token 的 bytes 或 steps」
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **arm 1（可複製）**：`prod-new`
+- ⚠ **本格沒有旋鈕**：新軸尚未命名：本格要問的是「每 token 的 bytes 或 steps 有沒有可改的乘數」⇒ 仍在立卡階段，沒有既有旋鈕可綁。
+- **結案狀態**：未結案（本輪立項）
+- **逐條處置**：整合進子目標　→ `L25-1`　—　口徑＋k=3 飄移認證；第六條軸要用的量測基準
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 驗收：需要一個新乘數，≤ 40.0 ms 且 M1 bit-identical。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

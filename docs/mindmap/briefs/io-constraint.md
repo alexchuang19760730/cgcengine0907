@@ -25,14 +25,13 @@ IOCACHE：#6 沒做之前 #3 的 async 版本不可達（且不可並列相加�
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prefill250:CGC_SUBMIT_AHEAD=1`　（profile `prefill250`；被測 option：`CGC_SUBMIT_AHEAD=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **測試 log**：[l3prize_off.json](../../../Backup/phase_decomp/l3prize_off.json)　[joint_step_accept_g6.json](../../../Backup/cgc_logs/joint_step_accept_g6.json)　[f1_cb_miss_regression_report.json](../../../Backup/cgc_logs/f1_cb_miss_regression_report.json)
-- **測試 log（檔案不在工作區，`Backup/` 未進版控）**：`summary_l3_prize_submit_ahead.json`
-- **證據報告**：[IOCACHE_CONSTRAINT_ADMISSION_2026-09-22.md](../../IOCACHE_CONSTRAINT_ADMISSION_2026-09-22.md)　[L3_M1_BLOCKED_STRUCTURAL_2026-09-20.md](../../L3_M1_BLOCKED_STRUCTURAL_2026-09-20.md)　[L3_M1_GAP_LEDGER_2026-09-20.md](../../L3_M1_GAP_LEDGER_2026-09-20.md)　[S2_PROBE2_AND_CEILING_2026-09-20.md](../../S2_PROBE2_AND_CEILING_2026-09-20.md)
-- 從證據文件掃到的 arm 字串（5 份文件）
+- **子目標**：—（未歸屬看板 15 格中的任何一格）
+- ⚠ 本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。
+- **逐條處置**：已定案（約束／基準）　—　IOCACHE 約束承認（＋段邊界 S2）：已承認的約束
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- IOCACHE 約束承認（＋段邊界 S2）：已承認的約束
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

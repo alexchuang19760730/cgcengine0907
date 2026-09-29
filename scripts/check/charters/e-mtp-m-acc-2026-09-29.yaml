@@ -1,0 +1,44 @@
+# 立項卡（2026-09-29，由 operator 的結案規則而生）：結案 = prod-new ＋ harness bench ＋ 達標
+id: e-mtp-m-acc
+owner: freebuff
+created: '2026-09-29'
+axis: M
+question: MTP 的 m（每 token 的驗證成本）能不能壓到 ≤0.30，讓 k→∞ 的 24.59 t/s 上限變成可攻目標？
+baseline:
+  metric: 『加速比 2』已判不成立（k 加到多大都不到 2×）；現況每產出 token 成本 45.6–56.4 vs baseline 48.2 ⇒ 攤薄 ≈ 0；caliper：同 launch ×1.06、生產 ×0.695（方向相反）
+  cell: prod25（MTP on）為主；交付口徑是 MTP off ⇒ 本卡只在 prod25 上回答 m 的結構
+  source: docs/MTP_CALIBER_REDEFINE_CHARTER_2026-09-28.md
+hypothesis:
+  mechanism: t/s(k) = 1000·mean_len(k)/(S0·(1+m·k))；m 的主項被記為 pool budget 與 verify 寬度 ⇒ 要攻的是 m，不是 2×。
+  expected: m ≤0.30（⇒ 上限 24.59 t/s）；不得再追 2×
+  basis: mtp-2x／mtp-caliper／exp-m-draft-cost 的節點判定
+acceptance:
+  success: m ≤0.30，且指名它的主項（draft 流量／verify 寬度／pool 預算）並量出該主項的邊際
+  falsify: 主項壓不下來 ⇒ M 軸在交付口徑無增益（維持 off）
+  on_fail: 維持 off；把 m 的結構寫清楚供產品決策引用
+targets:
+  decode_tps: 24.59
+  prefill_tps: 250.0
+subgoals:
+- id: sg-m-ident
+  text: m 的主項指名（誰在付）
+  expect: 主項 ＋ 量級
+  how: 同 launch 配對（caliper 已定：單點不可引用）
+- id: sg-m-target
+  text: m ≤0.30 的達成或否證
+  expect: m ≤0.30
+  how: prod25 成對；交付口徑另計
+arms:
+- prod25
+non_prod_reason: MTP 只存在於 prod25（交付口徑 MTP off）⇒ 這張卡問的是 M 軸的內部結構，只能在 prod25 上回答。
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L25-5 同步；勿手改，改看板）】──
+options:
+  subgoal: L25-5
+  profile: prod25
+  arms:
+    - "prod25"
+  knobs:
+    - {name: CGC_MTP_PERF, value: "1", role: instrument, why: "量 m 的儀器（ms_per_round 是累計均值，必須差分相鄰行）", source: "charters/e-mtp-m-acc arms[]；node mtp-2x／mtp-caliper"}
+    - {name: CGC_SERVER_MTP_N_MAX, value: "1", role: subject, why: "k 端點（配 --spec-draft-n-max 一起用；m 不得外推別的 k）", source: "docs/MTP_K_SWEEP_2026-09-22.md"}
+  note: "判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。"

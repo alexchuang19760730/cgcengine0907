@@ -28,14 +28,17 @@ E0 已給出決定性答案：前提成立——S1（暖池 8 GiB）輸出 文�
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new`　（profile `prod-new`；無自己的 option）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **儀器開關**（不是被測 option）：`CGC_DECODE_PROFILE=1`
-- **測試 log**：[nf_fill.json](../../../Backup/nofill_prod/nf_fill.json)　[summary.json](../../../Backup/eseries/E4/summary.json)
-- **證據報告**：[S1_ASYNC_GATHER_PIPELINE_2026-09-25.md](../../S1_ASYNC_GATHER_PIPELINE_2026-09-25.md)　[S1_ASYNC_GATHER_PIPELINE_2026-09-25.html](../../S1_ASYNC_GATHER_PIPELINE_2026-09-25.html)
-- 從證據文件掃到的 arm 字串（2 份文件）
+- **子目標**：`L20-6`　替代機制：非同步 fill ＋ 只補算
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **arm 1（可複製）**：`prod-new`
+- ⚠ **本格沒有旋鈕**：已結案（CLOSED — 不做）：收益 +2.6~4.6% < MDD 8.5%，且要動 M1/M2/M3 護欄 ⇒ 本格沒有要跑的臂，只留登記。
+- **結案狀態**：結案（排除）
+- **逐條處置**：整合進子目標　→ `L20-6`　—　異步 gather 流水線；L20-6 已排除，這條是它的機制紀錄
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 重開條件：盒子 ≥32 GB 且重測 fill ≥ 8.5% × step 預算（兩條同時）。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

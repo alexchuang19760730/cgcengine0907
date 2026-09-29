@@ -27,12 +27,18 @@ k 加到多大都不到 2×（server a/m=1.445、bench 0.982）；現況每產�
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_P_ROUTE=1`　（profile `prod-new`；被測 option：`CGC_P_ROUTE=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **證據報告**：[MTP_2X_BOUNDARY_2026-09-19.md](../../MTP_2X_BOUNDARY_2026-09-19.md)　[REUSE_DISTANCE_MTPON_CONFIRM_2026-09-20.md](../../REUSE_DISTANCE_MTPON_CONFIRM_2026-09-20.md)
-- 從證據文件掃到的 arm 字串（2 份文件）
+- **子目標**：`L25-5`　MTP 的產品化上限
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod25`
+- **被測 option**：`CGC_SERVER_MTP_N_MAX=1`
+- **儀器開關**（不是被測 option）：`CGC_MTP_PERF=1`
+- **arm 1（可複製）**：`prod25`
+- **結案狀態**：未結案（已判、未立新判準）
+- **逐條處置**：整合進子目標　→ `L25-5`　—　2× 邊界算術（S=(1+a·k)/(1+m·k)，上界 a/m）
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

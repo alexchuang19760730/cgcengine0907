@@ -1,0 +1,126 @@
+# 實驗立項卡：把「補齊」接上去 —— 單次提交臂的正確版（前半）
+#
+# ── 為什麼是這一張卡 ──────────────────────────────────────────────────────
+# 2026-09-28 的三組量測把「prod-new decode 20+」的問題重新定位了：
+#
+#   ① 語料庫裡所有 ≥20 的 prod-new 讀數都來自**單次提交臂**（`CGC_SEG_BATCH=1`），
+#      而該臂的錯在原始碼自陳：**routing is wrong, output is garbage, never a deliverable**
+#      （`llama-context.cpp:3720-3738`）。
+#   ② 該臂為什麼錯：它跳過每層 hook ⇒ decode 期**零 fill**（`gather (ensure) hits=0/0`），
+#      池凍結在 prefill 的內容上 ⇒ 提交時每步只有 **57.1%** 的被選中專家已駐留
+#      （未駐留 42.9%／41.8%，兩個 cell 一致）。
+#   ③ 而**逐步路由是一步級可預測的**：可用席位只有 **8**（≈ 上一步的路由）時，
+#      誠實臂的逐步駐留率是 **96.0%（預設 cell）／96.8%（交付 cell）**，把席位放大 18 倍
+#      到 143 只多 **0.3pp**。⇒ 缺的 39pp 不是「歷史不夠長」，是「**池沒有重定中心**」。
+#   ④ 那個「重定中心」的機器**已經在樹上**（`CGC_PREFETCH_SRC=prev|hist` 的滾動視窗 +
+#      非阻塞 `prefetch_slot`，`llama-context.cpp:2127-2260`），只是**它的餵料來自 hook**：
+#          `cache_step_union[(size_t) il] = uni;`   ← `llama-context.cpp:7866`，在每層 hook 裡
+#      單次提交臂跳過 hook ⇒ `cache_step_union` 永遠是空的 ⇒ **所有 prefetch 來源都拿到空集合**
+#      ⇒ 兩臂的 `prefetch=0/0` 是這個原因，不是沒有需求。
+#
+# ⇒ 本卡實作並量測前半：**不靠 hook，把每一步的 union 交給預取器**（來源用 mask 回讀，
+#   那條路本來就每步把 `cache_ids_cont_tensors[il]`（＝該層被選中的專家 id）讀回 host）。
+#   後半（那 ~3.2% 未駐留者的逐 (layer, expert) 重算）另立新卡，本卡不碰。
+#
+# ⚠ 本卡會動 `src/`（引擎）並重 build。已知協調成本：樹上 `src/` 另有他線未提交的改動，
+#   而**跨 build 的 A/B 無效**（G1b 文件已記）；因此本卡的產物必須記 build 指紋，
+#   且不得與舊 build 的數字直接比。
+
+id: exp-singlesubmit-fillahead
+owner: lineA
+created: 2026-09-28
+
+# ── 【目標】──
+question: |
+  在單次提交臂上，**把每一步的 union 不經 hook 交給預取器**（`cache_step_union` 改由
+  mask 回讀餵；`CGC_PREFETCH_SRC=hist` ＋ `CGC_PREFETCH_WINDOW=4` 開起來），
+  提交時「被選中但未駐留」的比例會不會從 **42.9% 降到 ~3% 這個量級**？
+
+  也就是：**單次提交臂的 39pp 缺口，是不是只由「餵料被 hook 綁住」造成的？**
+
+# ── 【現狀】今天量到的三個數（全部合規入口、同一天、同 build）──
+baseline:
+  metric: "單次提交臂提交時未駐留 42.9%（預設 cell）／41.8%（交付 cell）；誠實臂逐步駐留 96.3%（143 席位）、96.8%（交付 cell、8 席位）"
+  cell: "prod-new ＋ harness bench：預設 cell（p2048/b5632）與交付 cell（p0/b512/ctx4096）"
+  source: "Backup/g4miss_2026-09-28/ctl_segmented_default.json"
+  sources_extra: "Backup/g4miss_2026-09-28/g4miss2_default.json; Backup/g4miss_2026-09-28/g4miss_delivery.json; Backup/g4miss_2026-09-28/recency_usable8.json; Backup/g4miss_2026-09-28/recency_usable16.json; Backup/g4miss_2026-09-28/recency_usable64.json"
+  # ⚠ 其中兩筆（recency_usable8 / ctl_segmented_default）也是「交付 cell 的 143 席位」那筆的來源；
+  #   全部 t/s 一律 VOID（thermal worst HEAVY／attribution both|swap），本卡只引用計數器。
+
+# ── 【假設】──
+hypothesis:
+  mechanism: |
+    (a) **餵料被 hook 綁住**（可證）：`cache_step_union[il] = uni` 在 hook 內（`:7866`），
+        而 `CGC_SEG_BATCH=1` 跳過 hook ⇒ 預取器的三個來源（step/prev/hist）都拿到空集合。
+        證據：**兩臂的 `prefetch=0/0` 完全相同**（原始碼註解明說 `src=step` 時
+        「the hook just ensured (all resident) -> prefetch_slot drops everything」，
+        但單次提交臂是連 hook 都沒跑）。
+    (b) **補齊的資訊本來就在 host**：`CGC_MISS_MASK_DBG=1` 的回讀迴圈
+        （`:4011-4042`）每步把 `cache_ids_cont_tensors[il]`（該層被選中的 id）讀回 host 只為了
+        數 miss；同一份 `ibuf` 直接寫進 `cache_step_union[il]` 即可。
+    (c) **需求側的上界已知**：一步級可預測性 96.0–96.8% ⇒ 若預取器真的動起來、
+        且覆蓋到「上一步的 union」，則提交時未駐留應落到 **3–6%**（compulsory 那一側）。
+  expected: "未駐留 42.9% → **3–8%**（預設 cell）；`prefetch` 計數從 0/0 變成 N>0；輸出仍為 garbage（後半未做）"
+  basis: "src/llama.cpp/src/llama-context.cpp:2127-2260（prefetch 區塊）、:7863-7866（union 來源在 hook）、:4011-4042（mask 回讀已含 ids）；docs/PROD_NEW_DECODE20_G4MISS_2026-09-28.md §4.3-4.5"
+
+# ── 【驗收】跑之前就定好 ──
+acceptance:
+  success: |
+    ① **量具活著**：`prefetch=` 不再是 `0/0`（這是「治療真的執行了」的唯一閘；本 repo 已兩次
+       把「旗標在 env 裡」誤讀成「機制跑了」——`docs/F2_F5_OVERLAP_AND_AUDIT_RESULT_2026-09-20.md:33`）。
+    ② **缺口真的縮**：`CGC-MISSMASK-STEP` 的 `misses/nsel` 中位數從 42.9% 落到 **≤10%**
+       （依 (c) 預期 3–8%），且分布（四分位）一起報。
+    ③ **t/s 一律標 VOID**：本卡**不**驗收速率；輸出仍是 garbage（後半沒做），
+       任何 t/s 只能當作「上限探針」並明文標 VOID。
+  falsify: |
+    ① `prefetch` 仍是 `0/0`，或補完餵料後仍未駐留沒有下降 ⇒ **餵料不是瓶頸**，
+       那 39pp 另有來源（優先查 `prefetch_slot` 的丟棄計數與 LRU 受害者選擇）。
+    ② 未駐留下降但**輸出逐位惡化**（比對 `answer_md5` 或 native adapter 的參考集）⇒
+       補齊改變了正確性語意，必須先解釋再往下走。
+  on_fail: |
+    把「單次提交的正確版需要什麼」收斂成一條可判定條件，並把主力移回
+    「分段臂的 39 次提交／步」那一側（誠實臂的 8 ms/step fill 成本已量到，
+    其餘 ~78 ms 是每層提交的結構成本）。
+
+# ── 【量化目標】：這張卡服務的是 20 ──
+targets:
+  decode_tps: 20.0
+  prefill_tps: 250.0
+
+# ── 【技術子目標】──
+subgoals:
+  - id: sg-feed-union
+    text:   "把每步的 union 從 mask 回讀餵進 `cache_step_union`（不經 hook）"
+    expect: "單次提交臂上 `prefetch` 計數 N>0，且 `CGC-PREFETCH` 相關行出現"
+    how:    "改 `llama-context.cpp` 的回讀迴圈（`:4011-4042`）在數 miss 之外把 ids 組成集合寫入 union；`run_server.sh` 白名單補 `CGC_PREFETCH_SRC` 的轉發（3 行，仿 `CGC_PREFETCH_WINDOW` 的區塊）"
+  - id: sg-miss-drop
+    text:   "提交時未駐留比例的下降量"
+    expect: "42.9% → 3–8%（預設 cell）；交付 cell 同步量一次"
+    how:    "`CGC-MISSMASK-STEP misses=`／`nsel`，報四分位不是單點"
+  - id: sg-correctness-guard
+    text:   "確認補齊沒有把正確性語意改壞"
+    expect: "參考集逐位比對不劣化（本臂本來就是 garbage，所以比的是**與未補齊版的一致性**）"
+    how:    "同 prompt、同 seed 的 answer_md5 比對"
+  - id: sg-price-residual
+    text:   "把剩下的 3–8% 的價格寫出來（後半 G4 的規模）"
+    expect: "每步 ~10 個 (layer, expert) 的逐專家重算；給出提交時間預算表"
+    how:    "用 `CGC-MISSMASK-COST` 的 sync/read 拆解 + fill_wait/pread 的趟內增量"
+
+# ── 臂：只用 prod-new；B 臂 = A 臂 ＋ 預取來源 ──
+arms:
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_PREFETCH_SRC=hist;CGC_PREFETCH_WINDOW=4
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-5 同步；勿手改，改看板）】──
+options:
+  subgoal: L20-5
+  profile: prod-new
+  arms:
+    - "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1"
+    - "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_PREFETCH_SRC=hist;CGC_PREFETCH_WINDOW=4"
+  knobs:
+    - {name: CGC_SPAC_DBG, value: "1", role: subject, why: "餵料目前掛在 debug 之下 —— 本格就是要把它搬到不依賴 debug 的位置", source: "node exp-singlesubmit-fillahead 實跑 arm"}
+    - {name: CGC_PREFETCH_SRC, value: "hist", role: subject, why: "餵料來源（history 端）", source: "charters/exp-singlesubmit-fillahead arms[]"}
+    - {name: CGC_PREFETCH_WINDOW, value: "4", role: subject, why: "餵料視窗（步）", source: "同上"}
+  note: "驗收：不開 debug 仍要有 CGC-RB-FEED 且 prefetch > 0/0。"

@@ -1,0 +1,44 @@
+# 立項卡（2026-09-29，由 operator 的結案規則而生）：結案 = prod-new ＋ harness bench ＋ 達標
+id: e-fill-term-price
+owner: freebuff
+created: '2026-09-29'
+axis: S
+question: 進 48.2 + x 這個算式的那一個 x，是 1.60、3.955、5.41 還是 8.3 ms/step？
+baseline:
+  metric: 同一個 term、四個數字：1.60–3.20（B 的 op）／3.955（同步 fill）／5.41（誠實臂 p50）／8.3（IO 反解）
+  cell: prod-new 交付 cell（誠實臂：不凍結池、不關 leaf 觀察）
+  source: docs/ASYNCFILL_P2_ADJUDICATION_2026-09-29.md
+hypothesis:
+  mechanism: 四個數字量的是不同東西（同步成本／端到端 p50／IO 反解／替代方案的 op 成本）⇒ 只有一個能進天花板算式，其餘三個必須各被指名為「診斷價」。
+  expected: 把 5× 的口徑差收斂成一個數字 ± 不確定度（單一值，ms/step）
+  basis: §43 §四（一個 term、四個數字）
+acceptance:
+  success: 交付 cell 上指名一個數字 ＋ 不確定度，並列出其餘三個各是什麼口徑
+  falsify: 收斂不了 ⇒ 20+ 天花板維持為區間（不得寫成單一值）
+  on_fail: 維持區間並在卡片標明；不得用區間的上緣當預期
+targets:
+  decode_tps: 20.0
+  prefill_tps: 250.0
+subgoals:
+- id: sg-fill-pick
+  text: 指認哪一個數字可進算式
+  expect: 一個值 ± 不確定度
+  how: 四個來源的口徑逐條對照（唯讀）
+- id: sg-fill-price
+  text: 該數字在交付 cell 的可重複性
+  expect: CV ≤ 20%
+  how: 同 cell 多次成對
+arms:
+- prod-new
+- prod-new:CGC_EB_NOFILL=1
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-4 同步；勿手改，改看板）】──
+options:
+  subgoal: L20-4
+  profile: prod-new
+  arms:
+    - "prod-new:CGC_EB_NOFILL=1"
+  knobs:
+    - {name: CGC_EB_NOFILL, value: "1", role: subject, why: "關掉 fill 的診斷臂：fill 3.955 → 0.206 ms/step（−95%）", source: "docs/DIAGNOSTIC_ARMS_LEDGER_2026-09-25.md；node io-nofill"}
+    - {name: CGC_EB_TIMER, value: "1", role: instrument, why: "fill 計時；09-29 新增 seg= 欄位區分 prefill／decode", source: "docs/FILL_COST_MEASURED_2026-09-25.md；charters/e-fillbudget-m-decomp arms[]"}
+  note: "本格要的是「哪一個 term 進 48.2 + x」的算式與不確定度，不是提速。"

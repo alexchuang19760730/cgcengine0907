@@ -27,12 +27,19 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new`　（profile `prod-new`；無自己的 option）
-- **來源**：③ 證據文件掃描　·　置信度 `low`
-- **證據報告**：[H_MEASURED_2026-09-24.md](../../H_MEASURED_2026-09-24.md)　[H_MEASURED_A_VERDICT_2026-09-24.md](../../H_MEASURED_A_VERDICT_2026-09-24.md)　[PREBIND_SLOT_DESIGN_2026-09-23.md](../../PREBIND_SLOT_DESIGN_2026-09-23.md)　[PREBIND_STAGE0_RESULT_2026-09-23.md](../../PREBIND_STAGE0_RESULT_2026-09-23.md)
-- 證據文件裡只有出現 1 次的 option（—）⇒ 置信度壓到 low，需人工確認
+- **子目標**：`L20-7`　prefetch 的兩個前置分支
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **被測 option**：`CGC_RHO_PROBE=1`；`CGC_PREBIND_PROBE=1`
+- **儀器開關**（不是被測 option）：`CGC_PREBIND_PROBE_VERBOSE=1`；`CGC_RHO_PROBE_LATE=1`
+- **arm 1（可複製）**：`prod-new:CGC_RHO_PROBE=1`
+- **arm 2（可複製）**：`prod-new:CGC_PREBIND_PROBE=1`
+- **結案狀態**：未結案（有前置）
+- **逐條處置**：整合進子目標　→ `L20-7`　—　prebind／方案 A（預指派 slot）—— 另一條前置分支
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 前置題：先付 4.76 ms（藏掉或攤平）再談收益；前置成本 ≤ 收益且覆蓋不降才算過。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

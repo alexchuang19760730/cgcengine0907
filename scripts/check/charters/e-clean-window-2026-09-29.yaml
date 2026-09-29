@@ -1,0 +1,41 @@
+# 立項卡（2026-09-29，由 operator 的結案規則而生）：結案 = prod-new ＋ harness bench ＋ 達標
+id: e-clean-window
+owner: freebuff
+created: '2026-09-29'
+axis: na
+question: 交付 cell 能不能在 attribution=none ∧ thermal NOMINAL ∧ reps≥3 的窗口裡拿到一場可引用的成對錨點？
+baseline:
+  metric: §33–§46 全部 attribution=swap（連「有沒有推進」都答不出）；窗口紀律已建（BOX_ADMISSION_SINGLE_SOURCE ＋ SERVER_WINDOW_LEDGER）
+  cell: prod-new 交付 cell（唯一認可入口）
+  source: docs/MEASUREMENT_CONTRACT_2026-09-25.md
+hypothesis:
+  mechanism: 乾淨窗口不是優化，是量具：沒有它，任何新讀數都維持 VOID。它同時是唯一不需要新機制就能把「有沒有推進」變成可答的一格。
+  expected: 讓 36.80 ms／27.17 t/s 的 S1 臂在 attribution=none 下重現（若不重現，則維持 19.2 的天花板）
+  basis: §33–§46（全部 swap）＋ 契約 §5.1
+acceptance:
+  success: 一場可引用的成對錨點：attribution=none ∧ thermal NOMINAL ∧ warm_skip_applied=true ∧ reps≥3
+  falsify: 拿不到乾淨窗口 ⇒ 所有新讀數維持 VOID（本輪不得結案）
+  on_fail: 停止跑並回報盒子狀態（不降 NEED_MB、不換 cell）
+targets:
+  decode_tps: 25.0
+  prefill_tps: 250.0
+subgoals:
+- id: sg-win-sentinel
+  text: 啟動前窗口守門全過（thermal／swap／無殘留）
+  expect: NOMINAL ＋ swap 穩定
+  how: harness 的 sys_snapshot
+- id: sg-win-anchor
+  text: 交付錨點成對重跑
+  expect: 與 11.703 同帶（±0.8 t/s）
+  how: harness bench 的 rows＋attribution
+arms:
+- prod-new
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L25-3 同步；勿手改，改看板）】──
+options:
+  subgoal: L25-3
+  profile: prod-new
+  arms:
+    - "prod-new"
+  no_knob: "窗口條件不是旋鈕：attribution=none ∧ thermal NOMINAL ∧ reps≥3。CGC_WINDOW_OVERRIDE 是繞過閘門的開關，不能當本格的 option。"
+  note: "產物＝一場可引用的成對錨點（交付 cell、prod-new、harness bench）。"

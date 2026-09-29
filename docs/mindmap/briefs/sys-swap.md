@@ -27,12 +27,13 @@ launch swap 0、decode 11.49、thermal NOMINAL（commit efba7c1d5）
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_SERVER_MTP=1`　（profile `prod-new`；被測 option：`CGC_SERVER_MTP=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **證據報告**：[SWAP_STRUCTURAL_FIX_2026-09-24.md](../../SWAP_STRUCTURAL_FIX_2026-09-24.md)
-- 從證據文件掃到的 arm 字串（2 份文件）
+- **子目標**：—（未歸屬看板 15 格中的任何一格）
+- ⚠ 本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。
+- **逐條處置**：已定案（約束／基準）　—　swap 結構修復（L0–L4）：現在 launch swap 0 的來源
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- swap 結構修復（L0–L4）：現在 launch swap 0 的來源
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

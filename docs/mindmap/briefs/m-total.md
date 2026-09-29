@@ -27,13 +27,13 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new:CGC_LAYER_AHEAD_PREFETCH=1`　（profile `prod-new`；被測 option：`CGC_LAYER_AHEAD_PREFETCH=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **測試 log**：[nf2_fill.json](../../../Backup/nofill_prod/nf2_fill.json)　[nf_fill.json](../../../Backup/nofill_prod/nf_fill.json)　[mw_ctrl.json](../../../Backup/mw_ab/mw_ctrl.json)
-- **證據報告**：[MILESTONE_MAP_RECHECK_2026-09-25.md](../../MILESTONE_MAP_RECHECK_2026-09-25.md)
-- 從證據文件掃到的 arm 字串（1 份文件）
+- **子目標**：—（未歸屬看板 15 格中的任何一格）
+- ⚠ 本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。
+- **逐條處置**：已認證　→ `C1`　—　里程碑配對：prefill 這一半是 C1，decode 那一半（>12.57）未達 ⇒ 只認 C1
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 里程碑配對：prefill 這一半是 C1，decode 那一半（>12.57）未達 ⇒ 只認 C1
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

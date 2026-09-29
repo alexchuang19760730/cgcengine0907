@@ -1,0 +1,48 @@
+# 立項卡（2026-09-29，由 operator 的結案規則而生）：結案 = prod-new ＋ harness bench ＋ 達標
+id: e-prefetch-prereq
+owner: freebuff
+created: '2026-09-29'
+axis: S
+question: ρ 按層批次 prefetch 每步付的 4.76 ms GPU 插入成本，能不能被藏掉或攤平到收益以下？
+baseline:
+  metric: 判活但有前置：ρ 覆蓋 0.849、視窗 1.30–1.59 ms，每步付 4.76 ms GPU 插入；prebind qu2/qu3 全過、qu1 邊緣
+  cell: prod-new 交付 cell（若只能以探針驅動，需在卡片補 non_prod_reason）
+  source: docs/RHO_STAGE0_RESULT_2026-09-23.md
+hypothesis:
+  mechanism: prefetch 的收益是覆蓋率，成本是每步一次 GPU 插入；而交付 cell 每步的 union 已經 80 ms 級 ⇒ 若插入能被 CPU 提前發出（與 GPU 工作重疊），成本就只值它的邊際。
+  expected: 前置 4.76 ms/step 必須先被壓到 ≤ 收益；若壓不下來 ⇒ 判活但不可用（本卡不主張 t/s）
+  basis: cache-rho／cache-prebind 節點（S 軸，同價不可相加）
+acceptance:
+  success: 前置成本 ≤ 收益，且 prefetch 覆蓋不降（ρ 覆蓋 ≥ 0.849）
+  falsify: 前置壓不下來 ⇒ 判活但不可用（節點維持 no_throughput_claim）
+  on_fail: 不硬做；把 4.76 ms 的來源寫清楚，交回主線決定是否放棄這條
+targets:
+  decode_tps: 20.0
+  prefill_tps: 250.0
+subgoals:
+- id: sg-pre-cost
+  text: 4.76 ms/step 的組成指名（誰在等誰）
+  expect: 逐項加總 = 4.76 ± 噪音
+  how: 同 cell 開／關 prefetch 的配對（prod-new ＋ harness bench）
+- id: sg-pre-hide
+  text: 插入成本能否被 GPU busy 覆蓋
+  expect: 前置 ≤ 收益
+  how: 配對 step 與 union
+arms:
+- prod-new
+- prod-new:CGC_RHO_PROBE=1
+- prod-new:CGC_PREBIND_PROBE=1
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-7 同步；勿手改，改看板）】──
+options:
+  subgoal: L20-7
+  profile: prod-new
+  arms:
+    - "prod-new:CGC_RHO_PROBE=1"
+    - "prod-new:CGC_PREBIND_PROBE=1"
+  knobs:
+    - {name: CGC_RHO_PROBE, value: "1", role: subject, why: "ρ 路線：按層批次化 prefetch（覆蓋 0.849、每步付 4.76 ms GPU 插入）", source: "docs/RHO_STAGE0_RESULT_2026-09-23.md；node cache-rho"}
+    - {name: CGC_PREBIND_PROBE, value: "1", role: subject, why: "prebind／方案 A：預指派 slot", source: "docs/PREBIND_STAGE0_SPEC_2026-09-23.md；node cache-prebind"}
+    - {name: CGC_PREBIND_PROBE_VERBOSE, value: "1", role: instrument, why: "prebind 逐筆明細", source: "同上"}
+    - {name: CGC_RHO_PROBE_LATE, value: "1", role: instrument, why: "ρ 的晚探針變體", source: "docs/RHO_STAGE0_RESULT_2026-09-23.md"}
+  note: "前置題：先付 4.76 ms（藏掉或攤平）再談收益；前置成本 ≤ 收益且覆蓋不降才算過。"

@@ -27,13 +27,19 @@ step ≈ 14.61 + 42.03·T（max resid 11.5）；最佳 k=2 但那格不可移植
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod25:CGC_NO_PREFETCH=1`　（profile `prod25`；被測 option：`CGC_NO_PREFETCH=1`）
-- **來源**：③ 證據文件掃描　·　置信度 `med`
-- **測試 log**：[pool_budget_runs_20260918_2251.json](../../../Backup/phase_decomp/pool_budget_runs_20260918_2251.json)　[s1_ksweep.json](../../../Backup/s1_ksweep/20260924_225548/s1_ksweep.json)
-- **證據報告**：[BIGMOMO_TRANSFER_AND_MTP_PARAM_PARITY_2026-09-19.md](../../BIGMOMO_TRANSFER_AND_MTP_PARAM_PARITY_2026-09-19.md)　[MTP_K_SWEEP_2026-09-22.md](../../MTP_K_SWEEP_2026-09-22.md)　[MTP_VERIFY_HEADROOM_2026-09-24.md](../../MTP_VERIFY_HEADROOM_2026-09-24.md)　[MTP_VERIFY_SPLIT_2026-09-19.md](../../MTP_VERIFY_SPLIT_2026-09-19.md)
-- 從證據文件掃到的 arm 字串（5 份文件）
+- **子目標**：`L25-4`　MTP（C6）：唯一「乘」的軸
+- **來源**：子目標看板（唯一來源）　·　置信度 `high`
+- **profile**：`prod-new`
+- **被測 option**：`CGC_SERVER_MTP=1`；`CGC_SERVER_LAYER_CAPS=40-40:16`；`CGC_DRAFT_CTX_ALIGN=1`；`CGC_DRAFT_SMALL_BATCH=1`
+- **儀器開關**（不是被測 option）：`CGC_MTP_PERF=1`
+- **CLI**：`--spec-type draft-mtp`；`--spec-draft-n-max 1`
+- **arm 1（可複製）**：`prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1`
+- **結案狀態**：未結案（待產品決策）
+- **逐條處置**：整合進子目標　→ `L25-4`　—　k-sweep（verify batch T 成本曲線）：k 端點包夾的來源
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- ⛔ 必帶 --spec-draft-n-max 1：沒帶就是 k_eff≈2.33 必 thrash。且 MTP on/off 是不同輸出函數 ⇒ t/s 不可互比。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

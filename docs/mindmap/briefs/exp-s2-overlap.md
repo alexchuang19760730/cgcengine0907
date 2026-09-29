@@ -27,13 +27,13 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod25:CGC_SLOT_TABLE_GPU=1`　（profile `prod25`；被測 option：`CGC_SLOT_TABLE_GPU=1`）
-- **來源**：② charter arms[]　·　置信度 `high`
-- **測試 log**：[f1_cb_miss_regression_report.json](../../../Backup/cgc_logs/f1_cb_miss_regression_report.json)　[s2a_policy_census.json](../../../Backup/phase_decomp/s2a_policy_census.json)
-- **證據報告**：[S2_PROBE2_AND_CEILING_2026-09-20.md](../../S2_PROBE2_AND_CEILING_2026-09-20.md)
-- 取自 `scripts/check/charters/exp-s2-overlap.yaml` 的 `arms[]`（取有 option 的那一臂；對照臂是裸 profile）
+- **子目標**：—（未歸屬看板 15 格中的任何一格）
+- ⚠ 本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。
+- **逐條處置**：已定案（約束／基準）　—　S2 段邊界免等：已結（FAIL 附機制，殘項是 Metal 側延遲）
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- S2 段邊界免等：已結（FAIL 附機制，殘項是 Metal 側延遲）
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

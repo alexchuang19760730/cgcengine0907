@@ -25,12 +25,13 @@
 
 ---
 
-## 5. Profile 綁定與測試 Log 報告
+## 5. 子目標綁定 · options · 測試 Log 報告
 
-- **arm**：`prod-new`　（profile `prod-new`；無自己的 option）
-- **來源**：⑤ 非實驗結論　·　置信度 `n/a`
-- **證據報告**：[DIAGNOSTIC_ARMS_LEDGER_2026-09-25.md](../../DIAGNOSTIC_ARMS_LEDGER_2026-09-25.md)　[ENGINE_LINE_ASSIGNMENT_AND_G1_LADDERS_2026-09-20.md](../../ENGINE_LINE_ASSIGNMENT_AND_G1_LADDERS_2026-09-20.md)　[LATEST_COMMIT_GAP_ANALYSIS_2026-09-15.md](../../LATEST_COMMIT_GAP_ANALYSIS_2026-09-15.md)　[MILESTONE_MAP_2026-09-21.md](../../MILESTONE_MAP_2026-09-21.md)
-- 非實驗結論（約束／帳本／上界算術／入口索引／跨線）⇒ 無待測 option；其數字全部來自 prod-new 預設臂
+- **子目標**：—（未歸屬看板 15 格中的任何一格）
+- ⚠ 本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。
+- **逐條處置**：作廢／判死／歷史　—　非實驗：入口／索引／決策頁
+- **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
+- 非實驗：入口／索引／決策頁
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

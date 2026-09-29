@@ -69,29 +69,30 @@
       "note": "達標但 decode 未超越 12.57 ⇒ 只能 ②",
       "sub": "na",
       "goal": "把 <b>prefill 推到 ≥250 t/s</b>——「250 / 25」裡的 250 那一半，且要在<b>交付 cell</b> 上成立（不是降級視窗的峰值）。",
-      "arm_binding": {
-        "arm": "prefill250:CGC_PREFILL_PROTECT=1",
-        "profile": "prefill250",
-        "options": [
-          "CGC_PREFILL_PROTECT=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（19 份文件）",
-        "logs": [
-          "Backup/llama_bench/prefill_certifiability_20260916.json",
-          "Backup/llama_bench/prefill_certifiability_warm_20260916.json",
-          "Backup/cgc_logs/powermetrics_parse_145506.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/PREFILL250_CONDITIONAL_DELIVERY_20260916.md",
-          "docs/PREFILL250_CONDITIONAL_DELIVERY_20260916.html",
-          "docs/PREFILL250_DECODE25_VERDICT_2026-09-20.md",
-          "docs/PREFILL250_MET_AND_S1_REJUDGE_2026-09-24.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "prefill ≥250 的那個里程碑本體；9 次 launch ≥250、最高 296.24",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "certified",
+          "ref": "C1",
+          "why": "prefill ≥250 的那個里程碑本體；9 次 launch ≥250、最高 296.24"
+        }
+      ]
     },
     {
       "id": "m-total",
@@ -105,26 +106,30 @@
       "note": "目前無任何一格是 ①。結案規則（09-29）下它需要 **prod-new ＋ harness bench** 的同場成對（pp 與 tg 同 cell），而現有最接近的一場是不同日比較 ⇒ 仍未結案。 **§50（09-29）**：decode ≥25 那一側的判詞已由「判死」改記「**未判定**」（margin 0.6–2.2 ms，邊界是 B 半補丁）⇒ ① 仍然空著，但它現在等的是**一個乾淨窗口**加上那一支補丁，而不是「新的軸」。",
       "sub": "na",
       "goal": "同一次量測裡<b>同時</b>達成 prefill ≥250 與 decode >12.57 t/s——只有這樣才算「① 攻關成功」。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_LAYER_AHEAD_PREFETCH=1",
-        "profile": "prod-new",
-        "options": [
-          "CGC_LAYER_AHEAD_PREFETCH=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（1 份文件）",
-        "logs": [
-          "Backup/nofill_prod/nf2_fill.json",
-          "Backup/nofill_prod/nf_fill.json",
-          "Backup/mw_ab/mw_ctrl.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/MILESTONE_MAP_RECHECK_2026-09-25.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "里程碑配對：prefill 這一半是 C1，decode 那一半（>12.57）未達 ⇒ 只認 C1",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "certified",
+          "ref": "C1",
+          "why": "里程碑配對：prefill 這一半是 C1，decode 那一半（>12.57）未達 ⇒ 只認 C1"
+        }
+      ]
     },
     {
       "id": "m-decode25",
@@ -132,7 +137,7 @@
       "theme": "交付里程碑",
       "tier": "4",
       "crit": "25 ⇔ 40.0 ms/token",
-      "res": "**判詞改記「未判定」（2026-09-29 §50 更正 §41）**：可交付 = **11.703 t/s ＝ 85.45 ms**（到 40.0 缺 45.45 ms）。§41 原本把越線的三格綁成同一個機制（無 fill、池凍結、41.8%），**但那一格是錯的**：27.17／24.88 確實是**池凍結**；而 **25.64 t/s ＝ 39.0 ms（`fillahead` A 半）的池是活的**——`prefetch=2854/0`、`feeds=1560`、`CGC-RB-FEED` 有印、**`file_reads>0`**、miss **42.9% → 6.1%**（P0 五項驗收全過），且 **6.1% 已過 G4 的 ≤25% 閘**。它缺的不是填池，是**沒重算**（≈19 個 (layer,expert)/步）。⇒ 修正後的算式：`39.0 ms ＋ B 半重算 1.60–3.20 ms（§35 已定價）＝ 40.6–42.2 ms ＝ 23.7–24.6 t/s` ⇒ **差 0.6–2.2 ms 到 40.0**；**邊界就是 B 半那一支補丁**（靜態 `ggml_acc` 累加器／`e-b-accpatch-feasibility`），不是別的塊。而這個 margin 落在本文件已量到的窗口／底漂移（§49：同日控制臂 88.29 vs 認證 85.45 ＝ +3.3%）之內，也小於節點 `exp-caliber-calibration` 記的 **16.4% 未認證飄移** ⇒ 依 §39 §三，**25 應記為「未判定」而非「判死」**。舊行「交付 12.57＝79.6 ms ⇒ 要砍 49.6%」**仍作廢**（12.57 是 MTP-on 口徑）。從未量過的交叉格：**`fillahead` × 交付 cell**（§0 自記「交付 cell 同一個量測尚未跑完」）——它決定 39.0 是 39.0 還是 36.8 那一側。 **§51（09-29，唯讀尖兵）撤回 §50 的復活路**：B 補丁的價目**定錯了對象**——被定價的是**散佈**（320 op × 5–10 µs，且那個單價在自己文件裡標明是**推算**），**沒被定價的是「把 320 列備援專家算出來」**：靜態寬度被**正確性**逼成 `k=8`（一層的 8 個選取可能全數不在池）⇒ 每步**一定**計算 `40×8=320` 列 ⇒ 依**同儀器實測**（T=1 MoE 家族 **8.09 ms/步**）＝**再跑一次完整 MoE** ⇒ 合計 `+9.7~13.8 ms`，而它要取代的 fill 只有 **3.955** ⇒ **淨回收 −5.7 ~ −9.9 ms（負）**。⇒ `39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms ＝ 18.9–20.5 t/s` ⇒ **§50 的「未判定」撤回，decode ≥25 在已知軸上回到「判死」**（依據是**實測單價 × 靜態寬度的結構限制**，不是假設）。唯一未動的是 **L25-1（第六條軸）**。**唯一還可能救 B 的量**＝「一層最多錯幾個」（逐層 miss 直方圖）：若 ≤2 則 k=2 ⇒ 重算降到 1.0–2.0 ms ⇒ B 復活；而那個量**樹上沒有**（權威產物只有逐步總量與「有 miss 的層數」）⇒ 缺的是**一行儀器**，不是 300 行補丁。",
+      "res": "**判詞改記「未判定」（2026-09-29 §50 更正 §41）**：可交付 = **11.703 t/s ＝ 85.45 ms**（到 40.0 缺 45.45 ms）。§41 原本把越線的三格綁成同一個機制（無 fill、池凍結、41.8%），**但那一格是錯的**：27.17／24.88 確實是**池凍結**；而 **25.64 t/s ＝ 39.0 ms（`fillahead` A 半）的池是活的**——`prefetch=2854/0`、`feeds=1560`、`CGC-RB-FEED` 有印、**`file_reads>0`**、miss **42.9% → 6.1%**（P0 五項驗收全過），且 **6.1% 已過 G4 的 ≤25% 閘**。它缺的不是填池，是**沒重算**（≈19 個 (layer,expert)/步）。⇒ 修正後的算式：`39.0 ms ＋ B 半重算 1.60–3.20 ms（§35 已定價）＝ 40.6–42.2 ms ＝ 23.7–24.6 t/s` ⇒ **差 0.6–2.2 ms 到 40.0**；**邊界就是 B 半那一支補丁**（靜態 `ggml_acc` 累加器／`e-b-accpatch-feasibility`），不是別的塊。而這個 margin 落在本文件已量到的窗口／底漂移（§49：同日控制臂 88.29 vs 認證 85.45 ＝ +3.3%）之內，也小於節點 `exp-caliber-calibration` 記的 **16.4% 未認證飄移** ⇒ 依 §39 §三，**25 應記為「未判定」而非「判死」**。舊行「交付 12.57＝79.6 ms ⇒ 要砍 49.6%」**仍作廢**（12.57 是 MTP-on 口徑）。從未量過的交叉格：**`fillahead` × 交付 cell**（§0 自記「交付 cell 同一個量測尚未跑完」）——它決定 39.0 是 39.0 還是 36.8 那一側。 **§51（09-29，唯讀尖兵）撤回 §50 的復活路**：B 補丁的價目**定錯了對象**——被定價的是**散佈**（320 op × 5–10 µs，且那個單價在自己文件裡標明是**推算**），**沒被定價的是「把 320 列備援專家算出來」**：靜態寬度被**正確性**逼成 `k=8`（一層的 8 個選取可能全數不在池）⇒ 每步**一定**計算 `40×8=320` 列 ⇒ 依**同儀器實測**（T=1 MoE 家族 **8.09 ms/步**）＝**再跑一次完整 MoE** ⇒ 合計 `+9.7~13.8 ms`，而它要取代的 fill 只有 **3.955** ⇒ **淨回收 −5.7 ~ −9.9 ms（負）**。⇒ `39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms ＝ 18.9–20.5 t/s` ⇒ **§50 的「未判定」撤回，decode ≥25 在已知軸上回到「判死」**（依據是**實測單價 × 靜態寬度的結構限制**，不是假設）。唯一未動的是 **L25-1（第六條軸）**。**唯一還可能救 B 的量**＝「一層最多錯幾個」（逐層 miss 直方圖）：若 ≤2 則 k=2 ⇒ 重算降到 1.0–2.0 ms ⇒ B 復活；而那個量**樹上沒有**（權威產物只有逐步總量與「有 miss 的層數」）⇒ 缺的是**一行儀器**，不是 300 行補丁。 **§52（09-29）底座更正**：交付 cell、**池活著**（`instrument=BOUND`）的 fillahead step 實測 **37.81 ms（26.45 t/s）**⇒ §51 的算式底座由 39.0 換成 37.81：`37.81 ＋ 9.7~13.8 ＝ 47.5–51.6 ms ＝ 19.4–21.1 t/s` ⇒ **仍差 7.5–11.6 ms 到 40.0**（判死成立）。兩臂皆 `swap` ⇒ 37.81 **不可引用**，只作同窗口診斷。",
       "evid": "DECODE25_FINAL_VERDICT_2026-09-21／DECODE_25TPS_VERDICT_2026-09-23／docs/IO_AXIS_VERDICT_2026-09-25.md",
       "docs": [
         "DECODE25_*",
@@ -149,29 +154,34 @@
       "sub": "both",
       "goal": "把 <b>decode 端到端推到 ≥25 t/s</b>（「250 / 25」裡的 25 那一半）。",
       "no_throughput_claim": "里程碑（tier 4）節點：res 裡的 11.703／27.17／25.64／36.33／39.0 全部是**轉引**（錨點、錯輸出臂、fillahead 臂），本節點不主張任何吞吐。**判詞變更是結構判定與算術更正（§50），不是新的量測**。",
-      "arm_binding": {
-        "arm": "prefill250:CGC_SERVER_EXPERT_CACHE_BYTES=8589934592",
-        "profile": "prefill250",
-        "options": [
-          "CGC_SERVER_EXPERT_CACHE_BYTES=8589934592"
+      "subgoal_binding": {
+        "subgoal": "L25-1",
+        "title": "第六條軸：改「每 token 的 bytes 或 steps」",
+        "layer": "L25",
+        "profile": "prod-new",
+        "arm_strings": [
+          "prod-new"
         ],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（16 份文件）",
-        "logs": [
-          "Backup/cgc_logs/joint_step_accept_g6.json",
-          "Backup/phase_decomp/io_granularity_20260921_020826.json",
-          "Backup/phase_decomp/joint_capture_20260920_2144.json"
+        "candidates": [],
+        "cli": [],
+        "no_knob": "新軸尚未命名：本格要問的是「每 token 的 bytes 或 steps 有沒有可改的乘數」⇒ 仍在立卡階段，沒有既有旋鈕可綁。",
+        "note": "驗收：需要一個新乘數，≤ 40.0 ms 且 M1 bit-identical。",
+        "state": "未結案（本輪立項）",
+        "also": [
+          "L25-2"
         ],
-        "logs_missing": [],
-        "reports": [
-          "docs/CEILING_STACK_2026-09-21.md",
-          "docs/CROSS_LINE_STATUS_AND_TARGET_MATH_2026-09-20.md",
-          "docs/DECODE25_CEILING_2026-09-20.md",
-          "docs/DECODE25_FINAL_VERDICT_2026-09-21.md"
-        ]
-      }
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-1",
+          "why": "decode ≥25 的主節點（tier 4）；§51 之後由 L25-1 決定它是否還有路"
+        }
+      ]
     },
     {
       "id": "io-poolsize",
@@ -188,25 +198,30 @@
       "sub": "S",
       "goal": "掃描 expert cache 池大小（8 → 4 → 2 GiB），量出<b>池容量對 decode 的敏感度</b>，判斷「加大池」能不能換到吞吐。",
       "no_throughput_claim": "本節點只記**判定**：res 裡的 10.74／8.43／9.21／7.08 全是**轉引** 2026-09-23 的 prod25＋decode_sweep 產物（另一條儀器、另一個 profile），本節點不主張吞吐。",
-      "arm_binding": {
-        "arm": "prod25:CGC_SERVER_EXPERT_CACHE_BYTES=0",
-        "profile": "prod25",
-        "options": [
-          "CGC_SERVER_EXPERT_CACHE_BYTES=0"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（2 份文件）",
-        "logs": [
-          "Backup/cache_size_ab/ds_346A.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/IO_PATH_AB_2026-09-21.md",
-          "docs/CACHE_SIZE_AB_2026-09-23.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "池大小已仲裁：8 GiB 定案，3／4 GiB 不可選（衝突是儀器造成的）",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "池大小已仲裁：8 GiB 定案，3／4 GiB 不可選（衝突是儀器造成的）"
+        }
+      ]
     },
     {
       "id": "io-shape",
@@ -223,27 +238,30 @@
       "note": "收益 ~2.9% < 3% 門檻 ⇒ 不值得 rebuild",
       "sub": "S",
       "goal": "改變 <b>IO 請求形狀</b>（合併 pread、加大 span、batching），用更少次 syscall 換同樣的 bytes，看 decode 是否受益。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_SPAC=0",
-        "profile": "prod-new",
-        "options": [
-          "CGC_SPAC=0"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（3 份文件）",
-        "logs": [
-          "Backup/phase_decomp/ab_nospac_prodnew.json",
-          "Backup/nofill_prod/nf_fill.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/EXPERT_CHANNEL_SHAPE_2026-09-23.md",
-          "docs/EXPERT_IO_SHAPE_FIRST_PRINCIPLES_2026-09-23.md",
-          "docs/IO_AXIS_VERDICT_2026-09-25.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "判死：IO 請求形狀（合併 pread）",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "判死：IO 請求形狀（合併 pread）"
+        }
+      ]
     },
     {
       "id": "io-mw",
@@ -259,26 +277,30 @@
       "note": "09-21 舊判 ≈+1.7% 亦在門檻下",
       "sub": "S",
       "goal": "把填池 <b>worker 數從 8 降到 2</b>（M-W），減少並發爭用與上下文切換，看 decode 是否淨得。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_SERVER_WORKERS=8",
-        "profile": "prod-new",
-        "options": [
-          "CGC_SERVER_WORKERS=8"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（2 份文件）",
-        "logs": [
-          "Backup/mw_ab/mw_ctrl.json",
-          "Backup/mw_ab/mw_w2.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/M_W_DELIVERY_VERDICT_2026-09-21.md",
-          "docs/MW_WORKERS_VERDICT_2026-09-25.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "判死：WORKERS 8→2",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "判死：WORKERS 8→2"
+        }
+      ]
     },
     {
       "id": "io-layer-ahead",
@@ -292,25 +314,30 @@
       "note": "天花板寫在 llama-context.cpp:7244-7246（drain_layer 會 DROP）",
       "sub": "S",
       "goal": "用 <code>CGC_LAYER_AHEAD_PREFETCH=1</code> <b>提前一層</b>發出下一層 expert 的預取，把填池延遲藏到計算後面。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_LAYER_AHEAD_PREFETCH=1",
-        "profile": "prod-new",
-        "options": [
-          "CGC_LAYER_AHEAD_PREFETCH=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（1 份文件）",
-        "logs": [
-          "Backup/layer_ahead/a4_ctrl.json",
-          "Backup/layer_ahead/a3_la.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "Backup/layer_ahead/VERDICT_layer_ahead_2026-09-25.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "判死：CGC_LAYER_AHEAD_PREFETCH（提前一層）",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "判死：CGC_LAYER_AHEAD_PREFETCH（提前一層）"
+        }
+      ]
     },
     {
       "id": "io-mpf",
@@ -326,22 +353,30 @@
       "note": "",
       "sub": "S",
       "goal": "做<b>背景 neighbour prefetch</b>（M-PF），讓填池完全離開關鍵路徑，不再以同步等待的形式出現在 step 裡。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_PREFILL_STREAM=1",
-        "profile": "prod-new",
-        "options": [
-          "CGC_PREFILL_STREAM=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（1 份文件）",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/NEIGHBOUR_PREFETCH_VERDICT_2026-09-21.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "判死：M-PF 背景 neighbour prefetch",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "判死：M-PF 背景 neighbour prefetch"
+        }
+      ]
     },
     {
       "id": "io-nofill",
@@ -357,24 +392,36 @@
       "note": "端到端 reps=3 仍缺（nofill 臂曾被看門狗 SIGTERM）。**3.955／1.60–3.20／5.41／8.3 的 5× 口徑差已立項**（`e-fill-term-price-2026-09-29.yaml`，targets 20.0）：不收斂成一個數 ⇒ 20+ 天花板只能寫成區間。",
       "sub": "S",
       "goal": "<b>診斷臂</b>：用 <code>CGC_EB_NOFILL</code> 把填池關掉，量出「fill 在一個 decode step 裡到底佔多少」。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_PREFILL_STREAM=1",
+      "subgoal_binding": {
+        "subgoal": "L20-4",
+        "title": "fill 那一個 term 的定價",
+        "layer": "L20",
         "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_EB_NOFILL=1"
+        ],
         "options": [
-          "CGC_PREFILL_STREAM=1"
+          "CGC_EB_NOFILL=1"
         ],
-        "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（1 份文件）",
-        "logs": [
-          "Backup/nofill_prod/nf_fill.json"
+        "instruments": [
+          "CGC_EB_TIMER=1"
         ],
-        "logs_missing": [],
-        "reports": [
-          "docs/IO_AXIS_VERDICT_2026-09-25.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "本格要的是「哪一個 term 進 48.2 + x」的算式與不確定度，不是提速。",
+        "state": "未結案（數字齊、口徑未裁）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-4",
+          "why": "CGC_EB_NOFILL 診斷臂：fill 那一個 term 的定價就靠它（3.955→0.206 ms/step）"
+        }
+      ]
     },
     {
       "id": "s1-probe",
@@ -395,22 +442,37 @@
       "note": "★ 本臂不可報吞吐（同節寫明「速度：無主張」）",
       "sub": "S",
       "goal": "把 <b>slot table 放上 GPU</b>（<code>CGC_SLOT_TABLE_GPU</code>），證明單段提交的查表與 host 版<b>逐位相同</b>（數值身分）。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_MM_BITIDENT=1",
+      "subgoal_binding": {
+        "subgoal": "L20-2",
+        "title": "武裝 G3（CGC_ZERO_SLOT）",
+        "layer": "L20",
         "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1",
+          "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1"
+        ],
         "options": [
-          "CGC_MM_BITIDENT=1"
+          "CGC_ZERO_SLOT=1",
+          "CGC_SEG_BATCH=1",
+          "CGC_SLOT_TABLE_GPU=1"
         ],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（7 份文件）",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/S1_LINE_VERDICT_2026-09-25.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "A/B 兩臂只差 CGC_ZERO_SLOT，不動 src/；2 趟，主端點是計數器不是 t/s。",
+        "state": "未結案（卡已立、未跑）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-2",
+          "why": "slot table 放 GPU 的數值身分（576/576）：讓 leaf 被建的前置，G3 的最小武裝就是它"
+        }
+      ]
     },
     {
       "id": "s1-segbatch",
@@ -418,7 +480,7 @@
       "theme": "S1／段邊界",
       "tier": "3a",
       "crit": "同 build 同 cell 同 pool，兩臂皆無 spec（無驗收門檻）",
-      "res": "判詞：41 段→1 段的 A/B **作廢**（兩端都不可引用）。本節點不主張吞吐。**補（09-29）**：它的**可交付上界**＝序列化 − 必須還回去的 fill ⇒ **19.2–24.5 t/s**（底未裁：預設 cell 的 S1 step 同場讀 **49.18**，交付 cell 讀 **36.80**，差 12.4 ms；兩者只在同一組開關下才可比）。**09-29 21:3x 成對實測（交付 cell、(default)、MTP off、warm_skip 64、未開 `_DBG`/`_COST`）**：S1 **36.33 ms（27.526±0.228 t/s）** vs 控制 **88.29 ms（11.327±0.349）** ⇒ **36.80 ms 那一側重現**（差 0.5 ms），而舊的「49.18」是**不同 cell** 的另一支。⚠ 兩臂皆 `attribution=swap`（+851／+1768 MiB）⇒ 這些 t/s **不可引用**。 **§50**：越線且**池活著**的一格屬於 `fillahead` 族（39.0 ms），不是本節點（本節點是凍結簽名）；依 §50，decode ≥25 的判詞已由「判死」改記「**未判定**」，剩下的 **0.6–2.2 ms** 是 **B 半重算補丁**的邊界。",
+      "res": "判詞：41 段→1 段的 A/B **作廢**（兩端都不可引用）。本節點不主張吞吐。**補（09-29）**：它的**可交付上界**＝序列化 − 必須還回去的 fill ⇒ **19.2–24.5 t/s**（底未裁：預設 cell 的 S1 step 同場讀 **49.18**，交付 cell 讀 **36.80**，差 12.4 ms；兩者只在同一組開關下才可比）。**09-29 21:3x 成對實測（交付 cell、(default)、MTP off、warm_skip 64、未開 `_DBG`/`_COST`）**：S1 **36.33 ms（27.526±0.228 t/s）** vs 控制 **88.29 ms（11.327±0.349）** ⇒ **36.80 ms 那一側重現**（差 0.5 ms），而舊的「49.18」是**不同 cell** 的另一支。⚠ 兩臂皆 `attribution=swap`（+851／+1768 MiB）⇒ 這些 t/s **不可引用**。 **§50**：越線且**池活著**的一格屬於 `fillahead` 族（39.0 ms），不是本節點（本節點是凍結簽名）；依 §50，decode ≥25 的判詞已由「判死」改記「**未判定**」，剩下的 **0.6–2.2 ms** 是 **B 半重算補丁**的邊界。 **§52（09-29）**：同族的 **fillahead** 臂在**交付 cell** 上實測 **37.81 ms（26.45 t/s）**、`instrument_gate=BOUND`（池真的在餵）⇒ 交付 cell 的底座應記 **37.81**，而 §43 用的 39.0 是**預設 cell**。",
       "evid": "Backup/seg_batch_s1_pairs/abba_212809.json／docs/S1_LINE_VERDICT_2026-09-25.md",
       "docs": [
         "S1_FRONTIER_*",
@@ -433,28 +495,40 @@
       "sub": "S",
       "goal": "把 <b>41 段提交合成 1 段</b>（<code>CGC_SEG_BATCH</code>＋<code>CGC_B_SCHEME</code>），消掉段與段之間的同步與序列化開銷。",
       "no_throughput_claim": "① 入口：該 A/B 是 2026-09-24 的 matrix 直跑，而 `CGC_SEG_BATCH`／`CGC_B_SCHEME` **09-25** 才進 launcher 白名單 ⇒ 不可能是 `harness bench` 的產物（§5.0）。② 出處對不上：`Backup/seg_batch_s1_pairs/` 的 A/B 是 12.20／11.96／9.32／11.71 → 22.22／20.30／20.06／20.33，而舊 res 寫的 11.30 → 20.73 **在該目錄找不到對應產物**。③ 歸因：B 臂 `attribution=thermal`（HEAVY、`max_llama_procs=3` ⇒ 當時有其他 llama 行程）⇒ 22.22 那一族在 §5.1 下同樣不可引用。④ 該臂無 hook ⇒ 無 demand fill ⇒ 正確性未證。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_S1_TABLE_CHURN=1",
+      "subgoal_binding": {
+        "subgoal": "L20-1",
+        "title": "底（S1 的 step）校準",
+        "layer": "L20",
         "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1"
+        ],
         "options": [
-          "CGC_S1_TABLE_CHURN=1"
+          "CGC_SEG_BATCH=1",
+          "CGC_B_SCHEME=1",
+          "CGC_SLOT_TABLE_GPU=1"
         ],
-        "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（8 份文件）",
-        "logs": [
-          "Backup/m123_oracle_gate/summary_s1-nodbg.json",
-          "Backup/m123_oracle_gate/summary_s1-dbg-fixed2.json",
-          "Backup/m123_oracle_gate/summary_s1-postfix.json"
+        "instruments": [
+          "CGC_MISS_MASK=1",
+          "CGC_MISS_MASK_DBG=1",
+          "CGC_MISS_MASK_COST=1"
         ],
-        "logs_missing": [],
-        "reports": [
-          "docs/S1_DIAGNOSTIC_ABORT_ROOT_CAUSE_2026-09-20.md",
-          "docs/S1_FRONTIER_2026-09-18.md",
-          "docs/S1_LINE_VERDICT_2026-09-25.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。",
+        "state": "未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是乾淨窗口）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-1",
+          "why": "單段提交本體 —— L20-1 要校準的那個 step 就是它"
+        }
+      ]
     },
     {
       "id": "s1-refuted",
@@ -471,23 +545,30 @@
       "note": "已作廢：診斷口徑本身有盲點",
       "sub": "S",
       "goal": "早期（09-16／09-17）用單段提交當探針，量測 <code>wait</code>／<code>gap</code>，<b>確認「段邊界成本」這個假說成立與否</b>。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_S1_TABLE_CHURN=1",
-        "profile": "prod-new",
-        "options": [
-          "CGC_S1_TABLE_CHURN=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（2 份文件）",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/S1_SLOT_OWNER_REFUTED_20260917.html",
-          "docs/S1_TIMING_REFUTED_20260917.html"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "作廢：S1 早期診斷系列（09-16/17），已被 slot owner 否證取代",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "作廢：S1 早期診斷系列（09-16/17），已被 slot owner 否證取代"
+        }
+      ]
     },
     {
       "id": "miss-3a",
@@ -505,26 +586,37 @@
       "note": "零成本且逐位正確的**使能項**；零 fill 下無正確性收益（3c 的前置）。生產價值上限 **≤0.23%**：權威 cell 的 `CGC-MISSMASK-COST` 是 464 µs/step，其中 read 462（77.8 次 `tensor_get`）、sync 1.9（0.40%）⇒ 成本形狀是「次數 × 固定開銷」，可優化對象是**次數**（§42）。",
       "sub": "S",
       "goal": "讓<b>未填充 expert 的貢獻歸零</b>（<code>CGC_MISS_MASK</code>／ZERO_MISS），使「有 miss 也能算對」成為可能——這是單段提交的<b>正確性前提</b>。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_SERVER_STRICT_BUDGET=1",
+      "subgoal_binding": {
+        "subgoal": "L20-2",
+        "title": "武裝 G3（CGC_ZERO_SLOT）",
+        "layer": "L20",
         "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1",
+          "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1"
+        ],
         "options": [
-          "CGC_SERVER_STRICT_BUDGET=1"
+          "CGC_ZERO_SLOT=1",
+          "CGC_SEG_BATCH=1",
+          "CGC_SLOT_TABLE_GPU=1"
         ],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（3 份文件）",
-        "logs": [
-          "Backup/miss_axis_mtpoff_ws64_r3/miss_axis_res.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/GAP_VS_MISS_2026-09-20.md",
-          "docs/MISS_PATH_COST_AUDIT_2026-09-13.md",
-          "docs/SWAP_MISS_LINK_2026-09-24.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "A/B 兩臂只差 CGC_ZERO_SLOT，不動 src/；2 趟，主端點是計數器不是 t/s。",
+        "state": "未結案（卡已立、未跑）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-2",
+          "why": "未填充 expert 貢獻歸零（MISS_MASK／ZERO_SLOT）—— L20-2 武裝 G3 的正確性前提"
+        }
+      ]
     },
     {
       "id": "miss-3b",
@@ -538,24 +630,37 @@
       "note": "",
       "sub": "S",
       "goal": "把 <b>fill 的觸發點搬出 hook 並批次化</b>，讓填池不再被切成 41 次小動作，而是一次大批次。",
-      "arm_binding": {
-        "arm": "prod-new",
+      "subgoal_binding": {
+        "subgoal": "L20-5",
+        "title": "餵料搬家（P1）",
+        "layer": "L20",
         "profile": "prod-new",
-        "options": [],
-        "instruments": [],
-        "source": "scan",
-        "confidence": "low",
-        "note": "證據文件裡只有出現 1 次的 option（—）⇒ 置信度壓到 low，需人工確認",
-        "logs": [
-          "Backup/seg_batch_s1_pairs/abba_212809.json",
-          "Backup/nofill_prod/nf_fill.json",
-          "Backup/s1_ksweep/20260924_225548/s1_ksweep.json"
+        "arm_strings": [
+          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1",
+          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_PREFETCH_SRC=hist;CGC_PREFETCH_WINDOW=4"
         ],
-        "logs_missing": [],
-        "reports": [
-          "docs/DIAGNOSTIC_ARMS_LEDGER_2026-09-25.md"
-        ]
-      }
+        "options": [
+          "CGC_SPAC_DBG=1",
+          "CGC_PREFETCH_SRC=hist",
+          "CGC_PREFETCH_WINDOW=4"
+        ],
+        "instruments": [],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "驗收：不開 debug 仍要有 CGC-RB-FEED 且 prefetch > 0/0。",
+        "state": "未結案（P0 成立、P1 未做）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-5",
+          "why": "fill 觸發點搬出 hook ＋ batch 化 —— 正是 L20-5「餵料搬家」要搬的那一段"
+        }
+      ]
     },
     {
       "id": "miss-3c",
@@ -569,22 +674,32 @@
       "note": "",
       "sub": "S",
       "goal": "做 <b>per-expert 重算 kernel</b>：利用 MoE 輸出是線性疊加，只重算 miss 的那幾個 expert，而不是整層重算。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_POOL_MADVISE=1",
+      "subgoal_binding": {
+        "subgoal": "L20-3",
+        "title": "重算本體 B（靜態 ggml_acc）",
+        "layer": "L20",
         "profile": "prod-new",
-        "options": [
-          "CGC_POOL_MADVISE=1"
+        "arm_strings": [
+          "prod-new"
         ],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（1 份文件）",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/STEP3_PER_EXPERT_RECOMPUTE_2026-09-24.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置是先補一行儀器印逐層 miss 直方圖（CGC-MISSMASK-STEP 目前不存在），確認每層最大 ≤ k 才考慮實作。",
+        "note": "§51 尖兵已量：被定價的是散佈（320 op），沒被定價的是備援重算 320 列 ＝ 8.09 ms ⇒ 淨回收為負，decode ≥25 回到判死。",
+        "state": "未結案（尖兵已跑（唯讀）⇒ 價目不成立；缺的那個量＝逐層 miss 直方圖，一行儀器）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-3",
+          "why": "per-expert 重算 kernel（已判 0）—— L20-3 的 B 是同一件事的靜態版本，判詞要一起讀"
+        }
+      ]
     },
     {
       "id": "s1-asyncgather",
@@ -720,27 +835,33 @@
           "result": "<b>已跑（21:26–21:29，同輪 AB r3）</b>：分段臂 pp 233.29±20.83／<b>tg 11.40±0.04</b>（hit 96.2%）；S1 臂 pp 187.03±10.38／<b>tg 16.14±1.66</b>（hit 100.0%、misses 0、reads 0）⇒ <b>decode ×1.42、prefill ×0.80</b>。⚠ <b>比值亦不可引用</b>：兩臂 worst thermal 皆 HEAVY、起跑 swap 7.7–8.1 GiB、非交錯；且 S1 臂按 E0 屬「NaN 級輸出」⇒ 只能當<b>診斷價（S 軸形狀上界）</b>。prefill 方向與 09-24 k-sweep 相反 ⇒ 盒況主宰，待乾淨窗口。產物 <code>Backup/eseries/E4/summary.json</code>"
         }
       ],
-      "arm_binding": {
-        "arm": "prod-new",
+      "no_throughput_claim": "本節點**不主張任何吞吐**：res 裡的 **~14.5 t/s** 是按 E1 裁決的可引用 fill 價（20.8 ms/step）**推算**的；**23.7–24.6 t/s** 是 §50 的**轉引算式**（`fillahead` A 半 39.0 ms ＋ B 半 1.60–3.20 ms）；節點本身**沒有 run、沒有 best.log**，兩者都不可當成績引用。E4 的比值（decode ×1.42／prefill ×0.80）也只能當診斷價（兩臂 thermal HEAVY＋起跑 swap 8 GiB）。",
+      "subgoal_binding": {
+        "subgoal": "L20-6",
+        "title": "替代機制：非同步 fill ＋ 只補算",
+        "layer": "L20",
         "profile": "prod-new",
+        "arm_strings": [
+          "prod-new"
+        ],
         "options": [],
-        "instruments": [
-          "CGC_DECODE_PROFILE=1"
-        ],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（2 份文件）",
-        "logs": [
-          "Backup/nofill_prod/nf_fill.json",
-          "Backup/eseries/E4/summary.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/S1_ASYNC_GATHER_PIPELINE_2026-09-25.md",
-          "docs/S1_ASYNC_GATHER_PIPELINE_2026-09-25.html"
-        ]
+        "instruments": [],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "已結案（CLOSED — 不做）：收益 +2.6~4.6% < MDD 8.5%，且要動 M1/M2/M3 護欄 ⇒ 本格沒有要跑的臂，只留登記。",
+        "note": "重開條件：盒子 ≥32 GB 且重測 fill ≥ 8.5% × step 預算（兩條同時）。",
+        "state": "結案（排除）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
       },
-      "no_throughput_claim": "本節點**不主張任何吞吐**：res 裡的 **~14.5 t/s** 是按 E1 裁決的可引用 fill 價（20.8 ms/step）**推算**的；**23.7–24.6 t/s** 是 §50 的**轉引算式**（`fillahead` A 半 39.0 ms ＋ B 半 1.60–3.20 ms）；節點本身**沒有 run、沒有 best.log**，兩者都不可當成績引用。E4 的比值（decode ×1.42／prefill ×0.80）也只能當診斷價（兩臂 thermal HEAVY＋起跑 swap 8 GiB）。"
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-6",
+          "why": "異步 gather 流水線；L20-6 已排除，這條是它的機制紀錄"
+        }
+      ]
     },
     {
       "id": "mtp-instrument",
@@ -760,25 +881,36 @@
       "note": "★ 前身：MTP off 9.82／on 12.62 是 HTTP 口徑 ⇒ 已作廢（契約 §7）",
       "sub": "M",
       "goal": "把 <b>MTP 接進 llama-bench</b>，讓 MTP on／off 能在<b>交付口徑</b>下做配對量測（而不是靠 HTTP server 的舊口徑）。",
-      "arm_binding": {
-        "arm": "prod-new:LLAMA_BENCH_SPEC_NOTRIM=1",
-        "profile": "prod-new",
-        "options": [
-          "LLAMA_BENCH_SPEC_NOTRIM=1"
+      "subgoal_binding": {
+        "subgoal": "L25-5",
+        "title": "MTP 的產品化上限",
+        "layer": "L25",
+        "profile": "prod25",
+        "arm_strings": [
+          "prod25"
         ],
-        "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（6 份文件）",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/MTP_HEAD_PROVENANCE_GATE_2026-09-14.md",
-          "docs/MTP_INSTRUMENT_PLAN_2026-09-17.md",
-          "docs/MTP_IN_LLAMA_BENCH_2026-09-18.md",
-          "docs/MTP_LAUNCH_REQUIRED_PARAMS_2026-09-18.md"
-        ]
-      }
+        "options": [
+          "CGC_SERVER_MTP_N_MAX=1"
+        ],
+        "instruments": [
+          "CGC_MTP_PERF=1"
+        ],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。",
+        "state": "未結案（已判、未立新判準）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-5",
+          "why": "MTP 儀器化（接進 llama-bench）—— 沒有它，L25-5 的 m 量不出來"
+        }
+      ]
     },
     {
       "id": "mtp-caliper",
@@ -801,29 +933,36 @@
       "note": "⇒ 交付 cell 的 MTP 增益 UNRESOLVED（作廢 9.82/12.62/+28.5% 後）",
       "sub": "M",
       "goal": "定出 <b>MTP 的量測口徑</b>並定位混淆因子（pool 大小、跨啟動污染、執行順序），讓 MTP 數字可比。",
-      "arm_binding": {
-        "arm": "prod25:CGC_SERVER_MTP=0",
+      "subgoal_binding": {
+        "subgoal": "L25-5",
+        "title": "MTP 的產品化上限",
+        "layer": "L25",
         "profile": "prod25",
+        "arm_strings": [
+          "prod25"
+        ],
         "options": [
-          "CGC_SERVER_MTP=0"
+          "CGC_SERVER_MTP_N_MAX=1"
         ],
-        "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（8 份文件）",
-        "logs": [
-          "Backup/phase_decomp/aligned_nail_vs_ornith_fwd.json",
-          "Backup/m123_oracle_gate/summary_en-orn-ab.json",
-          "Backup/phase_decomp/aligned_nail_vs_ornith_rev.json"
+        "instruments": [
+          "CGC_MTP_PERF=1"
         ],
-        "logs_missing": [],
-        "reports": [
-          "docs/MTP3_25TPS_ARITHMETIC_2026-09-18.md",
-          "docs/MTP_ABBA_RECHECK_2026-09-18.md",
-          "docs/MTP_K_AB_2026-09-18.md",
-          "docs/MTP_NET_EFFECT_PAIRED_2026-09-18.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。",
+        "state": "未結案（已判、未立新判準）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-5",
+          "why": "MTP 口徑與混淆定位：m 的每一個讀數都要先過它"
+        }
+      ]
     },
     {
       "id": "mtp-ksweep",
@@ -843,28 +982,42 @@
       "note": "模型可移植、最佳 k 不可移植。**口徑界線**：依 MTP 口徑再定義（B2），12.57／12.62 屬 **MTP-on 輸出函數** ⇒ 本 T 曲線只在 prod25 內部有效，**不得與交付口徑（MTP off）互比**。",
       "sub": "M",
       "goal": "掃 <b>verify batch 長度 T（k-sweep）</b>，量出每多驗一個 token 的邊際成本曲線，找出該 regime 的最佳 k。",
-      "arm_binding": {
-        "arm": "prod25:CGC_NO_PREFETCH=1",
-        "profile": "prod25",
+      "subgoal_binding": {
+        "subgoal": "L25-4",
+        "title": "MTP（C6）：唯一「乘」的軸",
+        "layer": "L25",
+        "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1"
+        ],
         "options": [
-          "CGC_NO_PREFETCH=1"
+          "CGC_SERVER_MTP=1",
+          "CGC_SERVER_LAYER_CAPS=40-40:16",
+          "CGC_DRAFT_CTX_ALIGN=1",
+          "CGC_DRAFT_SMALL_BATCH=1"
         ],
-        "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（5 份文件）",
-        "logs": [
-          "Backup/phase_decomp/pool_budget_runs_20260918_2251.json",
-          "Backup/s1_ksweep/20260924_225548/s1_ksweep.json"
+        "instruments": [
+          "CGC_MTP_PERF=1"
         ],
-        "logs_missing": [],
-        "reports": [
-          "docs/BIGMOMO_TRANSFER_AND_MTP_PARAM_PARITY_2026-09-19.md",
-          "docs/MTP_K_SWEEP_2026-09-22.md",
-          "docs/MTP_VERIFY_HEADROOM_2026-09-24.md",
-          "docs/MTP_VERIFY_SPLIT_2026-09-19.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [
+          "--spec-type draft-mtp",
+          "--spec-draft-n-max 1"
+        ],
+        "no_knob": "",
+        "note": "⛔ 必帶 --spec-draft-n-max 1：沒帶就是 k_eff≈2.33 必 thrash。且 MTP on/off 是不同輸出函數 ⇒ t/s 不可互比。",
+        "state": "未結案（待產品決策）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-4",
+          "why": "k-sweep（verify batch T 成本曲線）：k 端點包夾的來源"
+        }
+      ]
     },
     {
       "id": "mtp-2x",
@@ -881,23 +1034,36 @@
       "note": "★ 產品化結論：『MTP on 加速比 2』不成立 ⇒ 改寫成 m/acc 兩條可攻目標",
       "sub": "M",
       "goal": "算清「<b>MTP 加速比 2</b>」需要什麼條件（攤薄算術），判斷這個目標值不值得追、缺的是 k 還是別的。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_P_ROUTE=1",
-        "profile": "prod-new",
-        "options": [
-          "CGC_P_ROUTE=1"
+      "subgoal_binding": {
+        "subgoal": "L25-5",
+        "title": "MTP 的產品化上限",
+        "layer": "L25",
+        "profile": "prod25",
+        "arm_strings": [
+          "prod25"
         ],
-        "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（2 份文件）",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/MTP_2X_BOUNDARY_2026-09-19.md",
-          "docs/REUSE_DISTANCE_MTPON_CONFIRM_2026-09-20.md"
-        ]
-      }
+        "options": [
+          "CGC_SERVER_MTP_N_MAX=1"
+        ],
+        "instruments": [
+          "CGC_MTP_PERF=1"
+        ],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。",
+        "state": "未結案（已判、未立新判準）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-5",
+          "why": "2× 邊界算術（S=(1+a·k)/(1+m·k)，上界 a/m）"
+        }
+      ]
     },
     {
       "id": "mtp-rsl",
@@ -915,28 +1081,30 @@
       "note": "⇒ 別練 draft head",
       "sub": "M",
       "goal": "用 <b>RSL-MTP</b>（讓 draft 的 top-8 ⊆ 已付費並集）降低 draft 成本，並評估<b>練 draft head</b> 划不划算。",
-      "arm_binding": {
-        "arm": "prod25:CGC_P_ROUTE=1",
-        "profile": "prod25",
-        "options": [
-          "CGC_P_ROUTE=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（4 份文件）",
-        "logs": [
-          "Backup/phase_decomp/reuse_distance_result.json",
-          "Backup/phase_decomp/spec_cost_curve_20260918_2030.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/MOE_MTP_FEASIBILITY_2026-09-18.md",
-          "docs/REUSE_DISTANCE_RESULT_2026-09-20.md",
-          "docs/RSL_MTP_GAIN_2026-09-18.md",
-          "docs/RSL_MTP_GAIN_ESTIMATE_2026-09-18.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "判死（需要練 draft head；收益不成立）",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "判死（需要練 draft head；收益不成立）"
+        }
+      ]
     },
     {
       "id": "mtp-verify-opt",
@@ -955,27 +1123,30 @@
       "note": "另判：調高 CGC_FAST_COLD_MAX 有損 ⇒ 不做；更大的 k／tree verification 別做",
       "sub": "M",
       "goal": "降低 <b>verify 階段的 residency thrash</b>（池配額、prefetch 開關），讓 verify 不因權重換入換出而變慢。",
-      "arm_binding": {
-        "arm": "prod25:CGC_NO_PREFETCH=1",
-        "profile": "prod25",
-        "options": [
-          "CGC_NO_PREFETCH=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（3 份文件）",
-        "logs": [
-          "Backup/phase_decomp/spec_onoff/k_sweep.json",
-          "Backup/phase_decomp/spec_cost_curve_20260918_2030.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/EXPERT_CACHE_THRASH_2026-09-19.md",
-          "docs/MTP_VERIFY_COST_2026-09-21.md",
-          "docs/MTP_VERIFY_OPT_2026-09-18.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "判死（verify residency thrash／池配額／prefetch 開關三條都敗）",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "判死（verify residency thrash／池配額／prefetch 開關三條都敗）"
+        }
+      ]
     },
     {
       "id": "mtp-accept",
@@ -992,29 +1163,36 @@
       "note": "",
       "sub": "M",
       "goal": "調整 <b>accept rule／dynamic-k／n_max</b>，把接受率 a 與每輪產出 token 數拉高，直接放大攤薄倍數。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_MTP_REJECTION=1",
-        "profile": "prod-new",
+      "subgoal_binding": {
+        "subgoal": "L25-5",
+        "title": "MTP 的產品化上限",
+        "layer": "L25",
+        "profile": "prod25",
+        "arm_strings": [
+          "prod25"
+        ],
         "options": [
-          "CGC_MTP_REJECTION=1"
+          "CGC_SERVER_MTP_N_MAX=1"
         ],
-        "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（2 份文件）",
-        "logs": [
-          "Backup/cgc_logs/mtp_rule_ab_g6_r2.json",
-          "Backup/cgc_logs/mtp_rule_ab_g6.json",
-          "Backup/cgc_logs/joint_step_accept_g6.json"
+        "instruments": [
+          "CGC_MTP_PERF=1"
         ],
-        "logs_missing": [
-          "Backup/cgc_logs/mtp_suite_accept_g6.json"
-        ],
-        "reports": [
-          "docs/MTP_ACCEPT_RULE_G6_2026-09-20.md",
-          "docs/MTP_ROUND_COST_OPT_BACKLOG_2026-09-19.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。",
+        "state": "未結案（已判、未立新判準）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-5",
+          "why": "accept rule／dynamic-k／n_max：L25-5 的「acc 那一條目標」"
+        }
+      ]
     },
     {
       "id": "cache-rho",
@@ -1033,27 +1211,39 @@
       "sub": "S",
       "goal": "走 <b>ρ 路線</b>：按層批次化 prefetch，用一次大批次取代多次零散小預取，減少預取本身的開銷。",
       "no_throughput_claim": "舊 res 的 14.36 t/s 是**定價換算**（cb → ms/步 → t/s），不是量測；來源文件 `docs/RHO_STAGE0_RESULT_2026-09-23.md` 自陳『**本輪 t/s 不可引用**』（該輪圖裡多一個 norm ＋ 一個 matmul、`CGC_TD_CB` 令 async 行為改變），同族的 14.38／14.39 只是同一條換算式在另一格 cb 上的輸出；`Backup/` 無對應產物。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_SERVER_MTP=1",
+      "subgoal_binding": {
+        "subgoal": "L20-7",
+        "title": "prefetch 的兩個前置分支",
+        "layer": "L20",
         "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_RHO_PROBE=1",
+          "prod-new:CGC_PREBIND_PROBE=1"
+        ],
         "options": [
-          "CGC_SERVER_MTP=1"
+          "CGC_RHO_PROBE=1",
+          "CGC_PREBIND_PROBE=1"
         ],
-        "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（5 份文件）",
-        "logs": [
-          "Backup/cgc_logs/f1_cb_miss_regression_report.json"
+        "instruments": [
+          "CGC_PREBIND_PROBE_VERBOSE=1",
+          "CGC_RHO_PROBE_LATE=1"
         ],
-        "logs_missing": [],
-        "reports": [
-          "docs/F1_CB_MISS_REGRESSION_RESULT_2026-09-20.md",
-          "docs/GAP_SPLIT_SWAP_BIAS_2026-09-20.md",
-          "docs/RHO_BATCH_REGRESSION_2026-09-24.md",
-          "docs/RHO_MAXQ_SETTLED_2026-09-23.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "前置題：先付 4.76 ms（藏掉或攤平）再談收益；前置成本 ≤ 收益且覆蓋不降才算過。",
+        "state": "未結案（有前置）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-7",
+          "why": "ρ 按層批次化 prefetch（覆蓋 0.849、每步付 4.76 ms）"
+        }
+      ]
     },
     {
       "id": "cache-prebind",
@@ -1072,23 +1262,39 @@
       "sub": "S",
       "goal": "做 <b>prebind／方案 A</b>：預先指派 slot，消掉執行期的 slot 查表與指派成本。",
       "no_throughput_claim": "舊 res 的 14.33 t/s（+14.0%）在 `Backup/` 沒有對應產物；且它是由 `scripts/check/prebind_probe_run.sh`（`CGC_PREBIND_*`）驅動的探針，而 **`scripts/run_server.sh` 的白名單裡沒有任何 `CGC_PREBIND*` 開關** ⇒ 這個數字不可能是認可入口的產物。",
-      "arm_binding": {
-        "arm": "prod-new",
+      "subgoal_binding": {
+        "subgoal": "L20-7",
+        "title": "prefetch 的兩個前置分支",
+        "layer": "L20",
         "profile": "prod-new",
-        "options": [],
-        "instruments": [],
-        "source": "scan",
-        "confidence": "low",
-        "note": "證據文件裡只有出現 1 次的 option（—）⇒ 置信度壓到 low，需人工確認",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/H_MEASURED_2026-09-24.md",
-          "docs/H_MEASURED_A_VERDICT_2026-09-24.md",
-          "docs/PREBIND_SLOT_DESIGN_2026-09-23.md",
-          "docs/PREBIND_STAGE0_RESULT_2026-09-23.md"
-        ]
-      }
+        "arm_strings": [
+          "prod-new:CGC_RHO_PROBE=1",
+          "prod-new:CGC_PREBIND_PROBE=1"
+        ],
+        "options": [
+          "CGC_RHO_PROBE=1",
+          "CGC_PREBIND_PROBE=1"
+        ],
+        "instruments": [
+          "CGC_PREBIND_PROBE_VERBOSE=1",
+          "CGC_RHO_PROBE_LATE=1"
+        ],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "前置題：先付 4.76 ms（藏掉或攤平）再談收益；前置成本 ≤ 收益且覆蓋不降才算過。",
+        "state": "未結案（有前置）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-7",
+          "why": "prebind／方案 A（預指派 slot）—— 另一條前置分支"
+        }
+      ]
     },
     {
       "id": "cache-cb",
@@ -1102,22 +1308,30 @@
       "note": "已作為後續所有上界計算的單價",
       "sub": "S",
       "goal": "<b>定讞「cb」是什麼、成本多少</b>（42 vs 74 ms 之爭）——它是 expert cache 填池 IO，不是 command buffer。",
-      "arm_binding": {
-        "arm": "prod25",
-        "profile": "prod25",
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
         "options": [],
-        "instruments": [
-          "CGC_DECODE_PROFILE=1"
-        ],
-        "source": "scan",
-        "confidence": "med",
-        "note": "證據文件裡只有出現 1 次的 option（—）⇒ 置信度壓到 low，需人工確認",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/CB_DELIVERY_SETTLED_2026-09-23.md"
-        ]
-      }
+        "instruments": [],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "cb 口徑定讞（42 vs 74）：現行 `cb` 桶的讀法就是它",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "cb 口徑定讞（42 vs 74）：現行 `cb` 桶的讀法就是它"
+        }
+      ]
     },
     {
       "id": "k3-price",
@@ -1137,25 +1351,30 @@
       "note": "★ KNOB_INVENTORY 自記：那晚的 budget sweep 無效（撤回）",
       "sub": "C",
       "goal": "量出 <b>K3 的邊際單價</b>（多一次 dispatch 要付多少），判斷把 k 從 2 加到 3 划不划算。",
-      "arm_binding": {
-        "arm": "prod25",
-        "profile": "prod25",
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
         "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（5 份文件）",
-        "logs": [
-          "Backup/m123_oracle_gate/summary_en-k3pair-cert.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/K3_CEILING_REAUDIT_2026-09-21.md",
-          "docs/K3_PRICE_MEASURED_2026-09-21.md",
-          "docs/KNOB_FULL_MAP_15_2026-09-22.md",
-          "docs/KNOB_INVENTORY_VERIFIED_2026-09-22.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "K3 邊際單價（dispatch 成本）已量；上界算術的常數",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "K3 邊際單價（dispatch 成本）已量；上界算術的常數"
+        }
+      ]
     },
     {
       "id": "k3-swing",
@@ -1172,26 +1391,32 @@
       "note": "",
       "sub": "na",
       "goal": "定位 <b>k=3 那個 1.43× 飄移</b>從哪裡來，並用配對認證把它關掉（或證明它是視窗機械造成的）。",
-      "arm_binding": {
-        "arm": "prod25:CGC_SERVER_MTP_N_MAX=2",
-        "profile": "prod25",
-        "options": [
-          "CGC_SERVER_MTP_N_MAX=2"
+      "subgoal_binding": {
+        "subgoal": "L25-6",
+        "title": "口徑認證",
+        "layer": "L25",
+        "profile": "prod-new",
+        "arm_strings": [
+          "prod-new"
         ],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（3 份文件）",
-        "logs": [
-          "Backup/prod_profile/prod_profile_20260920_1230.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/K3_PAIR_CERT_2026-09-23.md",
-          "docs/K3_PAIR_CERT_V2_BENCH_2026-09-23.md",
-          "docs/K3_SWING_ANALYSIS_2026-09-23.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "沒有新旋鈕：本格要的是加大配對 n（-r）到能認證 16.4% 的飄移，或證明飄移是視窗機械造成。",
+        "note": "目前 n=5、t=2.08 < df=4 的 2.776 ⇒ 未認證；17.669 已降級為分布尾端一次抽樣。",
+        "state": "未結案（未認證）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-6",
+          "why": "k=3 的 1.43× 飄移定位：16.4% 的底噪就是它"
+        }
+      ]
     },
     {
       "id": "k-series",
@@ -1209,24 +1434,30 @@
       "note": "整條線結案；by-product 是 K3 的邊際單價（已升為 ③b）",
       "sub": "C",
       "goal": "走 <b>K0–K5 系列</b>（kernel 融合、小 op 群），看能不能從 kernel 側拿到可觀的增益。",
-      "arm_binding": {
-        "arm": "prod25",
-        "profile": "prod25",
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
         "options": [],
-        "instruments": [
-          "CGC_GPU_NODES_MATRIX=1"
-        ],
-        "source": "scan",
-        "confidence": "med",
-        "note": "證據文件裡只有出現 1 次的 option（—）⇒ 置信度壓到 low，需人工確認",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/K5_GRID_HYPOTHESIS_2026-09-21.md",
-          "docs/K5_VERDICT_2026-09-21.md",
-          "docs/M_K5_SHAPE_2026-09-21.md"
-        ]
-      }
+        "instruments": [],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "K0–K5 全結案（融合／小 op 群判死）",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "K0–K5 全結案（融合／小 op 群判死）"
+        }
+      ]
     },
     {
       "id": "g4",
@@ -1243,32 +1474,30 @@
       "note": "",
       "sub": "C",
       "goal": "寫 <b>元素級融合 kernel</b>（G4），減少大量小 op 的 launch 與往返開銷。",
-      "arm_binding": {
-        "arm": "prefill250",
-        "profile": "prefill250",
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
         "options": [],
-        "instruments": [
-          "CGC_DISPATCH_CENSUS=1"
-        ],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（11 份文件）",
-        "logs": [
-          "Backup/phase_decomp/metal_fusion_dispatch_cost_20260920_2053.json",
-          "Backup/cgc_logs/joint_step_accept_g6.json",
-          "Backup/phase_decomp/en_dc_st_20260918.json"
-        ],
-        "logs_missing": [
-          "Backup/phase_decomp/g4_null_manifest.json",
-          "Backup/phase_decomp/g4_dc_union_st.json"
-        ],
-        "reports": [
-          "docs/G4_ADDFUSE_ALREADY_FUSED_2026-09-20.md",
-          "docs/G4_DISPATCH_CENSUS_2026-09-20.md",
-          "docs/G4_ELEMENTWISE_TARGETS_2026-09-20.md",
-          "docs/G4_FUSION_ANSWER_2026-09-20.md"
-        ]
-      }
+        "instruments": [],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "G4 元素級融合 kernel 判死；已認證的是它的閘（C2），不是這條實作",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "G4 元素級融合 kernel 判死；已認證的是它的閘（C2），不是這條實作"
+        }
+      ]
     },
     {
       "id": "c-device-span",
@@ -1285,25 +1514,30 @@
         "CB_IS_THE_DEVICE_RESULT_*"
       ],
       "note": "歸因成立，但<b>不是可用槓桿</b>：受模型形狀與 kernel 物理約束 ⇒ 歸 C 天花板軸，只作背景約束與上界。",
-      "arm_binding": {
-        "arm": "prod25:CGC_CB_N_MAIN=1",
-        "profile": "prod25",
-        "options": [
-          "CGC_CB_N_MAIN=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（2 份文件）",
-        "logs": [
-          "Backup/phase_decomp/L3/shape_probe/mmid_gather.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/CB_IS_THE_DEVICE_RESULT_2026-09-20.md",
-          "docs/DEVICE_BUSY_ATTRIBUTED_2026-09-23.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "device span 歸因（56–61%）：C 軸的背景約束，不是待辦",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "device span 歸因（56–61%）：C 軸的背景約束，不是待辦"
+        }
+      ]
     },
     {
       "id": "c-bandwidth",
@@ -1320,25 +1554,30 @@
         "DENSE_NSG_RESCAN_*"
       ],
       "note": "是<b>上界算術</b>不是加速手段：它給的是「打滿也只有 2.42%」這種否定結論 ⇒ 天花板軸，非活躍攻關軸。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_MMV_NSG=8",
-        "profile": "prod-new",
-        "options": [
-          "CGC_MMV_NSG=8"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（2 份文件）",
-        "logs": [
-          "Backup/phase_decomp/L3/shape_probe/nsg_dense_lmhead.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/DENSE_GEMV_INSTRUMENT_2026-09-22.md",
-          "docs/DENSE_NSG_RESCAN_2026-09-23.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "頻寬屋頂／dense GEMV 上界：C 軸的上界，已證偽的候選都在這裡",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "頻寬屋頂／dense GEMV 上界：C 軸的上界，已證偽的候選都在這裡"
+        }
+      ]
     },
     {
       "id": "g1",
@@ -1363,28 +1602,30 @@
       "note": "",
       "sub": "C",
       "goal": "量出 <b>可達上界</b>（G1–G7 sweep）——先知道天花板在哪，才知道要追的數字合不合理。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_SUBMIT_AHEAD=1",
-        "profile": "prod-new",
-        "options": [
-          "CGC_SUBMIT_AHEAD=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（10 份文件）",
-        "logs": [
-          "Backup/phase_decomp/joint_capture_20260920_2144.json",
-          "Backup/phase_decomp/L3/shape_probe/mmid_nsg_sweep_rotated.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/G1_ACHIEVABLE_CEILING_2026-09-20.md",
-          "docs/G1_G7_SWEEP_2026-09-20.md",
-          "docs/G1_PREMISE_B_RECHECK_2026-09-20.md",
-          "docs/GAP_ELIMINATION_PLAN_2026-09-24.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "G1 可達上界／G1-G7 sweep：上界算術已結，數字只當背景",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "G1 可達上界／G1-G7 sweep：上界算術已結，數字只當背景"
+        }
+      ]
     },
     {
       "id": "shape-knobs",
@@ -1406,28 +1647,35 @@
       "note": "★ BEST_SHAPE 標「唯一沒被結論覆蓋、還活著的方向」（一處 switch case）。**該 switch case 的指名與邊界量測已立項**（`e-shape-knobs-2026-09-29.yaml`，C 軸、targets 16.0）。",
       "sub": "C",
       "goal": "建立 <b>shape／knob 的世界模型</b>：把 14–15 個旋鈕各自的邊界量出來，讓「改哪個旋鈕有用」有據可依。",
-      "arm_binding": {
-        "arm": "prefill250",
-        "profile": "prefill250",
+      "subgoal_binding": {
+        "subgoal": "L20-9",
+        "title": "C 軸唯一「活著」的一格",
+        "layer": "L20",
+        "profile": "prod-new",
+        "arm_strings": [
+          "prod-new"
+        ],
         "options": [],
-        "instruments": [
-          "CGC_GPU_TIMING=1"
+        "instruments": [],
+        "candidates": [
+          "CGC_MMV_NSG=8",
+          "CGC_MMV_FUSE=1"
         ],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（16 份文件）",
-        "logs": [
-          "Backup/phase_decomp/L3/autotune_nsg.json",
-          "Backup/m123_oracle_gate/summary_p2_rebased.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/BEST_SHAPE_IQ3XXS_M4_2026-09-22.md",
-          "docs/FP_ORDER_SHAPE_2026-09-22.md",
-          "docs/FP_ORDER_TARGETS_2026-09-22.md",
-          "docs/GPU_CEILING_STEP2_2026-09-22.md"
-        ]
-      }
+        "cli": [],
+        "no_knob": "",
+        "note": "C 軸唯一還活著的一格；背景題，邊界可量且與既有結論不衝突才算過。",
+        "state": "未結案（本輪立項）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-9",
+          "why": "shape／knob 世界模型：C 軸唯一還活著的一格"
+        }
+      ]
     },
     {
       "id": "io-constraint",
@@ -1446,31 +1694,30 @@
       "note": "",
       "sub": "S",
       "goal": "把 <b>IOCACHE 約束</b>與段邊界（S2）承認下來並寫成約束——目的是界定什麼不可能，而不是拿增益。",
-      "arm_binding": {
-        "arm": "prefill250:CGC_SUBMIT_AHEAD=1",
-        "profile": "prefill250",
-        "options": [
-          "CGC_SUBMIT_AHEAD=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（5 份文件）",
-        "logs": [
-          "Backup/phase_decomp/l3prize_off.json",
-          "Backup/cgc_logs/joint_step_accept_g6.json",
-          "Backup/cgc_logs/f1_cb_miss_regression_report.json"
-        ],
-        "logs_missing": [
-          "Backup/m123_oracle_gate/summary_l3_prize_submit_ahead.json"
-        ],
-        "reports": [
-          "docs/IOCACHE_CONSTRAINT_ADMISSION_2026-09-22.md",
-          "docs/L3_M1_BLOCKED_STRUCTURAL_2026-09-20.md",
-          "docs/L3_M1_GAP_LEDGER_2026-09-20.md",
-          "docs/S2_PROBE2_AND_CEILING_2026-09-20.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "IOCACHE 約束承認（＋段邊界 S2）：已承認的約束",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "IOCACHE 約束承認（＋段邊界 S2）：已承認的約束"
+        }
+      ]
     },
     {
       "id": "sys-swap",
@@ -1486,22 +1733,30 @@
       "note": "⚠ 執行線主張、本線未複核；另判「pool 納入 wired 級管理」不建議",
       "sub": "na",
       "goal": "修好 <b>swap 結構</b>（L0–L4 ＋ P0／P1／P2），讓實驗跑得起來、不被 OOM／swap 殺掉。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_SERVER_MTP=1",
-        "profile": "prod-new",
-        "options": [
-          "CGC_SERVER_MTP=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（2 份文件）",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/SWAP_STRUCTURAL_FIX_2026-09-24.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "swap 結構修復（L0–L4）：現在 launch swap 0 的來源",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "swap 結構修復（L0–L4）：現在 launch swap 0 的來源"
+        }
+      ]
     },
     {
       "id": "sys-window",
@@ -1518,25 +1773,32 @@
       "note": "與本線的 gate 規格同源（契約 §3）",
       "sub": "na",
       "goal": "建立 <b>server 窗口／box 准入的單一來源閘門</b>，避免兩條線同時搶 GPU 而互相蓋掉對方的 build。",
-      "arm_binding": {
-        "arm": "prod-new",
+      "subgoal_binding": {
+        "subgoal": "L25-3",
+        "title": "乾淨窗口（C7）",
+        "layer": "L25",
         "profile": "prod-new",
+        "arm_strings": [
+          "prod-new"
+        ],
         "options": [],
-        "instruments": [
-          "CGC_WINDOW_OVERRIDE=1"
-        ],
-        "source": "scan",
-        "confidence": "med",
-        "note": "證據文件裡只有出現 1 次的 option（—）⇒ 置信度壓到 low，需人工確認",
-        "logs": [
-          "Backup/phase_decomp/server_window_audit.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/BOX_ADMISSION_SINGLE_SOURCE_2026-09-20.md",
-          "docs/SERVER_WINDOW_LEDGER_2026-09-19.md"
-        ]
-      }
+        "instruments": [],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "窗口條件不是旋鈕：attribution=none ∧ thermal NOMINAL ∧ reps≥3。CGC_WINDOW_OVERRIDE 是繞過閘門的開關，不能當本格的 option。",
+        "note": "產物＝一場可引用的成對錨點（交付 cell、prod-new、harness bench）。",
+        "state": "未結案（09-29 實跑兩臂皆 attribution=swap；缺的是這台盒子的餘裕）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-3",
+          "why": "box 准入單一來源閘門 —— 乾淨窗口那一格就是它"
+        }
+      ]
     },
     {
       "id": "m3",
@@ -1552,22 +1814,30 @@
       "note": "★ 這批是 9.82/12.62 的出生地 ⇒ 已進契約 §7 作廢登記表",
       "sub": "na",
       "goal": "定出 <b>M3／M4／M5 的離開條件</b>（09-17 期）：什麼情況下該繼續投、什麼情況下該收手。",
-      "arm_binding": {
-        "arm": "prod-new",
-        "profile": "prod-new",
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
         "options": [],
-        "instruments": [
-          "CGC_GPU_TIMING=1"
-        ],
-        "source": "scan",
-        "confidence": "med",
-        "note": "證據文件裡只有出現 1 次的 option（—）⇒ 置信度壓到 low，需人工確認",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/M3_VERDICT_2026-09-17.md"
-        ]
-      }
+        "instruments": [],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "M3／M4／M5 離開條件（09-17 期）—— 歷史期的進入條件，已過",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "M3／M4／M5 離開條件（09-17 期）—— 歷史期的進入條件，已過"
+        }
+      ]
     },
     {
       "id": "na-entry",
@@ -1595,23 +1865,30 @@
       "note": "",
       "sub": "na",
       "goal": "（非實驗）維護<b>入口／索引／決策頁</b>，讓判決有唯一可查的落點。",
-      "arm_binding": {
-        "arm": "prod-new",
-        "profile": "prod-new",
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
         "options": [],
         "instruments": [],
-        "source": "n_a",
-        "confidence": "n/a",
-        "note": "非實驗結論（約束／帳本／上界算術／入口索引／跨線）⇒ 無待測 option；其數字全部來自 prod-new 預設臂",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/DIAGNOSTIC_ARMS_LEDGER_2026-09-25.md",
-          "docs/ENGINE_LINE_ASSIGNMENT_AND_G1_LADDERS_2026-09-20.md",
-          "docs/LATEST_COMMIT_GAP_ANALYSIS_2026-09-15.md",
-          "docs/MILESTONE_MAP_2026-09-21.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "非實驗：入口／索引／決策頁",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "非實驗：入口／索引／決策頁"
+        }
+      ]
     },
     {
       "id": "na-crossline",
@@ -1635,23 +1912,30 @@
       "note": "",
       "sub": "na",
       "goal": "（非實驗）<b>跨線與其他產品</b>（Wan2.2、HarmonyOS、Windows client、Colibri、Unified IR）的記錄。",
-      "arm_binding": {
-        "arm": "prod-new",
-        "profile": "prod-new",
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
         "options": [],
         "instruments": [],
-        "source": "n_a",
-        "confidence": "n/a",
-        "note": "非實驗結論（約束／帳本／上界算術／入口索引／跨線）⇒ 無待測 option；其數字全部來自 prod-new 預設臂",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/archive/pre-consistency-metrics-2026-09-11/CGC_COLIBRI_HERMES_ROUTEPOLICY_V2_INTEGRATION.md",
-          "docs/archive/pre-consistency-metrics-2026-09-11/CGC_COLIBRI_SINGLE_NODE_PRODUCTION_MATRIX.md",
-          "docs/archive/pre-consistency-metrics-2026-09-11/CGC_COMPUTE_SHARING_ARCHITECTURE.md",
-          "docs/archive/pre-consistency-metrics-2026-09-11/CGC_CROSS_PLATFORM_ARCHITECTURE.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "非實驗：跨線／其他產品（Wan2.2、HarmonyOS、Windows client、Colibri、Unified IR）",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "非實驗：跨線／其他產品（Wan2.2、HarmonyOS、Windows client、Colibri、Unified IR）"
+        }
+      ]
     },
     {
       "id": "na-design",
@@ -1671,22 +1955,30 @@
       "note": "⚠ 推定而非實測（歸檔於 pre-consistency-metrics 期）",
       "sub": "S",
       "goal": "確立 <b>expert cache 的血統設計</b>（09-05～09-09 期）：權重常駐 SSD → 池的整體架構與介面。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_WARM_NPAST=256",
-        "profile": "prod-new",
-        "options": [
-          "CGC_WARM_NPAST=256"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（4 份文件）",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/archive/pre-consistency-metrics-2026-09-11/CGC_EXPERT_CACHE_INVARIANTS_v1.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "非實驗：expert cache 血統設計（09-05~09-09 期）",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "非實驗：expert cache 血統設計（09-05~09-09 期）"
+        }
+      ]
     },
     {
       "id": "na-olddata",
@@ -1717,25 +2009,30 @@
       "note": "⚠ 含作廢數字（9.82/12.62）者，依契約 §7 不得再引用",
       "sub": "na",
       "goal": "整理<b>舊口徑數據報告</b>（Gemma4、MTP_BENCHMARK_WIN8GB、TPOT 路線圖）——目的是標明它們不可再引用。",
-      "arm_binding": {
-        "arm": "prod25:CGC_SERVER_SKIP0=1",
-        "profile": "prod25",
-        "options": [
-          "CGC_SERVER_SKIP0=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（5 份文件）",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/archive/pre-consistency-metrics-2026-09-11/Gemma4_Final_Report.md",
-          "docs/archive/pre-consistency-metrics-2026-09-11/Gemma4_Performance_Report.md",
-          "docs/archive/pre-consistency-metrics-2026-09-11/M4_SETUP_GUIDE.md",
-          "docs/archive/pre-consistency-metrics-2026-09-11/MTP_BENCHMARK_WIN8GB.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "作廢：舊口徑數據（Gemma4／MTP_BENCHMARK_WIN8GB／TPOT 路線圖）",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "archived",
+          "ref": "",
+          "why": "作廢：舊口徑數據（Gemma4／MTP_BENCHMARK_WIN8GB／TPOT 路線圖）"
+        }
+      ]
     },
     {
       "id": "exp-s-retro",
@@ -1825,26 +2122,40 @@
         }
       ],
       "no_throughput_claim": "`Backup/phase_decomp/cbnmain_pair/` 的 9 個 run 無一乾淨：`both`／HEAVY ×3（off1／off2／on1）、`swap` ×5（off3／off5／on2／on3／on4）、`thermal`／HEAVY ×1（off4）；11.97 出自 on3（`attribution=swap`）。依 §5.1 不得引用。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_HOOK_SPLIT=1;CGC_CB_N_MAIN=32",
+      "subgoal_binding": {
+        "subgoal": "L20-1",
+        "title": "底（S1 的 step）校準",
+        "layer": "L20",
         "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1"
+        ],
         "options": [
-          "CGC_HOOK_SPLIT=1",
-          "CGC_CB_N_MAIN=32"
+          "CGC_SEG_BATCH=1",
+          "CGC_B_SCHEME=1",
+          "CGC_SLOT_TABLE_GPU=1"
         ],
         "instruments": [
-          "CGC_DECODE_PROFILE=1",
-          "CGC_GPU_TIMING=1"
+          "CGC_MISS_MASK=1",
+          "CGC_MISS_MASK_DBG=1",
+          "CGC_MISS_MASK_COST=1"
         ],
-        "source": "run",
-        "confidence": "high",
-        "note": "節點自帶實跑 arm（3 筆 run，log 可點）",
-        "logs": [
-          "Backup/phase_decomp/cbnmain_pair/on1/bench.json"
-        ],
-        "logs_missing": [],
-        "reports": []
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。",
+        "state": "未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是乾淨窗口）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-1",
+          "why": "G0–G7 的序列化回顧：同一條軸的歷史與作廢清單，決定 L20-1 只認哪一端"
+        }
+      ]
     },
     {
       "id": "score-leaderboard",
@@ -2015,26 +2326,37 @@
           }
         }
       },
-      "arm_binding": {
-        "arm": "prod25:CGC_PREFILL_STREAM=1",
-        "profile": "prod25",
-        "options": [
-          "CGC_PREFILL_STREAM=1"
+      "subgoal_binding": {
+        "subgoal": "L25-6",
+        "title": "口徑認證",
+        "layer": "L25",
+        "profile": "prod-new",
+        "arm_strings": [
+          "prod-new"
         ],
+        "options": [],
         "instruments": [],
-        "source": "scan",
-        "confidence": "med",
-        "note": "從證據文件掃到的 arm 字串（1 份文件）",
-        "logs": [
-          "Backup/k3_pair_cert_2026-09-28/logs/r4_b_k2/launch01.json",
-          "Backup/leaderboard/20260928_233550_launch01.json",
-          "Backup/k3_pair_cert_2026-09-28/logs/r3_a_k2/launch01.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/K3_PAIR_CERT_VERDICT_2026-09-28.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "沒有新旋鈕：本格要的是加大配對 n（-r）到能認證 16.4% 的飄移，或證明飄移是視窗機械造成。",
+        "note": "目前 n=5、t=2.08 < df=4 的 2.776 ⇒ 未認證；17.669 已降級為分布尾端一次抽樣。",
+        "state": "未結案（未認證）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-6",
+          "why": "成績排行榜；「目前最好」的定義衝突在這裡結清"
+        },
+        {
+          "kind": "certified",
+          "ref": "C3",
+          "why": "「目前最好」＝交付錨點 11.703 t/s（三扇門全過）"
+        }
+      ]
     },
     {
       "id": "exp-c-eff-bandwidth",
@@ -2108,20 +2430,30 @@
           "contribs": []
         }
       ],
-      "arm_binding": {
-        "arm": "prod25",
-        "profile": "prod25",
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
         "options": [],
         "instruments": [],
-        "source": "charter",
-        "confidence": "high",
-        "note": "取自 `scripts/check/charters/exp-c-eff-bandwidth.yaml` 的 `arms[]`",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/DECODE25_CEILING_2026-09-20.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "C：有效帶寬 13.65→≥29 GB/s 的目標線；C 軸背景，不進 L20/L25",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "C：有效帶寬 13.65→≥29 GB/s 的目標線；C 軸背景，不進 L20/L25"
+        }
+      ]
     },
     {
       "id": "exp-c-read-issue",
@@ -2204,20 +2536,30 @@
           "contribs": []
         }
       ],
-      "arm_binding": {
-        "arm": "prod25",
-        "profile": "prod25",
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
         "options": [],
         "instruments": [],
-        "source": "charter",
-        "confidence": "high",
-        "note": "取自 `scripts/check/charters/exp-c-read-issue.yaml` 的 `arms[]`",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/S2_OVERLAP_EXPERIMENT_2026-09-28.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "C：讀取發行開銷（重驗 io-shape）；同上，背景",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "C：讀取發行開銷（重驗 io-shape）；同上，背景"
+        }
+      ]
     },
     {
       "id": "exp-s2-overlap",
@@ -2300,25 +2642,30 @@
           "contribs": []
         }
       ],
-      "arm_binding": {
-        "arm": "prod25:CGC_SLOT_TABLE_GPU=1",
-        "profile": "prod25",
-        "options": [
-          "CGC_SLOT_TABLE_GPU=1"
-        ],
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
         "instruments": [],
-        "source": "charter",
-        "confidence": "high",
-        "note": "取自 `scripts/check/charters/exp-s2-overlap.yaml` 的 `arms[]`（取有 option 的那一臂；對照臂是裸 profile）",
-        "logs": [
-          "Backup/cgc_logs/f1_cb_miss_regression_report.json",
-          "Backup/phase_decomp/s2a_policy_census.json"
-        ],
-        "logs_missing": [],
-        "reports": [
-          "docs/S2_PROBE2_AND_CEILING_2026-09-20.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "S2 段邊界免等：已結（FAIL 附機制，殘項是 Metal 側延遲）",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "S2 段邊界免等：已結（FAIL 附機制，殘項是 Metal 側延遲）"
+        }
+      ]
     },
     {
       "id": "exp-m-draft-cost",
@@ -2392,20 +2739,42 @@
           "contribs": []
         }
       ],
-      "arm_binding": {
-        "arm": "prod25",
-        "profile": "prod25",
-        "options": [],
-        "instruments": [],
-        "source": "charter",
-        "confidence": "high",
-        "note": "取自 `scripts/check/charters/exp-m-draft-cost.yaml` 的 `arms[]`",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/DECODE25_CEILING_2026-09-20.md"
-        ]
-      }
+      "subgoal_binding": {
+        "subgoal": "L25-4",
+        "title": "MTP（C6）：唯一「乘」的軸",
+        "layer": "L25",
+        "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1"
+        ],
+        "options": [
+          "CGC_SERVER_MTP=1",
+          "CGC_SERVER_LAYER_CAPS=40-40:16",
+          "CGC_DRAFT_CTX_ALIGN=1",
+          "CGC_DRAFT_SMALL_BATCH=1"
+        ],
+        "instruments": [
+          "CGC_MTP_PERF=1"
+        ],
+        "candidates": [],
+        "cli": [
+          "--spec-type draft-mtp",
+          "--spec-draft-n-max 1"
+        ],
+        "no_knob": "",
+        "note": "⛔ 必帶 --spec-draft-n-max 1：沒帶就是 k_eff≈2.33 必 thrash。且 MTP on/off 是不同輸出函數 ⇒ t/s 不可互比。",
+        "state": "未結案（待產品決策）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-4",
+          "why": "攤薄係數 m 的成本曲線；MTP 決策的價格表"
+        }
+      ]
     },
     {
       "id": "exp-caliber-calibration",
@@ -2479,20 +2848,32 @@
           "contribs": []
         }
       ],
-      "arm_binding": {
-        "arm": "prod25",
-        "profile": "prod25",
+      "subgoal_binding": {
+        "subgoal": "L25-1",
+        "title": "第六條軸：改「每 token 的 bytes 或 steps」",
+        "layer": "L25",
+        "profile": "prod-new",
+        "arm_strings": [
+          "prod-new"
+        ],
         "options": [],
         "instruments": [],
-        "source": "charter",
-        "confidence": "high",
-        "note": "取自 `scripts/check/charters/exp-caliber-calibration.yaml` 的 `arms[]`",
-        "logs": [],
-        "logs_missing": [],
-        "reports": [
-          "docs/DECODE25_CEILING_2026-09-20.md"
-        ]
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "新軸尚未命名：本格要問的是「每 token 的 bytes 或 steps 有沒有可改的乘數」⇒ 仍在立卡階段，沒有既有旋鈕可綁。",
+        "note": "驗收：需要一個新乘數，≤ 40.0 ms 且 M1 bit-identical。",
+        "state": "未結案（本輪立項）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-1",
+          "why": "口徑＋k=3 飄移認證；第六條軸要用的量測基準"
+        }
+      ]
     },
     {
       "id": "exp-churn-delivery-630",
@@ -2611,9 +2992,14 @@
         }
       ],
       "no_throughput_claim": "本節點 2 個 run 全部非乾淨歸因（swap）⇒ 依 MEASUREMENT_CONTRACT §5.1 吞吐不得引用；節點只記判詞。乾淨 = memory_pressure.is_clean()。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1",
+      "subgoal_binding": {
+        "subgoal": "L20-8",
+        "title": "churn 判詞在交付口徑的重檢",
+        "layer": "L20",
         "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1;CGC_GPU_TIMING=1;CGC_DECODE_PROFILE=1"
+        ],
         "options": [
           "CGC_S1_TABLE_CHURN=1",
           "CGC_SLOT_TABLE_GPU=1"
@@ -2622,15 +3008,22 @@
           "CGC_GPU_TIMING=1",
           "CGC_DECODE_PROFILE=1"
         ],
-        "source": "run",
-        "confidence": "high",
-        "note": "節點自帶實跑 arm（2 筆 run，log 可點）",
-        "logs": [
-          "Backup/churn_delivery_630_2026-09-28/churn.json"
-        ],
-        "logs_missing": [],
-        "reports": []
-      }
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "要在 ntok=1 主 context 上重測（MTP-on 的 verify 形狀 k=3 與交付口徑不是同一個量）。",
+        "state": "未結案（未跑）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-8",
+          "why": "在交付口徑上重檢 churn；L20-8 的產物"
+        }
+      ]
     },
     {
       "id": "exp-prodnew-decode20-g4miss",
@@ -3099,28 +3492,48 @@
         }
       ],
       "no_throughput_claim": "本節點 15 個 run 全部非乾淨歸因（attribution.verdict=both（thermal=HEAVY, swap_growth=1515.0699999999988 MiB）、attribution.verdict=both（thermal=HEAVY, swap_growth=1515.0699999999988 MiB）；缺成對的 stderr log（不可引用）、attribution.verdict=both（thermal=HEAVY, swap_growth=1541.3099999999995 MiB）、attribution.verdict=both（thermal=HEAVY, swap_growth=2261.5600000000004 MiB）、attribution.verdict=both（thermal=HEAVY, swap_growth=2261.5600000000004 MiB）；缺成對的 stderr log（不可引用）、attribution.verdict=both（thermal=HEAVY, swap_growth=2338.999999999999 MiB）、attribution.verdict=both（thermal=HEAVY, swap_growth=2338.999999999999 MiB）；缺成對的 stderr log（不可引用）、attribution.verdict=both（thermal=HEAVY, swap_growth=2362.8100000000004 MiB）、attribution.verdict=both（thermal=HEAVY, swap_growth=2362.8100000000004 MiB）；缺成對的 stderr log（不可引用）、attribution.verdict=both（thermal=HEAVY, swap_growth=2369.000000000001 MiB）、attribution.verdict=both（thermal=HEAVY, swap_growth=2369.000000000001 MiB）；缺成對的 stderr log（不可引用）、attribution.verdict=swap（swap_growth=2225.38 MiB, max_swap=8121.5 MiB）、attribution.verdict=swap（swap_growth=2977.000000000001 MiB, max_swap=9338.81 MiB）、attribution.verdict=swap（swap_growth=2977.000000000001 MiB, max_swap=9338.81 MiB）；缺成對的 stderr log（不可引用）、attribution.verdict=swap（swap_growth=30.13000000000102 MiB, max_swap=8962.94 MiB））⇒ 依 MEASUREMENT_CONTRACT §5.1 吞吐不得引用；節點只記判詞。乾淨 = memory_pressure.is_clean()。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_COST=1",
+      "subgoal_binding": {
+        "subgoal": "L20-1",
+        "title": "底（S1 的 step）校準",
+        "layer": "L20",
         "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1"
+        ],
         "options": [
           "CGC_SEG_BATCH=1",
           "CGC_B_SCHEME=1",
-          "CGC_SLOT_TABLE_GPU=1",
-          "CGC_MISS_MASK=1",
-          "CGC_MISS_MASK_COST=1"
+          "CGC_SLOT_TABLE_GPU=1"
         ],
         "instruments": [
-          "CGC_MISS_MASK_DBG=1"
+          "CGC_MISS_MASK=1",
+          "CGC_MISS_MASK_DBG=1",
+          "CGC_MISS_MASK_COST=1"
         ],
-        "source": "run",
-        "confidence": "high",
-        "note": "節點自帶實跑 arm（15 筆 run，log 可點）",
-        "logs": [
-          "Backup/g4miss_2026-09-28/g4miss_delivery.json"
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。",
+        "state": "未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是乾淨窗口）",
+        "also": [
+          "L20-2",
+          "L20-3"
         ],
-        "logs_missing": [],
-        "reports": []
-      }
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-1",
+          "why": "L20 的主節點；G4 閘的權威讀數（中位 6.09%）就是它的產物"
+        },
+        {
+          "kind": "certified",
+          "ref": "C2",
+          "why": "G4 重算工作清單中位 6.09% ≤25%，已認證"
+        }
+      ]
     },
     {
       "id": "exp-singlesubmit-fillahead",
@@ -3129,7 +3542,7 @@
       "tier": "3a",
       "goal": "在單次提交臂上，**把每一步的 union 不經 hook 交給預取器**（`cache_step_union` 改由\nmask 回讀餵；`CGC_PREFETCH_SRC=hist` ＋ `CGC_PREFETCH_WINDOW=4` 開起來），\n提交時「被選中但未駐留」的比例會不會從 **42.9% 降到 ~3% 這個量級**？\n\n也就是：**單次提交臂的 39pp 缺口，是不是只由「餵料被 hook 綁住」造成的？**",
       "crit": "① **量具活著**：`prefetch=` 不再是 `0/0`（這是「治療真的執行了」的唯一閘；本 repo 已兩次\n   把「旗標在 env 裡」誤讀成「機制跑了」——`docs/F2_F5_OVERLAP_AND_AUDIT_RESULT_2026-09-20.md:33`）。\n② **缺口真的縮**：`CGC-MISSMASK-STEP` 的 `misses/nsel` 中位數從 42.9% 落到 **≤10%**\n   （依 (c) 預期 3–8%），且分布（四分位）一起報。\n③ **t/s 一律標 VOID**：本卡**不**驗收速率；輸出仍是 garbage（後半沒做），\n   任何 t/s 只能當作「上限探針」並明文標 VOID。\n",
-      "res": "尚無可引用讀數：1 個 run 全部非乾淨（attribution.verdict=both（thermal=HEAVY, swap_growth=3513.94 MiB））",
+      "res": "尚無可引用讀數：1 個 run 全部非乾淨（attribution.verdict=both（thermal=HEAVY, swap_growth=3513.94 MiB）） **§52（09-29 22:06–22:08）：交付 cell（p0／b512）成對實測**——fillahead A 半 **26.45±0.51 t/s ＝ 37.81 ms/step**（`attribution=swap` ⇒ VOID）vs 同窗口控制 **10.28±0.34 t/s ＝ 97.28 ms**；**`instrument_gate=BOUND`**（`rb_feed=14000`、`prefetch=30301`、`spac=1564`、`mm_pub_n_leaf=39`）⇒「池活著」是**閘門判定**。計數器：`file_reads` **82932**（控制 26352，3.1×）、`fill_batch` 14.89 s（控制 6.01 s）⇒ 餵料代價看得見、**不出現在步時上**。⇒ 池活著時的 step 落在 **36.8 那一側**（不是 39.0）；`39.0` 是**預設 cell** 的讀數。⚠ 控制臂 swap +6511.8 MiB（臂的 4.7×）⇒ 成對 Δ 被控制臂的換頁放大。",
       "evid": "Backup/g4miss_2026-09-28/ctl_segmented_default.json",
       "sub": "S",
       "note": "假設：(a) **餵料被 hook 綁住**（可證）：`cache_step_union[il] = uni` 在 hook 內（`:7866`），\n    而 `CGC_SEG_BATCH=1` 跳過 hook ⇒ 預取器的三個來源（step/prev/hist）都拿到空集合。\n    證據：**兩臂的 `prefetch=0/0` 完全相同**（原始碼註解明說 `src=step` 時\n    「the hook just ensured (all resident) -> prefetch_slot drops everything」，\n    但單次提交臂是連 hook 都沒跑）。\n(b) **補齊的資訊本來就在 host**：`CGC_MISS_MASK_DBG=1` 的回讀迴圈\n    （`:4011-4042`）每步把 `cache_ids_cont_tensors[il]`（該層被選中的 id）讀回 host 只為了\n    數 miss；同一份 `ibuf` 直接寫進 `cache_step_union[il]` 即可。\n(c) **需求側的上界已知**：一步級可預測性 96.0–96.8% ⇒ 若預取器真的動起來、\n    且覆蓋到「上一步的 union」，則提交時未駐留應落到 **3–6%**（compulsory 那一側）。\n",
@@ -3171,6 +3584,122 @@
           "verdict": "both：thermal=HEAVY, swap_growth=941.5699999999997 MiB",
           "clean": false,
           "void_why": "attribution.verdict=both（thermal=HEAVY, swap_growth=941.5699999999997 MiB）",
+          "subgoal_contrib": null
+        },
+        {
+          "when": "2026-09-29 22:08",
+          "arm": "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1",
+          "profile": "prod-new",
+          "log": "Backup/fillahead_delivery_2026-09-29/filla_run.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/fillahead_delivery_2026-09-29/filla_run.stderr.log",
+            "source": "sibling",
+            "why": "成對：filla_run.stderr.log（903772 bytes）（另有 1 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 0 -n 64 --warm-skip 64（由產物參數重建）",
+          "result": {
+            "tg": 26.45
+          },
+          "thermal": "NOMINAL",
+          "swap": {
+            "before": "10831 MiB",
+            "after": "12202 MiB"
+          },
+          "verdict": "swap：swap_growth=1379.3100000000013 MiB, max_swap=12239.69 MiB",
+          "clean": false,
+          "void_why": "attribution.verdict=swap（swap_growth=1379.3100000000013 MiB, max_swap=12239.69 MiB）",
+          "instrument": {
+            "verdict": "BOUND",
+            "why": "受檢量具都動過：mm_pub_n_leaf=39、mm_pub_wrote=39、spac=1564、rb_feed=14000、prefetch=30301",
+            "required": [
+              "mm_pub_n_leaf",
+              "mm_pub_wrote",
+              "spac",
+              "rb_feed",
+              "prefetch"
+            ],
+            "required_reason": {
+              "mm_pub_n_leaf": "CGC_MISS_MASK_DBG=1 武裝了 mask 回讀",
+              "mm_pub_wrote": "CGC_MISS_MASK_DBG=1 武裝了 mask 回讀",
+              "spac": "CGC_SPAC_DBG=1 武裝了 SpAc 計數器",
+              "rb_feed": "明文宣告的探針：不經 hook 的餵料（CGC_SEG_BATCH=1 時 hook 不跑，它是唯一的餵料來源；此線需 2026-09-29 的補丁）",
+              "prefetch": "由 --require 明文要求"
+            },
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "positive",
+                "n": 8,
+                "max": 39,
+                "last": 39,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "positive",
+                "n": 8,
+                "max": 39,
+                "last": 39,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "positive",
+                "n": 7,
+                "max": 14000,
+                "last": 14000,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "positive",
+                "n": 386,
+                "max": 386,
+                "last": 386,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "positive",
+                "n": 12721,
+                "max": 64,
+                "last": 4,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "positive",
+                "n": 40,
+                "max": 1564,
+                "last": 1564,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "positive",
+                "n": 1,
+                "max": 30301,
+                "last": 30301,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              }
+            },
+            "incidental_zero": [],
+            "escaped": [],
+            "escape_why": "",
+            "armed": [
+              "CGC_MISS_MASK_DBG",
+              "CGC_SEG_BATCH",
+              "CGC_SPAC_DBG"
+            ]
+          },
           "subgoal_contrib": null
         }
       ],
@@ -3252,30 +3781,38 @@
           "contribs": []
         }
       ],
-      "no_throughput_claim": "本節點 2 個 run 全部非乾淨歸因（attribution.verdict=both（thermal=HEAVY, swap_growth=3513.94 MiB）、attribution.verdict=both（thermal=HEAVY, swap_growth=941.5699999999997 MiB）；缺成對的 stderr log（不可引用））⇒ 依 MEASUREMENT_CONTRACT §5.1 吞吐不得引用；節點只記判詞。乾淨 = memory_pressure.is_clean()。",
-      "arm_binding": {
-        "arm": "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1",
+      "no_throughput_claim": "本節點**不主張任何吞吐**：all runs（含 09-29 §52 的成對）皆非乾淨歸因（`attribution=both`／`swap`／`thermal=HEAVY`）⇒ 依 MEASUREMENT_CONTRACT §5.1 吞吐不得引用；節點只記判詞與計數器（`rb_feed`／`prefetch`／`file_reads`）。乾淨 = memory_pressure.is_clean()。",
+      "subgoal_binding": {
+        "subgoal": "L20-5",
+        "title": "餵料搬家（P1）",
+        "layer": "L20",
         "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1",
+          "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_PREFETCH_SRC=hist;CGC_PREFETCH_WINDOW=4"
+        ],
         "options": [
-          "CGC_SEG_BATCH=1",
-          "CGC_B_SCHEME=1",
-          "CGC_SLOT_TABLE_GPU=1",
-          "CGC_MISS_MASK=1",
-          "CGC_MISS_MASK_COST=1",
-          "CGC_SPAC_DBG=1"
+          "CGC_SPAC_DBG=1",
+          "CGC_PREFETCH_SRC=hist",
+          "CGC_PREFETCH_WINDOW=4"
         ],
-        "instruments": [
-          "CGC_MISS_MASK_DBG=1"
-        ],
-        "source": "run",
-        "confidence": "high",
-        "note": "節點自帶實跑 arm（2 筆 run，log 可點）",
-        "logs": [
-          "Backup/fillahead_2026-09-28/fed_default.json"
-        ],
-        "logs_missing": [],
-        "reports": []
-      }
+        "instruments": [],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "",
+        "note": "驗收：不開 debug 仍要有 CGC-RB-FEED 且 prefetch > 0/0。",
+        "state": "未結案（P0 成立、P1 未做）",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L20-5",
+          "why": "單次提交臂上把 union 交給預取；P1 餵料的載體"
+        }
+      ]
     }
   ],
   "subgoals": [

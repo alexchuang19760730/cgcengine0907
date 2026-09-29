@@ -1,0 +1,90 @@
+id: exp-k3-pair-cert
+owner: shared
+created: 2026-09-28
+
+question: |
+  k=2 與 k=3 在**測試卡 §2.5 的權威 cell** 上是否可分離（配對 t，事先登記的 n 判一次）？
+
+  為什麼現在才問：`docs/K3_PAIR_CERT_V2_BENCH_2026-09-23.md` 登記的是
+  `prod_profile.py` 的**交付 cell**（batch 512 / prompt 0），而
+  `llama_bench_matrix.py` 的 `[cell contract]` fail-closed 只認 §2.5 那一個 cell
+  ⇒ 那個交付 cell **自合約生效起就量不到**（見 docs/K3_PAIR_CERT_V2_EXECUTABILITY_2026-09-28.md
+  的 D8）。`_BENCH_DEFAULTS` 與 §2.5 逐項相同，所以走 `harness.py bench` 的預設是唯一
+  不撞閘門又能表達 k 的路徑（`--spec-draft-n-max`，`:1411`）。
+
+  注意口徑變了：這裡量的是 `-p 2048 -b 5632` 的 **tg row**，不是 12.57 那個 cell。
+  k 的效應是 kernel 層的（`ggml-metal-ops.cpp` 的 `mul_mv_ext` 對 Q_K 家族要 `ne11>=4`，
+  所以 ntok=3 走不到、ntok=4 才進得去），機制與 cell 無關 ⇒ 對「交付 cell 該不該換 k=2」
+  這個決定是充分的。**但「換了之後交付數字是多少」仍需要交付 cell 被寫進 §2.5 才能問。**
+
+baseline:
+  metric: "k=2 − k=3 配對差 +1.71 t/s（+16.4%），n=5 pairs，sd 1.83，t=2.08 < 2.776（df=4）⇒ NOT CERTIFIED；交付 cell 上的絕對 tg 值尚未重新量（歷史 12.57 為 2026-09-20）"
+  cell: "§2.5 的 `delivery` cell：prompt 0, gen 128, depths 512, batch/ubatch 512, ctx 4096, warm-skip 64, reps 3, expert-cache 8 GiB, MTP draft k ∈ {2,3}（臂 prod25:!CGC_PREFILL_STREAM=1;!CGC_GATHER_SLAB_CAP=256）"
+  source: "docs/PROD_NEW_TEST_CARD_2026-09-24.md"
+
+# 【登記修正 2026-09-28，跑前】第一次登記的是預設（prod-new host-prefill）cell。
+# 實跑後它**在還台機器上進不去**：`-ub 5632` 的 prefill 撞 Metal OOM
+# （`CGC-METAL-FAIL ... kIOGPUCommandBufferCallbackErrorOutOfMemory`，兩次可重現），
+# 而它建議的逃生口（降 -ub／expert cache）正是 CELL 裡的嚴格維度 ⇒ 該 cell 動不了。
+# 於是改登記到測試卡新增的 `delivery` cell（batch 512 / prompt 0，即 12.57 那次的口徑）。
+# 兩次登記都寫在這裡，因為換口徑就等於換實驗。
+non_prod_reason: |
+  沒有選 prod-new：**預設 cell 在還台 16 GB 機器上跑不動。** 它的 `-ub 5632` prefill 會撞
+  Metal command buffer OOM（fail-closed abort，2026-09-28 可重現），而合約建議的緩解手段
+  （降 `-ub`、降 expert cache）都是該 cell 的**嚴格維度** ⇒ 不離開 cell 就繞不過去。
+  而 k=2 vs k=3 這個問題的歷史依據（+16.4%）與 12.57 誤點**都在交付 cell 上**，
+  那是 `prod25` ＋ `CGC_PREFILL_STREAM=1` ＋ `CGC_GATHER_SLAB_CAP=256`（＝ registry 的
+  `prod25-stream`）。兩個 cell 的機器不變量相同（ngl/load_mode/threads/expert-cache/cache-type
+  用 `resolve()` 對過），差別只在量測維度。
+  ⚠ 代價：本實驗的數字**不可與預設 cell 的數字互比**。
+
+hypothesis:
+  mechanism: |
+    v1 在 server 口徑上看到的是**雙峰**而不是對稱噪音：k=3 有 3/5 次掉到 8.59–10.72，
+    2/5 次正常（11.48 / 12.25），而 k=2 完全沒有 launch 級項（F=0.62，95% 上界 9.98%）。
+    變異數項本不該 bias 平均，它會 bias 正是因為慢狀態是**單邊**的。
+    若這個單邊慢狀態在權威 cell 上也在，配對差應為正且 k=3 較慢的對數偏多；
+    若它只是 server 口徑（10.43 基線）的現象，在 12.57 那個交付基線較高的 cell 上，
+    可被 k=2 救回來的那一段會比較短 ⇒ 配對差變小甚至消失。**兩個方向都只是先驗。**
+  expected: "配對差 +0 ~ +2.5 t/s（k=2 較快）；方向若相反也照實記錄"
+  basis: "docs/K3_SWING_ANALYSIS_2026-09-23.md §7.3（雙峰）／§5.1（reps 是偽槓桿）；docs/K3_PAIR_CERT_V2_BENCH_2026-09-23.md §1.1（bench 的 rep sd 也是 18%，沒有比較乾淨）"
+
+acceptance:
+  success: "階段 1 先以 --sd-only 估 sd（只估不判）⇒ 依 §3 的規則寫死 N = min(12, max(8, n_needed_at_point_sd)) ⇒ 跑滿 N 對，做**一次**配對 t 檢定（雙尾 α=0.05）。|t| ≥ crit 且 k=2 較快 ⇒ CERTIFIED"
+  falsify: "跑滿 N 對而 |t| < crit ⇒ NOT SEPARATED。**不再加對**（optional stopping），改走機制路線"
+  on_fail: "把 k 當已知噪音源處理：k=2 當便宜 screen，winner 回 k=3 確認一次（兩者 PSO 不同，排名不可直接搬）"
+
+# 【N 登記 2026-09-28，跑第 5 對之前】階段 1（四對 pilot）以 --sd-only 估 sd，只估不判：
+#   within-arm sd 19.1–20.6%（一個 request）；launch 級項**未偵測到**
+#   （k2 F=1.79、k3 F=0.40，df=(3,8)，兩者都 < 該 df 的 95% 點 4.07）；
+#   配對差 sd = 2.39 t/s（95% 上界 6.99）。
+#   登記的規劃差 +1.16 t/s（**觀察值，僅用來定 n，不是發現**）。
+#   ⇒ n_needed at point sd = 19；at sd upper bound > 40（工具 cap）。
+#   ⇒ 依 §3：N = min(12, max(8, 19)) = **12**。
+# 這個 N 是在看見任何判決之前寫死的；跑滿 12 對之前不做檢定（paired_verdict 會拒 n < planned_n）。
+targets:
+  decode_tps: 15.0
+  prefill_tps: 250.0
+
+subgoals:
+  - id: sg-k3-launch-term
+    text: "權威 cell 上 k=3 是否仍有 launch 級項（F 過 df 對應的門檻）"
+    expect: "若 F ≥ F(0.95;3,8)=4.07 ⇒ launch 級項在這個 cell 上也在"
+    how: "k_swing_decompose.py 的 decompose（4 臂 × 3 rep ⇒ df=(3,8)）；**注意不要用預設的 3.48**"
+  - id: sg-k3-paired
+    text: "配對差的方向與量級（k2 − k3, t/s）"
+    expect: "+0 ~ +2.5 t/s"
+    how: "k_swing_decompose.py --paired --planned-n N；一對 = 一次 k2 launch ＋ 一次 k3 launch，ABBA"
+
+arms:
+  - prod25
+  - prod-new
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L25-6 同步；勿手改，改看板）】──
+options:
+  subgoal: L25-6
+  profile: prod-new
+  arms:
+    - "prod-new"
+  no_knob: "沒有新旋鈕：本格要的是加大配對 n（-r）到能認證 16.4% 的飄移，或證明飄移是視窗機械造成。"
+  note: "目前 n=5、t=2.08 < df=4 的 2.776 ⇒ 未認證；17.669 已降級為分布尾端一次抽樣。"

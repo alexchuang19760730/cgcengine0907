@@ -246,14 +246,13 @@ def render_md(data: dict, mapping: dict[str, str], unmapped: list[str]) -> str:
                 continue
             ents = [e for e in data["entries"] if e["tier"] == t["id"]]
             out += [f"#### {t['label']}（{len(ents)}）", "", f"*{t['def']}*", "",
-                    "| 條目 | 子目標 | 主題 | arm（profile＋option） | 判準 | 結果 | 依據 |",
+                    "| 條目 | 軸 | 主題 | 子目標（看板格） | 判準 | 結果 | 依據 |",
                     "|---|---|---|---|---|---|---|"]
             for e in ents:
-                b = e.get("arm_binding") or {}
-                arm = b.get("arm") or "（未綁定）"
+                sg = (e.get("subgoal_binding") or {}).get("subgoal") or "—"
                 out.append(f"| [**{e['name']}**](briefs/{e['id']}.html) | "
                            f"{subs[e['sub']]['label']} | {e['theme']} | "
-                           f"`{arm}` | "
+                           f"`{sg}` | "
                            f"{e['crit']} | {e['res']} | {e['evid']} |")
             out.append("")
 
@@ -269,9 +268,8 @@ def render_md(data: dict, mapping: dict[str, str], unmapped: list[str]) -> str:
             out += [f"#### [{e['name']}](briefs/{e['id']}.html)　·　{e['tier']} {t['label']}"
                     f"　·　{subs[e['sub']]['label']}"
                     f"　·　[MD](briefs/{e['id']}.md)", "",
-                    f"- **arm**：`{(e.get('arm_binding') or {}).get('arm') or '（未綁定）'}`"
-                    f"（{(e.get('arm_binding') or {}).get('source', '—')}；"
-                    f"對照表：[52 條 × profile option](PROFILE_OPTION_MAP_2026-09-29.md)）",
+                    f"- **子目標**：`{(e.get('subgoal_binding') or {}).get('subgoal') or '—（未歸屬）'}`"
+                    f"（來源：子目標看板；對照表：[子目標 × options](SUBGOAL_OPTION_MAP_2026-09-29.md)）",
                     f"- **目標**：{e.get('goal', '—')}",
                     f"- **判準**：{e['crit']}",
                     f"- **結果**：{e['res']}",
@@ -383,7 +381,7 @@ iframe{width:100%;height:360px;border:1px solid var(--line);border-radius:8px;ba
   <div id="btns"><button id="theme">切換主題</button></div>
   <h1>__TITLE__</h1>
   <div class="meta">範圍：__SCOPE__<br>分支：__BRANCHES__<br>規則：<code>__RULE__</code></div>
-  <div class="meta hdr">子目標看板：<a href="prefill250decode20.html">prefill250decode20.html</a>（L20／L25 × 結案判準）｜<a href="subgoals/index.html">逐子目標 15 頁</a>（預期 ms/step 與 t/s、立項卡、產物 log）｜逐條技術白皮書：<a href="briefs/index.html">總目錄（__NENTRY__ 條：目標 → 判準 → 結果 → 判定）</a>｜<a href="PROFILE_OPTION_MAP_2026-09-29.html">52 條 × profile option 對照表</a>（哪條掛哪個臂、log 在哪一份）</div>
+  <div class="meta hdr">子目標看板：<a href="prefill250decode20.html">prefill250decode20.html</a>（L20／L25 × 結案判準）｜<a href="subgoals/index.html">逐子目標 15 頁</a>（預期 ms/step 與 t/s、立項卡、產物 log）｜逐條技術白皮書：<a href="briefs/index.html">總目錄（__NENTRY__ 條：目標 → 判準 → 結果 → 判定）</a>｜<a href="SUBGOAL_OPTION_MAP_2026-09-29.html">子目標 × options 對照表</a>（15 格各自的臂／option／立項卡；唯一來源是子目標看板，非文件掃描）</div>
 </header>
 <div class="legend">
   <div class="lrow"><span class="lab">階段（分支）</span><span class="note">生產 ＝ ① ② ③b｜實驗階段 ＝ ③a｜已結案 ＝ ④ ＋ 不適用</span></div>
