@@ -303,7 +303,7 @@ layers:
         expect_ms: "缺口 45.45 ms ⇒ 需要一個能動 <b>bytes 或 steps</b> 的乘數"
         expect_tps: "≥25.0（在 ≤40.0 ms 下）"
         now: "現有軸（ms、段數、kernel、IO）<b>全量完</b>；缺口 <b>45.45 ms</b>（交付錨點 85.45 ms → 25 t/s 的 40.0 ms）。<b>§51 撤回 §50 的「未判定」</b>（B 半補丁的價目漏掉主項：備援重算 320 列 ＝ 8.09 ms；§52 用交付 cell 底座複核，仍差 7.5–11.6 ms）⇒ <b>decode ≥25 回到判死</b>，而<b>本格是全板唯一還沒被判死的一格</b>。<br><b>09-29 23:5x 唯讀盤點完成</b>（0 跑）：每 token <b>1.171 GB</b> 裡只有 <b>381 MB（33%）</b>的專家段會 miss，<b>790 MB（67%）</b>的 dense 段常駐 RAM ⇒ <b>bytes 類候選最多只能動那 33%</b>。<b>7 個候選盤完</b>：1 個 PRIMARY = <code>--spec-type ngram-*</code>（**不需要 draft head**，且 <code>need_n_rs_seq()</code> 對它回 <b>0</b> ⇒ 結構上不觸發 M2 的輸出函數改變 —— 那正是 MTP 被判「產品決策」的原因）、1 個 SECONDARY = <code>CGC_SERVER_LOAD_MODE=mmap</code>、5 個已判（bpw／top-k／砍 dense／MTP／池命中）。"
-        action: "① ~~量 PRIMARY~~ <b>已做、否證</b>（E 0.984）；② 接著量 SECONDARY＝<code>CGC_SERVER_LOAD_MODE=mmap</code> 的等效 bytes/step（A/B 各一趟，比 <code>answer_md5</code> 與 IO 側讀數）"
+        action: "① ~~量 PRIMARY~~ <b>已做、否證</b>（E 0.984）；② 接著量 SECONDARY＝<code>CGC_SERVER_LOAD_MODE=mmap</code> 的等效 bytes/step（A/B 各一趟，比 <code>answer_md5</code> 與 IO 側讀數）—— <b>旋鈕已在 09-30 驗過真的到達</b>（<code>arm_env_dropped()</code> 回空；解析後 <code>none</code> → <code>mmap</code>），且本臂 <b>MTP off</b> ⇒ <b>不吃「可回收 ≥8 GB」那條線</b>，是 <b>L25 六格裡唯一現在就能跑的一格</b>"
         accept: "需要一個新乘數：≤40.0 ms 且 M1 bit-identical。★ 對 ngram 展開成三條：① <code>need_n_rs_seq()==0</code>（✅ 源碼已得）② <code>E&gt;1</code>（<b>⛔ 0.984</b>）③ <code>answer_md5</code> 與對照臂相同（量不到，見 <code>docs/SIXTH_AXIS_NGRAM_2026-09-30.md</code> §4）"
         falsify: "<b>② 已觸發</b>（E ≤1）⇒ 這個乘數不產生攤薄，回到「以現有軸加總到不了」；③ 仍 UNDECIDABLE 但<b>不改變判決</b>（沒有攤薄就沒有「要不要接受它的輸出」這個問題）"
         stage: 1
@@ -323,7 +323,7 @@ layers:
           - {name: "--spec-ngram-simple-size-n", value: "12（編譯期預設，不可覆寫）", role: candidate, why: "⛔ bench 拒絕此旗標 ⇒ 在唯一認可入口上**只能跑預設**；要掃參數得先改 `src/`（且改動會動到共用 binary）", source: "common.h:367-371；llama-bench.cpp:1330"}
           - {name: "--spec-ngram-simple-size-m", value: "48（同上）", role: candidate, why: "⛔ 同上（`--spec-ngram-simple-size-m` 也被 bench 的 arg 白名單拒）", source: "同上"}
           - {name: "--spec-ngram-simple-min-hits", value: "1（同上）", role: candidate, why: "⛔ 同上", source: "同上"}
-          - {name: CGC_SERVER_LOAD_MODE, value: "mmap", role: candidate, why: "被測 SECONDARY：dense 段由匿名頁變可回收檔案頁 ⇒ 降落到 SSD 的比例 f（§7：f 20% ⇒ 85.9 ms；25 t/s 要 f ≤7.9%）", source: "scripts/run_server.sh:513-518（預設 none）；docs/DECODE25_CEILING_2026-09-20.md §7"}
+          - {name: CGC_SERVER_LOAD_MODE, value: "mmap", role: candidate, why: "被測 SECONDARY：dense 段由匿名頁變可回收檔案頁 ⇒ 降落到 SSD 的比例 f（§7：f 20% ⇒ 85.9 ms；25 t/s 要 f ≤7.9%）。<b>09-30 已驗它到得了引擎</b>：prod-new 解析後是 <code>--load-mode none</code>，設這顆 ⇒ <code>--load-mode mmap</code>，且 <code>llama_bench_matrix.arm_env_dropped()</code> 回<b>空清單</b>。⚠ 它是 run_server.sh 的別名（被翻譯成 argv）⇒ <code>grep src/</code> 會 0 命中，<b>那不是判據</b>", source: "scripts/run_server.sh:513-518（預設 none）；docs/DECODE25_CEILING_2026-09-20.md §7"}
           note: "⚠ 本格的 `knobs.name` 有兩種：`CGC_*`＝env；`--*`＝**CLI 旗標**（`--spec-type` 不是 env，寫成 env 會被 allowlist 靜默丟掉 —— 那正是 MTP 修復臂空轉一趟的原因）。三趟：A 對照＝裸 `prod-new`（不帶任何 spec 旗標）、B＝A ＋ 上面那串、C＝B 重跑（驗 ON 自身 identical）。驗收三條：**① `need_n_rs_seq()==0` ② `E>1` ③ `answer_md5` 與 A 相同**。⛔ 三趟的 t/s 一律先過引用閘門；本格的第一個產物是「有沒有乘數」，不是速度。"
       - id: L25-2
         title: "讓某一格超過自己的已量上界"
