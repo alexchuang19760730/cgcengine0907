@@ -51,8 +51,9 @@
 <tr><th>否證</th><td>兩臂落在同一帶（10.5 ± 5%）⇒ 起點與 batch 都不是主因；維持未結案並註記「已試、兩者皆非主因」</td></tr>
 </table></div>
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
-<tr><td><code>—</code></td><td><code>—</code></td><td>—（判別臂未跑）</td><td>tps</td><td>❌</td></tr>
+<tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td><b>交付 cell 的第一列可引用讀數 9.377 t/s</b>（<code>stepbudget 07:21 delivery_fuse</code>）；孿生 <code>delivery_base</code> 9.909 被冷啟 rep 擋下（全 rep 1.134 ⇒ UNSTABLE，kept 10.31 ⇒ <b>同帶</b>）——<b>判別臂（B1／B3）本身仍未跑</b></td><td>tps</td><td>❌</td></tr>
 </tbody></table>
+<div class="success"><b>引用閘門：QUOTABLE</b>（判準＝<code>scripts/check/quote_gate.py</code>，逐 rep 離散 ＋ 樣本數 ＋ 窗口 ＋ 參考帶）<br>產物 <a href="../../../Backup/stepbudget_2026-09-29/delivery_fuse.json"><code>Backup/stepbudget_2026-09-29/delivery_fuse.json</code></a><br>逐 rep [8.83, 9.59, 9.70] ⇒ 全 rep 1.099／kept 1.011（皆 ≤1.10）、<code>attribution=none</code>、<code>contract.ok</code>、產物旁有成對 stderr log ⇒ 交付 cell 的 <b>第一列</b>可引用讀數（§58）。⚠ 臂上帶 5 個 <code>CGC_GPU_*</code>／<code>CGC_DISPATCH_CENSUS</code> 取樣開關（Metal 記 command buffer 時間；unset 時無熱路徑成本）＋<code>CGC_MMV_FUSE</code> ⇒ 引用時要一起寫</div>
 <h3>立項（charter）</h3>
 <ul>
 <li><a href="../../../scripts/check/charters/e-cell-discriminate-2026-09-29.yaml"><code>scripts/check/charters/e-cell-discriminate-2026-09-29.yaml</code></a></li>

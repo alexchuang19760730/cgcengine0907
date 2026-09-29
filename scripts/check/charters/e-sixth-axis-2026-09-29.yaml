@@ -1,35 +1,152 @@
-# 立項卡（2026-09-29，由 operator 的結案規則而生）：結案 = prod-new ＋ harness bench ＋ 達標
+# ═══════════════════════════════════════════════════════════════════════
+# 第六條軸（Campaign charter）—— 「每 token 的乘數」：bytes 或 steps
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼要有這張卡：§39 把 ms 軸與段數軸都量空了，並把 25 t/s 的最後兩條路寫成
+#   (a) 找到第六條軸（改**每 token 的 bytes 或 steps**，而不是每步的 ms）
+#   (b) 讓某一格超過自己的已量上界
+# 這張卡只做 (a)。它的第一個產出是「有無候選」的判定，不是實作。
+#
+# ★★ 2026-09-29 23:5x 補：**候選清單已盤完（唯讀，0 跑）**，而且找到一個真的新候選 ——
+#   `--spec-type ngram-*`。關鍵在源碼：`common.h:395 need_n_rs_seq()` 只對
+#   **DRAFT_MTP／EAGLE3／DFLASH／DSPARK** 回 `draft.n_max`，**ngram-\* 與 draft-simple 回 0**。
+#   而 MTP 之所以是「產品決策」（C6）而不是本線槓桿，正是因為 `n_rs_seq > 0` 讓它變成
+#   **不同的輸出函數**（M2 FAIL）。⇒ **ngram 投機在結構上不經過那條路**，
+#   它有機會同時是「乘數」又是「同一個輸出」—— 那會讓 (a) 第一次變成可判定的問題。
+#   ⚠ 「結構上不經過」是**讀源碼得到的推論**，不是量測 ⇒ 本卡的 sg-6th-ngram 就是去量它。
 id: e-sixth-axis
 owner: freebuff
 created: '2026-09-29'
 axis: both
-question: 本步的 bytes 或 steps 有沒有可改的乘數（＝不是把 ms 變小，而是讓每 token 的份數變少）？
+
+# ── 【目標】─────────────────────────────────────────────────────────────
+question: |
+  本步的 bytes 或 steps 有沒有可改的乘數（＝不是把 ms 變小，而是讓每 token 的份數變少）？
+
+# ── 【現狀】─────────────────────────────────────────────────────────────
 baseline:
-  metric: 現有軸（ms、段數、kernel、IO）全量完；交付 85.45 ms、缺口 45.45 ms；P(25)<3%
-  cell: prod-new 交付 cell
-  source: docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md
+  metric: "現有軸（ms、段數、kernel、IO）全量完；交付 85.45 ms、缺口 45.45 ms；P(25)<3%"
+  cell: "prod-new 交付 cell（`-p 2048 -n 128 -d 512 -r 3 -b/-ub 5632 --warm-skip 64`）"
+  source: "docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md §39（C1–C7 ＋ 四級槓桿清單）"
+  known: |
+    - §39 §三 C1：把四塊各自推到**自己的已量上界**相加 = 41.2 ms = 24.3 t/s < 25
+      ⇒ 「以現有的軸加總到不了」。C6 明寫：「若要靠每步多 token 攤薄固定成本，必須先把 MTP-on
+      變成交付口徑」——並把它裁成**產品決策**。本卡要問的正是：**除了 MTP 還有沒有別的乘數**。
+
+# ── 【唯讀盤點（2026-09-29 23:5x，本輪產出）】──────────────────────────
+# 這是「每 token 的 bytes／steps」的第一份清單。全部轉引，出處逐列標明；本節 0 跑。
+inventory:
+  bytes_per_token:
+    total: "1.171 GB（1117 MiB）／token（35.51 B 參數、3.12 bpw、A3B ⇒ 每 token 激活 3B）"
+    source: "docs/DECODE25_CEILING_2026-09-20.md §7"
+    structure:
+      - "模型：41 層 / 256 專家 / **top-8** / expert FFN 512 / emb 2048；專家 ≈ 33 B（93%）、attn 1.06 B"
+      - "**專家段 ≈ 381 MB（33%）**：`41×8×3.1M` ⇒ **會 miss 的那一半**（實測 miss 22.4%，hits 28584／misses 8246）"
+      - "**dense 段 ≈ 790 MB（67%）**：attn＋shared ⇒ **常駐 RAM、不受 miss 影響**"
+    source2: "同檔 §8.1"
+    physics: "全命中 RAM ⇒ **9.76 ms（102.5 t/s）**；25 t/s 只需有效頻寬 29 GB/s（峰值 24%）⇒ 25 不是被物理頻寬擋住"
+    wall: "模型 12.72 GiB vs expert-cache pool **8 GiB** ⇒ 4.72 GiB 只能待在 SSD（慢 ~40×）"
+  # ★ 這張表才是本卡的核心：每個候選都標「改哪個乘數／量級／能不能 M1 相同／現況」
+  candidates:
+    - id: ngram-spec
+      changes: steps/token
+      mechanism: "`--spec-type ngram-simple`（或 map-k／mod／cache）用**上下文自己的 n-gram 索引**起草，不需要 draft head"
+      magnitude: "攤薄固定成本，係數由 E（accept rate）決定；E≥1 才正"
+      identity: "★★ `need_n_rs_seq()` 回 **0**（common.h:395 只列 MTP／EAGLE3／DFLASH／DSPARK）⇒ **結構上不觸發 M2 的輸出函數改變**"
+      source: "common/speculative.cpp:1998（impl_ngram_simple，need_embd=false）；common.h:395；CLI `--spec-ngram-simple-size-n/-size-m/-min-hits`"
+      status: CANDIDATE_PRIMARY
+      why_first: "唯一同時「改乘數」且「有機會保持同一個輸出函數」的候選。bytes 類的候選只對 33% 那一半有效；steps 類對兩半都有效。"
+    - id: load-mode
+      changes: bytes/token（等效）
+      mechanism: "`CGC_SERVER_LOAD_MODE=mmap`：dense 段由匿名頁變成可回收的檔案頁 ⇒ 降低落到 SSD 的比例 f"
+      magnitude: "§7 的模型：`f` 20% ⇒ 85.9 ms；25 t/s 要 `f ≤ 7.9%`"
+      identity: "載入方式不改數值 ⇒ **構造上 M1**（要用 `answer_md5` 驗，不是假設）"
+      source: "scripts/run_server.sh:513-518（合法值 auto|none|mmap|mlock|mmap+mlock，預設 none）"
+      status: CANDIDATE_SECONDARY
+      risk: "該檔自己的筆記：某些寬度下 mmap `survived 0/3`；5 份可判定 load_mode 的 Metal 工作集警告**全是 mmap** ⇒ 要連 `metal working set` 一起記錄"
+    - id: bpw
+      changes: bytes/token（真）
+      mechanism: "bpw 3.12 → ≤1.96（IQ2_XXS 級）或模型 ≤8 GiB"
+      magnitude: "§7 排名第一，理論直達 ~100 t/s"
+      identity: "**換模型 ⇒ M1 不適用**"
+      status: PRODUCT_DECISION（同 C6 類）
+    - id: topk
+      changes: bytes/token（真）
+      mechanism: "top-8 → 更少專家"
+      magnitude: "∝ k（33% 那一半）"
+      identity: "**換輸出 ⇒ M1 不適用**（等於換模型）"
+      status: DEAD_FOR_M1
+    - id: dense-cut
+      changes: bytes/token（真）
+      mechanism: "砍 dense 790 MB"
+      magnitude: "67% 的 bytes"
+      identity: "改模型"
+      status: DEAD_FOR_M1
+      note: "★ 而且**它本來就不是 miss 的那一半** ⇒ 就算能砍也打不到牆（這條是「量級在對的地方嗎」的檢查）"
+    - id: mtp
+      changes: steps/token
+      mechanism: "`--spec-type draft-mtp`（已量 `step ≈ 14.61 + 42.03·T`，可移植）"
+      identity: "`need_n_rs_seq() = draft.n_max` ⇒ **M2 FAIL（不同輸出函數）**"
+      status: PRODUCT_DECISION（§39 C6 已裁）
+    - id: pool-hit
+      changes: bytes/token（等效）
+      mechanism: "提高池命中率／把池變大"
+      identity: "不改數值"
+      status: CLOSED
+      note: "線 I 結案：16 GB 上無記憶體側槓桿；池不能縮（8G 12.06 → 6G 10.48 → 4G 7.67）也不能長（上限 8 GiB）"
+
+# ── 【假設】─────────────────────────────────────────────────────────────
 hypothesis:
-  mechanism: 25 需要的不是把某一段變快，而是改變乘數：每 token 的 bytes（權重/專家位元組）或 steps（每 token 的步數）。這張卡的第一個產出是「有無候選」的判定，不是實作。
-  expected: 缺口 45.45 ms 需要一個新乘數 ⇒ 目標 ≤40.0 ms／≥25.0 t/s；找不到就維持判死
-  basis: §39（兩條路：第六條軸或超過上界）
+  mechanism: |
+    25 需要的不是把某一段變快，而是改變乘數：每 token 的 bytes（權重／專家位元組）或
+    steps（每 token 的步數）。**優先序由 bytes 的結構決定**：
+    每 token 1.171 GB 裡只有 **381 MB（33%）**是會 miss 的專家段，**790 MB（67%）**的 dense 段
+    常駐 RAM ⇒ **bytes 類的候選最多只能動那 33%**；**steps 類（每步多 token）對兩半都有效**
+    ⇒ 這就是為什麼 `ngram-spec` 排第一，而不是任何 bytes 類候選。
+  expected: "缺口 45.45 ms 需要一個新乘數 ⇒ 目標 ≤40.0 ms／≥25.0 t/s；找不到就維持判死"
+  basis: "§39 §五（兩條路：第六條軸或超過上界）"
+
+# ── 【驗收】─────────────────────────────────────────────────────────────
 acceptance:
-  success: 指名至少一個可改的乘數，且它落在 ≤40.0 ms 且 M1 bit-identical 的形狀上
-  falsify: 找不到候選乘數 ⇒ 25 維持判死（判詞不改）
-  on_fail: 維持判死；把「已找過哪些乘數、各為何不行」寫進卡片
+  success: |
+    指名至少一個可改的乘數，且它落在 **≤40.0 ms** 且 **M1 bit-identical** 的形狀上。
+    ★ 對 steps 類候選（ngram），這條展開成三個子條件：
+    ① 結構前提：`need_n_rs_seq() == 0`（**已由源碼讀得**，本卡只覆核）
+    ② `E = emit_tok_per_round > 1`（真的有攤薄發生）
+    ③ 輸出同一：`answer_md5` 與 MTP-off 對照臂**相同**，且 ON 自身重跑 identical
+  falsify: |
+    找不到候選乘數 ⇒ 25 維持判死（判詞不改）。
+    ★ 對 ngram：若 ③ 不成立（輸出不同）⇒ **它與 MTP 同類**（產品決策，不是本線槓桿）；
+    若 ② 不成立（E ≤ 1）⇒ 這個乘數不產生攤薄，回到「以現有軸加總到不了」。
+  on_fail: "維持判死；把「已找過哪些乘數、各為何不行」寫進卡片（本檔 inventory 就是第一版）"
+
 targets:
   decode_tps: 25.0
   prefill_tps: 250.0
+
+# ── 【技術子目標】─────────────────────────────────────────────────────────
 subgoals:
-- id: sg-6th-bytes
-  text: 每 token 的 bytes 有哪些可改項（含 MTP 攤薄）
-  expect: 候選清單 ＋ 各自的量級
-  how: 唯讀盤點（模型／pool／verify 形狀）
-- id: sg-6th-steps
-  text: 每 token 的 steps 有哪些可改項
-  expect: 候選清單 ＋ 各自量級
-  how: 唯讀盤點（投機／批次／接受鏈）
+  - id: sg-6th-inventory
+    text: "唯讀盤點：每 token 的 bytes 與 steps 各有哪些可改項、量級多少、能不能 M1 相同"
+    expect: "候選清單 ＋ 各自量級 ＋ 現況"
+    how: "讀 §39／`DECODE25_CEILING` §7 §8.1／`run_server.sh` 的旋鈕清單"
+    state: DONE
+    result: "本檔 inventory：7 個候選，1 個 PRIMARY（ngram-spec）、1 個 SECONDARY（load-mode）、5 個已判"
+  - id: sg-6th-ngram
+    text: "量 `--spec-type ngram-simple`：E 與輸出同一性"
+    expect: "`E > 1` ∧ `answer_md5` 與對照臂相同 ∧ ON 自身重跑 identical"
+    how: |
+      同 cell 三趟（**A 對照＝裸 prod-new、B＝`--spec-type ngram-simple`、C＝B 重跑取 identical）。
+      先查 `CGC-MTP-PERF`（或等價的每輪計數器）取 E；再 diff `answer_md5`。
+      ⛔ `--spec-type` **不是 env**，不能寫進 arm 的 env 段（會被 allowlist 靜默丟掉）。
+    state: TODO
+  - id: sg-6th-loadmode
+    text: "量 `CGC_SERVER_LOAD_MODE=mmap` 的等效 bytes/step（不改乘數，改 f）"
+    expect: "A/B 各一趟：`answer_md5` 相同，且 IO 側觀察到落 SSD 比例的變化"
+    how: "用既有 IO 儀器（`cb` 桶／`file_reads`／`MiB/step`）；⚠ 同時記錄 `metal working set` 警告"
+    state: TODO
+
 arms:
-- prod-new
+  - prod-new
 
 # ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L25-1 同步；勿手改，改看板）】──
 options:
@@ -37,5 +154,10 @@ options:
   profile: prod-new
   arms:
     - "prod-new"
-  no_knob: "新軸尚未命名：本格要問的是「每 token 的 bytes 或 steps 有沒有可改的乘數」⇒ 仍在立卡階段，沒有既有旋鈕可綁。"
-  note: "驗收：需要一個新乘數，≤ 40.0 ms 且 M1 bit-identical。"
+  knobs:
+    - {name: --spec-type, value: "ngram-simple", role: subject, why: "被測 PRIMARY：用上下文自己的 n-gram 起草，**不需要 draft head**；且 `need_n_rs_seq()` 對它回 **0** ⇒ 結構上不觸發 M2 的輸出函數改變（那正是 MTP 被判產品決策的原因）", source: "common/speculative.cpp:1998（need_embd=false）；common.h:395"}
+    - {name: --spec-ngram-simple-size-n, value: "4", role: subject, why: "lookup n-gram 長度（E 對它敏感 ⇒ 要掃）", source: "src/llama.cpp/common/arg.cpp:4129"}
+    - {name: --spec-ngram-simple-size-m, value: "8", role: subject, why: "draft m-gram 長度", source: "同上 :4139"}
+    - {name: --spec-ngram-simple-min-hits, value: "2", role: subject, why: "最小命中數（直接決定 E）", source: "同上 :4149"}
+    - {name: CGC_SERVER_LOAD_MODE, value: "mmap", role: candidate, why: "被測 SECONDARY：dense 段由匿名頁變可回收檔案頁 ⇒ 降落到 SSD 的比例 f（§7：f 20% ⇒ 85.9 ms；25 t/s 要 f ≤7.9%）", source: "scripts/run_server.sh:513-518（預設 none）；docs/DECODE25_CEILING_2026-09-20.md §7"}
+  note: "⚠ 本格的 `knobs.name` 有兩種：`CGC_*`＝env；`--*`＝**CLI 旗標**（`--spec-type` 不是 env，寫成 env 會被 allowlist 靜默丟掉 —— 那正是 MTP 修復臂空轉一趟的原因）。三趟：A 對照＝裸 `prod-new`（不帶任何 spec 旗標）、B＝A ＋ 上面那串、C＝B 重跑（驗 ON 自身 identical）。驗收三條：**① `need_n_rs_seq()==0` ② `E>1` ③ `answer_md5` 與 A 相同**。⛔ 三趟的 t/s 一律先過引用閘門；本格的第一個產物是「有沒有乘數」，不是速度。"

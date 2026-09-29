@@ -41,17 +41,17 @@
 <nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container">
 <h1>L25-1 ｜ 第六條軸：改「每 token 的 bytes 或 steps」</h1>
-<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（本輪立項）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
+<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（<b>唯讀盤點完成</b>：7 候選、1 PRIMARY；下一步＝量 ngram 的 E 與輸出同一性）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>缺口 45.45 ms ⇒ 需要一個能動 <b>bytes 或 steps</b> 的乘數</td></tr>
 <tr><th>預期（t/s）</th><td>≥25.0（在 ≤40.0 ms 下）</td></tr>
-<tr><th>現況（已量）</th><td>現有軸（ms、段數、kernel、IO）<b>全量完</b>；缺口 <b>45.45 ms</b>（交付錨點 85.45 ms → 25 t/s 的 40.0 ms）。<b>§51 撤回 §50 的「未判定」</b>（B 半補丁的價目漏掉主項：備援重算 320 列 ＝ 8.09 ms；§52 用交付 cell 底座複核，仍差 7.5–11.6 ms）⇒ <b>decode ≥25 回到判死</b>，而<b>本格是全板唯一還沒被判死的一格</b> —— 它是唯一能繞過那個補丁的路。</td></tr>
-<tr><th>action</th><td>立卡，先問「本步的 bytes 或 steps 有沒有可改的乘數」</td></tr>
-<tr><th>驗收</th><td>需要一個新乘數：≤40.0 ms 且 M1 bit-identical</td></tr>
-<tr><th>否證</th><td>找不到候選乘數 ⇒ 25 不再靠本格成立（維持<b>判死</b>；全板到時無一格存活）</td></tr>
+<tr><th>現況（已量）</th><td>現有軸（ms、段數、kernel、IO）<b>全量完</b>；缺口 <b>45.45 ms</b>（交付錨點 85.45 ms → 25 t/s 的 40.0 ms）。<b>§51 撤回 §50 的「未判定」</b>（B 半補丁的價目漏掉主項：備援重算 320 列 ＝ 8.09 ms；§52 用交付 cell 底座複核，仍差 7.5–11.6 ms）⇒ <b>decode ≥25 回到判死</b>，而<b>本格是全板唯一還沒被判死的一格</b>。<br><b>09-29 23:5x 唯讀盤點完成</b>（0 跑）：每 token <b>1.171 GB</b> 裡只有 <b>381 MB（33%）</b>的專家段會 miss，<b>790 MB（67%）</b>的 dense 段常駐 RAM ⇒ <b>bytes 類候選最多只能動那 33%</b>。<b>7 個候選盤完</b>：1 個 PRIMARY = <code>--spec-type ngram-*</code>（**不需要 draft head**，且 <code>need_n_rs_seq()</code> 對它回 <b>0</b> ⇒ 結構上不觸發 M2 的輸出函數改變 —— 那正是 MTP 被判「產品決策」的原因）、1 個 SECONDARY = <code>CGC_SERVER_LOAD_MODE=mmap</code>、5 個已判（bpw／top-k／砍 dense／MTP／池命中）。</td></tr>
+<tr><th>action</th><td>① <b>先量 PRIMARY</b>：<code>--spec-type ngram-simple</code> 三趟（A 對照／B 處理／C 重跑）⇒ 取 <code>E</code> ＋ diff <code>answer_md5</code>；② 次量 <code>CGC_SERVER_LOAD_MODE=mmap</code> 的等效 bytes/step</td></tr>
+<tr><th>驗收</th><td>需要一個新乘數：≤40.0 ms 且 M1 bit-identical。★ 對 ngram 展開成三條：<b>① <code>need_n_rs_seq()==0</code>（源碼已得）② <code>E&gt;1</code> ③ <code>answer_md5</code> 與對照臂相同</b></td></tr>
+<tr><th>否證</th><td>① 若 ③ 不成立（輸出不同）⇒ ngram 與 MTP 同類＝<b>產品決策</b>，不是本線槓桿；② 若 ② 不成立（E ≤1）⇒ 這個乘數不產生攤薄，回到「以現有軸加總到不了」（維持<b>判死</b>）</td></tr>
 </table></div>
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
-<tr><td><code>—</code></td><td><code>—</code></td><td>—（未跑）</td><td>tps</td><td>❌</td></tr>
+<tr><td><code>—</code></td><td><code>—（唯讀盤點，0 跑）</code></td><td>bytes/token 1.171 GB ＝ 專家 381 MB（33%，會 miss）＋ dense 790 MB（67%，常駐）；7 候選中 1 個 PRIMARY</td><td>tps</td><td>❌</td></tr>
 </tbody></table>
 <h3>立項（charter）</h3>
 <ul>

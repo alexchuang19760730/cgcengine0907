@@ -32,13 +32,14 @@
 - **子目標**：`L25-1`　第六條軸：改「每 token 的 bytes 或 steps」
 - **來源**：子目標看板（唯一來源）　·　置信度 `high`
 - **profile**：`prod-new`
+- **被測 option**：`--spec-type=ngram-simple`；`--spec-ngram-simple-size-n=4`；`--spec-ngram-simple-size-m=8`；`--spec-ngram-simple-min-hits=2`
+- **候選（待指名）**：`CGC_SERVER_LOAD_MODE=mmap`
 - **arm 1（可複製）**：`prod-new`
-- ⚠ **本格沒有旋鈕**：新軸尚未命名：本格要問的是「每 token 的 bytes 或 steps 有沒有可改的乘數」⇒ 仍在立卡階段，沒有既有旋鈕可綁。
-- **結案狀態**：未結案（本輪立項）
+- **結案狀態**：未結案（唯讀盤點完成：7 候選、1 PRIMARY；下一步＝量 ngram 的 E 與輸出同一性）
 - （同條另掛：`L25-2`）
 - **逐條處置**：整合進子目標　→ `L25-1`　—　decode ≥25 的主節點（tier 4）；§51 之後只剩 L25-1 一條活路（L25-2 唯一被指名的機制 B 已被量死）
 - **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
-- 驗收：需要一個新乘數，≤ 40.0 ms 且 M1 bit-identical。
+- ⚠ 本格的 `knobs.name` 有兩種：`CGC_*`＝env；`--*`＝**CLI 旗標**（`--spec-type` 不是 env，寫成 env 會被 allowlist 靜默丟掉 —— 那正是 MTP 修復臂空轉一趟的原因）。三趟：A 對照＝裸 `prod-new`（不帶任何 spec 旗標）、B＝A ＋ 上面那串、C＝B 重跑（驗 ON 自身 identical）。驗收三條：**① `need_n_rs_seq()==0` ② `E>1` ③ `answer_md5` 與 A 相同**。⛔ 三趟的 t/s 一律先過引用閘門；本格的第一個產物是「有沒有乘數」，不是速度。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

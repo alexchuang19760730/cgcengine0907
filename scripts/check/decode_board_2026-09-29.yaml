@@ -15,7 +15,7 @@ closure_rule:
 summary:
   - {value: "≥250",       tone: ok,  label: "prefill（已過線·已認證）· 最高 296.24，乾淨視窗 283.01"}
   - {value: "11.703",     tone: bad, label: "decode 交付錨點（t/s）· 85.45 ms/token · 三扇門全過"}
-  - {value: "0 / 5",     tone: bad, label: "交付 cell 今日 5 場的<b>可引用數</b>（引用閘門 §55）· 唯一 <code>attribution=none</code> 的那場被判 <b>UNSTABLE</b>（逐 rep <b>2.691</b>：rep 3 慢 2.7×）· 全語料只有 <b>1</b> 個可引用的 decode 讀數＝<b>11.703</b>"}
+  - {value: "1 / 30",   tone: bad, label: "交付 cell 的 decode 列<b>可引用數</b>（引用閘門 §55／§58；全語料 30 列）· 今日 5 場 0/5 的局面被另一批場次打破：<b>9.377</b>（<code>stepbudget 07:21 delivery_fuse</code>，逐 rep 1.099／kept 1.011、<code>none</code>）＝交付 cell <b>第一列</b>可引用讀數 · 27.3 那一批（SPAC K sweep）帶 <code>MISS_MASK_DBG</code>，源碼明文 never-quote ⇒ <b>R5</b> 判 DIRTY"}
   - {value: "6.09%",      tone: ok,  label: "G4 重算工作清單（權威 cell 中位）· 閘檻 ≤25% ⇒ 過閘·已認證"}
   - {value: "1 / 15",     tone: bad, label: "子目標<b>結案數</b>· 依新規則（prod-new ＋ harness bench ＋ 達標）· 其餘 <b>14</b> 格未結案"}
   - {value: "19.2–24.5",  tone: "",  label: "20+ 路線的天花板（t/s）· 底未裁：49.18 或 36.80 ms"}
@@ -36,6 +36,8 @@ reading: |
   套用結果：<b>今日 5 場全不可引用</b>（4 場 <code>swap</code>／1 場 <code>UNSTABLE</code>）、歷史 8 列過 3 列（含認證錨點 11.703 ⇒ 1.061）。
   <b>閘門抓到的第一件事</b>：09-27 的「舊基線 9.311」其 rep 1 是 4.12（其餘 12.01／11.80）⇒ kept 半邊＝<b>11.905</b>，與 11.703 幾乎相同 ⇒ §15 的「+25.7% 進步」主要是<b>冷啟 rep 的產物</b>，不是機器變快。
   <br>⑦ <b>§56（09-29）「同一個格子但差 29%」的前提不成立</b>：11.703 是 <code>(default)</code> cell（<code>-b/-ub 5632</code>、<code>-p 2048</code>、一次 launch 兩列），8.26／9.7／10.7 是 <code>delivery</code> cell（<code>-b/-ub 512</code>、<code>-p 0</code>、只有 tg 一列）——按 <code>cell_contract</code> 兩格<b>不可互比</b>。可量的那一項只有盒子（同 (default) 格 −<b>3.2%</b>）；最大候選是<b>量測起點</b>：default 的 tg 在同一行程裡排在 pp2048 之後（整臂 <code>fill_batch</code> <b>5×</b>、<code>file_reads</code> 82k vs 26k），delivery 的 reps 則出現單調上升、末 rep 落在 default 的平台高度。已立項 <b>L20-10</b>（互斥的 B1／B3），但它需要<b>測試卡 §2.5 新增一格</b>才能跑。
+
+  <br>⑧ <b>§58（09-29）交付 cell 的第一列可引用讀數，以及一個差點變成假綠燈的 27.3</b>：全語料掃描（1061 列）只有 <b>4</b> 列可引用，而 <code>delivery</code> cell 的 30 列裡<b>只有 1 列</b>——<code>stepbudget_2026-09-29/delivery_fuse.json</code> <b>9.377 t/s</b>（逐 rep [8.83, 9.59, 9.70] ⇒ 1.099／kept 1.011、<code>none</code>、<code>contract.ok</code>、有成對 log）。它的孿生 <code>delivery_base</code>（同 cell、只差 <code>CGC_MMV_FUSE</code>）9.909 被<b>冷啟 rep</b> 擋下（kept 10.31 ⇒ 同帶）。<b>同一輪掃描的另一列才是重點</b>：SPAC K sweep 的 <code>k_sweep_T4_K4</code> 在<b>交付 cell</b> 上報 <b>27.338 t/s</b>（逐 rep 1.005）、<code>attribution=none</code> ⇒ <b>R1–R4 全過</b>，而 27.338 同時 ≥20 與 ≥25。但它的臂上掛著 <code>CGC_MISS_MASK_DBG</code>／<code>_COST</code>／<code>CGC_SPAC_DBG</code>，原始碼自己寫「<b>Never quote throughput from an arm with this on</b>」（<code>llama-context.cpp:3962</code>：每步多一次 synchronize）⇒ 沒有新規則時，只要有人把 L20／L25 的 evidence 指過去，<b>兩個主節點會一起變綠</b>。因此引用閘門補上 <b>R5 臂身分</b>（清單＝原始碼明文 never-quote 的 6 個旗標，附出處）⇒ 該列 <b>DIRTY</b>、全語料可引用數 5 → 4。這條與 §57 的綠燈規則是同一件事的兩面：<b>先把「可引用」判對，再讓綠燈跟著它走</b>。
 
 stage_legend: ["已量到判定", "卡／動作就緒", "已跑出讀數", "已認證（prod-new ＋ harness bench ＋ 達標）"]
 
@@ -75,7 +77,7 @@ layers:
     goal: {metric: tps, target: 20.0, crit: "decode t/s（交付 cell）"}
     evidence: {artifact: "Backup/mtp_off_clean/res_2026-09-29c.json", value: 11.703, metric: tps,
                quote_verdict: QUOTABLE, met: false,
-               note: "全語料目前唯一可引用的 decode 讀數（逐 rep 1.061，(default) cell）⇒ 距 20.0 還差 41%；交付 cell 今日 5 場 0/5 可引用，沒有第二個候選"}
+               note: "全語料唯一 <b>≥10</b> 的可引用 decode 讀數（逐 rep 1.061，(default) cell）⇒ 距 20.0 還差 41%。<b>§58 把交付 cell 的第一列可引用讀數補上了</b>（<b>9.377</b>、逐 rep 1.099／kept 1.011）⇒ 本層現在有<b>兩個</b>可引用候選；但仍無一來自交付 cell 且 ≥10，而 27.3 那一批被判 <b>DIRTY</b>（臂上帶 <code>MISS_MASK_DBG</code> ⇒ 源碼明文不得引用）"}
     targets:
       - id: L20-1
         title: "底（S1 的 step）校準"
@@ -288,7 +290,7 @@ layers:
         badge: {text: "待宣告 cell", tone: warn}
         charter: scripts/check/charters/e-cell-discriminate-2026-09-29.yaml
         state: "未結案（§56 於 09-29 立項：跨格子不可比已確定；兩個候選尚未分離）"
-        evidence: {profile: "—", entry: "—", value: "—（判別臂未跑）", metric: tps, meets: false}
+        evidence: {profile: prod-new, entry: "harness bench", value: "<b>交付 cell 的第一列可引用讀數 9.377 t/s</b>（<code>stepbudget 07:21 delivery_fuse</code>）；孿生 <code>delivery_base</code> 9.909 被冷啟 rep 擋下（全 rep 1.134 ⇒ UNSTABLE，kept 10.31 ⇒ <b>同帶</b>）——<b>判別臂（B1／B3）本身仍未跑</b>", metric: tps, meets: false, quote: {artifact: "Backup/stepbudget_2026-09-29/delivery_fuse.json", verdict: QUOTABLE, why: "逐 rep [8.83, 9.59, 9.70] ⇒ 全 rep 1.099／kept 1.011（皆 ≤1.10）、<code>attribution=none</code>、<code>contract.ok</code>、產物旁有成對 stderr log ⇒ 交付 cell 的 <b>第一列</b>可引用讀數（§58）。⚠ 臂上帶 5 個 <code>CGC_GPU_*</code>／<code>CGC_DISPATCH_CENSUS</code> 取樣開關（Metal 記 command buffer 時間；unset 時無熱路徑成本）＋<code>CGC_MMV_FUSE</code> ⇒ 引用時要一起寫"}}
         options:
           profile: prod-new
           arms: ["prod-new"]
@@ -308,20 +310,25 @@ layers:
         nodes: [m-decode25, exp-caliber-calibration]
         expect_ms: "缺口 45.45 ms ⇒ 需要一個能動 <b>bytes 或 steps</b> 的乘數"
         expect_tps: "≥25.0（在 ≤40.0 ms 下）"
-        now: "現有軸（ms、段數、kernel、IO）<b>全量完</b>；缺口 <b>45.45 ms</b>（交付錨點 85.45 ms → 25 t/s 的 40.0 ms）。<b>§51 撤回 §50 的「未判定」</b>（B 半補丁的價目漏掉主項：備援重算 320 列 ＝ 8.09 ms；§52 用交付 cell 底座複核，仍差 7.5–11.6 ms）⇒ <b>decode ≥25 回到判死</b>，而<b>本格是全板唯一還沒被判死的一格</b> —— 它是唯一能繞過那個補丁的路。"
-        action: "立卡，先問「本步的 bytes 或 steps 有沒有可改的乘數」"
-        accept: "需要一個新乘數：≤40.0 ms 且 M1 bit-identical"
-        falsify: "找不到候選乘數 ⇒ 25 不再靠本格成立（維持<b>判死</b>；全板到時無一格存活）"
-        stage: 0
-        badge: {text: "本輪立項", tone: info}
+        now: "現有軸（ms、段數、kernel、IO）<b>全量完</b>；缺口 <b>45.45 ms</b>（交付錨點 85.45 ms → 25 t/s 的 40.0 ms）。<b>§51 撤回 §50 的「未判定」</b>（B 半補丁的價目漏掉主項：備援重算 320 列 ＝ 8.09 ms；§52 用交付 cell 底座複核，仍差 7.5–11.6 ms）⇒ <b>decode ≥25 回到判死</b>，而<b>本格是全板唯一還沒被判死的一格</b>。<br><b>09-29 23:5x 唯讀盤點完成</b>（0 跑）：每 token <b>1.171 GB</b> 裡只有 <b>381 MB（33%）</b>的專家段會 miss，<b>790 MB（67%）</b>的 dense 段常駐 RAM ⇒ <b>bytes 類候選最多只能動那 33%</b>。<b>7 個候選盤完</b>：1 個 PRIMARY = <code>--spec-type ngram-*</code>（**不需要 draft head**，且 <code>need_n_rs_seq()</code> 對它回 <b>0</b> ⇒ 結構上不觸發 M2 的輸出函數改變 —— 那正是 MTP 被判「產品決策」的原因）、1 個 SECONDARY = <code>CGC_SERVER_LOAD_MODE=mmap</code>、5 個已判（bpw／top-k／砍 dense／MTP／池命中）。"
+        action: "① <b>先量 PRIMARY</b>：<code>--spec-type ngram-simple</code> 三趟（A 對照／B 處理／C 重跑）⇒ 取 <code>E</code> ＋ diff <code>answer_md5</code>；② 次量 <code>CGC_SERVER_LOAD_MODE=mmap</code> 的等效 bytes/step"
+        accept: "需要一個新乘數：≤40.0 ms 且 M1 bit-identical。★ 對 ngram 展開成三條：<b>① <code>need_n_rs_seq()==0</code>（源碼已得）② <code>E&gt;1</code> ③ <code>answer_md5</code> 與對照臂相同</b>"
+        falsify: "① 若 ③ 不成立（輸出不同）⇒ ngram 與 MTP 同類＝<b>產品決策</b>，不是本線槓桿；② 若 ② 不成立（E ≤1）⇒ 這個乘數不產生攤薄，回到「以現有軸加總到不了」（維持<b>判死</b>）"
+        stage: 1
+        badge: {text: "盤點完・1 個 PRIMARY", tone: ok}
         charter: scripts/check/charters/e-sixth-axis-2026-09-29.yaml
-        state: "未結案（本輪立項）"
-        evidence: {profile: "—", entry: "—", value: "—（未跑）", metric: tps, meets: false}
+        state: "未結案（<b>唯讀盤點完成</b>：7 候選、1 PRIMARY；下一步＝量 ngram 的 E 與輸出同一性）"
+        evidence: {profile: "—", entry: "—（唯讀盤點，0 跑）", value: "bytes/token 1.171 GB ＝ 專家 381 MB（33%，會 miss）＋ dense 790 MB（67%，常駐）；7 候選中 1 個 PRIMARY", metric: tps, meets: false}
         options:
           profile: prod-new
           arms: ["prod-new"]
-          no_knob: "新軸尚未命名：本格要問的是「每 token 的 bytes 或 steps 有沒有可改的乘數」⇒ 仍在立卡階段，沒有既有旋鈕可綁。"
-          note: "驗收：需要一個新乘數，≤ 40.0 ms 且 M1 bit-identical。"
+          knobs:
+          - {name: "--spec-type", value: "ngram-simple", role: subject, why: "被測 PRIMARY：用上下文自己的 n-gram 起草，**不需要 draft head**；且 `need_n_rs_seq()` 對它回 **0** ⇒ 結構上不觸發 M2 的輸出函數改變（那正是 MTP 被判產品決策的原因）", source: "common/speculative.cpp:1998（need_embd=false）；common.h:395"}
+          - {name: "--spec-ngram-simple-size-n", value: "4", role: subject, why: "lookup n-gram 長度（E 對它敏感 ⇒ 要掃）", source: "src/llama.cpp/common/arg.cpp:4129"}
+          - {name: "--spec-ngram-simple-size-m", value: "8", role: subject, why: "draft m-gram 長度", source: "同上 :4139"}
+          - {name: "--spec-ngram-simple-min-hits", value: "2", role: subject, why: "最小命中數（直接決定 E）", source: "同上 :4149"}
+          - {name: CGC_SERVER_LOAD_MODE, value: "mmap", role: candidate, why: "被測 SECONDARY：dense 段由匿名頁變可回收檔案頁 ⇒ 降落到 SSD 的比例 f（§7：f 20% ⇒ 85.9 ms；25 t/s 要 f ≤7.9%）", source: "scripts/run_server.sh:513-518（預設 none）；docs/DECODE25_CEILING_2026-09-20.md §7"}
+          note: "⚠ 本格的 `knobs.name` 有兩種：`CGC_*`＝env；`--*`＝**CLI 旗標**（`--spec-type` 不是 env，寫成 env 會被 allowlist 靜默丟掉 —— 那正是 MTP 修復臂空轉一趟的原因）。三趟：A 對照＝裸 `prod-new`（不帶任何 spec 旗標）、B＝A ＋ 上面那串、C＝B 重跑（驗 ON 自身 identical）。驗收三條：**① `need_n_rs_seq()==0` ② `E>1` ③ `answer_md5` 與 A 相同**。⛔ 三趟的 t/s 一律先過引用閘門；本格的第一個產物是「有沒有乘數」，不是速度。"
       - id: L25-2
         title: "讓某一格超過自己的已量上界"
         nodes: [m-decode25]
