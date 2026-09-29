@@ -427,6 +427,10 @@ def render_board(board, nodes, here, out_path):
       '<br>主節點（L20／L25）<span class="badge b-ok">達標</span>＝該層已有一場<b>可引用</b>''（引用閘門 <code>QUOTABLE</code>）的讀數達到目標；未達標<b>不變色</b>，理由寫在標題的 <code>title</code> 裡。''<br><span style="padding:2px 10px;border-left:6px solid #059669;background:#ecfdf5;border-radius:6px">綠底＝達標</span></div>'
       % " ／ ".join("①②③④"[i] + " " + x for i, x in enumerate(board.get("stage_legend") or [])))
     A("<h2>已認證（符合結案規則的實測）</h2>")
+    cn = board.get("certified_note") or {}
+    if cn:
+        A('<div class="warning"><b>%s</b>%s</div>'
+          % (cn.get("title", ""), "".join("<br>%s" % x for x in (cn.get("lines") or []))))
     A("<table><thead><tr><th>id</th><th>項目</th><th>實測</th><th>profile</th><th>入口</th><th>達標</th>"
       "<th>引用閘門</th><th>出處</th></tr></thead><tbody>")
     for c in board.get("certified") or []:
@@ -450,10 +454,6 @@ def render_board(board, nodes, here, out_path):
     #   已認證/L20/L25 上面，其餘刪除。」
     # ⇒ 兩句必須留在**已認證**段裡（它們正是「什麼才叫認證」的判準），而不是散在後面的敘述段。
     #   資料來源＝`certified_note`（YAML）；其餘段落的 `order`／`calls`／`stale` 已從資料裡移除。
-    cn = board.get("certified_note") or {}
-    if cn:
-        A('<div class="warning"><b>%s</b>%s</div>'
-          % (cn.get("title", ""), "".join("<br>%s" % x for x in (cn.get("lines") or []))))
     for layer in board.get("layers") or []:
         met, why = layer_goal(layer)
         head = layer.get("title", layer.get("id", ""))
