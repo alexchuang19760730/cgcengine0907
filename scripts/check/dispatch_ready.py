@@ -137,6 +137,9 @@ def main(argv=None):
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--once-per-day", action="store_true", help="今天已發過就不再發")
     ap.add_argument("--claim", action="store_true", help="READY 時寫下今天的標記")
+    ap.add_argument("--allow-dirty-box", action="store_true",
+                    help="**明知盒子未回收也照跑**，但必須把狀況記下來："
+                         "產物僅供觀測，不得進認證表、不得主張 t/s（依 operator 2026-09-30 口徑）")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
 
@@ -172,6 +175,10 @@ def main(argv=None):
     ok, rows = check()
     for n, s, d in rows:
         print("  %-11s %-9s %s" % (n, s, d))
+    if not ok and a.allow_dirty_box:
+        print("VERDICT: OVERRIDE — 明知盒子未回收仍發車；**產物僅供觀測**，"
+              "attribution 幾乎必然非 none ⇒ 不得進認證表、不得主張 t/s。")
+        return 0
     if a.once_per_day and claimed_today():
         print("VERDICT: ALREADY_CLAIMED（今天已發過 ⇒ 不重發）")
         return 3
