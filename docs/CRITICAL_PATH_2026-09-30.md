@@ -42,3 +42,43 @@
 - 只 stage 自己的檔案：他線目前 **117 檔未提交**（含 `src/llama.cpp/src/llama-expert-cache.cpp`、
   `ggml/src/ggml-metal/ggml-metal-ops.cpp`），且 `d2997157c` 的 dylib 內嵌了他線未提交工作
   ⇒ 任何從這顆 binary 出來的讀數都要註明 provenance。
+
+---
+
+# v2（18:25 重排）—— 今天的 S2／S3 结果把清单收窄了
+
+算子决策已就位：**D0 = yes**（25 走 MTP-on 独立口径）、**D0′ = ok**（§2.5 新增格子）。
+今天下午的实测把两条「以为的杠杆」各自削掉一半，所以清单从「排实验」变成「两条引擎机制 ＋ 一条价格重测」。
+
+## 今天先削掉的三个误判（决定了下面怎么排）
+
+1. **20+ 的分歧源不是驻留**：单段臂池 hit **97.4%**，比诚实臂（89.2%，prefetch 关）还高
+   ⇒ 原假设「跳 hook ⇒ 驻留掉到 57.1% ⇒ `e % ns` fallback」不成立（S2-b）。
+2. **ρ prefetch 在单段臂上是结构性 no-op**：`cgc_rho_capture()` 只在 `expert_cache_eval_cb` 里被调用，
+   而那正是 `CGC_SEG_BATCH=1` 跳过的 per-layer hook ⇒ `g_rho_logits` 恒空 ⇒ prefetch 永远不投递
+   （这也解释了池计数器为何三趟逐项相同）。
+3. **4.76 ms/step 不是实测**：原文自陈是估计，且漏了 host read；漏项就在
+   `cgc_rho_capture()` 的 `ggml_backend_tensor_get`（每层一次 device→host）。
+
+## 关键步骤（照这个顺序前进）
+
+| # | 节点 | 做什么 | 预期端点（跑前写死） | 归属 | 前置／状态 |
+|---|---|---|---|---|---|
+| **1** | **L25-4 → 机制（S1）** | 修 `is_mem_shared` 的 **draft 轮级掉线**（61% 轮 `draft=0`；verify init 失败 144/194 是 `X>Y`）⇒ 把 `k_eff` 从 1.59 拉回 k | **k=8 时 `k_eff` ≥ 7** 且 position error 密度 ≤ 32/11075 ⇒ 带入门槛 a≥0.484 ⇒ **≈25.2 t/s** | 他线（src） | D0 已拍；M1/M2/M3 需以 ON 为独立口径（门 2）。**25 的唯一活路** |
+| **2** | **L20-1 → S2-c** | 把 `cgc_rho_capture` 搬出被跳过的 per-layer hook（比照 P1：用单段路径已有的读回通道 `CGC_SEG_BATCH && (...)` 补一个 capture，而不是恢复整个 hook） | 重跑 M123 见证：**M1/M2 ≥ 8/9** ⇒ R6 解除 ⇒ 20+ 臂可引用；仍 ≤ 2/9 ⇒ 分歧在图本身（`CGC_B_SCHEME` garbage）⇒ 真引擎手术 | 本线（src） | ⛔ src 在他线工作树（117 档） |
+| **3** | **L20-7 → S3-b** | 把 4.76 这个估计换成实测：端点改**计数器＋仪器**（`CGC-RHO-CAP` 层数、`CGC-RHO-FILL` queued/per_layer；时间绑 EBTIMER 口径），窗要求 `attribution=none` | **Δ ≤ 1.30–1.59 ms（窗口）** ⇒ ρ 净赚；明显大于窗口 ⇒ 依卡 `on_fail` 不硬做；干净窗也量不出 ⇒ 4.76 降级 | 本线（量测） | 无（随时可发） |
+| **4** | **L20-10（§2.5 新格已 ok）** | 两个互斥判别臂：B1＝delivery 孪生加大 `warm_skip`；B3＝(default) 孪生用 `-b 512` 保留 p2048 | B1 升到 ~11.5 且 reps 变平 ⇒ 起点是主因；B3 掉到 ~9.7 ⇒ batch 是主因（解 11.703 vs 8.26 的跨格疑云） | 本线（量测） | 需 §2.5 新格（已 ok） |
+| **5** | **L25-1 B 臂（§2.5 新格已 ok）** | 宣告**更小 pool** 的 `delivery-mmap`（现 8 GiB ⇒ Metal OOM rc=−6）⇒ 量 §8 两量 | miss/step 与有 miss 层数（A 臂已量 **6.0／6.0**，正规化 1.92%）⇒ 比 A 下降 ⇒ 引擎侧还有杠杆；否证 ⇒ **25 引擎侧候选穷尽**（量化已禁） | 本线（量测）＋operator（pool 决策） | 需要新格 ＋ pool-size 决策 |
+| **6** | L25-2 | 指名一个「上界以外的新机制」 | —（缺机制就不存在可跑） | 任何人 | 无（存量缺口） |
+
+## 卡住的不是步骤，是两个前置
+
+- **src 在他线工作树**（117 档未提交，`llama-context.cpp`／`llama-expert-cache.cpp/.h`）
+  ⇒ 步骤 1、2 都要等它落地，或先协调到不撞同一段代码。
+- **16 GB 盒子的足迹**：MTP-on 存活线 ≥7703 MB；`delivery-mmap` 直接 OOM
+  ⇒ 步骤 5 的 pool 大小是 operator 决策，不是量测能绕过的。
+
+## 一句话
+
+**25 只剩一条路（S1 的 KV 布局），20+ 只剩一把钥匙（S2-c 把 ρ capture 搬出 hook）；
+其余能动的都是「把价格量准」（S3-b）与「把口径理清」（L20-10／L25-1）。**
