@@ -84,7 +84,9 @@ def classify(path, cells=None):
         # `cell` 常是巢狀欄位（在 arms／resolved 底下）⇒ 只看最上層會讀不到，
         # 進而被當成 '(default)' —— 那是把別的格子認證成別的格子。
         m2 = re.search(r'"cell"\s*:\s*"([^"]+)"', t)
-        if m2:
+        # 只接受像格子名的字串：第一版把說明文件裡的模板 `"cell": "<name>",` 也吃進來，
+        # 讀出一個叫 `<name>",` 的格子 ⇒ 誤報。形狀不對就當作沒看到。
+        if m2 and re.fullmatch(r"[A-Za-z0-9_().\-]+", m2.group(1) or ""):
             cell = m2.group(1)
     if not cells:
         return "UNKNOWN", "測試卡 §2.5 的格子清單讀不到 ⇒ 格子這一條判不了（fail-closed）"
@@ -114,6 +116,27 @@ def cmd_check(paths):
         bad += 0 if v == "UNIFIED" else 1
     print("VERDICT: %d/%d 統一口徑" % (len(paths) - bad, len(paths)))
     return 0 if bad == 0 else 1
+
+
+def cmd_sweep(pattern):
+    """一次掃一批：把「非統一口徑不得參與量測」套到既有產物上（可重複執行）。"""
+    import glob as _glob
+    import collections
+    cells = declared_cells()
+    paths = sorted(set(_glob.glob(pattern)))
+    if not paths:
+        print("  沒有命中：%s" % pattern)
+        return 1
+    buckets = collections.defaultdict(list)
+    for p in paths:
+        v, why = classify(p, cells)
+        buckets[v].append((p, why))
+    for v in ("UNIFIED", "NON_UNIFIED", "UNKNOWN"):
+        print("== %s : %d ==" % (v, len(buckets[v])))
+        for p, why in buckets[v]:
+            print("   %-64s %s" % (p, why))
+    print("total: %d" % len(paths))
+    return 0
 
 
 def cmd_selftest():
@@ -165,9 +188,13 @@ def main(argv=None):
     ap.add_argument("cmd", nargs="?", choices=["check"])
     ap.add_argument("paths", nargs="*")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--sweep", metavar="GLOB",
+                    help="一次掃一批產物（例：'Backup/*2026-09-30*/*.json'），只列分類與計數")
     a = ap.parse_args(argv)
     if a.selftest:
         return cmd_selftest()
+    if a.sweep:
+        return cmd_sweep(a.sweep)
     if a.cmd != "check" or not a.paths:
         ap.print_help()
         return 2
