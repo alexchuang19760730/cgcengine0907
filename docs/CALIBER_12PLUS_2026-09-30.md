@@ -48,3 +48,25 @@ warm_skip/load_mode/expert_cache_bytes…）。server completion 的 round 级�
 **(a) 能刷新既有锚点，但拿不到 12+（快的那臂是 R5，机制与量具不可分）；
 (b) 要拿 12+ 就得新增一条 server-round 口径线，那是 operator 的事，不是加一格 JSON 的事。**
 在这两件事落地之前，12+ 只能是观测值。
+
+---
+
+# operator 裁定：attribution 非 none 也可**主张 t/s**（2026-09-30 22:3x）
+
+机器规则没变：**认证表只收 `quote_gate` 判 QUOTABLE 的读数**。
+operator 另外授权的是另一件事——**在报告／卡片／commit 讯息里主张 t/s**，条件是**必须把状况一起写出来**。
+
+- 政策唯一来源：`scripts/check/claim_policy.yaml`（裁定 `allow-nonquote-tps-2026-09-30`，**2026-10-07 到期**）。
+- 主张时必须同时写出：`attribution` 判词、`swap_growth`、`thermal_worst`、逐 rep 向量、
+  「非认证值、不进 C 表」、依哪一条裁定。
+- 禁止：拿去覆盖／替换同格认证值（C3＝11.703／C4＝10.923）、与不同 cell 互比（§56）、只报数字不报 attribution。
+- 工具：`python3 scripts/check/claim_label.py <artifact.json>` ⇒ 直接吐出可贴的那句话（selftest 8/8）。
+
+今晚这四趟按新裁定可这样主张：
+
+```
+decode 11.29 t/s（platform；attribution=swap、swap_growth=2885 MiB、thermal NOMINAL；逐 rep [11.81, 11.27, 11.32]；非认证值、不进 C 表；依 allow-nonquote-tps-2026-09-30）
+decode 11.14 t/s（attribution=swap、swap_growth=2535、thermal MODERATE；逐 rep [11.88, 10.55, 11.72]；非认证值）
+decode 10.95 t/s（attribution=both、swap_growth=369、thermal HEAVY；逐 rep [10.14, 11.27, 10.64]；非认证值）  ← b512
+decode 11.02 t/s（attribution=both、swap_growth=425、thermal HEAVY；逐 rep [10.74, 10.87, 11.18]；非认证值）  ← ρ-on
+```

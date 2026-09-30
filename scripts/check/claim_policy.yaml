@@ -1,0 +1,26 @@
+# 主張政策（operator 裁定）— 唯一來源；改這裡，不要各自在文件裡口頭放寬
+#
+# 背景：引用閘門（quote_gate）判 QUOTABLE 才能「進認證表」；這是機器規則。
+# 但 operator 可以另外授權「**主張 t/s**」（寫在報告／卡片／commit 訊息裡），
+# 前提是：**必須把條件一起寫出來**，且**不得混進認證表**。
+# 本 repo 三番兩次拒絕 silent re-baseline ⇒ 放寬可以，紀錄不能省。
+
+rulings:
+  - id: allow-nonquote-tps-2026-09-30
+    date: '2026-09-30'
+    by: operator
+    scope: >-
+      盒子未回收（attribution ≠ none，swap／thermal）時，該趟的 t/s **仍可主張**，
+      但只作為「觀測值／狀況值」，不是認證值。
+    must_include:            # 主張時「同一處」必須同時寫出的東西（缺一即違規）
+      - attribution 的判詞（swap／thermal／both）
+      - swap_growth（MiB）與 thermal_worst
+      - 逐 rep 向量（samples_ts）
+      - 「非認證值、不進 C 表」這句
+      - 依哪一條裁定（本 id）
+    must_not:                # 禁止的事
+      - 不得拿去覆蓋或替換同格認證值（C3＝11.703／C4＝10.923）
+      - 不得與不同 cell 的數值互比（§56）
+      - 不得省略 attribution 而只報數字
+    caliber: 仍需通過口徑閘（caliber_gate：入口／格子／逐 rep 聚合）
+    expires: '2026-10-07'    # 到期需重新裁定；過期 ⇒ 回到「不得主張」
