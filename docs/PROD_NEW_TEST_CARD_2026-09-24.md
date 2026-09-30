@@ -128,7 +128,58 @@ llama-bench -m models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
       "cache_type_v": "q8_0",
       "fixed_fill_seed": null
     },
-    "delivery-repsplit": {
+    "delivery-ws256": {
+  "ngl": 99,
+  "load_mode": "none",
+  "threads": 8,
+  "batch": 512,
+  "ubatch": 512,
+  "prompt": 0,
+  "gen": 128,
+  "depths": 512,
+  "reps": 3,
+  "warm_skip": 256,
+  "ctx_size": 4096,
+  "expert_cache_bytes": 8589934592,
+  "cache_type_k": "q8_0",
+  "cache_type_v": "q8_0",
+  "fixed_fill_seed": null
+ },
+ "default-b512": {
+  "ngl": 99,
+  "load_mode": "none",
+  "threads": 8,
+  "batch": 512,
+  "ubatch": 512,
+  "prompt": 2048,
+  "gen": 128,
+  "depths": 512,
+  "reps": 3,
+  "warm_skip": 64,
+  "ctx_size": 4096,
+  "expert_cache_bytes": 8589934592,
+  "cache_type_k": "q8_0",
+  "cache_type_v": "q8_0",
+  "fixed_fill_seed": null
+ },
+ "delivery-mmap-p6": {
+  "ngl": 99,
+  "load_mode": "mmap",
+  "threads": 8,
+  "batch": 512,
+  "ubatch": 512,
+  "prompt": 0,
+  "gen": 128,
+  "depths": 512,
+  "reps": 3,
+  "warm_skip": 64,
+  "ctx_size": 4096,
+  "expert_cache_bytes": 6442450944,
+  "cache_type_k": "q8_0",
+  "cache_type_v": "q8_0",
+  "fixed_fill_seed": null
+ },
+ "delivery-repsplit": {
       "ngl": 99,
       "load_mode": "none",
       "threads": 8,
@@ -187,6 +238,25 @@ llama-bench -m models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
   }
 }
 ```
+
+#### 2.5.4 `cells.delivery-ws256` / `cells.default-b512` — L20-10 的兩個互斥判別格（2026-09-30 線A 新增）
+
+- 由來：L20-10 要分離「量測起點」與「batch」兩個候選，而 `warm_skip`／`batch` 都是**嚴格維度**
+  （實測：`--cell delivery --warm-skip 256` 被 contract 拒，只列 `warm_skip: 實際 256 ≠ 權威 64`）
+  ⇒ 只能**宣告新格**，不能用 CLI 對齊。
+- `delivery-ws256`（B1）：delivery 的一切不變，只把 `warm_skip` 64 → 256。
+  判別句：**升到 ~11.5 且 reps 變平 ⇒ 「量測起點」是主因**。
+- `default-b512`（B3）：(default) 的一切不變，只把 `batch`/`ubatch` 5632 → 512（保留 `prompt 2048`）。
+  判別句：**掉到 ~9.7 ⇒ batch 是主因**。
+- 兩者互斥且都只改一個維度 ⇒ 任一格單獨達標即分離成功；都不達標 ⇒ 主因在別處（不是 11.703 vs 8.26 的差）。
+
+#### 2.5.5 `cells.delivery-mmap-p6` — L25-1 的 B 臂（2026-09-30 線A 新增）
+
+- 由來：`delivery-mmap`（pool 8 GiB）在這台 16 GB 盒子上 **Metal OOM（rc=−6）**，
+  而「pool 大小」是格子級欄位（`expert_cache_bytes`）⇒ 宣告一個 **6 GiB** 的同形格子來量。
+- 判別句（§8 兩量，計數器端點）：`miss/step` 與「有 miss 的層數」比 A 臂（`delivery`、
+  已量 6.0／6.0、正規化 1.92%）下降 ⇒ 引擎側還有槓桿；**否證 ⇒ 25 的引擎側候選窮盡**（量化已被 operator 禁止）。
+- ⚠ 這不是放寬口徑：load_mode 與 pool 都寫死在格子裡，contract 照樣 fail-closed。
 
 #### 2.5.1 `cells.delivery` — 交付 cell（2026-09-28 新增）
 
