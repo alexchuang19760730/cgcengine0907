@@ -1,0 +1,90 @@
+# S2-c：把 ρ 的**读回通路**搬出 per-layer hook（2026-09-30，線A）
+#
+# ⚠ 状态：未编译、未验证。写这份补丁的目的不是"现在就能打"，而是把动工变成 src 一释放就能
+#    一趟 commit 的事（他线目前持有 llama-context.cpp / run_server.sh / ggml-metal/*）。
+#    基线＝ HEAD（`d2997157c` 之后的树）。若他线落地时改到同一段，用 `git apply -3` 或手工对齐。
+#
+# 背景（今天实测坐实，见 docs/S2_S3_2026-09-30.md、docs/S2C_PATCH_PLAN_2026-09-30.md）：
+#   · 单段提交臂 `CGC_SEG_BATCH=1` 跳过 per-layer hook（llama-context.cpp:4103 注释 "SKIPS THE HOOK"）。
+#   · `cgc_rho_capture()`（HEAD:4647）只在 `expert_cache_eval_cb`（HEAD:4820 附近调用）里被触发；
+#     `cgc_rho_prefetch()`（HEAD:4691）开头就检查 `g_rho_logits[ul].empty()` ⇒ 空则 return。
+#   ⇒ 单段臂上 ρ prefetch 是**结构性 no-op**（池计数器三趟逐项相同）。
+#   · 影子节点本身是建出来的（qwen35moe.cpp:224，`CGC_RHO_PROBE` 下建 `cgc_rho_logits-L` 并 expand）
+#     ⇒ 补的是"读回"，不是"建节点"，也不是"恢复整个 hook"。
+#
+# 形状照抄 P1（feeder 从 `_DBG` 拆出来，用单段路径已有的读回通道承载，不新增 synchronize）：
+#   · 新开关 `CGC_RHO_FEED`（与 `CGC_RB_FEED` 对称）。
+#   · 插入点＝ HEAD:4105 那个 `if (cgc_rb_seg_batch && (cgc_miss_mask_dbg || cgc_rb_feed))` 分支内，
+#     该处已在 synchronize 之后读 `ibuf` ⇒ 影子节点此时同样已算完，多读一个张量不引入新的等待点。
+#
+# 落地后第一件事：编译＋跑一次，确认 stderr 出现 `CGC-RHO-CAP`（读回非空）。没有那一行 ⇒ 机制仍没到。
+
+diff --git a/src/llama.cpp/src/llama-context.cpp b/src/llama.cpp/src/llama-context.cpp
+index 01c297e82..3f5203f2c 100644
+--- a/src/llama.cpp/src/llama-context.cpp
++++ b/src/llama.cpp/src/llama-context.cpp
+@@ -4021,6 +4021,13 @@ ggml_status llama_context::graph_compute(
+     static const bool cgc_rb_seg_batch = getenv("CGC_SEG_BATCH") != nullptr;
+     static const bool cgc_rb_feed      = getenv("CGC_RB_FEED") != nullptr;
+     static uint64_t cgc_rb_feeds = 0;
++    // [CGC 2026-09-30 · S2-c] `CGC_RHO_FEED` is the ρ analogue of `CGC_RB_FEED`: it replaces the
++    // DEBUG/HOOK INSTRUMENT in the read-back gate, it does NOT widen which arms may prefetch.
++    // Why it has to exist: on the hook-less arm (`CGC_SEG_BATCH=1`) `cgc_rho_capture()` is never
++    // called, so `g_rho_logits` stays empty and `cgc_rho_prefetch()` returns at its `empty()`
++    // guard -- measured: three runs with prefetch nominally ON produced byte-identical pool
++    // counters. Default unchanged: unset => this branch is exactly what it was.
++    static const bool cgc_rho_feed     = getenv("CGC_RHO_FEED") != nullptr;
+     // [CGC 2026-09-29] ids the union feeder drops for being outside [0, n_expert). Counted,
+     // never printed by default: the sibling feeder (spac_update) and the consumer
+     // (prefetch_slot) both reject the same id, so this is bookkeeping, not a behaviour switch.
+@@ -4105,6 +4112,17 @@ ggml_status llama_context::graph_compute(
+             if (cgc_rb_seg_batch && (cgc_miss_mask_dbg || cgc_rb_feed)) {
+                 llama_expert_cache * ec_rb = model.expert_cache;
+                 if (ec_rb != nullptr && llama_expert_cache_pool_active(ec_rb)) {
++                    // [CGC 2026-09-30 · S2-c] ρ capture on the hook-less path. Same location and
++                    // same reason as the feeder below: we are ALREADY after the synchronize that
++                    // produced `ibuf`, so the shadow `cgc_rho_logits-L` for this layer is complete
++                    // too -- reading it here adds no new wait point.
++                    if (cgc_rho_feed) {
++                        ggml_tensor * rho_t = cgc_rho_node_for((int) il);
++                        if (rho_t != nullptr) {
++                            cgc_rho_capture(rho_t);
++                            cgc_rho_prefetch((int) il);
++                        }
++                    }
+                     std::vector<uint32_t> routed((size_t) ntot);
+                     for (int64_t i = 0; i < ntot; ++i) {
+                         routed[(size_t) i] = (uint32_t) ibuf[(size_t) i];
+diff --git a/src/llama.cpp/src/models/qwen35moe.cpp b/src/llama.cpp/src/models/qwen35moe.cpp
+index 3eb7ef82d..6dd85f83a 100644
+--- a/src/llama.cpp/src/models/qwen35moe.cpp
++++ b/src/llama.cpp/src/models/qwen35moe.cpp
+@@ -222,6 +222,11 @@ llama_model_qwen35moe::graph::graph(const llama_model & model, const llm_graph_p
+                                                    LLM_NORM_RMS, il);
+                 ggml_tensor * rho_logits = build_lora_mm(model.layers[il].ffn_gate_inp, rho_pre);
+                 cb(rho_logits, "cgc_rho_logits", il);   // 命名後 eval cb 才認得（cb -> "name-il"）
++                // [CGC 2026-09-30 · S2-c] Remember the node so the hook-less arm can read it back.
++                // The node is built and expanded regardless of `CGC_SEG_BATCH`; what that arm skips
++                // is the READ-BACK, so registering a pointer here is what makes `cgc_rho_node_for()`
++                // resolvable. If `cb` already reaches the context, stash it there instead.
++                cgc_rho_node_register((int) il, rho_logits);
+                 ggml_build_forward_expand(gf, rho_logits);
+             }
+         }
+diff --git a/scripts/run_server.sh b/scripts/run_server.sh
+index af94b09b0..851fc1ad0 100644
+--- a/scripts/run_server.sh
++++ b/scripts/run_server.sh
+@@ -1729,6 +1729,12 @@ fi
+ if [ -n "${CGC_RB_FEED:-}" ]; then
+     SERVER_ENV+=(CGC_RB_FEED="$CGC_RB_FEED")
+ fi
++# [CGC 2026-09-30 · S2-c] CGC_RHO_FEED=1 lets the hook-less (single-submit) arm read the ρ shadow
++# logits back, so `cgc_rho_prefetch` stops being a no-op there. Without this line the arm silently
++# reruns as control -- indistinguishable from "the mechanism does nothing".
++if [ -n "${CGC_RHO_FEED:-}" ]; then
++    SERVER_ENV+=(CGC_RHO_FEED="$CGC_RHO_FEED")
++fi
+ # [CGC 2026-09-25 column census] CGC_EB_TIMER=1 prices the WHOLE `llama_expert_cache_ensure_batch`
+ # call (assignment + synchronous fill + bg_cv wait) and prints one `CGC-EBTIMER: step_usec=...`
+ # line per decode step (llama-expert-cache.cpp:1155). It was read by the engine since 2026-09-25
