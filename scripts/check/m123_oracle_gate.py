@@ -246,6 +246,18 @@ DIAGNOSTIC_KEYS = {
     # report "incomparable" against a knob-off reference, i.e. the gate could not express the one
     # proposition the knob rests on. If the claim is false the gate fails on the LOGITS.
     "CGC_FILL_NOCACHE",
+    # [CGC 2026-09-30 線A · S2] The ρ prefetch pair, registered for the same reason and with the
+    # same caveat as the other keys here: this is the mechanism the R6 witness is meant to TEST, and
+    # a knob that makes a run "incomparable" cannot be tested by any measurement. The claim is
+    # narrow -- CGC_RHO_PROBE builds a per-layer shadow router and CGC_RHO_FILL turns its prediction
+    # into a non-blocking batch prefetch of the SAME experts the per-layer fill would read, so which
+    # bytes reach the MoE is unchanged; only WHEN they arrive differs. It is not a claim that the
+    # arm's output is already correct: on the hook-less arm residency was measured at 57.1% versus
+    # 96.3% on the honest path, and a non-resident selection falls back to `e % ns` and lands on a
+    # DIFFERENT real expert. So the expectation this registration makes testable is directional: if
+    # missing residency is the whole divergence, M1 goes 0/9 -> 9/9; if the divergence lives in the
+    # single-submit graph itself, M1 stays red -- and that, not a green M1, is the finding.
+    "CGC_RHO_PROBE", "CGC_RHO_FILL",
 }
 # CGCENV scalars that are comparability-irrelevant (paths/timing only).
 DIAGNOSTIC_CGCENV = {"LOG", "PORT"}
@@ -1271,8 +1283,12 @@ def main() -> int:
     print(f"  dump    : {reason}, validated", flush=True)
 
     # The fresh dump's own provenance, carried with the fresh dump.
+    # [CGC 2026-09-30 線A · S2-a] the probe prompt is a CLI argument, so it is NOT part of the
+    # config stamp -- that is exactly why a low coverage_pct cannot be cleared today: there is
+    # nothing on record to compare against. Record it on every dump and on every re-baseline.
     write_cap(dump, now_cfg, note=f"gate run {tag}",
-              extra={"probe_answer": ans.strip(), "validated": True})
+              extra={"probe_answer": ans.strip(), "validated": True,
+                     "probe_prompt_md5": hashlib.md5(args.probe_prompt.encode()).hexdigest()})
 
     # (3) re-baseline in one step when asked. Done BEFORE the comparison so a --write-ref run
     # also reports what the new baseline looks like against the old one.
@@ -1287,7 +1303,7 @@ def main() -> int:
         if stale.exists():
             stale.unlink()
         write_cap(dst, now_cfg, note=args.ref_note or f"re-baselined by gate run {tag}",
-                  extra={"probe_answer": ans.strip()})
+                  extra={"probe_answer": ans.strip(), "probe_prompt_md5": hashlib.md5(args.probe_prompt.encode()).hexdigest()})
         print(f"  baseline: wrote {dst.relative_to(ROOT)} + .cap (this run is the new reference)",
               flush=True)
 
@@ -1326,6 +1342,9 @@ def main() -> int:
         "tag": tag, "profile": args.profile, "ref": str(ref), "ref_md5": ref_hex,
         "ref_pinned": (ref_pin == ref_hex), "dump": str(dump),
         "probe_prompt_md5": hashlib.md5(args.probe_prompt.encode()).hexdigest(),
+        "ref_probe_prompt_md5": (ref_cap or {}).get("probe_prompt_md5"),
+        "probe_prompt_match": (None if (ref_cap or {}).get("probe_prompt_md5") is None
+                               else (ref_cap or {})["probe_prompt_md5"] == hashlib.md5(args.probe_prompt.encode()).hexdigest()),
         "dump_records": dump_records,
         "coverage_pct": coverage_pct,
         "probe_answer": ans.strip(),
@@ -1351,35 +1370,28 @@ def main() -> int:
     else:
         print(f"  probe pool: UNREADABLE -- {pc.get('reason')}")
     if coverage_pct is not None and coverage_pct < 100.0:
-        print(f"  \u26a0 coverage: only {n_common} of {dump_records} dump records "
-              f"({coverage_pct:.1f}%) had a counterpart in the reference. That is what a DIFFERENT "
-              f"probe prompt looks like from here: the keys (step, token_idx, ctx_type) collide while "
-              f"describing a different token sequence, so M1/M2 above compare unrelated content even "
-              f"though comparable=True. Compare `probe_prompt_md5` in this summary against the "
-              f"reference's run before reading any verdict.")
-    print("=" * 74)
-    if not comparable:
-        print(f"GATE {tag}: INVALID COMPARISON -- reference was dumped under a different "
-              f"numerics-determining configuration ({len(cfg_diffs)} diffs).")
-        print(f"  observed M1={summary['m1_numeric_identity']}  M2={summary['m2_decision_agreement']}  "
-              f"M3={summary['m3_topk_set_agreement']}  n={summary['n_compared']} "
-              f"(printed for information, NOT a verdict)")
-    else:
-        print(f"GATE {tag}: {'PASS' if summary['ok'] else 'FAIL'}   "
-              f"M1(bit-identical)={summary['m1_numeric_identity']}  "
-              f"M2(argmax)={summary['m2_decision_agreement']}  "
-              f"M3(topk)={summary['m3_topk_set_agreement']}  n={summary['n_compared']}")
-        print(f"cross-tab: {d['cross_tab']}")
-    print(f"summary  : {RESULT_DIR / f'summary_{tag}.json'}")
-    print("  build   : " + "  ".join(
-        f"{k}={v['md5']}" for k, v in summary["engine_digest"].items()) or "  build   : (none)")
-    tr = summary["tree"]
-    if tr:
-        print(f"  tree    : {tr.get('head')} dirty_tracked={tr.get('dirty_tracked')}")
-    print("=" * 74)
-    if not comparable:
-        return 2 if not args.allow_incomparable else (0 if summary["ok"] else 1)
-    return 0 if summary["ok"] else 1
+        # [CGC 2026-09-30 線A · S2-a] three-way, because "shortfall" has two very different causes
+        # and only one of them invalidates the verdict. `unknown` stays loud on purpose: a legacy
+        # reference that never recorded its prompt cannot clear the doubt, so it must not read as
+        # if it had been checked.
+        _rpm = (ref_cap or {}).get("probe_prompt_md5")
+        if _rpm is None:
+            print(f"  \u26a0 coverage: only {n_common} of {dump_records} dump records "
+                  f"({coverage_pct:.1f}%) had a counterpart in the reference, and the reference's "
+                  f"`.cap` records NO probe_prompt_md5 (pre-dates 2026-09-30) => PROMPT UNKNOWN: "
+                  f"the prompt-mismatch explanation for the shortfall CANNOT be cleared, so the "
+                  f"M1/M2 verdicts above are EVIDENCE, not a decision. Re-baseline (--write-ref) to "
+                  f"make it decidable.")
+        elif _rpm != hashlib.md5(args.probe_prompt.encode()).hexdigest():
+            print(f"  \u26a0 coverage {coverage_pct:.1f}% and the reference was dumped with a "
+                  f"DIFFERENT probe prompt (ref {_rpm} vs now "
+                  f"{hashlib.md5(args.probe_prompt.encode()).hexdigest()}) => the M1/M2 verdicts "
+                  f"above compare unrelated content. CANNOT_JUDGE.")
+        else:
+            print(f"  \u26a0 coverage {coverage_pct:.1f}% with an IDENTICAL probe prompt "
+                  f"({_rpm}) => the shortfall is NOT a prompt artefact: the record keys diverged "
+                  f"because this arm produced a different token sequence. That IS the finding, and "
+                  f"the M1/M2 verdicts above are readable.")
 
 
 if __name__ == "__main__":
