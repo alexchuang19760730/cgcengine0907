@@ -22,6 +22,7 @@
 import argparse
 import datetime as _dt
 import os
+import re
 import subprocess
 import sys
 
@@ -37,6 +38,36 @@ def _run(cmd):
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except Exception as e:  # 逾時／找不到 ⇒ 讀不到
         return 97, str(e)
+
+
+def reclaim_state():
+    """盒子回收狀態：swap 存量與可用記憶體。
+
+    為什麼要這一條（2026-09-30 晚上的教訓）：窗看起來全綠（無人佔用／壓縮機 QUIET／熱 NOMINAL），
+    但只要 swap 存量還高，每趟 launch 就再漲 2500–3200 MiB ⇒ `attribution` 一定不是 none。
+    那一晚連發三趟都是 DIRTY/UNSTABLE，等於白跑 ⇒ **「壓縮機安靜」不等於「盒子已回收」**。
+    """
+    try:
+        out = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True).stdout
+        # 形如：total = 1024.00M  used = 4700.00M  free = 12.00M  (encrypted)
+        m = re.search(r"used\s*=\s*([0-9.]+)([KMG])", out)
+        if not m:
+            return "UNKNOWN", "vm.swapusage 讀不到"
+        val, unit = float(m.group(1)), m.group(2)
+        swap_mb = val * {"K": 1/1024, "M": 1.0, "G": 1024.0}[unit]
+    except Exception as e:
+        return "UNKNOWN", "sysctl 失敗：%s" % e
+    try:
+        vm = subprocess.run(["vm_stat"], capture_output=True, text=True).stdout
+        fm = re.search(r"Pages free:\s+(\d+)", vm)
+        ps = 16384 if "16384" in vm else 4096
+        free_mb = int(fm.group(1)) * ps / (1024 * 1024) if fm else None
+    except Exception:
+        free_mb = None
+    ok = swap_mb <= 2048.0 and (free_mb is None or free_mb >= 4096.0)
+    detail = "swap used %.0f MiB（門檻 ≤2048）%s" % (
+        swap_mb, "；free %.0f MiB（門檻 ≥4096）" % free_mb if free_mb is not None else "")
+    return ("RECLAIMED" if ok else "DIRTY_BOX"), detail
 
 
 def busy_procs():
@@ -95,7 +126,9 @@ def check():
     rows.append(("compressor", c, cd))
     t, td = thermal_state()
     rows.append(("thermal", t, td))
-    ok = (not p) and c == "QUIET" and t == "NOMINAL"
+    r, rd = reclaim_state()
+    rows.append(("reclaim", r, rd))
+    ok = (not p) and c == "QUIET" and t == "NOMINAL" and r == "RECLAIMED"
     return ok, rows
 
 
@@ -119,11 +152,15 @@ def main(argv=None):
 
         # 結構：永遠三條，且熱讀不到時不得當成可發
         okk, rows = check()
-        case("check() 回傳三條", len(rows) == 3, rows)
-        case("熱 UNKNOWN ⇒ 不 READY",
+        case("check() 回傳四條", len(rows) == 4, rows)
+        case("任一條 UNKNOWN ⇒ 不 READY",
              (okk is False) if any(r[1] == "UNKNOWN" for r in rows) else True, rows)
-        case("三條都綠才 READY",
-             okk == all(r[1] in ("FREE", "QUIET", "NOMINAL") for r in rows))
+        case("四條都綠才 READY",
+             okk == all(r[1] in ("FREE", "QUIET", "NOMINAL", "RECLAIMED") for r in rows))
+        # 盒子沒回收（swap 存量高）⇒ 不發車（這是今晚三趟白跑的原因）
+        case("reclaim 不是 RECLAIMED ⇒ 不 READY",
+             (okk is False) if any(r[0] == "reclaim" and r[1] != "RECLAIMED" for r in rows) else True,
+             [r for r in rows if r[0] == "reclaim"])
         case("標記檔路徑在系統暫存（不進 repo）", marker_path().startswith("/tmp"))
         print("SELFTEST PASS（%d/%d）" % (ok, total))
         return 0 if ok == total else 1
