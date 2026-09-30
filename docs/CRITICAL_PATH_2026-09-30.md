@@ -1,0 +1,44 @@
+# 推動 L20／L25 的關鍵步驟（2026-09-30 16:5x）
+
+現況一句話：看板 **結案 10/16**，而 D12（`scripts/check/runnable_gate.py`）掃出來的是
+**needed 0／duplicate 10／blocked 6** —— 也就是說「再跑一趟」對任何一格都不會產生新資訊
+（10 格的判決已經在樹上），6 格 blocked 的原因沒有一個是「缺一趟量測」。
+
+⇒ 所以接下來的關鍵步驟不是排實驗，而是三類：**兩個 operator 決策**、**兩個引擎機制**、
+**一個量測前置**。下面照「卡住多少槓桿」排序。
+
+## 步驟表（每格跑前先寫死預期端點／判句）
+
+| # | 節點 | 要做什麼 | 預期端點（發車前寫死） | 歸屬 | 前置 |
+|---|---|---|---|---|---|
+| **D0** | L25-4（產品決策） | 25 是否以 **MTP-on 為獨立口徑**推進。門 2 已封掉「ON＝OFF 的 X%」的寫法，所以這是口徑決策，不是提速決策 | —（決策；無端點） | **operator** | 無（今天就該拍） |
+| **D0′** | L20-10／L25-1（測試卡 §2.5） | 是否新增格子：L20-10 要 `batch`／`prompt`／`warm_skip` 維度；L25-1 要 **更小 pool 的 delivery-mmap** | L20-10：B1 升到 ~11.5 且 reps 變平／B3 掉到 ~9.7（互斥判別）。L25-1 B 臂：miss/step 與有 miss 層數（A 臂已量 6.0／6.0、正規化 1.92%） | **operator** | 無 |
+| **S1** | L25-4 的機制側 | 修 `is_mem_shared` 的 **draft 輪級掉線**（61% 輪 `draft=0`；verify init 失敗 144/194 是 `X>Y`）⇒ 把 `k_eff` 從 1.59 拉回 k | 端點＝`k_eff` 與 `acc_rate`。達標句：**k=8 時 `k_eff` ≥ 7** 且 position error 密度 ≤ 乾淨批的 32/11075。帶入門檻 a≥0.484 ⇒ 預期 ≈ 25.2 t/s | 他線（src） | D0 拍板；過 M1/M2/M3 oracle |
+| **S2** | L20-1 | 讓**單段提交臂 bit-identical**（M1/M2/M3 9/9），或證明現有見證不乾淨 | 端點＝M1／M2（n=9）。達標句：同 probe prompt、同 build 下 `logits_fnv1a64` 全等 ⇒ 20+ 臂產出可引用讀數 | 本線（src／S1） | server 窗口；**不需重建**（現 binary `c76358aa` 已含 `CGC_RB_FEED`） |
+| **S2-a**（今晚可做） | L20-1 的可判性 | ref 的 `.cap` **沒記它自己的 `probe_prompt_md5`** ⇒ 見證那句 12.5% coverage 警告無從排除。補一行 sidecar ＋ 閘門 | 端點＝CANNOT_JUDGE 是否消失（計數器，非 t/s） | 本線 | 0 盒子成本；先確認 `m123_oracle_gate.py` 未被別線改動 |
+| **S3** | L20-7 | 把每步 **4.76 ms GPU 插入**藏掉／攤平（prebind qu1 邊緣、ρ 覆蓋 0.849） | 端點＝插入成本 ms/step。達標句：≤ 該支的收益端點（視窗 1.30–1.59 ms） | 本線（量測） | 無決策 |
+| **S4** | L25-2 | 指名一個「上界以外的新機制」（§51 撤回 B；§70 判 B **不可分辨**） | —（沒有機制就不存在可跑的東西） | 任何人 | 無 |
+
+## 今晚已完成（0 盒子成本）
+
+1. **D12 全板掃描**：`needed 0`。10 格判決已存在（L20-2/3/4/5/6/8/9、L25-3/5/6），6 格 blocked
+   （L20-1 `quotable_reading verdict_absent`；L20-7／L20-10／L25-1／L25-2／L25-4 `kind=none`）。
+   ⇒ 任何「再跑一趟」的衝動都先過這一閘。
+2. **R6 見證取證**（`Backup/r6_witness_2026-09-30/gate.log`；build `libllama.0.dylib=c76358aa`、
+   tree `d2997157c` dirty 117）：M1 **0/9**、M2 2/9、M3 0/9。但 log 自帶
+   **coverage 12.5%** 警告。已查證：今天這趟用的 probe prompt **＝ 腳本預設**
+   （md5 `50f8c5ae…` 相符）⇒ 警告多半正是「輸出分歧」本身造成的（token 序列不同 ⇒ keys 對不上）；
+   ⛔ 但 ref（20260926）的 `.cap` **沒有記錄它自己的 prompt md5**，所以無法正面排除；
+   且 ref 是 **cache-ON**（只支援相對不變性，非 ground truth）。
+   ⇒ **結論：0/9 是強證據，但目前不是可判決的結論**；補一行 sidecar 就能把它變成可判。
+3. **靜態（唯讀）**：餵料在**誠實臂（跑 per-layer hook）本來就由 hook 餵**
+   （`llama-context.cpp:6543` `spac_update`）。⇒ P1 的 `CGC_RB_FEED` 只解掉單段臂的 **R5**，
+   **不解 R6**；20+ 的全部張力集中在「單段臂的輸出同一性」（也就是 S2）。
+
+## 發車慣例（本線）
+
+- 每次發車先報**子目標節點 id** ＋ **預期端點**（計數器端點寫預期讀數與判別句，時間端點只能給上界）。
+- 建置前用**會 abort 的閘門**同時查 listener 與 `pgrep -fl 'run_ids_dst_capture|decode_sweep|llama-server'`。
+- 只 stage 自己的檔案：他線目前 **117 檔未提交**（含 `src/llama.cpp/src/llama-expert-cache.cpp`、
+  `ggml/src/ggml-metal/ggml-metal-ops.cpp`），且 `d2997157c` 的 dylib 內嵌了他線未提交工作
+  ⇒ 任何從這顆 binary 出來的讀數都要註明 provenance。
