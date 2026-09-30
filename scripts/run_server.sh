@@ -1709,6 +1709,26 @@ fi
 if [ -n "${CGC_MISS_MASK_DBG:-}" ]; then
     SERVER_ENV+=(CGC_MISS_MASK_DBG="$CGC_MISS_MASK_DBG")
 fi
+# [CGC 2026-09-30 · §35 P1] CGC_RB_FEED=1 gives the pool-membership feeder its OWN trigger.
+# Why it exists: the feeder (llama-context.cpp `graph_compute`: the SpAc EMA + the union bitmap that
+# re-centre the pool on decode's working set) used to live INSIDE the `CGC_MISS_MASK_DBG` block
+# above, so 「池子會重定中心」 was reachable only by also carrying a debug instrument -- and `_DBG`,
+# `_COST` and `_HIST` are all entries of quote_gate's THROUGHPUT_VOID_INSTRUMENTS (R5). That is why
+# every arm that could actually reach 20+ was R5-DIRTY. `CGC_MISS_MASK` itself is NOT an R5 entry
+# (it builds a NODE, it adds no drain), so `CGC_MISS_MASK=1;CGC_RB_FEED=1` feeds the pool with no
+# never-quote instrument on the arm at all.
+# ⚠ The drain is still paid on this path (the ids are read after the synchronize); removing that
+#   cost needs a device-side id source and is a separate step. The acceptance for THIS one is
+#   「不開 CGC_MISS_MASK_DBG 的那一趟仍有 `CGC-RB-FEED` 且 `prefetch > 0/0`」.
+# ⚠ It is NOT a general "feed the pool" switch: the gate is `CGC_SEG_BATCH && (_DBG || CGC_RB_FEED)`.
+#   This feeder exists because the single-submit arm skips the per-layer hook; on a hook-running arm
+#   the hook has already fed `spac_update` for the same ids, and a second feed would bump the EMA
+#   twice per occurrence. `CGC_RB_FEED` removes the DEBUG INSTRUMENT from that gate, nothing else.
+# Same allowlist trap as every entry here: without this line the arm silently reruns the control,
+# which is indistinguishable from a mechanism that does nothing.
+if [ -n "${CGC_RB_FEED:-}" ]; then
+    SERVER_ENV+=(CGC_RB_FEED="$CGC_RB_FEED")
+fi
 # [CGC 2026-09-25 column census] CGC_EB_TIMER=1 prices the WHOLE `llama_expert_cache_ensure_batch`
 # call (assignment + synchronous fill + bg_cv wait) and prints one `CGC-EBTIMER: step_usec=...`
 # line per decode step (llama-expert-cache.cpp:1155). It was read by the engine since 2026-09-25

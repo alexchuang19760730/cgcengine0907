@@ -31,6 +31,29 @@ llama-bench -m models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
   --warm-skip 64 --fixed-fill-seed 1
 ```
 
+> **2026-09-30 · `delivery-mmap` 為何是一個 cell 而不是一個 arm 旋鈕（operator 裁定）**
+>
+> L25-1 的 SECONDARY（`CGC_SERVER_LOAD_MODE=mmap`）09-30 兩臂都被拒：A 臂被壓縮機閘擋（BUSY, rc=2），B 臂過了壓縮機卻被**本塊**擋
+> （`load_mode: 實際 mmap ≠ 權威 none` ⇒ fail-closed）。旋鈕本身確認到達（`arm_env_dropped()` 回空、解析後 `none → mmap`），
+> 所以卡點不是「旗標沒送進去」，而是 **load-mode 出現在本塊的嚴格維度裡、不在 `runtime_adjustable` 裡** ⇒ 它在結構上不可能是 arm 級增量。
+> ⇒ 要量它只能宣告一個 cell，這就是這一格：它與 `delivery` **只差 `load_mode`**（其餘維度逐字相同），預設 cell 與 `delivery`
+> **一個字都沒動**，而指名不存在的 cell 仍然 fail-closed（`resolve_cell` 不退回預設）。
+>
+> 為什麼值得有這一格：`mmap` 下模型頁是 OS 可回收（`budget_preflight.py:59` 把 model resident 視為 0），而本機最常擋跑的預算項是
+> 「Metal 駐留」那 7899 MiB（`Backup/p1_rbfeed_2026-09-30` 那兩跑已示範）。它是唯一能在**不動模型、不動量化**的前提下改變「足跡」
+> 這一項的 cell 級欄位——而 operator 09-30 已裁定量化不做。
+>
+> ⚠ **09-30 當日實跑（這一行是量到的，不是推的）**：
+> ① **宣告 cell 是必要但不充分**——cell 只宣告**門檻**，值仍要由 `CGC_SERVER_LOAD_MODE=mmap` 供給；
+>    只給 `--cell delivery-mmap` 會被本塊擋（`load_mode: 實際 none ≠ 權威 mmap`），兩者一起給才是合規的一趟。
+> ② 兩者一起給之後**跑不完**：`--load-mode mmap` ＋ `-expert-cache 8589934592` 在本機（16 GB）
+>    **Metal OOM fail-stop**（`command buffer 8 failed with status 5` / `Insufficient Memory`、rc=**−6**、
+>    `recovered 0 completed instance`）⇒ 這一格目前在本機**量不到**，不是被否證。
+>    要在本機量它，得先宣告一個**更小的 pool**（或換更大的機器）；那是 operator 決策。
+> ③ 對照臂（`delivery`、`load_mode=none`）跑通：miss 數/step 中位 **6.0**（IQR 4–12）、
+>    有 miss 的層數/step 中位 **6.0**（min 1、max 39）、正規化 **1.92%**；instrument ✅ BOUND
+>    （`mm_pub 39/39`、`missmask_step=386`、`missmask_row=64`）。
+
 | 參數 | 值 | 意義 / 依據 |
 |---|---|---|
 | `-p 2048` | prefill 2048 token | 完整側 prefill 維 |
@@ -69,6 +92,62 @@ llama-bench -m models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
     "cache_type_v": "q8_0",
     "fixed_fill_seed": 1
   },
+
+  "cells": {
+    "delivery": {
+      "ngl": 99,
+      "load_mode": "none",
+      "threads": 8,
+      "batch": 512,
+      "ubatch": 512,
+      "prompt": 0,
+      "gen": 128,
+      "depths": 512,
+      "reps": 3,
+      "warm_skip": 64,
+      "ctx_size": 4096,
+      "expert_cache_bytes": 8589934592,
+      "cache_type_k": "q8_0",
+      "cache_type_v": "q8_0",
+      "fixed_fill_seed": null
+    },
+    "delivery-mmap": {
+      "ngl": 99,
+      "load_mode": "mmap",
+      "threads": 8,
+      "batch": 512,
+      "ubatch": 512,
+      "prompt": 0,
+      "gen": 128,
+      "depths": 512,
+      "reps": 3,
+      "warm_skip": 64,
+      "ctx_size": 4096,
+      "expert_cache_bytes": 8589934592,
+      "cache_type_k": "q8_0",
+      "cache_type_v": "q8_0",
+      "fixed_fill_seed": null
+    },
+    "delivery-repsplit": {
+      "ngl": 99,
+      "load_mode": "none",
+      "threads": 8,
+      "batch": 512,
+      "ubatch": 512,
+      "prompt": 0,
+      "gen": 128,
+      "depths": 512,
+      "reps": 1,
+      "warm_skip": 64,
+      "ctx_size": 4096,
+      "expert_cache_bytes": 8589934592,
+      "cache_type_k": "q8_0",
+      "cache_type_v": "q8_0",
+      "fixed_fill_seed": null,
+      "rep_split": { "of": "delivery", "launches": 3, "cool_to": "NOMINAL", "cool_max_s": 420 }
+    }
+  },
+
   "switches": {
     "LLAMA_EXPERT_CACHE_ALLOW_NGL": {
       "default": 1,
@@ -108,6 +187,52 @@ llama-bench -m models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
   }
 }
 ```
+
+#### 2.5.1 `cells.delivery` — 交付 cell（2026-09-28 新增）
+
+**為什麼會有第二個 cell。** 在 2026-09-28 之前這裡只宣告**一個** cell，而
+`prod_profile.py`（量交付 decode 的入口）用的形狀是 `--prompt 0 --batch 512 --ctx-size 4096`
+⇒ `cell contract` 對它 **fail-closed**，於是**交付 cell 自合約生效起就量不到**。
+發現它的人是 k=2 vs k=3 的認證（見 `docs/K3_PAIR_CERT_V2_EXECUTABILITY_2026-09-28.md` 的 D8）。
+
+**它不是放寬，是補宣告。** 兩個 cell 的**機器不變量逐項相同**（`ngl 99 / load_mode none /
+threads 8 / expert_cache 8589934592 / cache_type_k = cache_type_v = q8_0`，用 `resolve()` 對過），
+差別只在量測維度：
+
+| | （預設）prod-new host-prefill | `delivery` |
+|---|---|---|
+| batch / ubatch | 5632 / 5632 | **512 / 512** |
+| prompt | 2048 | **0** |
+| ctx_size | 0 | **4096** |
+| fixed_fill_seed | 1 | **null** |
+
+`delivery` 的臂是 `prod25:!CGC_PREFILL_STREAM=1;!CGC_GATHER_SLAB_CAP=256`
+（＝ registry 的 `prod25-stream`），形狀與 2026-09-20 讀到 **12.57 t/s** 的那次逐字相同
+（`Backup/prod_profile/prod_profile_20260920_1230.json` 的 `decode-delivery-anchor`），
+且它通過 `derived.warm_skip_applied`：`gen 128 − warm_skip 64 = 64` ✔
+
+**怎麼用**：
+
+```sh
+python3 scripts/check/harness.py bench \
+    --arm "prod25:!CGC_PREFILL_STREAM=1;!CGC_GATHER_SLAB_CAP=256" \
+    --cell delivery --prompt 0 --batch 512 --ctx-size 4096 \
+    --warm-skip 64 --fixed-fill-seed 0 --spec-type draft-mtp \
+    --charter <charter.yaml> --json <out.json>
+```
+
+**兩個不能忘的性質：**
+
+1. **不指名 cell 就是預設 cell** —— 拿交付形狀去跑而沒帶 `--cell delivery`，仍會被拒
+   （2026-09-28 已驗證）；閘門沒有變鬆。指名一個**不存在**的 cell 也是 fail-closed，
+   **不退回預設**（退回會讓一次命名錯誤變成另一個 cell 的數字）。
+2. **兩個 cell 的數字不可互比。** 產物現在會記 `named_cell`（`_cell()`）與
+   `contract.cell`，但紀錄不會替你判斷。
+
+**為什麼這件事對 k=2 vs k=3 重要**：預設 cell 的 `-ub 5632` prefill 在 16 GB 盒子上會撞
+**Metal OOM**（`CGC-METAL-FAIL: kIOGPUCommandBufferCallbackErrorOutOfMemory`，2026-09-28
+可重現兩次），而它建議的逃生口（降 `-ub`／expert cache）正好指向 CELL 裡的**嚴格維度**
+⇒ 那個 cell 動不了。`-b 512` 的交付 cell 沒有這個問題。
 
 ## 3. prod-new profile env（默認，顯式 env 永遠贏）
 

@@ -4003,18 +4003,32 @@ ggml_status llama_context::graph_compute(
     // layer the graph guards skipped is reported as unknown rather than as a 0 (a guard-skipped layer
     // is missing data, and printing it as "no misses" is exactly how a max gets understated).
     static const bool cgc_mm_hist = getenv("CGC_MISS_MASK_HIST") != nullptr;
-    if (cgc_miss_mask_dbg) {
+
+    // [CGC 2026-09-30 · P1 · 餵料與 debug 插樁解耦] This block used to exist ONLY when
+    // `CGC_MISS_MASK_DBG` was set, so 「池子會重定中心」 was bolted to a debug instrument: no arm
+    // could feed the pool without also carrying `_DBG` (and `_COST`/`_HIST` when those are on), and
+    // all three are entries of quote_gate's THROUGHPUT_VOID_INSTRUMENTS (R5). That is why every arm
+    // that could actually reach 20+ was R5-DIRTY. `CGC_MISS_MASK` itself is NOT an R5 entry -- it
+    // builds a NODE, it adds no drain -- so this step's ids are obtainable with no never-quote
+    // instrument on the arm at all. `CGC_RB_FEED` is that gate: the feeder's own switch.
+    //
+    // ⛔ NOT a behaviour change by default: with `CGC_RB_FEED` unset the gate below is exactly what
+    //    it always was, so a default run and every existing arm stay byte-identical. The feed body
+    //    below is unchanged verbatim -- only the gate, the iteration source and the printing move.
+    // ⛔ The drain is still paid on the feed-only path (it reads the ids AFTER the sync). Removing
+    //    that cost needs a device-side id source and is a separate step; the acceptance for THIS
+    //    one is 「不開 CGC_MISS_MASK_DBG 的那一趟仍有 CGC-RB-FEED 與 prefetch > 0/0」.
+    static const bool cgc_rb_seg_batch = getenv("CGC_SEG_BATCH") != nullptr;
+    static const bool cgc_rb_feed      = getenv("CGC_RB_FEED") != nullptr;
+    static uint64_t cgc_rb_feeds = 0;
+    // [CGC 2026-09-29] ids the union feeder drops for being outside [0, n_expert). Counted,
+    // never printed by default: the sibling feeder (spac_update) and the consumer
+    // (prefetch_slot) both reject the same id, so this is bookkeeping, not a behaviour switch.
+    static uint64_t cgc_rb_oob = 0;
+
+    if (cgc_miss_mask_dbg || cgc_rb_feed) {
         static int cgc_mm_step = 0;
         static int cgc_mm_warn = 0;
-        // [CGC 2026-09-28 · single-submit membership feed] see the block below. Two statics:
-        // the gate (CGC_SEG_BATCH) and a printed counter, because 「旗標在 env 裡」 was twice
-        // mistaken for 「機制跑了」in this repo -- the feeder needs its own proof of life.
-        static const bool cgc_rb_seg_batch = getenv("CGC_SEG_BATCH") != nullptr;
-        static uint64_t cgc_rb_feeds = 0;
-        // [CGC 2026-09-29] ids the union feeder drops for being outside [0, n_expert). Counted,
-        // never printed by default: the sibling feeder (spac_update) and the consumer
-        // (prefetch_slot) both reject the same id, so this is bookkeeping, not a behaviour switch.
-        static uint64_t cgc_rb_oob = 0;
         const int64_t mm_t0 = cgc_mm_cost ? ggml_time_us() : 0;
         int mm_gets = 0;
         if (!cgc_miss_mask && cgc_mm_warn++ == 0) {
@@ -4031,30 +4045,43 @@ ggml_status llama_context::graph_compute(
         // `n_expert_used * n_tokens` (the same quantity the `nsel=` field of MISSMASK prints).
         int64_t mm_nsel0 = -1;
         std::map<int, int> mm_per;   // il -> misses (-1 = captured but the graph guards skipped it)
-        for (const auto & kv : cache_missmask_tensors) {
+        // [CGC 2026-09-30 · P1] The iteration source follows the gate. The debug path walks the
+        // MASK tensors and finds the ids beside them; the feed-only path walks the IDS tensors and
+        // never touches the mask -- the feeder needs this step's routed ids and nothing else, and
+        // reading the mask on an arm that only wants to feed is how the arm keeps looking like an
+        // instrument. `CGC_MISS_MASK` satisfies both, which is the point: it is not an R5 entry.
+        for (const auto & kv : (cgc_miss_mask_dbg ? cache_missmask_tensors : cache_ids_cont_tensors)) {
             const int il = kv.first;
             if (cgc_mm_hist) { mm_per[il] = -1; }
-            ggml_tensor * mk  = kv.second;
-            ggml_tensor * idc = cache_ids_cont_tensors.count(il) ? cache_ids_cont_tensors[il] : nullptr;
-            if (mk == nullptr || mk->data == nullptr || idc == nullptr || idc->data == nullptr) {
+            ggml_tensor * mk  = cgc_miss_mask_dbg ? kv.second : nullptr;
+            ggml_tensor * idc = cgc_miss_mask_dbg
+                    ? (cache_ids_cont_tensors.count(il) ? cache_ids_cont_tensors[il] : nullptr)
+                    : kv.second;
+            if (idc == nullptr || idc->data == nullptr ||
+                    (cgc_miss_mask_dbg && (mk == nullptr || mk->data == nullptr))) {
                 continue;
             }
             // Both guards, for the reason the S1 readback records: membership says this capture is
             // still a node of the graph that just ran, the byte test keeps the read inside it.
-            const int64_t ntot = (int64_t) mk->ne[0] * (int64_t) mk->ne[1];
-            if (ntot <= 0 || ntot != (int64_t) idc->ne[0] * (int64_t) idc->ne[1]) {
+            // The ids tensor is the one that decides how many int32s are legal to read; when the
+            // mask is also present the two shapes must still agree, exactly as before.
+            const int64_t ntot = (int64_t) idc->ne[0] * (int64_t) idc->ne[1];
+            if (ntot <= 0 || (mk != nullptr && ntot != (int64_t) mk->ne[0] * (int64_t) mk->ne[1])) {
                 continue;
             }
-            if (!cgc_node_in_graph(gf, mk) || !cgc_node_in_graph(gf, idc)) {
+            if (!cgc_node_in_graph(gf, idc) || (mk != nullptr && !cgc_node_in_graph(gf, mk))) {
                 continue;
             }
-            if (!cgc_is_i32_n(mk, ntot) || !cgc_is_i32_n(idc, ntot)) {
+            if (!cgc_is_i32_n(idc, ntot) || (mk != nullptr && !cgc_is_i32_n(mk, ntot))) {
                 continue;
             }
-            std::vector<int32_t> mbuf((size_t) ntot);
             std::vector<int32_t> ibuf((size_t) ntot);
-            ggml_backend_tensor_get(mk,  mbuf.data(), 0, (size_t) ntot * sizeof(int32_t));
             ggml_backend_tensor_get(idc, ibuf.data(), 0, (size_t) ntot * sizeof(int32_t));
+            std::vector<int32_t> mbuf;
+            if (mk != nullptr) {
+                mbuf.assign((size_t) ntot, 0);
+                ggml_backend_tensor_get(mk, mbuf.data(), 0, (size_t) ntot * sizeof(int32_t));
+            }
             // [CGC 2026-09-28 · single-submit membership feed] EVERY pool-membership feeder lives in
             // the PER-LAYER HOOK, and `CGC_SEG_BATCH=1` SKIPS THE HOOK. Two of them:
             //   (1) `llama_expert_cache_spac_update` (:6357) -- the SpAc utility EMA that
@@ -4067,7 +4094,15 @@ ggml_status llama_context::graph_compute(
             // `ibuf` -- it reads them to count placeholders -- so it can feed (1) and (2) with no
             // hook and no extra sync. Gated on CGC_SEG_BATCH so the honest path keeps its own feeder
             // and stays byte-identical.
-            if (cgc_rb_seg_batch) {
+            // [CGC 2026-09-30 · P1] The feed gate. Two conjuncts, and the first one is not
+            // decoration: this feeder exists BECAUSE `CGC_SEG_BATCH=1` skips the per-layer hook, so
+            // it is the only membership feed that arm has. On an arm that does NOT skip the hook,
+            // the hook already fed `spac_update` for the same ids this step (`:6470`), and feeding
+            // them a second time would bump the SpAc EMA twice per occurrence -- a change to the
+            // pool's behaviour that no card asked for. So the hook-less arm is a precondition, not
+            // an optimisation: `CGC_RB_FEED` only replaces the DEBUG INSTRUMENT in the second
+            // conjunct, it does not widen which arms may feed.
+            if (cgc_rb_seg_batch && (cgc_miss_mask_dbg || cgc_rb_feed)) {
                 llama_expert_cache * ec_rb = model.expert_cache;
                 if (ec_rb != nullptr && llama_expert_cache_pool_active(ec_rb)) {
                     std::vector<uint32_t> routed((size_t) ntot);
@@ -4126,11 +4161,15 @@ ggml_status llama_context::graph_compute(
             if (mm_nsel0 < 0) { mm_nsel0 = ntot; }   // == n_expert_used * n_tokens for this step
             int misses = 0;
             std::string exps;
-            for (int64_t i = 0; i < ntot; ++i) {
-                if (mbuf[(size_t) i] == 0) {
-                    misses++;
-                    exps += " ";
-                    exps += std::to_string(ibuf[(size_t) i]);
+            // No mask was read on the feed-only path, so `misses` stays 0 and the zero-skip below
+            // suppresses the per-layer line: the arm feeds the pool without claiming a measurement.
+            if (mk != nullptr) {
+                for (int64_t i = 0; i < ntot; ++i) {
+                    if (mbuf[(size_t) i] == 0) {
+                        misses++;
+                        exps += " ";
+                        exps += std::to_string(ibuf[(size_t) i]);
+                    }
                 }
             }
             // Zero-miss steps print nothing here, and BATCHDBG prints nothing for them either
@@ -4146,7 +4185,24 @@ ggml_status llama_context::graph_compute(
             mm_tot += misses;
             mm_layers++;
         }
-        fprintf(stderr, "CGC-MISSMASK-STEP: step=%d misses=%d layers=%d\n", cgc_mm_step, mm_tot, mm_layers);
+        // The step line is the debug path's own summary. On a feed-only arm no mask was read, so a
+        // step line saying `misses=0 layers=0` would claim a measurement that never happened.
+        if (cgc_miss_mask_dbg) {
+            fprintf(stderr, "CGC-MISSMASK-STEP: step=%d misses=%d layers=%d\n", cgc_mm_step, mm_tot, mm_layers);
+        } else if (cgc_rb_feed && !cgc_miss_mask) {
+            // [CGC 2026-09-30 · P1 否證分支] The feed reads this step's ids out of
+            // `ffn_moe_ids_cont`, which build_moe_ffn emits under CGC_MISS_MASK=1. With the mask
+            // off there is no captured id tensor at all, so say so ONCE instead of silently feeding
+            // nothing. That case needs a device-side id source of its own -- the step this card
+            // deliberately did not do (「餵料需要一個新的 device-side 來源」／不硬做).
+            static bool cgc_rb_feed_nosrc_warned = false;
+            if (!cgc_rb_feed_nosrc_warned) {
+                cgc_rb_feed_nosrc_warned = true;
+                fprintf(stderr, "CGC-RB-FEED: CGC_RB_FEED=1 with CGC_MISS_MASK unset -- no captured id "
+                                "tensor, so nothing was fed. The feed needs a device-side id source of "
+                                "its own (L20-5 P1 否證分支).\n");
+            }
+        }
         if (cgc_mm_hist) {
             // max over RECORDED layers only; `unknown` counts the guards' skips so a partially read
             // step cannot masquerade as an all-zero one (which is how a max gets understated).
