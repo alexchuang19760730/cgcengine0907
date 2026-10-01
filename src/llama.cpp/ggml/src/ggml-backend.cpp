@@ -2068,7 +2068,34 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 //             gt_prev_end is cleared per graph, so gap never spans a
                 //             draft->verify or step->step transition.
                 static int64_t gt_busy = 0, gt_union = 0, gt_gap = 0, gt_wait = 0;
+                // [CGC 2026-09-29 gap split] The two readback calls below run INSIDE the very window
+                // `gap` measures (segment i is complete, segment i+1 is not yet submitted), so the gap is
+                // partly the instrument's own CPU cost. §19 measured gap/(cb+submit) = 1.36..2.79 > 1 -- the
+                // GPU is idle for MORE time than the CPU work recorded in the same window -- so the question
+                // is which part is instrument and which is real. These three counters are that split: the two
+                // readback calls separately, and the number of poll iterations the completion handoff costs.
+                static int64_t gt_take = 0, gt_takecb = 0, gt_polln = 0;
                 static int64_t gt_nseg = 0, gt_nbuf = 0, gt_nstep = 0, gt_unsup = 0, gt_prev_end = -1;
+                // [CGC 2026-09-29 §37] Boundary-window CPU ENVELOPE. `gap` is a GPU-clock quantity
+                // (start_i - end_{i-1}) while every other boundary instrument is CPU-side, so
+                // "gap minus the CPU work that happened inside it" was never separable: the 42% of
+                // the boundary window that `cb + submit` does not name (0.145 ms x 40 = 5.8 ms/step,
+                // §37 §二) is either CPU work (encode/commit inside this loop) OR Metal's own launch
+                // latency, and those two need OPPOSITE responses (one is attackable here, the other
+                // is not attackable at all). Three stamps per boundary:
+                //   gt_st1    = the instant the poll observed segment i complete (set by hook_seg,
+                //               i.e. the earliest instant the CPU can know end_i happened);
+                //   gt_bdhook = st1 -> hook return  (the take + `cb` span);
+                //   gt_bdsub  = hook return -> submit return (the `submit` = encode+commit span);
+                //   gt_bdcpu  = st1 -> submit return (the whole CPU envelope of that boundary).
+                // => `gap - gt_bdcpu` is the part of the gap that NO CPU activity covers: Metal's
+                //    launch latency after the commit, plus the poll's observation latency and the
+                //    two clocks' skew (the §16 3.3 ms-order term). ADD-ONLY: reads the wall clock and
+                //    accumulates; touches no scheduling, no buffer and nothing that reaches the GPU.
+                //    Accumulated only on the default (non-submit_ahead) order, where the hook sits
+                //    between the two submits; the racy diagnostic arm is skipped by construction.
+                static int64_t gt_bdcpu = 0, gt_bdhook = 0, gt_bdsub = 0;
+                int64_t gt_st1 = 0;
                 // [CGC 2026-09-27] `gt_unsup` 原本把「slot 沒 buffer」與「buffer 還沒 Completed」混在一起，
                 // 所以同一個 n_main 下的 skip% 可以差十倍卻無法歸因。下面兩個把它拆開：
                 //   gt_unsup_nil = 結構性（該 worker 分不到節點，slot 從來沒有 buffer）
@@ -2138,12 +2165,14 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                         // garbage remap -> whole-graph corruption (echo prompt / all-'!').
                         const int target = done0 + (i + 1) * bufs;
                         while (cgc_done(split_backend) < target) {
+                            gt_polln++;
                             sched_yield();
                         }
                     } else {
                         ggml_backend_synchronize(split_backend);
                     }
                     const int64_t st1 = ggml_time_us();
+                    gt_st1 = st1;
                     // [CGC GPU-side timing] the poll above just observed segment i's last
                     // completion, so all of segment i's command buffers are completed -- the
                     // only point where Metal reports GPUStartTime/GPUEndTime. Segment i+1 has
@@ -2152,7 +2181,9 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     if (cgc_gpu_take != nullptr) {
                         // [CGC 2026-09-27] 7 slots: {busy, union, start, end, unsup, unsup_nil, unsup_nc}
                         int64_t g[7] = {0, 0, 0, 0, 0, 0, 0};
+                        const int64_t kt0 = ggml_time_us();
                         const int gns = cgc_gpu_take(split_backend, g);
+                        gt_take += ggml_time_us() - kt0;
                         sg_busy  = g[0];
                         sg_union = g[1];
                         sg_st    = g[2];
@@ -2191,7 +2222,9 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                         // n_cb+1 = 128 buffers); a smaller buffer silently DROPS the tail slots,
                         // and the tail is where DPROF's self-check denominator comes from.
                         int64_t cb_rec[5 * 129];
+                        const int64_t kc0 = ggml_time_us();
                         const int n_rec = cgc_gpu_take_cb(split_backend, cb_rec, 129);
+                        gt_takecb += ggml_time_us() - kc0;
                         for (int r = 0; r < n_rec; r++) {
                             const int64_t * rec = cb_rec + 5*r;
                             if (rec[4] == 0) {
@@ -2699,11 +2732,20 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                             break;
                         }
                     }
+                    const int64_t bd_t0 = ggml_time_us();   // [CGC §37] hook returned
                     if (!submit_ahead && i + 1 < n_segs) {
                         ec = submit_seg(i + 1);
                         if (ec != GGML_STATUS_SUCCESS) {
                             return ec;
                         }
+                        // [CGC 2026-09-29 §37] bank this boundary's CPU envelope. The block is
+                        // entered only for i = 0..n_as_found-1 (i+1 < n_segs = n_as_found+1), i.e.
+                        // only for iterations that just ran the hook, so gt_st1/bd_t0 are both from
+                        // THIS boundary -- no stale span can be counted.
+                        const int64_t bd_t1 = ggml_time_us();
+                        gt_bdcpu += bd_t1 - gt_st1;
+                        gt_bdhook += bd_t0 - gt_st1;
+                        gt_bdsub  += bd_t1 - bd_t0;
                     }
                 }
 
@@ -3052,15 +3094,28 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                             fprintf(stderr,
                                     "CGC-GPUTIME: step=%lld segs=%lld bufs=%lld skipped=%lld "
                                     "wait=%.2f gpu_busy_sum=%.2f (%.0f%%) gpu_union=%.2f (%.0f%%) "
-                                    "gap=%.2f (%.0f%%) ms  skip_nil=%lld skip_nc=%lld\n",
+                                    "gap=%.2f (%.0f%%) ms  skip_nil=%lld skip_nc=%lld "
+                                    "take=%.2f take_cb=%.2f instr_total=%.2f poll_iters=%lld"
+                                    " instr_of_gap=%.0f%%"
+                                    " bdcpu=%.3f bdhook=%.3f bdsub=%.3f gap_not_cpu=%.3f"
+                                    " bdcpu_of_gap=%.0f%%\n",
                                     (long long) gt_nstep, (long long) gt_nseg, (long long) gt_nbuf,
                                     (long long) gt_unsup, w,
                                     b, b * pc, u, u * pc, gp, gp * pc,
-                                    (long long) gt_unsup_nil, (long long) gt_unsup_nc);
+                                    (long long) gt_unsup_nil, (long long) gt_unsup_nc,
+                                    (double) gt_take / 1e3, (double) gt_takecb / 1e3,
+                                    ((double) gt_take + (double) gt_takecb) / 1e3, (long long) gt_polln,
+                                    gp > 0.0 ? 100.0 * ((double) gt_take + (double) gt_takecb) / 1e3 / gp : 0.0,
+                                    (double) gt_bdcpu / 1e3, (double) gt_bdhook / 1e3,
+                                    (double) gt_bdsub / 1e3,
+                                    gp - (double) gt_bdcpu / 1e3,
+                                    gp > 0.0 ? 100.0 * (double) gt_bdcpu / 1e3 / gp : 0.0);
                         }
                     }
                     gt_busy = gt_union = gt_gap = gt_wait = 0;
+                    gt_take = gt_takecb = gt_polln = 0;
                     gt_nseg = gt_nbuf = gt_unsup = 0;
+                    gt_bdcpu = gt_bdhook = gt_bdsub = 0;
                     gt_unsup_nil = gt_unsup_nc = 0;
                     gt_prev_end = -1;
                 }

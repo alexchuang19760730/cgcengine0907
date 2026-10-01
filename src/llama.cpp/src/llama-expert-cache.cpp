@@ -56,6 +56,18 @@ static bool cgc_fill_nocache_on() {
 static std::atomic<uint64_t> cgc_fn_applied{0};
 static std::atomic<uint64_t> cgc_fn_failed{0};
 
+// ─────────────────────────────────────────────────────────────────────────────
+// [CGC fill-path split 2026-09-30] CGC_FILL_SPLIT=1 -- see the field block in
+// llama-expert-cache.h for the bucket definitions and the identity the checker enforces.
+// Off by default: with the env unset every branch below is skipped (one cached bool test per
+// batch/job), so any run without the knob is byte-identical and un-slowed.
+// ─────────────────────────────────────────────────────────────────────────────
+static bool cgc_fill_split_on() {
+    static const bool on = getenv("CGC_FILL_SPLIT") != nullptr;
+    return on;
+}
+static inline uint64_t cgc_fs_now() { return (uint64_t) ggml_time_us(); }
+
 // Once per opened handle. The counters exist so a run can prove the knob bit instead of assuming it.
 static void cgc_fill_nocache(FILE * f) {
     if (!cgc_fill_nocache_on() || f == nullptr) {
@@ -1523,6 +1535,9 @@ void llama_expert_cache_ensure_batch(llama_expert_cache * cache, uint32_t layer,
                                          all_segs, all_dsts);
             }
             std::vector<int> ok;
+            if (cgc_fill_split_on()) {
+                cache->fs_misses.fetch_add((uint64_t) miss_exps.size(), std::memory_order_relaxed);
+            }
             fill_segments_pool(cache, all_segs, all_dsts, ok);
             eb_t.add_misses((uint64_t) miss_exps.size());
             bool bad = false;
@@ -2789,6 +2804,31 @@ llama_expert_cache::~llama_expert_cache() {
                 (unsigned long long) fill_wait_us.load(std::memory_order_relaxed),
                 n_prefetch, n_prefetch_dropped);
 
+        // [CGC fill-path split 2026-09-30] Rendered only when CGC_FILL_SPLIT=1. Per-batch
+        // averages are printed alongside the totals because the identity
+        // (wake_in + span + wake_out == wait) is only checkable per batch -- averaged buckets can
+        // add up from different batches. Consumed by scripts/check/fill_split.py.
+        if (cgc_fill_split_on()) {
+            const uint64_t nb   = fs_batches.load(std::memory_order_relaxed);
+            fprintf(stderr,
+                    "CGC-FILLSPLIT: batches=%llu incomplete=%llu misses=%llu segs=%llu jobs=%llu "
+                    "madvise_us=%llu build_us=%llu advise_us=%llu wake_in_us=%llu span_us=%llu "
+                    "wake_out_us=%llu wait_us=%llu wait_max_us=%llu\n",
+                    (unsigned long long) nb,
+                    (unsigned long long) fs_incomplete.load(std::memory_order_relaxed),
+                    (unsigned long long) fs_misses.load(std::memory_order_relaxed),
+                    (unsigned long long) fs_segs.load(std::memory_order_relaxed),
+                    (unsigned long long) fs_jobs.load(std::memory_order_relaxed),
+                    (unsigned long long) fs_madvise_us.load(std::memory_order_relaxed),
+                    (unsigned long long) fs_build_us.load(std::memory_order_relaxed),
+                    (unsigned long long) fs_advise_us.load(std::memory_order_relaxed),
+                    (unsigned long long) fs_wake_in_us.load(std::memory_order_relaxed),
+                    (unsigned long long) fs_span_us.load(std::memory_order_relaxed),
+                    (unsigned long long) fs_wake_out_us.load(std::memory_order_relaxed),
+                    (unsigned long long) fs_wait_us.load(std::memory_order_relaxed),
+                    (unsigned long long) fs_wait_max_us.load(std::memory_order_relaxed));
+        }
+
         // [2026-09-22 shape knob] One machine-parsable line carrying the realized shape plus the
         // cache's own counters, so a shape search reads THIS instead of assembling a second
         // opinion from four separately-formatted banners. It repeats the width/union recorded at
@@ -3597,6 +3637,14 @@ void llama_expert_cache::pool_loop() {
             }
             job = jobs.front();
             jobs.pop_front();
+            // [CGC fill-path split] FIRST worker to take a job of the current batch: records the
+            // end of the wake/queue window (fs_submit_us was reset + stamped by the submitter
+            // while the queue was empty). CAS from 0 so only the first one wins.
+            if (cgc_fill_split_on()) {
+                uint64_t expect = 0;
+                fs_first_deq_us.compare_exchange_strong(expect, cgc_fs_now(),
+                                                        std::memory_order_relaxed);
+            }
         }
         // pread OUTSIDE the lock (may block on IO)
         const auto t0 = std::chrono::steady_clock::now();
@@ -3649,6 +3697,11 @@ void llama_expert_cache::pool_loop() {
             std::lock_guard<std::mutex> lk(pool_m);
             --pool_outstanding;
             if (pool_outstanding == 0) {
+                // [CGC fill-path split] Last completion of the batch: stamped BEFORE the notify so
+                // fs_wake_out_us (last_done -> caller running again) includes the notify itself.
+                if (cgc_fill_split_on()) {
+                    fs_last_done_us.store(cgc_fs_now(), std::memory_order_relaxed);
+                }
                 pool_done_cv.notify_all();
             }
         }
@@ -3690,6 +3743,8 @@ static void fill_segments_pool(llama_expert_cache * cache,
     if (n == 0 || cgc_eb_nofill) {
         return;
     }
+    const bool   fs_on = cgc_fill_split_on();
+    const uint64_t fs_t_a = fs_on ? cgc_fs_now() : 0;   // entry (after the NOFILL gate)
     // [CGC 2026-09-24 swap-miss P1] Every dst below is about to be overwritten in full by
     // pread. Without this, a page that happens to sit on swap must first be read back in
     // (swap-in) only to be discarded one instruction later — pure, repeated IO. Drop the
@@ -3701,6 +3756,12 @@ static void fill_segments_pool(llama_expert_cache * cache,
             }
         }
     }
+    // [CGC fill-path split] the discard pass runs on the CALLER, before any job is submitted --
+    // it is dead time on the critical path, not overlapped with the workers.
+    if (fs_on) {
+        cache->fs_madvise_us.fetch_add(cgc_fs_now() - fs_t_a, std::memory_order_relaxed);
+    }
+    const uint64_t fs_t_b = fs_on ? cgc_fs_now() : 0;
     // [CGC 2026-08-29 merge-read] sort the batch's segments by (file_idx, file_offset) and
     // submit each file-contiguous RUN as ONE preadv job. Within one expert tensor (kind) the
     // segments of adjacent expert ids are adjacent in the file, so a layer's miss set forms
@@ -3795,7 +3856,21 @@ static void fill_segments_pool(llama_expert_cache * cache,
                 i = j + 1;
             }
         }
+        // [CGC fill-path split] Stamp the submit point and reset the two worker stamps INSIDE
+        // pool_m, together with the notify: the caller waits for outstanding == 0 before every
+        // submit, so at this instant the queue is empty and the next dequeue belongs to THIS batch
+        // (notify -> first dequeue is therefore exactly the wake + queueing cost).
+        if (fs_on) {
+            cache->fs_first_deq_us.store(0, std::memory_order_relaxed);
+            cache->fs_last_done_us.store(0, std::memory_order_relaxed);
+            cache->fs_submit_us.store(cgc_fs_now(), std::memory_order_relaxed);
+            cache->fs_jobs.fetch_add(cache->jobs.size(), std::memory_order_relaxed);
+        }
         cache->pool_cv.notify_all();
+    }
+    if (fs_on) {
+        cache->fs_build_us.fetch_add(cgc_fs_now() - fs_t_b, std::memory_order_relaxed);
+        cache->fs_segs.fetch_add(n, std::memory_order_relaxed);
     }
 #ifdef __APPLE__
     // [CGC 2026-08-29 RDADVISE] issue the read-ahead hints OUTSIDE pool_m (fcntl is cheap but
@@ -3807,9 +3882,32 @@ static void fill_segments_pool(llama_expert_cache * cache,
         }
     }
 #endif
+    const uint64_t fs_t_d = fs_on ? cgc_fs_now() : 0;   // end of the (post-submit) read-ahead hints
     {
         std::unique_lock<std::mutex> lk(cache->pool_m);
         cache->pool_done_cv.wait(lk, [&]{ return cache->pool_outstanding == 0; });
+    }
+    if (fs_on) {
+        const uint64_t t_e   = cgc_fs_now();
+        const uint64_t subm  = cache->fs_submit_us.load(std::memory_order_relaxed);
+        const uint64_t first = cache->fs_first_deq_us.load(std::memory_order_relaxed);
+        const uint64_t last  = cache->fs_last_done_us.load(std::memory_order_relaxed);
+        cache->fs_advise_us.fetch_add(fs_t_d > subm ? fs_t_d - subm : 0, std::memory_order_relaxed);
+        const uint64_t wait = t_e - subm;  // == wake_in + span + wake_out, by construction
+        cache->fs_wait_us.fetch_add(wait, std::memory_order_relaxed);
+        if (wait > cache->fs_wait_max_us.load(std::memory_order_relaxed)) {
+            cache->fs_wait_max_us.store(wait, std::memory_order_relaxed);
+        }
+        if (first == 0 || last == 0) {
+            // A batch whose stamps did not both land cannot be split; count it instead of
+            // inventing a zero. The checker treats a nonzero count as UNJUDGEABLE, not as "0 us".
+            cache->fs_incomplete.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            cache->fs_wake_in_us.fetch_add(first > subm ? first - subm : 0, std::memory_order_relaxed);
+            cache->fs_span_us.fetch_add(last > first ? last - first : 0, std::memory_order_relaxed);
+            cache->fs_wake_out_us.fetch_add(t_e > last ? t_e - last : 0, std::memory_order_relaxed);
+            cache->fs_batches.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     // [CGC V1 verify 2026-09-05] byte-identity check after the pool-worker batch finishes
     cgc_exact_cache_verify_post_fill(cache, segs, dsts);

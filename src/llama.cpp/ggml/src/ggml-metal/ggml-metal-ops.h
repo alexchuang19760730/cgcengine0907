@@ -26,6 +26,20 @@ int ggml_metal_op_n_nodes(ggml_metal_op_t ctx);
 
 int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx);
 
+// [CGC 2026-09-29 DISPATCH CENSUS v2] Report a kernel that was launched WITHOUT going through the
+// encoder, so the census counts it too. In this tree there is exactly ONE such path: the raw
+// `[encoder dispatchThreads:...]` in ggml_metal_spec_decode_verify (ggml-metal-context.m), which
+// builds its own command buffer instead of encoding into the graph's encoder.
+//
+// Why a separate entry point and not a macro like the encoder one: the macro in ggml-metal-ops.cpp
+// only rewrites calls that appear inside THAT translation unit, and `dispatchThreads:` is an ObjC
+// message send that no C preprocessor macro can intercept. So the spec-decode kernel has to declare
+// itself, or it stays invisible -- which is the whole defect this census v2 exists to close.
+//   `kernel` : the name of the pipeline that was set, used verbatim as the census's kernel name.
+// Counted with no op attribution (there is no graph node in flight), i.e. it lands in the `direct`
+// column. No-op unless CGC_DISPATCH_CENSUS=1.
+void cgc_dispatch_census_direct(const char * kernel);
+
 //
 // available ops:
 //

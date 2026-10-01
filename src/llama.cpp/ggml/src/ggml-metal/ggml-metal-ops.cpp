@@ -14,6 +14,9 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>   // [CGC 2026-09-29 DISPATCH CENSUS v2] fprintf/snprintf for the census tables
+#include <atomic>   // [CGC 2026-09-29 DISPATCH CENSUS v2] the slice counter is shared by n_cb+1 threads
+#include <mutex>    // [CGC 2026-09-29 DISPATCH CENSUS v2] one slice's rows print as one block
 
 // [CGC 2026-09-16 §9.18.6] Declared at the TOP of the file, deliberately. Defined with the rest of
 // the capture instrumentation at the foot of this file. It used to sit just above `mul_mat` (then the
@@ -25,6 +28,284 @@
 namespace {
 void cgc_dst_capture_at(ggml_metal_op_t ctx, ggml_metal_buffer_id bid_dst, int idx, int n_fuse);
 } // namespace
+
+// [CGC 2026-09-29 DISPATCH CENSUS v2] -- the nested-dispatch blind spot of the v1 census.
+//
+// WHAT WAS WRONG. `CGC-DISPATCH:` (v1) counts ONE "dispatch" per ENCODE CALL -- one per graph node
+// or fused node group. That is not what the GPU launches. Statically in this file: 15 of the 61 op
+// encoders hold MORE THAN ONE dispatch call site, and on the decode graph those are exactly the
+// ones that matter -- `flash_attn_ext` 7, `mul_mat` 4, `mul_mat_id` 4, `mul_mat_id_glu_fused` 3,
+// `bin` 2, `unary` 2. So a `MUL_MAT_ID` row reading `dispatches=3` can be 3 encode calls and 5..12
+// kernels, and every kernel issued from INSIDE a fused helper was invisible: it exists, it costs
+// GPU time, and no column counted it. The gap between the two columns was being read as "what
+// fusion bought", when part of it is "what the counter could not see".
+//
+// (The case that motivated the work was the down projection the fused combine launches itself.
+// MEASURED below records what the decode graph actually hides -- which is not that kernel.)
+//
+// WHAT v2 COUNTS. Every `ggml_metal_encoder_dispatch_threadgroups()` call, i.e. every kernel the
+// encoder actually launches, attributed to (a) the op currently being encoded and (b) the NAME of
+// the pipeline that was set when it launched. The name is what turns "counted" into "readable":
+// `kernel_mul_mm_id_iq2_s_f32_bci=0` under a MUL_MAT_ID row says WHICH inner projection ran, which
+// a bare count cannot. `enc_launch` counts encode calls that launched at least one kernel, so
+// `nested = kernels - enc_launch - direct` is the number of kernels that came from inside an op's
+// own body.
+//
+// MEASURED (prod-new  `CGC_DECODE_PROFILE=1;CGC_DISPATCH_CENSUS=1`, 2026-09-29). The nested
+// dispatches are REAL and this census now counts and NAMES them. Two windows, same arm:
+//     48 slices (default)         : kernels=363  enc_launch=340  nested=23    MUL_MAT_ID 21 -> 42
+//     400 slices (CENSUS_MAX=400) : kernels=2642 enc_launch=2473 nested=169   MUL_MAT_ID 156 -> 312
+// The identity `kernels == enc_launch + nested + direct` holds in EVERY slice of both (0
+// violations -- that identity is the self-check), and MUL_MAT_ID is 2x EXACTLY in both. Ranking the
+// kernel table by `nested` puts the names on them:
+//     kern n=102 nested=102  kernel_mul_mm_id_iq2_s_f32_bci=0    op=MUL_MAT_ID
+//     kern n=51  nested=51   kernel_mul_mm_id_iq3_s_f32_bci=0    op=MUL_MAT_ID
+//     kern n=3   nested=3    kernel_mul_mm_id_iq4_xs_f32_bci=0   op=MUL_MAT_ID
+// What they are: the expert matmul `mul_mat_id` launches AFTER its own `..._map0_...` id-mapping
+// kernel inside ONE encode call. map0 is never nested (`kernel_mul_mm_id_map0_ne20_8_ne02=256`
+// reads nested=0: it is always the first kernel of its call), so the pair map0+mm is the
+// invisible half.
+//
+// THIS IS A PREFILL WINDOW, AND THAT IS NOT A DETAIL. map0 is gated on `ne21 >= ne21_mm_id_min`
+// (32, the constant in ggml_metal_op_mul_mat_id), where ne21 = batch tokens. A decode step is ONE
+// token, so decode takes the MV path (`mul_mv_id`) and launches NO map0. Measured: the census's
+// first 48 flushes all precede the first decode step (last row at stderr line 746; DECPROF's first
+// `ntok=1` step at line 1244), and raising the window to 400 does NOT reach decode either (slice
+// 400 at line 3717; first ntok=1 at line 4097) while `mul_mv_id` never appears once in either.
+// So every number above is a PREFILL number. To census DECODE a slice cap is the wrong gate -- the
+// prefill phase alone emits more than 400 slices, so the gate has to be the batch size.
+//
+// NOTE: `kernel_mul_mv_id_down_combine_*` -- the case that motivated this work -- does NOT appear at
+// all (0 occurrences in every run), so ggml_metal_op_mul_mat_id_down_combine is not on THIS model's
+// decode path. The blind spot is real; the specific kernel that named it is not the one this graph
+// hides.
+//
+// HOW. A macro wraps the call inside THIS file, which is where every dispatch site in ggml-metal
+// lives (`ggml-metal-device.m` holds the single definition, and the one path that bypasses the
+// encoder -- the raw `dispatchThreads:` in ggml_metal_spec_decode_verify -- reports itself through
+// cgc_dispatch_census_direct()). Defined after the includes and before the first caller, so it
+// cannot be outrun; that is the lesson the `cgc_dst_capture_at` comment above records (three
+// placements, three broken builds).
+//
+// ADD-ONLY. No encoding, no value and no dispatch is changed; with the census OFF the only cost is
+// one predictable branch in cgc_dsp2_tick(). Silent unless CGC_DISPATCH_CENSUS=1.
+//
+// THREADING -- the defect the first cut of v2 had, and why every accumulator below is
+// `thread_local`. The encoder loop is CONCURRENT, not sequential:
+// ggml_metal_graph_compute encodes the head slice on the calling thread via
+// ctx->encode_async(n_cb) and then runs the remaining slices through
+// `dispatch_apply(n_cb, d_queue, encode_async)`. So n_cb+1 slices call
+// ggml_metal_op_encode_impl, and therefore cgc_dsp2_tick, AT THE SAME TIME.
+//
+// The first cut kept ONE set of accumulators for all of them and was wrong twice over:
+//   (a) the counts lost updates -- `kernels` was a lower bound that was not even a bound, and
+//       the per-(op,kernel) table dropped whatever the losing thread had appended; and
+//   (b) the slice number was read in the fprintf() argument and only incremented ~50 fprintf()s
+//       later, an enormous read-modify-write window. That is the observed signature: v1's
+//       `graph=` numbers came out unique because its counter is bumped a few instructions before
+//       it prints, while v2 printed `slice=4` FIVE times with DIFFERENT content (kernels=4
+//       direct=0 alternating with kernels=8 direct=1) -- a lost update, not a re-print.
+//
+// Per-slice state also makes a row mean what the label already claimed. v1's rows were read as
+// per-slice while actually being a nine-thread pool; `nested` is only meaningful when the op
+// and the kernels it launched belong to the same slice.
+namespace {
+
+bool cgc_dsp2_on() {
+    static const bool v = [] {
+        const char * e = getenv("CGC_DISPATCH_CENSUS");
+        return e != nullptr && e[0] == '1';
+    }();
+    return v;
+}
+
+// `thread_local`: see the THREADING note above -- one slice encodes on one thread, and n_cb+1 slices
+// run at once. Nothing here is shared, so nothing here can lose an update.
+// [CGC 2026-09-29] How many slices to PRINT (the counters always run; only the rows are capped).
+//
+// WHY THIS HAD TO BECOME A KNOB. The first cut hard-coded 48, matching v1. Measured the same day:
+// in a prod-new run the first 48 flushes all happen BEFORE the first decode step -- the last census
+// row is at stderr line 746 while DECPROF's first `ntok=1` step is at line 1244 -- so a 48-slice
+// window is a PREFILL-ONLY window, and every `nested=` in the header comment above is a prefill
+// number. That is not a cosmetic detail: `nested` on the decode path is the number that matters for
+// the decode target, and at 48 we cannot see it at all. Raise this to reach decode.
+//   unset / <=0 : 48 (the historical window, comparable with the 2026-09-29 runs)
+int cgc_dsp2_max() {
+    static const int v = [] {
+        const char * e = getenv("CGC_DISPATCH_CENSUS_MAX");
+        const int    n = e != nullptr ? atoi(e) : 0;
+        return n > 0 ? n : 48;
+    }();
+    return v;
+}
+
+thread_local int     cgc_dsp2_cur_op      = -1;    // op of the encode call in flight; -1 = nothing/direct
+thread_local bool    cgc_dsp2_enc_started = false; // has this encode call been counted as an "enc_launch"?
+thread_local int64_t cgc_dsp2_kern [GGML_OP_COUNT] = {0};  // kernels launched
+thread_local int64_t cgc_dsp2_enc  [GGML_OP_COUNT] = {0};  // encode calls of this op that launched >= 1 kernel
+thread_local int64_t cgc_dsp2_kern_tot = 0;
+thread_local int64_t cgc_dsp2_enc_tot  = 0;
+thread_local int64_t cgc_dsp2_direct   = 0;        // kernels launched outside any op encode
+
+// per (op, kernel name): this is the table that names a nested dispatch instead of only counting it.
+// `nested` is the column that matters -- `n` alone cannot separate "this kernel is what one encode
+// call launched" from "this kernel is the extra one launched from inside that call's body".
+struct cgc_dsp2_kn { int op; char nm[96]; int64_t n; int64_t nested; };
+thread_local cgc_dsp2_kn cgc_dsp2_by_name[256];
+thread_local int         cgc_dsp2_nkn = 0;
+
+void cgc_dsp2_count(int op, const char * nm) {
+    if (nm == nullptr || nm[0] == '\0') {
+        nm = "(pipeline-not-set)";
+    }
+
+    // NESTED, decided before `enc_started` is set below: this kernel is launched by an encode call
+    // that has ALREADY launched one, so it came from inside that call's body rather than from the
+    // call itself. The fused combine launching its own down projection is the case this names.
+    const bool nested = (op >= 0) && cgc_dsp2_enc_started;
+
+    cgc_dsp2_kern_tot++;
+
+    if (op < 0) {
+        cgc_dsp2_direct++;
+    } else {
+        cgc_dsp2_kern[op]++;
+        if (!cgc_dsp2_enc_started) {
+            cgc_dsp2_enc_started = true;
+            cgc_dsp2_enc[op]++;
+            cgc_dsp2_enc_tot++;
+        }
+    }
+
+    for (int i = 0; i < cgc_dsp2_nkn; ++i) {
+        if (cgc_dsp2_by_name[i].op == op && strcmp(cgc_dsp2_by_name[i].nm, nm) == 0) {
+            cgc_dsp2_by_name[i].n++;
+            if (nested) {
+                cgc_dsp2_by_name[i].nested++;
+            }
+            return;
+        }
+    }
+    if (cgc_dsp2_nkn < (int) (sizeof(cgc_dsp2_by_name) / sizeof(cgc_dsp2_by_name[0]))) {
+        cgc_dsp2_by_name[cgc_dsp2_nkn].op     = op;
+        snprintf(cgc_dsp2_by_name[cgc_dsp2_nkn].nm, sizeof(cgc_dsp2_by_name[cgc_dsp2_nkn].nm), "%s", nm);
+        cgc_dsp2_by_name[cgc_dsp2_nkn].n      = 1;
+        cgc_dsp2_by_name[cgc_dsp2_nkn].nested = nested ? 1 : 0;
+        cgc_dsp2_nkn++;
+    }
+}
+
+// called by the macro below, immediately before the kernel is launched
+inline void cgc_dsp2_tick(ggml_metal_encoder_t enc) {
+    if (!cgc_dsp2_on()) {
+        return;
+    }
+    cgc_dsp2_count(cgc_dsp2_cur_op, ggml_metal_encoder_last_pipeline(enc));
+}
+
+} // namespace
+
+// [CGC 2026-09-29 DISPATCH CENSUS v2] Print one slice's rows, then reset this thread's
+// accumulators. Called from ggml_metal_op_encode_impl at the START of an encode pass (local
+// idx == 0) -- i.e. once the pass it DESCRIBES has finished. See that call site for why this is
+// deliberately NOT nested inside the v1 census guard.
+void cgc_dsp2_flush() {
+    if (!cgc_dsp2_on() || cgc_dsp2_kern_tot <= 0) {
+        return;
+    }
+
+    // One slice's block is ~25 lines; without the lock two concurrent slices writing them would
+    // interleave and no row would be attributable to a slice. The id comes from a fetch_add for
+    // the same reason -- the old read-in-the-fprintf-argument / write-50-fprintf()s-later pair IS
+    // the window that printed `slice=4` five times.
+    static std::atomic<int64_t> cgc_dsp2_slices_done{0};
+    static std::mutex           cgc_dsp2_print_mu;
+
+    std::lock_guard<std::mutex> cgc_dsp2_lk(cgc_dsp2_print_mu);
+    const int64_t cgc_dsp2_sid = cgc_dsp2_slices_done.fetch_add(1) + 1;
+    if (cgc_dsp2_sid <= cgc_dsp2_max()) {   // bounds the LOG, never the counting
+        fprintf(stderr,
+                "CGC-DISPATCH2: slice=%lld kernels=%lld enc_launch=%lld nested=%lld direct=%lld\n",
+                (long long) cgc_dsp2_sid,
+                (long long) cgc_dsp2_kern_tot, (long long) cgc_dsp2_enc_tot,
+                (long long) (cgc_dsp2_kern_tot - cgc_dsp2_direct - cgc_dsp2_enc_tot),
+                (long long) cgc_dsp2_direct);
+        // EVERY op that launched a kernel -- not only the nested ones. Ranked by extra
+        // kernels so `nested > 0` is at the top, but filled out to 14 rows so a reader
+        // can line this table up against v1's column-for-column and see the 2x on
+        // MUL_MAT_ID for themselves, which is the whole claim. Stopping at the nested
+        // ops, as this table did at first, also made the two tables impossible to
+        // reconcile, since v1's rows are one row per op BY COUNT.
+        bool used[GGML_OP_COUNT] = {false};
+        for (int r = 0; r < 14; r++) {
+            int best = -1;
+            for (int q = 0; q < GGML_OP_COUNT; q++) {
+                if (used[q] || cgc_dsp2_kern[q] <= 0) { continue; }
+                const int64_t vq = cgc_dsp2_kern[q] - cgc_dsp2_enc[q];
+                if (best < 0) { best = q; continue; }
+                const int64_t vb = cgc_dsp2_kern[best] - cgc_dsp2_enc[best];
+                if (vq > vb || (vq == vb && cgc_dsp2_kern[q] > cgc_dsp2_kern[best])) {
+                    best = q;
+                }
+            }
+            if (best < 0) { break; }
+            used[best] = true;
+            fprintf(stderr, "CGC-DISPATCH2:   op=%-16s enc=%-5lld kernels=%-5lld nested=%lld\n",
+                    ggml_op_name((enum ggml_op) best),
+                    (long long) cgc_dsp2_enc[best], (long long) cgc_dsp2_kern[best],
+                    (long long) (cgc_dsp2_kern[best] - cgc_dsp2_enc[best]));
+        }
+        // ... and WHICH kernels those extra ones were, ranked by `nested` FIRST. Ranking
+        // by `n`, which is what this table did at first, buries exactly the rows it
+        // exists to show: a nested kernel launches once per encode call, so its `n` ties
+        // with every other singleton and the down projection falls off a top-12 made of
+        // ties. The `nested` tie-break to `n` keeps the busiest kernel first among equals.
+        bool usedk[256] = {false};
+        for (int r = 0; r < 12; r++) {
+            int best = -1;
+            for (int k = 0; k < cgc_dsp2_nkn; k++) {
+                if (usedk[k] || cgc_dsp2_by_name[k].n <= 0) { continue; }
+                if (best < 0
+                        || cgc_dsp2_by_name[k].nested > cgc_dsp2_by_name[best].nested
+                        || (cgc_dsp2_by_name[k].nested == cgc_dsp2_by_name[best].nested
+                            && cgc_dsp2_by_name[k].n > cgc_dsp2_by_name[best].n)) {
+                    best = k;
+                }
+            }
+            if (best < 0) { break; }
+            usedk[best] = true;
+            const int kop = cgc_dsp2_by_name[best].op;
+            fprintf(stderr, "CGC-DISPATCH2:   kern n=%-4lld nested=%-4lld %-52s op=%s\n",
+                    (long long) cgc_dsp2_by_name[best].n,
+                    (long long) cgc_dsp2_by_name[best].nested,
+                    cgc_dsp2_by_name[best].nm,
+                    kop < 0 ? "(direct)" : ggml_op_name((enum ggml_op) kop));
+        }
+    }
+
+    for (int q = 0; q < GGML_OP_COUNT; q++) { cgc_dsp2_kern[q] = 0; cgc_dsp2_enc[q] = 0; }
+    cgc_dsp2_kern_tot = 0;
+    cgc_dsp2_enc_tot  = 0;
+    cgc_dsp2_direct   = 0;
+    cgc_dsp2_nkn      = 0;
+}
+
+// The wrapper. Function-like, so it also rewrites the three multi-line call sites (the preprocessor
+// matches the name as a token, not as a line). Every argument is forwarded untouched to the real
+// function, which is declared in the header included above -- hence "defined after the header".
+#define ggml_metal_encoder_dispatch_threadgroups(enc, ...) \
+    (cgc_dsp2_tick(enc), ggml_metal_encoder_dispatch_threadgroups(enc, __VA_ARGS__))
+
+// [CGC 2026-09-29] A dispatch that does NOT go through the encoder above: the raw `dispatchThreads:`
+// in ggml_metal_spec_decode_verify (ggml-metal-context.m). It is a real kernel on a real command
+// buffer, so leaving it uncounted would keep the census's total a lower bound that is not even a
+// bound on the encoder's dispatches. Declared in ggml-metal-ops.h so the ObjC file can call it.
+extern "C" void cgc_dispatch_census_direct(const char * kernel) {
+    if (!cgc_dsp2_on()) {
+        return;
+    }
+    cgc_dsp2_count(-1, kernel);
+}
 
 static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
     if (!t) {
@@ -266,6 +547,14 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
     }
 
     int n_fuse = 1;
+
+    // [CGC 2026-09-29 DISPATCH CENSUS v2] the op this encode call is for. Everything dispatched from
+    // here down -- including a kernel launched from inside a fused helper, which is the case the v1
+    // census could not see -- attributes to it. Set after the early-outs above (noop / empty /
+    // non-compute nodes dispatch nothing) and cleared before the return at the foot of this
+    // function, so no dispatch can land on a stale op.
+    cgc_dsp2_cur_op      = (int) node->op;
+    cgc_dsp2_enc_started = false;
 
     // check if the current node can run concurrently with other nodes before it
     // the condition is that:
@@ -648,6 +937,7 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
                 for (int q = 0; q < GGML_OP_COUNT; q++) { cgc_dsp_cnt[q] = 0; cgc_dsp_nd[q] = 0; }
                 cgc_dsp_tot = 0;
                 cgc_dsp_totnd = 0;
+
             }
             if (cgc_dsp_graphs < 48) {
                 cgc_dsp_cnt[node->op]++;
@@ -658,12 +948,26 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
         }
     }
 
+    // [CGC 2026-09-29 DISPATCH CENSUS v2] ITS OWN flush, deliberately OUTSIDE the v1 block above.
+    // Two reasons, both measured:
+    //   (a) v1 stops at `cgc_dsp_graphs < 48` AND stops accumulating with it, so its flush
+    //       condition `cgc_dsp_tot > 0` goes false forever once v1 is capped. With the v2 rows
+    //       living inside that guard, a v2 window could never exceed 48 no matter what
+    //       CGC_DISPATCH_CENSUS_MAX said -- the first attempt to census DECODE silently
+    //       reprinted a prefill window, which is the failure this decoupling exists to prevent.
+    //   (b) v2's unit is one thread's encode pass, so its trigger must be v2's own state.
+    if (cgc_dsp2_on() && idx == 0 && cgc_dsp2_kern_tot > 0) {
+        cgc_dsp2_flush();
+    }
+
     // update the mem ranges in the encoding context
     for (int i = 0; i < n_fuse; ++i) {
         if (!ggml_metal_op_concurrency_add(ctx, ctx->node(idx + i))) {
             ggml_metal_op_concurrency_reset(ctx);
         }
     }
+
+    cgc_dsp2_cur_op = -1;   // [CGC 2026-09-29 DISPATCH CENSUS v2] this encode call is over
 
     return n_fuse;
 }

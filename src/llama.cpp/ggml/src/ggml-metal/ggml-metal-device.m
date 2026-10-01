@@ -73,6 +73,16 @@ void ggml_metal_cv_set_bool(ggml_metal_cv_t cv, bool value, int32_t idx) {
 
 struct ggml_metal_pipeline {
     id<MTLComputePipelineState> obj;
+
+    // [CGC 2026-09-29 DISPATCH CENSUS v2] the function name this pipeline was compiled from.
+    // Why it has to live here: the census counts KERNEL LAUNCHES, and the only place that knows
+    // which kernel the encoder is about to launch is the pipeline that was set. A pipeline object
+    // is opaque (`id<MTLComputePipelineState>`), so the name cannot be recovered from it.
+    // A fixed buffer and not a pointer: `name` is frequently a stack `char[]` (the formatted
+    // `kernel_%s_%s` names), so storing that pointer would dangle.
+    // No production path reads this field: the only reader is
+    // ggml_metal_encoder_last_pipeline(), which the census calls and nothing else does.
+    char name[160];
 };
 
 ggml_metal_pipeline_t ggml_metal_pipeline_init(void) {
@@ -80,6 +90,11 @@ ggml_metal_pipeline_t ggml_metal_pipeline_init(void) {
 
     *res = (struct ggml_metal_pipeline) {
         /*.obj  =*/ nil,
+        // [CGC 2026-09-29 DISPATCH CENSUS v2] named explicitly so the struct has no uninitialised
+        // field: `set_pipeline` overwrites it before any dispatch, but an unnamed member here would
+        // be a new -Wmissing-field-initializers warning on a file that had none, and a warning that
+        // the patch introduced is a warning the patch owns.
+        /*.name =*/ "",
     };
 
     return res;
@@ -444,6 +459,8 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_
 
         res.pipeline = ggml_metal_pipeline_init();
         res.pipeline->obj = obj;
+        // [CGC 2026-09-29] carry the name for the dispatch census -- see the struct comment
+        snprintf(res.pipeline->name, sizeof(res.pipeline->name), "%s", name);
 
         ggml_metal_pipelines_add(lib->pipelines, name, res.pipeline);
     }
@@ -459,6 +476,14 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_compile_pipeline(ggml_
 
 struct ggml_metal_encoder {
     id<MTLComputeCommandEncoder> obj;
+
+    // [CGC 2026-09-29 DISPATCH CENSUS v2] the name of the pipeline most recently set on this
+    // encoder. Every dispatch goes through ggml_metal_encoder_dispatch_threadgroups(), which takes
+    // no pipeline argument -- so without this field a counted dispatch cannot say WHICH kernel it
+    // launched. That is exactly the hole the v2 census closes: a dispatch issued from inside a
+    // fused helper (the down projection inside the fused combine is the motivating case) is a real
+    // kernel that the per-encode-call counter could not see at all.
+    char last_pipeline[160];
 };
 
 ggml_metal_encoder_t ggml_metal_encoder_init(ggml_metal_cmd_buf_t cmd_buf_raw, bool concurrent) {
@@ -492,6 +517,10 @@ void ggml_metal_encoder_debug_group_pop (ggml_metal_encoder_t encoder) {
 
 void ggml_metal_encoder_set_pipeline(ggml_metal_encoder_t encoder, struct ggml_metal_pipeline_with_params pipeline) {
     [encoder->obj setComputePipelineState:pipeline.pipeline->obj];
+
+    // [CGC 2026-09-29] record it for the dispatch census (read only when CGC_DISPATCH_CENSUS=1)
+    snprintf(encoder->last_pipeline, sizeof(encoder->last_pipeline), "%s",
+            pipeline.pipeline != nil ? pipeline.pipeline->name : "");
 }
 
 void ggml_metal_encoder_set_bytes(ggml_metal_encoder_t encoder, void * data, size_t size, int idx) {
@@ -508,6 +537,12 @@ void ggml_metal_encoder_set_threadgroup_memory_size(ggml_metal_encoder_t encoder
 
 void ggml_metal_encoder_dispatch_threadgroups(ggml_metal_encoder_t encoder, int tg0, int tg1, int tg2, int tptg0, int tptg1, int tptg2) {
     [encoder->obj dispatchThreadgroups:MTLSizeMake(tg0, tg1, tg2) threadsPerThreadgroup:MTLSizeMake(tptg0, tptg1, tptg2)];
+}
+
+// [CGC 2026-09-29 DISPATCH CENSUS v2] see the struct comment on `last_pipeline`: the census needs
+// the name of the kernel that is about to launch, and this is the only place that has it.
+const char * ggml_metal_encoder_last_pipeline(ggml_metal_encoder_t encoder) {
+    return encoder != NULL ? encoder->last_pipeline : "";
 }
 
 void ggml_metal_encoder_memory_barrier(ggml_metal_encoder_t encoder) {

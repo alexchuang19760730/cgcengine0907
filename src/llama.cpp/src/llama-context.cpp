@@ -169,7 +169,24 @@ llama_context::llama_context(
     // speculative.cpp:1413) -> the draft ran the non-shared catch-up decode instead of
     // reusing the target context, and the accept rate collapsed (a 0.98 -> 0.44).
     // Keep ctx_other for MTP contexts whenever it was supplied.
-    if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
+    //
+    // [CGC 2026-09-30 · attribution arm, NOT a revert] `65c76b8c7` shipped this retention with its
+    // own open item on the record: 「要定案需 owner 重新基線（--write-ref）或先單獨回退
+    // llama-context.cpp 那一臂再測；本輪不做」, and its gate line admits the accept-rate claim
+    // went in UNMEASURED (`G6 not-met (improve draft accept 0.44 -> UNMEASURED ...)`).
+    // `CGC_MTP_NO_CTX_OTHER=1` is that single arm expressed as a switch instead of a revert: the
+    // MTP context then drops ctx_other exactly as it did before that commit, so `is_mem_shared`
+    // (common/speculative.cpp:1413) reads false and the draft runs the non-shared catch-up decode
+    // -- which is the regime the 09-24 `s1_ksweep` k=1..4 curve was measured in (`k_eff == k`,
+    // 0 position errors), i.e. the only regime whose draft chain is known to reach its n_max.
+    //
+    // ⛔ Default (unset) leaves the line below BYTE-IDENTICAL to today, so no existing arm, artifact
+    //    or engine fingerprint moves; this is the repo's usual env-gated-diagnostic idiom. The
+    //    switch is read once per context construction. Any arm that sets it is an attribution arm:
+    //    read `k_eff`, the `draft=0` round count and `MTP fast path draft:verify` against it, never
+    //    a throughput figure.
+    static const bool cgc_mtp_no_ctx_other = getenv("CGC_MTP_NO_CTX_OTHER") != nullptr;
+    if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP && !cgc_mtp_no_ctx_other) {
         cparams.ctx_other = params.ctx_other;
     }
 

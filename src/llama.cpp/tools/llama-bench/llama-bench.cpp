@@ -2559,14 +2559,59 @@ static bool test_gen(llama_context * ctx, int n_gen, int n_threads) {
 
     llama_token token = llama_vocab_get_add_bos(vocab) ? llama_vocab_bos(vocab) : std::rand() % n_vocab;
 
+    // [CGC 2026-09-29 per-token phase split] WHERE THE ~11.6 ms OUT-OF-GRAPH RESIDUAL IS.
+    //
+    // WHY THIS EXISTS. DECPROF accounts for the in-graph work (`wait + cb + submit` summed over the
+    // step's 40 segments = 73.89 ms on the 85.45 ms baseline), leaving ~11.6 ms that has only ever
+    // been a RESIDUAL: `end-to-end - DECPROF total`. §16 §五 and §25 §五 both record that nobody
+    // instrumented it, and §25's SG-OFFGRAPH block is the largest blank in the 25 t/s
+    // decomposition.
+    //
+    // WHAT THIS LOOP ACTUALLY CONTAINS, which decides what the residual can even be:
+    //   * `llama_decode` -- build + alloc + inputs + graph_compute. CGC_PHASE_TIMING already
+    //     splits this end (build=0.038 alloc=0.075 inputs=0.017 ms mean, i.e. ~0.14 ms total).
+    //   * `llama_synchronize(ctx)` -- a per-token FULL BLOCK on the GPU. This is NOT inside
+    //     DECPROF's segment accounting (there is no hook after the step's last segment), so the
+    //     step's tail wait can only land here.
+    //   * `std::rand() % n_vocab` -- NOT sampling. This loop never reads logits; it fabricates the
+    //     next token. So "sampling cost" is not a term in this residual AT ALL, and a
+    //     decomposition that budgets for one would be measuring a thing this harness does not do.
+    //
+    // So the residual's candidates are exactly two: the untimed part of `llama_decode`, and this
+    // `llama_synchronize`. The stamps below separate them, per token, and print AFTER the loop so
+    // the timed region is not disturbed by the printf itself.
+    static const bool cgc_pt_phase = getenv("CGC_PHASE_TIMING") != nullptr;
+    int64_t pt_dec = 0, pt_sync = 0, pt_rand = 0, pt_loop0 = 0;
+    if (cgc_pt_phase) { pt_loop0 = ggml_time_us(); }
+
     for (int i = 0; i < n_gen; i++) {
+        const int64_t pt_a = cgc_pt_phase ? ggml_time_us() : 0;
         int res = llama_decode(ctx, llama_batch_get_one(&token, 1));
+        const int64_t pt_b = cgc_pt_phase ? ggml_time_us() : 0;
         if (res != 0) {
             fprintf(stderr, "%s: failed to decode generation batch, res = %d\n", __func__, res);
             return false;
         }
         llama_synchronize(ctx);
+        const int64_t pt_c = cgc_pt_phase ? ggml_time_us() : 0;
         token = std::rand() % n_vocab;
+        if (cgc_pt_phase) {
+            pt_dec  += pt_b - pt_a;
+            pt_sync += pt_c - pt_b;
+            pt_rand += ggml_time_us() - pt_c;
+        }
+    }
+
+    if (cgc_pt_phase && n_gen > 0) {
+        const double loop_ms = (double) (ggml_time_us() - pt_loop0) / 1e3;
+        const double n       = (double) n_gen;
+        fprintf(stderr,
+                "CGC-BENCH-PHASE: n_gen=%d loop=%.3f decode=%.3f sync=%.3f rand=%.3f "
+                "accounted=%.3f unaccounted=%.3f ms/token\n",
+                n_gen, loop_ms / n, (double) pt_dec / 1e3 / n, (double) pt_sync / 1e3 / n,
+                (double) pt_rand / 1e3 / n,
+                ((double) pt_dec + (double) pt_sync + (double) pt_rand) / 1e3 / n,
+                (loop_ms * 1e3 - (double) (pt_dec + pt_sync + pt_rand)) / 1e3 / n);
     }
     return true;
 }
@@ -3186,10 +3231,25 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
     return true;
 }
 
-static void llama_null_log_callback(enum ggml_log_level level, const char * text, void * user_data) {
-    (void) level;
-    (void) text;
+// [CGC 2026-09-28] ERRORs are never silent, even without -v.
+//
+// This used to be a NULL sink, so llama-bench discarded EVERY llama.cpp log line -- including
+// LLAMA_LOG_ERROR. Measured cost: a `-r 3` arm whose draft chain died on the first step of every
+// round printed the bare `llama_decode[0] returned -1` 264 times, while the engine's own reason
+// for that -1 (llama-batch.cpp's M-RoPE check, which names X and Y) went into this sink. The log
+// showed a symptom with no cause, and the arm's avg_ts -- one speculative rep plus two PLAIN
+// DECODE reps -- was read as a k result. A failure that cannot state its reason is a number
+// wearing a verdict's clothes, and scripts/check/draft_liveness.py can only classify what the log
+// actually contains, so the log has to contain it.
+//
+// INFO/DEBUG are still dropped; that is what keeps the default cheap enough not to push a tight
+// prefill into Metal OOM (the -v concern, not the rare ERROR).
+static void llama_error_only_log_callback(enum ggml_log_level level, const char * text, void * user_data) {
     (void) user_data;
+    if (level == GGML_LOG_LEVEL_ERROR) {
+        fputs(text, stderr);
+        fflush(stderr);
+    }
 }
 
 static std::unique_ptr<printer> create_printer(output_formats format) {
@@ -3245,10 +3305,17 @@ int llama_bench(int argc, char ** argv) {
     auto * ggml_threadpool_free_fn = (decltype(ggml_threadpool_free) *) ggml_backend_reg_get_proc_address(cpu_reg, "ggml_threadpool_free");
 
     // initialize llama.cpp
-    // [CGC] CGC_KEEP_ERRORS: keep ERROR-level logs (do not install the null sink) without paying
-    // for full --verbose DEBUG output, which itself can push a tight prefill into Metal OOM.
-    if (!params.verbose && getenv("CGC_KEEP_ERRORS") == nullptr) {
-        llama_log_set(llama_null_log_callback, NULL);
+    // [CGC] CGC_KEEP_ERRORS keeps its historical meaning: install NO sink at all, i.e. keep INFO
+    // and above (without paying for full --verbose DEBUG output, which itself can push a tight
+    // prefill into Metal OOM). The DEFAULT is now "keep ERROR only" -- see
+    // llama_error_only_log_callback for why a discarded ERROR is worse than a noisy one.
+    if (!params.verbose) {
+        if (getenv("CGC_KEEP_ERRORS") != nullptr) {
+            fprintf(stderr, "[CGC] CGC_KEEP_ERRORS set: llama.cpp log sink NOT installed "
+                            "(INFO and above will be printed)\n");
+        } else {
+            llama_log_set(llama_error_only_log_callback, NULL);
+        }
     }
     llama_backend_init();
     llama_numa_init(params.numa);

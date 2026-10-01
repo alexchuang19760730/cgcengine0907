@@ -1291,6 +1291,15 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
     // through llama-server prints `mean len = 1.47` for accept 0.46667 = 1 + a, i.e. 1 draft/round.
     bool    one_position_drafts = false;
 
+    // [CGC 2026-09-28] Per-generation tally of first-draft-step failures (i == 0). A failure at
+    // i == 0 means the ROUND produced ZERO drafts -- not a shorter draft, no draft at all -- so the
+    // caller verifies one token and the arm measures PLAIN DECODE while still being reported as a k
+    // arm. The loop's own message said only `llama_decode[0] returned -1`, 264 times in one measured
+    // arm, because llama-bench's log sink discarded the engine's reason for it (see
+    // llama_error_only_log_callback in tools/llama-bench/llama-bench.cpp). Report the state once
+    // per generation, then throttle.
+    int     n_first_step_fail = 0;
+
     // [CGC MTP sampler parity 2026-09-13] CGC_MTP_SAMPLER_PARITY=1 makes the draft chain the
     // target's chain (see common_params_speculative_draft::sampling) instead of the hard-coded
     // {TOP_K=10}, and makes the drafted token the chain's SAMPLE rather than its argmax. Both
@@ -1481,7 +1490,48 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         auto * ctx_dft = this->params.ctx_dft;
         const llama_pos pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), seq_id);
 
-        if (pos_max < N - 1 && !is_mem_shared) {
+        // [CGC 2026-09-28] One counter per generation, so the report below is about THIS generation
+        // (begin() is the only "new generation" hook the draft path has).
+        n_first_step_fail = 0;
+
+        // [CGC 2026-09-28] THE STALE TAIL: a new generation starts at N, but the memory can still
+        // hold a PREVIOUS generation's positions >= N, and then the first draft step is refused by
+        // llama-batch's M-RoPE check (X < Y required, X = memory->seq_pos_max, Y = the batch's
+        // position) for EVERY round -- i.e. the whole generation drafts nothing.
+        //
+        // Measured 2026-09-28 on the `delivery` cell (k=3, one llama-bench launch, reps 3), with
+        // the numbers straight out of the engine's own log: at the rep boundary X = 642 (the tail
+        // of the previous rep) against Y = 512 (this rep's start, after the -d 512 depth prefill),
+        // while inside rep 1 the same check fired at X == Y (559, 573, 597). rep 1 drafted
+        // (mean_len 1.7708, drafted=91); reps 2 and 3 had drafted=0 on every round -- a "k=3" arm
+        // that is one speculative rep plus two PLAIN DECODE reps.
+        //
+        // Why nothing else removes it: llama-bench clears the TARGET's memory between reps
+        // (llama-bench.cpp, in the rep loop) and nothing clears the draft's, and for a SHARED KV
+        // (`is_mem_shared`, which this arm measures as 1) the per-round `seq_rm` inside draft() is
+        // skipped by its own `!is_mem_shared` guard. So this is the only place left that can drop
+        // the tail. It drops ONLY the tail: `llama_memory_seq_rm` removes the cells whose POSITION
+        // falls in [p0, p1) and p1 < 0 means "to the end", so [N, -1) leaves [0, N) -- the prefix
+        // this generation re-uses -- intact.
+        if (pos_max >= N) {
+            llama_memory_seq_rm(llama_get_memory(ctx_dft), seq_id, N, -1);
+            const llama_pos after = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), seq_id);
+
+            SPC_WRN("ctx_dft seq %d: pos_max=%d >= N=%d on a NEW generation (shared_kv=%d) -- the "
+                    "previous generation's tail is still in the memory; removed [%d, -1) "
+                    "(pos_max is now %d). Without this, the first draft step of every round would "
+                    "be refused (M-RoPE X < Y, X=%d >= Y=%d) and the generation would draft "
+                    "nothing while still being reported as a k arm.\n",
+                    (int) seq_id, (int) pos_max, (int) N, (int) is_mem_shared, (int) N, (int) after,
+                    (int) after, (int) N);
+
+            if (after >= N) {
+                SPC_ERR("ctx_dft seq %d: pos_max=%d is STILL >= N=%d after removing the tail. Every "
+                        "round of this generation will yield 0 drafts, so any t/s from it is a "
+                        "PLAIN DECODE number, not a k number.\n",
+                        (int) seq_id, (int) after, (int) N);
+            }
+        } else if (pos_max < N - 1 && !is_mem_shared) {
             SPC_WRN("ctx_dft pos_max=%d < N-1=%d - "
                     "process() hook may not have run on every prefill ubatch "
                     "(need_embd / logits=1 on every prompt position?). "
@@ -1753,7 +1803,32 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             llama_context_set_cgc_phase(ctx_dft, CGC_PHASE_DRAFT);
             int ret = llama_decode(ctx_dft, batch);
             if (ret != 0) {
-                SPC_ERR("llama_decode[%d] returned %d\n", i, ret);
+                // [CGC 2026-09-28] i == 0 is the load-bearing case: this round yields ZERO drafts, so
+                // the arm measures PLAIN DECODE while still being reported as a k arm. Say so ONCE,
+                // AT THE FIRST round that does it, and name the state -- the old line repeated a bare
+                // `-1` 264 times in one arm, which is a symptom wearing no cause. The engine's own
+                // reason for the -1 is printed at ERROR level; if no ENGINE line accompanies this
+                // one, the log sink was reinstalled somewhere (see llama-bench.cpp).
+                if (i == 0) {
+                    const llama_seq_id sid = n_seq > 0 ? batch.seq_id[0][0] : 0;
+                    const llama_pos dft_max = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), sid);
+                    if (n_first_step_fail++ == 0) {
+                        SPC_ERR("llama_decode[0] returned -1 on the FIRST draft step => THIS GENERATION "
+                                "YIELDS 0 DRAFTS/ROUND; the arm measures PLAIN DECODE, not k. "
+                                "state: batch pos=%d (Y), ctx_dft seq=%d pos_max=%d (X), n_past=%d, "
+                                "drafting=%d/%u, mem_shared=%d, ctx_dft=%p. llama-batch rejects a "
+                                "batch when the M-RoPE check X < Y fails (X = memory->seq_pos_max, "
+                                "Y = the batch's min position).\n",
+                                (int) batch.pos[0], (int) sid, (int) dft_max,
+                                (int) dparams[sid].n_past, n_drafting, (unsigned) n_seq,
+                                (int) is_mem_shared, (void *) ctx_dft);
+                    } else if ((n_first_step_fail % 64) == 0) {
+                        SPC_ERR("llama_decode[0] returned -1: %d rounds of this generation yielded "
+                                "0 drafts (plain decode)\n", n_first_step_fail);
+                    }
+                } else {
+                    SPC_ERR("llama_decode[%d] returned %d\n", i, ret);
+                }
                 break;
             }
 

@@ -1608,6 +1608,15 @@ bool ggml_metal_spec_decode_verify(
         int tg = (int)[cached_pipeline maxTotalThreadsPerThreadgroup];
         if (tg > B) tg = B;
         if (tg < 1) tg = 1;
+
+        // [CGC 2026-09-29 DISPATCH CENSUS v2] this is a real kernel on a real command buffer, but it
+        // is the ONE dispatch in the Metal backend that does not go through
+        // ggml_metal_encoder_dispatch_threadgroups -- so the census in ggml-metal-ops.cpp cannot see
+        // it, not even with the v2 encoder macro (which only rewrites calls in its own translation
+        // unit; `dispatchThreads:` is an ObjC message send and no macro can name it). Report it here
+        // instead. Counted as `direct` (no graph node is in flight). No-op unless
+        // CGC_DISPATCH_CENSUS=1 -- this call is what makes the census a total rather than a bound.
+        cgc_dispatch_census_direct("kernel_spec_decode_verify");
         [encoder dispatchThreads:MTLSizeMake(B, 1, 1)
            threadsPerThreadgroup:MTLSizeMake(tg, 1, 1)];
 

@@ -87,6 +87,11 @@ void ggml_metal_encoder_set_threadgroup_memory_size(ggml_metal_encoder_t encoder
 
 void ggml_metal_encoder_dispatch_threadgroups(ggml_metal_encoder_t encoder, int tg0, int tg1, int tg2, int tptg0, int tptg1, int tptg2);
 
+// [CGC 2026-09-29 DISPATCH CENSUS v2] the name of the pipeline most recently set on this encoder
+// (empty string if none). Read only by the dispatch census in ggml-metal-ops.cpp; the census has to
+// ask here because a dispatch carries no pipeline argument and a pipeline object is opaque.
+const char * ggml_metal_encoder_last_pipeline(ggml_metal_encoder_t encoder);
+
 void ggml_metal_encoder_memory_barrier(ggml_metal_encoder_t encoder);
 
 void ggml_metal_encoder_end_encoding(ggml_metal_encoder_t encoder);

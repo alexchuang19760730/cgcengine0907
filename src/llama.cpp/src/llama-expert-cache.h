@@ -624,6 +624,40 @@ struct llama_expert_cache {
     std::atomic<uint64_t> eb_nseg_prefill{0};
     std::atomic<uint64_t> eb_nseg_decode{0};
 
+    // [CGC fill-path split 2026-09-30] CGC_FILL_SPLIT=1 -- decompose the hook thread's time inside
+    // fill_segments_pool into the buckets a fix could act on, instead of reporting one lump. The
+    // 0.756 ms/miss "wait" measured on the delivery cell (docs/FILL_TERM_DELIVERY_2026-09-30.md)
+    // could be bytes, could be the wake path, could be caller-side syscalls; those need different
+    // fixes, so the number alone cannot rank them. All of these are accumulated by the CALLING
+    // thread only (comparable to wall time), except the two worker stamps (fs_first_deq_us /
+    // fs_last_done_us), which exist to cut the wait into wake-in / pread span / wake-out.
+    //
+    //   t_submit .. t_first_deq  -> fs_wake_in_us   (notify -> a worker actually holds the job:
+    //                                                thread wake + queueing behind other jobs)
+    //   t_first_deq .. t_last_done -> fs_span_us    (the window preads were in flight)
+    //   t_last_done .. t_return  -> fs_wake_out_us  (last completion's notify -> caller running)
+    //   IDENTITY (checked by scripts/check/fill_split.py): wake_in + span + wake_out == wait.
+    //
+    // The two caller-side buckets that do NOT overlap the wait are fs_madvise_us (P1 discards)
+    // and fs_build_us (sort/merge + job push). fs_advise_us (fcntl F_RDADVISE hints) is issued
+    // AFTER the notify, so it OVERLAPS the workers -- reported separately, never added to wait.
+    std::atomic<uint64_t> fs_batches{0};      // batches with a complete stamp cycle
+    std::atomic<uint64_t> fs_incomplete{0};   // batches whose stamps did not land (cannot judge)
+    std::atomic<uint64_t> fs_misses{0};       // missed experts flushed through fill_segments_pool
+    std::atomic<uint64_t> fs_segs{0};         // segments (= 3 per miss on this model)
+    std::atomic<uint64_t> fs_jobs{0};         // pool jobs after run-merge
+    std::atomic<uint64_t> fs_madvise_us{0};
+    std::atomic<uint64_t> fs_build_us{0};
+    std::atomic<uint64_t> fs_advise_us{0};
+    std::atomic<uint64_t> fs_wake_in_us{0};
+    std::atomic<uint64_t> fs_span_us{0};
+    std::atomic<uint64_t> fs_wake_out_us{0};
+    std::atomic<uint64_t> fs_wait_us{0};      // == wake_in + span + wake_out (per batch)
+    std::atomic<uint64_t> fs_wait_max_us{0};
+    std::atomic<uint64_t> fs_submit_us{0};    // stamp written by the hook thread before notify
+    std::atomic<uint64_t> fs_first_deq_us{0}; // stamped by the first worker to dequeue
+    std::atomic<uint64_t> fs_last_done_us{0}; // stamped by the worker that drains the batch
+
 
     ~llama_expert_cache();
 
