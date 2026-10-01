@@ -37,7 +37,6 @@ options:
   subgoal: L20-3
   profile: prod-new
   arms:
-    - "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_MISS_MASK_HIST=1"
   knobs:
     - {name: CGC_MISS_MASK_HIST, value: "1", role: instrument, why: "逐層 miss 直方圖（決定靜態寬度 k 的唯一量）", source: "docs/MISSHIST_REVIVAL_GATE_2026-09-29.md；runA.stderr.log"}
   no_knob: "本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置的儀器已經跑完（見上）⇒ <b>前置否證，不必再印</b>。"

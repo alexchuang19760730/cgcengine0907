@@ -21,7 +21,9 @@
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
-  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
+  table.queue td.qnext { text-align: left; max-width: 46em; }
+table.queue td { vertical-align: top; }
+.layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
@@ -51,8 +53,9 @@
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>20.8（E1 裁決後的 fill 可引用值）</td></tr>
 <tr><th>預期（t/s）</th><td>14.5（節點自算，已排除）</td></tr>
-<tr><th>現在能跑？</th><td><span class="runnable">✅ 不用跑 — 已結案（排除）：登記即可，避免下一個人重做。</span></td></tr>
-<tr><th>現況（已量）</th><td>與 L20-3 同目標、不同機制：CPU 後台異步 fill ＋ 只補算 miss。節點自記：E1 裁決後按 <b>20.8 ms/step 重算 ⇒ ~14.5 t/s</b>（原 19–20 押在已降級的 3.955 上）</td></tr>
+<tr><th>現在能跑？</th><td><span class="runnable">⛔ 不用跑 — 已結案（排除）：判決在設計文件裡，登記即可，避免下一個人重做。</span></td></tr>
+<tr><th>前置（判決存不存在）</th><td><div class="success"><b>duplicate</b>／<code>verdict_file</code> ⇒ 現判 <b>EXISTS</b><br>命中：docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md<br><span class="legend">宣告理由：§35／§36 的排除判決已寫進設計文件（兩個不同 feeder 同一個崩潰 ⇒ 替代機制不是這一格）⇒ 再跑只會重印。</span></div></td></tr>
+<tr><th>現況（已量）</th><td>與 L20-3 同目標、不同機制：CPU 後台異步 fill ＋ 只補算 miss。節點自記：E1 裁決後按 <b>20.8 ms/step 重算 ⇒ ~14.5 t/s</b>（原 19–20 押在已降級的 3.955 上）<br><b>§70 同格數字（這一格要回收的正是它）：</b>交付 cell 上每 miss <b>0.756 ms</b>、其中 <b>98.72% 是固定開銷</b>（bytes 1.079 MiB 在峰值只要 0.00968 ms）⇒ 每步 ~8.8 miss 的「等」約 <b>6.6 ms</b>，而它的 bytes 只要 0.08 ms。⇒ <b>要回收的是『等』，不是 bytes</b>；這也是 L20-3 的重算路徑（同格 margin 不可分辨）該讓位的地方。</td></tr>
 <tr><th>action</th><td>登記即可（避免下一個人重做）</td></tr>
 <tr><th>驗收</th><td>—（已排除）</td></tr>
 <tr><th>否證</th><td>若有人能推翻那個 14.5 的重算 ⇒ 它會回到 L20 的候選</td></tr>

@@ -563,7 +563,7 @@ def main() -> int:
                          "test; prefill_certifiability.py remains the deeper harness for that.")
     ap.add_argument("--list", action="store_true", help="profiles x settings, then exit (zero GPU)")
     ap.add_argument("--dry-run", action="store_true", help="print every command, launch nothing")
-    ap.add_argument("--no-gate", action="store_true", help="skip the idle-machine gate (loud)")
+    ap.add_argument("--no-gate", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--min-usable-pct", type=float, default=30.0)
     ap.add_argument("--extra-env", default="",
                     help="semicolon-separated ENV=VAL applied to every cell (the matrix's "
@@ -578,6 +578,22 @@ def main() -> int:
     if args.list:
         return do_list(args)
 
+    # [CGC 2026-09-27] --no-gate 後門已停用：idle-machine gate 不能關。
+    if args.no_gate:
+        print("!! --no-gate 後門已停用：idle-machine gate 不能關。請在機器獨佔時跑，或見 NEXT_ACTIONS。",
+              file=sys.stderr)
+        return 2
+    # [CGC 唯一入口 2026-09-27] 檔頭 INTERNAL 宣告現在由運行時強制：直跑（無跑前立項、口徑
+    # 可能是冷 cache）數字不可引用。harness 內部調用自帶 CGC_INTERNAL_CALL=1；--dry-run 放行。
+    if not args.dry_run and os.environ.get("CGC_INTERNAL_CALL") != "1":
+        print(
+            "!! 這支是 internal 驅動，不是生產級量測入口（見檔頭 2026-09-25 ruling）。\n"
+            "   直跑沒有跑前立項、warm-skip/fixed-fill-seed 也可能不是熱-cache 口徑，數字不可引用。\n"
+            "   請走：python3 scripts/check/harness.py bench --arm \"prod-new\" --charter <charter.yaml>\n"
+            "   （內部自動化會自帶 CGC_INTERNAL_CALL=1；要復刻請顯式 export 後再跑。）",
+            file=sys.stderr)
+        return 2
+
     known = profiles_from_run_server()
     profiles = known if args.profiles in (None, "all") else [p.strip() for p in args.profiles.split(",")]
     bad = [p for p in profiles if p not in known]
@@ -588,7 +604,7 @@ def main() -> int:
     if bad:
         raise SystemExit(f"unknown cell(s) {bad}; known {CELL_ORDER}")
 
-    if not args.no_gate and not args.dry_run:
+    if not args.dry_run:
         blockers = gate()
         if blockers:
             print("GATE ABORT (exit 3) -- the machine is not yours:")
@@ -596,9 +612,6 @@ def main() -> int:
                 print("  -", b)
             return 3
         print("GATE PASS: no 8080 listener, no other measurement process.")
-    elif args.no_gate and not args.dry_run:
-        print("!! --no-gate: running without the idle-machine check. Any number produced here is "
-              "NOT attributable to this configuration until the machine state is established.")
 
     print(f"profiles={len(profiles)} cells={len(cells)} reps={args.reps} runs={args.runs} "
           f"warmup={WARMUP_RULE}")

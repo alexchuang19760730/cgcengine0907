@@ -1,0 +1,274 @@
+<html style="margin:0;padding:0;">
+<title>MTP 攤薄複核：a 決定一切嗎？（2026-09-25，v2 支撐審計版）</title>
+<div style="width:100%;box-sizing:border-box;padding:18px;font-family:-apple-system,'PingFang TC',sans-serif;color:#1a1a1a;">
+  <h2 style="margin:0 0 4px;font-size:19px;">MTP 攤薄複核 —— 攤薄倍數「幾乎完全由 a 決定」嗎？</h2>
+  <div style="font-size:12px;color:#666;margin-bottom:14px;">
+    v2（2026-09-25 支撐審計版）。判準預先寫死：同 shape／同 build／ABBA 交錯配對，只看<b>輪內比值</b>；
+    <code>S ≤ 0.95 ⇒ MTP 在此 shape 是淨成本</code>（沿用 <code>S0_MTP_ONOFF_AB_2026-09-21.md</code>）
+  </div>
+
+  <div style="padding:11px 13px;background:#fef2f2;border:1px solid #fca5a5;border-radius:7px;font-size:12.5px;color:#7f1d1d;line-height:1.7;margin-bottom:12px;">
+    <b>結論：不認同——但本頁只保留有支撐的部分。</b>
+    實測 <b>k_eff=1</b>（請求 3、模組截到 1）、輪內 <b>S = 0.914／0.682／1.050（中位 0.914）</b>、
+    <b>E = 1.707／1.455／1.620</b>、<b>a = 0.620</b>、<b>m = 0.868</b>。
+    量綱恆等 <b>S = E/cost</b> 三輪皆成立；<b>k_eff=1 下 2× 數學上不可達</b>（<code>a≤1 ⇒ E≤2</code>，要 <code>S=2</code> 需 <code>m≤0</code>）。
+  </div>
+
+  <div style="padding:10px 13px;background:#fffbeb;border:1px solid #fcd34d;border-radius:7px;font-size:12px;color:#78350f;line-height:1.7;margin-bottom:14px;">
+    ⛔ <b>v1 的六條推論已廢棄</b>（外推到未量測的 k、假設成本與 a 獨立、兩個無出處的百分比）——見本頁末節。
+    每條主張都標了支撐等級：<code>M</code> 實測／<code>D</code> 量綱恆等或定義／其餘廢棄；
+    機檢 <code>scripts/check/formula_audit.py</code>（11/11），廢棄斷言若回流到結論區會紅。
+  </div>
+
+  <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:170px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:6px;">MTP OFF（k=0，對照臂）</div>
+      <div style="font-size:11.5px;line-height:1.7;">每輪 1 次 target 前向、吐 <b>1 token</b><br>ms/step <b>120.3</b>　MiB/step <b>19.9</b></div>
+      <div style="margin-top:8px;font-size:22px;font-weight:700;color:#475569;">8.32 <span style="font-size:12px;font-weight:400;">t/s（本口徑，不可引用）</span></div>
+    </div>
+    <div style="flex:1;min-width:170px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:12px;">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:6px;color:#1e40af;">MTP ON（k_eff=<b>1</b>，請求 3）</div>
+      <div style="font-size:11.5px;line-height:1.7;">吐 <b>E=1.62</b> token／輪（a=<b>0.62</b>）<br>ms/step <b>224.7</b>　MiB/step <b>49.9</b></div>
+      <div style="margin-top:8px;font-size:22px;font-weight:700;color:#1d4ed8;">S = 0.914 <span style="font-size:12px;font-weight:400;">（輪內比值中位）</span></div>
+    </div>
+    <div style="flex:1;min-width:170px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px;">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:6px;color:#166534;">反解的邊際成本 m</div>
+      <div style="font-size:11.5px;line-height:1.7;">cost = 224.7/120.3 = <b>1.868</b><br>m = (cost−1)/k_eff　<b>僅 k_eff=1</b></div>
+      <div style="margin-top:8px;font-size:22px;font-weight:700;color:#15803d;">m = 0.868</div>
+    </div>
+  </div>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">① 實測（今天 17:4x，prod-new／-p 0 -n 128 -d 512／ABBA 3 輪／全程 NOMINAL）　<code>[M]</code></div>
+  <table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:6px;">
+    <tr style="background:#f1f5f9;">
+      <td style="padding:6px 8px;font-weight:600;">輪</td>
+      <td style="padding:6px 8px;font-weight:600;">OFF t/s</td>
+      <td style="padding:6px 8px;font-weight:600;">ON t/s</td>
+      <td style="padding:6px 8px;font-weight:600;">S（輪內）</td>
+      <td style="padding:6px 8px;font-weight:600;">E</td>
+      <td style="padding:6px 8px;font-weight:600;">k_eff</td>
+      <td style="padding:6px 8px;font-weight:600;">a = E−1</td>
+      <td style="padding:6px 8px;font-weight:600;">ms/step OFF→ON</td>
+      <td style="padding:6px 8px;font-weight:600;">m = cost−1</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">r1</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">8.315</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">7.596</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>0.914</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">1.707</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">1.0</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">0.707</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">120.3 → 224.7</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>0.868</b></td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">r2</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">8.552</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">5.828</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">0.682</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">1.455</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">1.0</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">0.455</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">116.9 → 249.6</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">1.134</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">r3</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">7.102</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">7.458</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">1.050</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">1.620</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">1.0</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">0.620</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">140.8 → 217.3</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">0.543</td>
+    </tr>
+    <tr style="background:#f8fafc;">
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-weight:600;">中位</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">8.315</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">7.458</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>0.914</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">1.620</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>1.0</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>0.620</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">—</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>0.868</b></td>
+    </tr>
+  </table>
+  <div style="font-size:11.5px;color:#92400e;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:8px 10px;margin-bottom:14px;">
+    ⚠ <b>中位是逐列獨立取</b>，那一行<b>不是真實的一輪</b> ⇒ 用中位 a、m 反推的 S（1.620/1.868）<b>不是實測值</b>。
+    要引用 S 就用三輪的 <b>0.914／0.682／1.050</b>。
+    另外 <code>k_eff=1</code> 是 <code>SPECDBG round: ... draft=1</code> 逐輪皆是（請求 3、模組截到 1）。
+    絕對 t/s 不可引用（無 <code>--warm-skip 64</code>）；交付口徑 MTP off = <b>11.03~12.20</b>。
+  </div>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">② 可引用的推論（有量測或數學支撐）</div>
+  <table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px;">
+    <tr style="background:#f1f5f9;">
+      <td style="padding:6px 8px;font-weight:600;">id</td>
+      <td style="padding:6px 8px;font-weight:600;">主張</td>
+      <td style="padding:6px 8px;font-weight:600;">等級</td>
+      <td style="padding:6px 8px;font-weight:600;">支撐</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">F10</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>S = E / cost</code></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">D</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">量綱恆等；三輪誤差 &lt;1e-3（r1 <code>1.7067/1.8683=0.9135</code> ✓）</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">F11</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>E = 1 + a·k_eff</code></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">D</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">a 的<b>定義式</b>，不是經驗規律</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">F12</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">k_eff=1 時 <b>2× 不可達</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">D</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>S=E/(1+m)=2 ⇒ E=2(1+m)</code>；<code>a≤1 ⇒ E≤2</code> ⇒ 需 <code>m≤0</code>。<b>僅 k_eff=1</b></td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">F13</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><code>dlnS/dlna=+0.383</code>、<code>dlnS/dlnm=−0.465</code></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">D</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">k=1 處微分。<b>局部值</b>：k 變了兩者都變 ⇒ 只能說「在 k_eff=1 的現實下 m 的邊際略大於 a」</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">F14／F15</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">原 html 的 <code>E=2.31</code> 高估 <b>1.35~1.59×</b>；<code>m=0.19</code> 低估 <b>2.9~6.0×</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">D</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">純算術，對三輪 E／m 取範圍</td>
+    </tr>
+    <tr style="background:#f0fdf4;">
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>F24</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">09-24 的 <code>m(k)</code> = <b>1.176／0.840／0.961／0.920</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">M</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">範本的 step 實測 48.2／104.87／129.16／187.19／225.61 ms</td>
+    </tr>
+  </table>
+  <div style="padding:10px 13px;background:#f0fdf4;border:1px solid #86efac;border-radius:7px;font-size:12px;color:#166534;line-height:1.7;margin-bottom:14px;">
+    <b>F24 是本輪最重要的單一發現。</b>若成本真線性於 k，<code>m(k)</code> 應是常數；
+    實測在 k=1..4 上散佈 <b>1.40×</b>（1.176→0.840→0.961→0.920）
+    ⇒ <b><code>cost = 1 + m·k</code> 這個線性模型在他批自己的資料上就不成立</b>
+    ⇒ 任何「把 m 當常數外推到別的 k」的推論都失去支撐。
+  </div>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">③ 成本在哪裡（整數計數器，不是回歸）　<code>[M]</code></div>
+  <table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:8px;">
+    <tr style="background:#f1f5f9;">
+      <td style="padding:6px 8px;font-weight:600;">計數器</td>
+      <td style="padding:6px 8px;font-weight:600;">MTP off</td>
+      <td style="padding:6px 8px;font-weight:600;">MTP on（k_eff=1）</td>
+      <td style="padding:6px 8px;font-weight:600;">含義</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">MiB/step</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">19.87 ~ 20.25</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>49.87 ~ 53.70</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">每多驗 1 token ⇒ <b>+30 MiB</b> 專家讀取</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">worst layer distinct / slots</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">111 ~ 130 / 143</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>168 ~ 205 / 143</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">工作集撐破 per-layer 配額（越界 18%~43%）</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">layers_over_slots</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>0</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>2 ~ 4</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">整數計數，非擬合</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">池 hit%</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">94.9 ~ 95.0</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>91.9 ~ 92.3</b></td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">−2.7 pp</td>
+    </tr>
+  </table>
+  <div style="padding:10px 13px;background:#eff6ff;border:1px solid #93c5fd;border-radius:7px;font-size:12px;color:#1e40af;line-height:1.7;margin-bottom:14px;">
+    ⇒ 成本主項在 <b>verify 側的專家 union 撐破 per-layer 配額</b>。
+    原 html 寫「verify 已批次、每輪就一次 ⇒ 成本不漲」——<b>批次化省的是權重讀取次數，省不掉「並集變寬」</b>。
+    （v1 曾用一條無出處的百分比支撐這句 ⇒ 見廢棄區 F21；但上表計數器本身仍成立。）
+  </div>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">④ 與既有權威的關係</div>
+  <div style="font-size:12px;line-height:1.8;margin-bottom:14px;">
+    • <b>一致</b>：<code>S0_MTP_ONOFF_AB_2026-09-21.md</code> 同形狀配對中位 <b>0.889（淨負 −11%）</b> ⇒ 本次 r1 <b>0.914</b> 同向。<br>
+    • <b>一致</b>：<code>MTP_AMORTIZATION_2026-09-25.html</code>（契約 §7 範本）實測「攤薄係數 ≈ 0」、
+    「光拉 accept rate 買不到它」⇒ 與本輪「此 shape 是淨成本」同向。<br>
+    • ⚠ <b>口徑差</b>：本輪 t/s 絕對值（7–8.5）低於交付口徑（11–12），因缺 <code>--warm-skip 64</code> ⇒ 比值可引用、絕對值不可。<br>
+    • ⚠ <code>13.78</code> 的出身：<code>PARALLEL_AND_WORKERS_AB_2026-09-21.md:114</code> 是 <b>MTP off 的 HTTP 單流</b>，
+    同文 <code>:173</code> 明寫「要寫交付數字就用 llama-bench，別用 13.78」。
+  </div>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;color:#7f1d1d;">⛔ 廢棄：v1 裡缺乏支撐的推論（以下不得當決策依據）</div>
+  <table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:8px;">
+    <tr style="background:#fef2f2;">
+      <td style="padding:6px 8px;font-weight:600;">id</td>
+      <td style="padding:6px 8px;font-weight:600;">被廢棄的主張</td>
+      <td style="padding:6px 8px;font-weight:600;">等級</td>
+      <td style="padding:6px 8px;font-weight:600;">為什麼缺支撐</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">F16</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">「k=3 時 S = 0.794」</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">X 外推</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">本批實測只有 k∈{0,1}（k_eff 恒為 1），k=3 從未量測</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">F17／F18</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">「k→∞ 上界 a/m = 0.714」「沿 k 軸加到多大都虧」</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">X 外推</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">極限存在，但線性模型本身被 F24 證偽</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">F19</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">「a 拉滿到 1.0 ⇒ S = 1.071（只有 +7%）」</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">A 假設</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">假設 cost 與 a 獨立；本批無「a 變化」對照臂，未量測</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">F20</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">「m≈0.87 是穩定讀數，兩批差 0.5%」</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">U 無出處</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;"><b>量綱錯配</b>：42.03 是 d(step)/dT（ms/verify-token），48.2 是「每產出 token 成本」，不能相除。
+        同義口徑（Δstep/step_off）下 09-24 的 m(k=1) = <b>1.176</b>，與今天 0.868 差 <b>35%</b></td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">F21／F22</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">「draft 前向只佔一輪 7.5%」「池 hit% 崩到 57%」</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">U 無出處</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">本輪 stderr 無 CGC-MTP-PERF 輸出；兩數全庫查無出處</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">F23</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">「原 html 的 S=1.19 來自兩台儀器相除」</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">S 推測</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">13.78/11.49 = 1.199 是<b>算術</b>（可留），但「所以它的 S 是這樣來的」是因果推測</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">F25</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">「a=0.44 是 ctx_other regression 的產物」</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">A 假設</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">65c76b8c7 的 D5 FAIL <b>未歸因</b> ⇒ 只能說「相關但未證明」</td>
+    </tr>
+  </table>
+  <div style="padding:10px 13px;background:#fffbeb;border:1px solid #fcd34d;border-radius:7px;font-size:12px;color:#78350f;line-height:1.7;margin-bottom:12px;">
+    <b>廢棄後仍站得住的</b>：F01–F11 的實測與恆等、F12（k_eff=1 下 2× 不可達）、F13（k=1 處局部彈性）、
+    F14／F15 的倍數、F24（m 非常數）⇒ 也就是本頁 ①②③ 節。<br>
+    <b>這些廢棄不改變方向性結論</b>：三輪 S 中位 <b>0.914（淨負）</b>，與 09-21 獨立配對的 <b>0.889</b> 同向；
+    被廢棄的都是「往外推」的陳述，不是「這裡量到什麼」。
+  </div>
+
+  <div style="font-size:11px;color:#666;line-height:1.7;">
+    產物：<code>Backup/phase_decomp/spec_cost_en-mtp-repro-250925.json</code>／
+    <code>/tmp/spec_cost_k{0,3}_r{1,2,3}_p0_n128_d512.stderr.log</code><br>
+    工具：<code>scripts/check/spec_cost_curve.py</code>（selftest 26/26）；審計：<code>scripts/check/formula_audit.py</code>（11/11）<br>
+    歸檔：<code>docs/mtp_amortization.html</code> → <code>docs/archive/mtp_amortization_SUPERSEDED_2026-09-25.html</code><br>
+    作廢數字：<b>13.7 t/s（MTP ON）／S=1.19／E=2.31／a=0.44／m=0.19</b>
+  </div>
+</div>
+</html>

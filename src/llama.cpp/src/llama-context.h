@@ -285,8 +285,14 @@ private:
     // 真實 on_topk 的 ensure 之後若發現 slot 已 resident 就是 hit；若還沒填完，ensure_slot
     // 會 `bg_cv.wait` 等它 —— 也就是說**最壞情形退化成基線，不會錯**，只是沒賺。
     //
-    // 準度（cov_uni = 0.854~0.860，2026-09-23 實測）決定賺多少；開關 `CGC_RHO_FILL`；
-    // 需要 `CGC_RHO_PROBE=1`（圖裡要有影子節點）。預設全關，行為與基線逐位元相同。
+    // 準度（cov_uni = 0.854~0.860，2026-09-23 實測）決定賺多少。
+    // 2026-09-30 起**機制與量具分家**（charter e-rho-delivery-flag）：
+    //   `CGC_RHO=1`        ⇒ 整條交付面（影子節點＋capture＋fill）；stderr **不印**任何
+    //                        `CGC-RHO-*`。這是唯一可以在權威 row 上引用 t/s 的 ρ 臂
+    //                        （臂上沒有 never-quote 量具）。
+    //   `CGC_RHO_PROBE=1`  ⇒ **量具**（印帳）並向後相容地把機制一起帶上 ⇒ 既有探針臂不變。
+    //   `CGC_RHO_FILL=1`   ⇒ 只控制「要不要真的發 IO」（對舊探針臂語意不變；交付面自己會開）。
+    // 預設全關，行為與基線逐位元相同。
     void cgc_rho_prefetch(int il);
 
     // Wrapper installed as cparams.cb_eval (static so it can be passed to

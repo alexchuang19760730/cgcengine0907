@@ -211,13 +211,16 @@ llama_model_qwen35moe::graph::graph(const llama_model & model, const llm_graph_p
         //
         // 這條分支的結果**不接回計算圖**：只由 `expert_cache_eval_cb` 讀出來跟真實 top-k 比。
         // ⚠ 它在圖裡多加一個 norm + 一個 matmul ⇒ **本輪的 t/s 不可引用**，只取 ρ。
-        //    開關 CGC_RHO_PROBE（存在即開）；不設時是兩個可預測的 branch，零成本。
+        //    開關：`CGC_RHO`（**交付面**：2026-09-30 起影子節點＋capture＋fill 一起，且 stderr
+        //    不印任何 `CGC-RHO-*`）或 `CGC_RHO_PROBE`（量具，向後相容地帶著機制）；不設時是兩個
+        //    可預測的 branch，零成本。
         //    CGC_RHO_PROBE_LATE=1 ⇒ 退回舊的（attn 之後）位置，用來做「位置」本身的 A/B：
         //    同一支 binary、同一組權重，ρ 應逐位元相同，只有 GPU 時間戳位置不同。
         {
-            static const bool cgc_rho_probe = getenv("CGC_RHO_PROBE") != nullptr;
-            static const bool cgc_rho_late  = getenv("CGC_RHO_PROBE_LATE") != nullptr;
-            if (cgc_rho_probe && model.layers[il].ffn_gate_inp != nullptr && !cgc_rho_late) {
+            static const bool cgc_rho_probe   = getenv("CGC_RHO_PROBE") != nullptr;
+            static const bool cgc_rho_deliver = getenv("CGC_RHO") != nullptr || cgc_rho_probe;
+            static const bool cgc_rho_late    = getenv("CGC_RHO_PROBE_LATE") != nullptr;
+            if (cgc_rho_deliver && model.layers[il].ffn_gate_inp != nullptr && !cgc_rho_late) {
                 ggml_tensor * rho_pre = build_norm(inpSA, model.layers[il].attn_post_norm, nullptr,
                                                    LLM_NORM_RMS, il);
                 ggml_tensor * rho_logits = build_lora_mm(model.layers[il].ffn_gate_inp, rho_pre);
@@ -260,9 +263,10 @@ llama_model_qwen35moe::graph::graph(const llama_model & model, const llm_graph_p
         // ⚠ 它排在 attn(L) 全部計算之後 ⇒ 提前量 ≈ 0 ⇒ **只能量準度，量不到窗口**。
         //   只留著作為「位置 A/B」的對照臂；真正要跑的新位置在 `inpSA = inpL` 正下方。
         {
-            static const bool cgc_rho_probe = getenv("CGC_RHO_PROBE") != nullptr;
-            static const bool cgc_rho_late  = getenv("CGC_RHO_PROBE_LATE") != nullptr;
-            if (cgc_rho_probe && model.layers[il].ffn_gate_inp != nullptr && cgc_rho_late) {
+            static const bool cgc_rho_probe   = getenv("CGC_RHO_PROBE") != nullptr;
+            static const bool cgc_rho_deliver = getenv("CGC_RHO") != nullptr || cgc_rho_probe;
+            static const bool cgc_rho_late    = getenv("CGC_RHO_PROBE_LATE") != nullptr;
+            if (cgc_rho_deliver && model.layers[il].ffn_gate_inp != nullptr && cgc_rho_late) {
                 ggml_tensor * rho_pre = build_norm(inpSA, model.layers[il].attn_post_norm, nullptr,
                                                    LLM_NORM_RMS, il);
                 ggml_tensor * rho_logits = build_lora_mm(model.layers[il].ffn_gate_inp, rho_pre);

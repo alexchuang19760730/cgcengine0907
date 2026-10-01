@@ -54,6 +54,7 @@ been measured the way the prefill separation was.
 
 from __future__ import annotations
 
+import calendar
 import subprocess
 import sys
 import threading
@@ -108,9 +109,16 @@ def label(lv):
 
 
 def stamp(key: str = KEY) -> dict:
-    """One JSON-safe reading: `{level, label, t}`. `level` is None when unreadable."""
+    """One JSON-safe reading: `{level, label, t, epoch}`. `level` is None when unreadable.
+
+    `epoch` is what `windows()` matches row `test_time` against. `t` alone cannot do it:
+    it is local wall clock while llama-bench stamps its rows in UTC, so windowing on `t`
+    needs a timezone offset, and a wrong offset does not fail loudly -- it yields windows
+    with zero samples, i.e. "the box was fine" for a run that was never examined.
+    """
     lv = level(key)
-    return {"level": lv, "label": label(lv), "t": time.strftime("%H:%M:%S")}
+    return {"level": lv, "label": label(lv), "t": time.strftime("%H:%M:%S"),
+            "epoch": time.time()}
 
 
 def worst(stamps) -> dict:
@@ -137,6 +145,65 @@ def histogram(stamps) -> dict:
     for s in stamps:
         if isinstance(s, dict):
             out[s.get("label", UNREADABLE)] = out.get(s.get("label", UNREADABLE), 0) + 1
+    return out
+
+
+def windows(samples, rows, pad_s: float = 0.0) -> list:
+    """Per-row thermal windows: one entry per measured row, with its OWN histogram.
+
+    WHY PER-ROW AND NOT PER-LAUNCH. A launch contains more than one measured row, and they
+    can sit on opposite sides of the thermal line. Measured 2026-09-28 on the authoritative
+    prod-new cell (a 2048-token prefill row, then a 64-token decode row):
+
+        pp window 18:36:33-18:36:54   hist {NOMINAL: 42}
+        tg window 18:37:06-18:37:22   hist {HEAVY: 34}
+
+    The launch verdict was HEAVY and the launch histogram said 79/153 -- which cannot
+    express "the prefill was clean and the decode row was the hot one". A consumer that
+    branches on the launch-level label is then deciding about the wrong row: here it would
+    reject the decode row (correctly, by accident) and also reject the prefill row (wrongly).
+
+    THE WINDOW IS `[test_time, test_time + avg_ns * n_reps + pad]`. `test_time` is the row's
+    START, not its end: llama-bench stamps it in the row constructor before the reps loop
+    (`llama-bench.cpp:1890`), and a launch's own first thermal sample precedes the first
+    row's stamp -- which is only consistent with start semantics.
+
+    A row without a parseable `test_time` is SKIPPED rather than given an empty window: an
+    empty window reads as "no samples ⇒ nothing hot", which is the opposite of "unknown".
+    """
+    out = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        tt = r.get("test_time")
+        if not tt:
+            continue
+        try:
+            start = calendar.timegm(time.strptime(str(tt), "%Y-%m-%dT%H:%M:%SZ"))
+        except (ValueError, TypeError):
+            continue
+        reps = len(r.get("samples_ns") or []) or 1
+        dur = float(r.get("avg_ns") or 0) * reps / 1e9
+        lo, hi = start - pad_s, start + dur + pad_s
+        with_epoch = [s for s in (samples or [])
+                      if isinstance(s, dict) and isinstance(s.get("epoch"), (int, float))]
+        sel = [s for s in with_epoch if lo <= s["epoch"] <= hi]
+        out.append({
+            "kind": "pp" if (r.get("n_prompt") or 0) > 0 else "tg",
+            "n_prompt": r.get("n_prompt"),
+            "n_gen": r.get("n_gen"),
+            "start_epoch": start,
+            "dur_s": round(dur, 2),
+            "n": len(sel),
+            # `n_samples_seen` + `matchable` separate the two ways a window can be empty:
+            # "the box was cold" (matchable, n>0 or a cold series) versus "this record
+            # predates the epoch field" (matchable=False). Both have hist {}, and only one
+            # of them licenses a claim.
+            "n_samples_seen": len([s for s in (samples or []) if isinstance(s, dict)]),
+            "matchable": bool(with_epoch),
+            "hist": histogram(sel),
+            "worst": worst(sel),
+        })
     return out
 
 
@@ -303,13 +370,58 @@ def _selftest() -> int:
     r = s.result
     check("Sampler refuses an unsupported key rather than recording a series",
           _raises(lambda: Sampler(key=bogus)))
+    # `stamp()` now carries `epoch`, so a whole-dict equality can never hold (the two
+    # readings are milliseconds apart). Compare the reading itself, and pin the ORDER
+    # instead -- the point of the check is that the launch reading is not post-spawn.
+    def _lv(x):
+        return {k: v for k, v in x.items() if k != "epoch"}
     check("Sampler takes its launch reading BEFORE the work (not a post-spawn reading)",
-          r["launch"] == pre, f"launch {r['launch']} vs pre {pre}")
+          _lv(r["launch"]) == _lv(pre) and r["launch"]["epoch"] >= pre["epoch"],
+          f"launch {r['launch']} vs pre {pre}")
     check("Sampler samples during the run, not only at the ends", r["n"] >= 4, f"n={r['n']}")
     check("Sampler's histogram accounts for every sample",
           sum(r["hist"].values()) == r["n"], repr(r["hist"]))
     check("Sampler's worst() is the max over the series",
           r["worst"]["level"] == max(x["level"] for x in r["samples"] if x["level"] is not None))
+
+    # --- windows(): one launch, more than one row, and the rows can disagree --------------
+    # Shape taken from the real 2026-09-28 prod-new launch: a 2048-token prefill row then a
+    # 64-token decode row, 3 reps each, with the box turning hot between them.
+    base = 1_800_000_000.0  # fixed epoch: the test must not depend on now()
+    # Stamp the times FROM the epoch instead of writing a date literal: a hand-written
+    # "2027-01-15T08:00:00Z" that is off by an hour silently moves the sample boundary and
+    # the test then fails for a reason that has nothing to do with windows(). (The first
+    # draft of this test did exactly that, and its window landed on the wrong samples.)
+    iso = lambda e: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(e))
+    labs = ["NOMINAL"] * 10 + ["HEAVY"] * 10
+    fake_samples = [{"level": 0 if L == "NOMINAL" else 2, "label": L, "epoch": base + i}
+                    for i, L in enumerate(labs)]
+    row_pp = {"n_prompt": 2048, "n_gen": 0, "avg_ns": 3e9, "samples_ns": [0, 0, 0],
+              "test_time": iso(base)}          # 9 s from base ⇒ samples i=0..9, all NOMINAL
+    row_tg = {"n_prompt": 0, "n_gen": 64, "avg_ns": 3e9, "samples_ns": [0, 0, 0],
+              "test_time": iso(base + 10)}      # 9 s from base+10 ⇒ samples i=10..19, all HEAVY
+    ws = windows(fake_samples, [row_pp, row_tg])
+    check("windows() returns one window per measured row", len(ws) == 2, repr(ws))
+    check("windows() labels the rows pp/tg from n_prompt", [w["kind"] for w in ws] == ["pp", "tg"])
+    check("windows() can put two rows of ONE launch on opposite sides of the line",
+          ws[0]["hist"] == {"NOMINAL": 10} and ws[1]["hist"] == {"HEAVY": 10},
+          f"pp={ws[0]['hist']} tg={ws[1]['hist']}")
+    check("windows() reports the window duration it used (avg_ns x n_reps)",
+          ws[0]["dur_s"] == 9.0 and ws[0]["n"] == 10, repr(ws[0]))
+    check("a row with no parseable test_time is SKIPPED, not given an empty window",
+          windows(fake_samples, [{"n_prompt": 0, "avg_ns": 1e9, "samples_ns": [0]}]) == []
+          and len(windows(fake_samples, [row_pp, {"n_prompt": 0}])) == 1)
+    check("windows() does not invent readings for samples lacking epoch",
+          windows([{"level": 0, "label": "NOMINAL", "t": "08:00:00"}], [row_pp])[0]["n"] == 0)
+    # An empty window must not be readable as "nothing was hot". A record written before
+    # `stamp()` carried `epoch` has samples but none matchable -- that is "no instrument",
+    # and the only difference between the two is this field.
+    legacy = windows([{"level": 0, "label": "NOMINAL", "t": "08:00:00"}], [row_pp])[0]
+    check("windows() says WHY a window is empty (legacy record vs genuinely cold)",
+          legacy["n"] == 0 and legacy["n_samples_seen"] == 1 and legacy["matchable"] is False,
+          repr(legacy))
+    check("a modern record reports matchable=True so an empty window means what it says",
+          ws[0]["matchable"] is True and ws[0]["n_samples_seen"] == 20, repr(ws[0]))
 
     # --- wait_nominal: it must return, must not fake a level, and must not sleep when cold ---
     t0 = time.time()

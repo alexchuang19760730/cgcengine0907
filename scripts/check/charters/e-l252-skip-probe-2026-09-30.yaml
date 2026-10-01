@@ -1,0 +1,94 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— e-l252-skip-probe：把「群集 1 的 7.4 ms 上界」換成實測 Δstep
+#   L25-2 唯一被指名過的機制（B 半補丁）已被量死（§51）；這一張量的是**下一個候選**
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼要立這一張（docs/L252_MECHANISM_NOMINATION_2026-09-30.md §2／§18 §七(4)）：
+#   `kernel 19.5 ms` 這一塊的**未開採上界**被算出來是 **7.4 ms**（群集 1＝輸出元素數 ≤8 的
+#   dispatch：SUM_ROWS[1]／CLAMP[1]／DIV[8]／scalar sigmoid；份額價 1.89 ms）。
+#   41.2 − 7.4 = 33.8 ms ⇒ 29.6 t/s，而赤字只有 1.2 ms ⇒ **上界足夠**蓋過赤字，
+#   但那是上界、不是實測 ⇒ 這一張卡就是那個「第一趟」。
+#
+# ⚠ 這一臂的輸出**定義上必然是錯的（VOID）**：它跳過真的 dispatch，只把上界換成 Δstep。
+#   這是本 repo 已有的模式（`CGC-HOOK=0`、「權重不進池」都是靠故意錯的臂量上界）⇒ 判詞只取 Δstep，
+#   引用閘門的 R6（輸出未驗）對這一臂**不適用**，但**窗口與逐 rep 離散照樣要乾淨**。
+# ⛔ 明確禁止（§40）：在 skip-probe 之前就寫那顆 ~300 行的融合 kernel；用 63 µs/dispatch 的外推
+#   當單價；把期望讀成「有 35 ms 可撿」（天花板就是 7.4 ms）。
+id: e-l252-skip-probe
+owner: freebuff（S 線 / L25-2）
+created: '2026-09-30'
+axis: S
+
+# ── 【目標】──
+question: |
+  跳過所有「輸出元素數 ≤ 8」的 dispatch（`CGC_SKIP_TINY_DISPATCH=1`，env-gated、預設關）之後，
+  交付 cell 的 decode 每步省下來的 **Δstep** 是不是 ≥ 1.2 ms（赤字）？
+  ⇒ 是 ⇒ 值得寫那顆承載算子（`ffn_moe_weighted`）；
+  ⇒ 否 ⇒ 群集 1 不是槓桿，`sg-kernel-busy` 與 L25-2 一起判死（附機制）。
+
+# ── 【現狀】──
+baseline:
+  metric: "Δstep 未量（只有上界 7.4 ms／份額價 1.89 ms）；L25-2 的 evidence 是 41.2 ms（上界相加）"
+  cell:   "權威 row：交付 cell（`delivery`：`-b/-ub 512`、`prompt 0`、`gen 128`、`depths 512`、`reps 3`、`warm-skip 64`、`ctx_size 4096`）—— 成對（probe-off／probe-on）"
+  source: "docs/L252_MECHANISM_NOMINATION_2026-09-30.md"
+  source_note: "上界的推導（群集 1、7.4 ms、份額價 1.89 ms）在 §2 與 §18 §一二；兩條已被量死的路（駐留政策化、非同步 fill＋重算）在 §4；`sg-kernel-busy` 的來源與算法在同文。"
+  known: |
+    - 赤字＝1.2 ms（41.2 − 40.0；本卡的判別門檻）。
+    - `CGC_MMV_FUSE=1` 的教訓（§17 §三）：再併一次 dispatch ⇒ −9% 而每步 **+3.5%** ⇒ 這條線
+      的方向是「減少 dispatch 次數」，不是「把 op 併大」。
+    - 一次 build ＝一個答案（env-gated）：新 gated patch 落地後，這一趟只回答這一個問題。
+    - ⛔ 不得再指 B 半補丁（§51 已撤回）；不得用 63 µs/dispatch 的外推當單價。
+
+# ── 【假設】──
+hypothesis:
+  mechanism: |
+    群集 1 的每一顆 dispatch 都帶著固定的提交／同步成本；decode 時這些 op 的輸出只有 1～8 個元素
+    （n_tokens=1 的 MoE 正規化：SUM_ROWS／CLAMP／DIV／scalar sigmoid，每層數顆、40 層、每步）。
+    把它們從圖裡拿掉（輸出照樣是 VOID）⇒ 每步少掉那些 dispatch ⇒ Δstep 直接量得出來。
+  expected: "Δstep ∈ [1.2, 7.4] ms（≥1.2 ⇒ 賠得起赤字；上限是群集 1 的上界 7.4 ms）"
+  basis: "docs/L252_MECHANISM_NOMINATION_2026-09-30.md §2（7.4 ms／1.89 ms／赤字 1.2 ms）；§40 §五(3) 的更正（駐留生命週期探針可關）"
+
+# ── 【驗收】跑前寫死 ──
+acceptance:
+  success: "成對重跑的 decode 行：Δstep = (A_ms − B_ms) ≥ **1.2 ms**，且 |Δstep| > 兩臂自身的散布（ms），且兩臂窗口乾淨（attribution=none、全 rep max/min ≤1.10、reps≥3）⇒ 判 `LEVER` ⇒ 值得寫 `ffn_moe_weighted`"
+  falsify: "同一組條件下 Δstep < 1.2 ms ⇒ 群集 1 不是槓桿 ⇒ `sg-kernel-busy` 與 L25-2 一起**判死（附機制）**；力氣全回 L20"
+  on_fail: "窗口不乾淨／任一臂不可引（R1–R4）⇒ `REFUSE`（不判 LEVER／DEAD）；gated patch 落地前 `skip_probe.py --check` 一律 `BLOCKED`（不發車）"
+
+# ── 【技術子目標】──
+targets:
+  delta_step_ms_lever: 1.2      # 判 `LEVER` 的門檻＝赤字
+  delta_step_ms_ceiling: 7.4    # 群集 1 的上界（超過 ⇒ 先懷疑量具）
+  void_marker_lines: 1          # VOID 臂必須在 stderr 留一行標記（收貨用）
+  tiny_dispatch_max_elems: 8    # 「tiny」的定義（輸出元素數 ≤8）
+
+subgoals:
+  - id: sg-skp-gated-patch
+    text:   "env-gated 的 skip-probe（`CGC_SKIP_TINY_DISPATCH=1`，預設關；跳過輸出元素數 ≤8 的 dispatch，並印 VOID 標記）"
+    expect: "旗標不在 ⇒ 樹行為逐位元不變；旗標在 ⇒ 機制照跑、stderr 印 VOID 標記（輸出必然錯）"
+    how:    "圖建構處（`llama-graph.cpp` 的 tiny op 站點）＋一個共用閘；形狀要保留（只換值），否則下游會炸"
+    delivered: "**未落地**：本卡的 receptor（`scripts/check/skip_probe.py`）已就位，但 patch 本身尚未寫 —— 依 §3 的規矩『立項與那支 gated patch 要同一批落地』，這一格在 patch 進樹前維持 `BLOCKED`。⛔ 不要在 probe 之前先寫融合 kernel。"
+  - id: sg-skp-paired-run
+    text:   "交付 cell 成對重跑（probe-off／probe-on、同一窗口、乾淨）"
+    expect: "`skip_probe.py --judge` 判 `LEVER`／`DEAD`（Δstep ≥／< 1.2 ms）"
+    how:    "`skip_probe.py --plan` 印出的兩條 `harness bench` 命令"
+  - id: sg-skp-verdict
+    text:   "判詞寫回看板 L25-2（LEVER ⇒ 新工作項；DEAD ⇒ 判死附機制）"
+    expect: "`Backup/l252_skipprobe_<日期>/verdict.json` 落地"
+
+# ── 【臂】──
+arms:
+  # A（對照）：交付基線
+  - prod-new
+  # B（處理）：tiny dispatch 全跳（輸出 VOID ⇒ 只取 Δstep）
+  - prod-new:CGC_SKIP_TINY_DISPATCH=1
+
+# ── 【交付】──
+delivery:
+  patch: "（待寫）env-gated skip-probe；落地時與本卡同批 ⇒ `skip_probe.py --check` 由 BLOCKED 轉 RUNNABLE"
+  receptor: "scripts/check/skip_probe.py（--check／--plan／--judge／--selftest）"
+  evidence: "Backup/l252_skipprobe_<日期>/{verdict.json,order{A,B}.json}；判詞由 receptor 的 `--judge` 產生（預註冊）"
+  apply_and_run: |
+    0) python3 scripts/check/skip_probe.py --check      # 旗標在不在、閘是不是 env-gated、VOID 標記有沒有
+    1) （patch 落地後）python3 scripts/check/skip_probe.py --plan
+    2) 照 `--plan` 跑兩臂（同一窗口、成對、交付 cell）
+    3) python3 scripts/check/skip_probe.py --judge --a <A.json> --b <B.json> --write
+    4) 判 `LEVER` ⇒ 新增「寫 ffn_moe_weighted」工作項；判 `DEAD` ⇒ L25-2 與 sg-kernel-busy 判死（附機制）

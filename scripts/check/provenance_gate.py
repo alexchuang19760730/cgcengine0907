@@ -180,6 +180,11 @@ REPORT_EXEMPT: dict[str, str] = {
         "subgoal board decode_board_2026-09-29.yaml (same class as mindmap_build.py): it measures "
         "no throughput, only booleans (is this row bound / is there a log), and its product is the "
         "--check exit code",
+    # 2026-10-01: doc_claim_gate.py 是 claim 標籤掃描器（in_scope_docs 以 globs=("docs/*.md","docs/*.html")
+    # 讀取文件來核對引用綁定），不寫任何報告產物 —— 與 void_number_check.py / formula_audit.py 同類（只讀端）。
+    "scripts/check/doc_claim_gate.py":
+        "it only READS docs/*.md and docs/*.html to scan claim tags (in_scope_docs globs docs/*.md/*.html); "
+        "it writes no report artifact, its product is the --check exit code",
 }
 DOCS_HTML_PATH = re.compile(r"(?:os\.path\.join\s*\([^)]*[\"']docs[\"']|ROOT\s*/\s*[\"']docs[\"']"
                             r"|[\"']docs/)")

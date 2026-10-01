@@ -21,7 +21,9 @@
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
-  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
+  table.queue td.qnext { text-align: left; max-width: 46em; }
+table.queue td { vertical-align: top; }
+.layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
@@ -47,25 +49,27 @@
 <nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container">
 <h1>L20-3 ｜ 重算本體 B（靜態 <code>ggml_acc</code>）</h1>
-<p class="subtitle">結案狀態：<span class="badge b-ok">結案（排除）——<b>前置已量、不成立</b>：穩態每層峰值 <b>6</b>；連把設計點降到峰值 6，重算 <b>6.07 ms</b> 都 > 它要取代的 fill <b>3.955</b>（09-30 operator：既然綠底，狀態就該寫結案——排除也是結案）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
+<p class="subtitle">結案狀態：<span class="badge b-ok">結案（排除）（§70 改寫理由）——<b>前置已量、不成立</b>：穩態每層峰值 <b>6</b>（≤2 只覆蓋 64% 的步）⇒ 靜態圖只能取 k＝6；而同格重判說 k=6 的邊際是 <b>−1.62 ~ +4.24 ms（NOT_SEPARATED）</b>，不是原本跨格比較寫的 −2.1。<br>⚠ <b>改的是理由，不是判詞</b>：原判拿交付 cell 的重算 <code>6.07</code> 對 <b>(default) cell</b> 的 fill <code>3.955</code>（§56 不可比）；換成同格之後 B 從「貴」變成「<b>不可分辨</b>」——全覆蓋也只能回收步時的 ~1%。（09-30 operator：既然綠底，狀態就該寫結案——排除也是結案）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
 <div class="card"><table class="kv">
-<tr><th>預期（ms/step）</th><td>−0.76 ~ −2.36（＝還回去的 fill 3.96 − op 1.60~3.20）</td></tr>
+<tr><th>預期（ms/step）</th><td>−0.76 ~ −2.36（＝還回去的 fill 3.96 − op 1.60~3.20）<br>⚠ <b>§70 同格重價（改寫這一行，因為 3.96 是 (default) cell）</b>：還回去的 fill <b>5.16–6.79</b> − 重算 <b>5.98</b>（k=6）⇒ <b>−1.62 ~ +4.24 ms</b> ⇒ 邊際跨零</td></tr>
 <tr><th>預期（t/s）</th><td>+0.2 ~ +0.6（在 19.2 的天花板上位移；底在 36.8 側則 +0.7 ~ +2.0）</td></tr>
-<tr><th>現在能跑？</th><td><span class="runnable">⛔ 不用（也不該）再跑 — 前置否證已交付（miss 直方圖）：復活門已關。要重開＝缺新機制，不是缺量測。</span></td></tr>
-<tr><th>現況（已量）</th><td><b>§51 尖兵：<code>sg-b-alloc</code> PASS（附 4 條件）／<code>sg-b-cost</code> FAIL。</b><code>ggml_acc</code> 在 ggml 核心有實作、<b>Metal 原生支援</b>（supports_op true、<code>ggml-metal-ops.cpp:1117</code>）⇒「無範例可抄」是<b>誤判</b>；但價格定錯了對象：<b>被定價的是散佈（320 op），主項是備援重算 320 列 ＝ 8.09 ms</b>（<code>MOE_GATHER_BOUND §2</code> 同儀器）⇒ 合計 <b>+9.7~13.8 ms</b>，而它要取代的 fill 只有 <b>3.955</b> ⇒ <b>淨回收為負</b></td></tr>
-<tr><th>action</th><td>**那一行儀器已補、也跑完了**（<code>CGC_MISSMASK-HIST</code>，交付 cell、386 步）⇒ <b>前置否證：不實作</b>（實測見 <code>docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</code>）</td></tr>
+<tr><th>現在能跑？</th><td><span class="runnable">⛔ 不用（也不該）再跑 — 判決在樹上，而且**同格重判**已交付（§70）：B 不是「貴」，是**不可分辨**（k*=6 的邊際 −1.62 ~ +4.24 ms）。端點＝<code>margin_ms</code>／<code>NOT_SEPARATED</code>（D7b 當場重跑）。</span></td></tr>
+<tr><th>前置（判決存不存在）</th><td><div class="success"><b>duplicate</b>／<code>verdict_file</code> ⇒ 現判 <b>EXISTS</b><br>命中：docs/SAMECELL_FILL_VS_RECOMPUTE_2026-09-30.md、Backup/mmid_delivery_2026-09-30/mmid_t1_pass2.json、Backup/mmid_delivery_2026-09-30/mmid_t1_pass3.json<br><span class="legend">宣告理由：判決兩份都在樹上：同格重判 <code>docs/SAMECELL_FILL_VS_RECOMPUTE_2026-09-30.md</code>（＋探針產物 <code>Backup/mmid_delivery_2026-09-30/*.json</code>）與前置的直方圖 <code>docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</code>。再跑只會重印。</span></div></td></tr>
+<tr><th>現況（已量）</th><td><b>§70 同格重判（這一行已取代原判的價格那一側）：</b>k=6 的重算 <b>5.98 ms</b>（乾淨窗口 kernel 探針 7.6–8.7 ms/320 列）vs 交付 cell 的 fill <b>5.16–6.79 ms/step</b> ⇒ margin <b>−1.62 ~ +4.24 ms</b> ⇒ <b>NOT_SEPARATED</b>（不是負）。<br>每-miss 分解：<b>0.756 ms/miss，其中 98.72% 是固定開銷</b>（bytes 1.079 MiB 在峰值只要 0.00968 ms）⇒ 真正的槓桿是把 miss 變成不阻塞（<code>L20-6</code>），不是把 miss 換成重算。<br><b>§51 尖兵：<code>sg-b-alloc</code> PASS（附 4 條件）／<code>sg-b-cost</code> FAIL。</b><code>ggml_acc</code> 在 ggml 核心有實作、<b>Metal 原生支援</b>（supports_op true、<code>ggml-metal-ops.cpp:1117</code>）⇒「無範例可抄」是<b>誤判</b>；但價格定錯了對象：<b>被定價的是散佈（320 op），主項是備援重算 320 列 ＝ 8.09 ms</b>（<code>MOE_GATHER_BOUND §2</code> 同儀器）⇒ 合計 <b>+9.7~13.8 ms</b>，而它要取代的 fill 只有 <b>3.955</b> ⇒ <b>淨回收為負</b></td></tr>
+<tr><th>action</th><td>**兩側都量完了**（直方圖 386 步 ⇒ k*＝6；同格邊際見 §70）⇒ <b>維持不實作</b>，但理由換成「<b>買不到東西</b>」：全覆蓋的設計點上邊際 ±1.6 ms，而 20+／25+ 要的是幾十 ms。</td></tr>
 <tr><th>驗收</th><td>M1 <b>9/9</b> ∧ M2 <b>9/9</b>、<code>config_diffs==[]</code>、op 增量 <b>320 且不隨 miss 放大</b>、生產路徑無新增 <code>synchronize</code>；<b>§51 的前置</b>「每層 miss 上界 ≤ k」——<b>09-29 實測不成立</b>（穩態峰值 <b>6</b>；≤2 只覆蓋 <b>64%</b> 的步）</td></tr>
 <tr><th>否證</th><td>成本隨 miss 縮放 ⇒ 靜態圖論證不成立</td></tr>
 </table></div>
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
-<tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td>逐層 max 分布（穩態 322 步）：1→43、2→163、<b>3→82、4→28、5→5、6→1</b>；平均 <b>0.470</b> miss/層。✅ 計數器（結構量，不隨窗口漂移）；⚠ 同趟 t/s 不可引用</td><td>count_per_layer</td><td>❌</td></tr>
+<tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td>① 逐層 max 分布（穩態 322 步）：1→43、2→163、<b>3→82、4→28、5→5、6→1</b>；平均 <b>0.470</b> miss/層（✅ 計數器，不隨窗口漂移；⚠ 同趟 t/s 不可引用）。<br>② 同格邊際（§70）：fill <b>6.79</b>（穩態 5.16）ms/step、每 miss <b>0.756 ms</b>（其中 <b>98.72%</b> 是固定開銷，bytes 只要 0.00968 ms）；kernel <b>0.02491 ms/列</b>（3 趟、spread 1.147）⇒ k=6（100% 覆蓋）margin <b>−1.62 ~ +4.24 ms</b> ⇒ <b>NOT_SEPARATED</b></td><td>margin_ms</td><td>❌</td></tr>
 </tbody></table>
-<div class="success"><b>排除依據（前置否證（miss 直方圖實測，非達標））</b>：docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</div>
+<div class="success"><b>排除依據（前置否證（直方圖 ⇒ k 由尾部決定）＋ 同格重價（§70：邊際不可分辨，非達標））</b>：docs/MISSHIST_REVIVAL_GATE_2026-09-29.md；docs/SAMECELL_FILL_VS_RECOMPUTE_2026-09-30.md；Backup/mmid_delivery_2026-09-30/*.json</div>
+<div class="warning"><b>端點判詞：NOT_SEPARATED</b>（檢查器 <code>samecell_margin</code>，build 當場重跑；這一格的端點不是時間讀數）<br>兩側都在交付 cell：fill 逐 rep 9.93／4.91／5.40 ms/step（EBTIMER）× kernel 0.0238／0.0272／0.0237 ms/列（三趟乾淨窗口）⇒ k*=6 的 9 個組合有正有負 ⇒ 不可分辨；覆蓋率由直方圖現算（64.0／89.4／98.1／99.7／100.0 與 09-29 表逐格相同）。</div>
 <h3>臂（options）</h3>
 <div class="warning">本格<b>沒有可跑的臂</b> —— 宣告過的臂全部被 R5／R6 擋掉（見下），所以 20+／25+ 不可能靠它們量到。</div>
 <div class="warning"><b>已刪除的臂</b> <code>prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_MISS_MASK_HIST=1</code>（R5／R6）<br>唯一的臂同時帶三個「原始碼／登記表明文不得引用吞吐」的診斷量具（R5）與單次提交（R6）⇒ 它量到的是量具的成本，不是交付目標。</div>
 <p>本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置的儀器已經跑完（見上）⇒ <b>前置否證，不必再印</b>。</p>
-<p>§51 尖兵已量：被定價的是散佈（320 op），沒被定價的是備援重算 320 列 ＝ 8.09 ms ⇒ 淨回收為負，decode ≥25 回到判死。<br>★ <b>復活門已關閉（09-29 實測）</b>：穩態每層峰值 <b>6</b>（不是 2）⇒ 要用 k≤3 才可能正回收，而那會讓 10.6% 的穩態步算錯（靜態圖不能按步改寬度）。均值 0.470 與板上原本寫的 0.49 相符 —— <b>k 由尾部決定，不由均值決定</b>。</p>
+<p>★ <b>復活門已關閉（09-29 實測）</b>：穩態每層峰值 <b>6</b>（不是 2）⇒ 要用 k≤3 才可能正回收，而那會讓 10.6% 的穩態步算錯（靜態圖不能按步改寬度）。均值 0.470 與板上原本寫的 0.49 相符 —— <b>k 由尾部決定，不由均值決定</b>。<br><b>§70 同格重價：</b>k=2/3/4 分離為正（覆蓋 64.0／89.4／98.1%），k=5/6 跨零（99.7／100.0%），k≥7 為負 ⇒ <b>可行區與可覆蓋區不相交</b>。重算列價由今晚乾淨窗口的 kernel 探針量得（7.6–8.7 ms/320 列）；09-22 的 8.09 是 busy-overridden 窗口。</p>
 <h3>立項（charter）</h3>
 <ul>
 <li><a href="../../../scripts/check/charters/e-b-accpatch-feasibility-2026-09-29.yaml"><code>scripts/check/charters/e-b-accpatch-feasibility-2026-09-29.yaml</code></a></li>

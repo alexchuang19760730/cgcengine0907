@@ -33,11 +33,26 @@
   D10 臂身分（quote_gate 的 R5／R6 在**看板面**）：`options.arms` 不准留著「量不到交付目標」的臂
       （單次提交臂跳過 per-layer hook ⇒ 計數器回傳常數；或源碼明文 never-quote 的量具）。
       要嘛刪掉，要嘛搬進 `options.arms_removed` 附規則與出處（那是留下來的否證，不是待跑的路）。
+  D15 待升級（operator 2026-09-30：「<b>搬成功要放到已認證</b>」）：`pending_promotion` 的每一格
+      必須**跑前**就寫死驗收（`accept`）與機器判準（`judge`），而且候選臂必須在認可口徑上
+      （quote_gate 的 R7）——否則這一格永遠升不了級、是白等的 pending。判準當場成立卻還停在
+      pending ⇒ **紅**（該升進 `certified` 了），失敗方向與 runnable_gate 的「該結案了」一致。
+  D17 棘輪 vs 認證表（2026-10-01）：`certify_anchor` 必須等於 `certified` 表上**最大的 decode 讀數**
+      （那也必須是最高那一列的 `quote.artifact`），而且每一列入表時都**嚴格高於當時的上限**。
+      有 decode 讀數的認證列一定要宣告 `ratchet:`（參與）或 `ratchet_exempt: <why>`（基準，不參與）
+      —— 兩個都沒有 ⇒ 紅（不寫欄位不能是繞過棘輪的方式）。判準見 `ratchet_consistency()`。
+  D16 臂類別 vs 卡點型別（2026-09-30）：`options.arms` 是空的（每一支臂都被 R5／R6 刪掉）、又還沒了結
+      的格，**不准**把卡點寫成 `window`。窗口是抽籤（同一支臂抽到 `attribution=none` 就引用得到？
+      不 —— 見 L20-1），臂的類別是**樹上的事實**：一個 window 永遠修不好臂的身分。這條同時要求
+      `block` 存在、型別落在 decision／code／mechanism，且內文**指名**擋住它的是哪一條規則
+      （R5／R6／R7）⇒ 讀的人一眼看到解除條件，而不是去等一個永遠不會到的窗口。
 """
 
 import argparse
+import glob as _glob
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -82,7 +97,9 @@ CSS = """  * { margin:0; padding:0; box-sizing:border-box; }
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
-  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
+  table.queue td.qnext { text-align: left; max-width: 46em; }
+table.queue td { vertical-align: top; }
+.layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
@@ -202,6 +219,54 @@ def gate_verdict(root, artifact):
     return "MIXED(%s)" % "/".join(verdicts), "檔內 row 判詞不一致"
 
 
+def _qg():
+    """懶載 quote_gate —— 判準（含 R7 的認可口徑白名單）只有一份定義。"""
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    import quote_gate
+    return quote_gate
+
+
+PENDING_JUDGE_KINDS = ("quotable_launch_cluster",)
+
+
+def pending_cluster(root, judge):
+    """判一個「待升級」候選的機器判準：回 (n_launches, n_quotable, detail)。
+
+    `quotable_launch_cluster` 問的是「這一批**獨立啟動**裡，有幾場真的過得了引用閘門」。
+    為什麼不能升級一個單點：§73.5 —— 同一支臂、同一格連三場是 8.933／8.486／10.923，而前兩場
+    各有一顆 rep 塌到 3.8–3.9 ⇒ 10.923 是那條分布的右尾之一，不是中心。
+    """
+    pat = judge.get("glob")
+    if not pat:
+        return None, None, "judge 缺 glob"
+    cell = judge.get("cell") or "delivery"
+    files = sorted(f for f in _glob.glob(os.path.join(root, pat), recursive=True)
+                   if os.path.isfile(f))
+    try:
+        qg = _qg()
+    except Exception as exc:  # noqa: BLE001
+        return None, None, "載不進 quote_gate：%s" % exc
+    n_cell, n_q, hits = 0, 0, []
+    for f in files:
+        try:
+            recs = qg.scan([f])
+        except Exception as exc:  # noqa: BLE001
+            return None, None, "quote_gate 判不了 %s：%s" % (os.path.basename(f), exc)
+        dec = [r for r in recs
+               if (r.get("cell") or "") == cell and (r.get("shape") or "").startswith("p0/")]
+        if not dec:
+            continue
+        n_cell += 1
+        best = max(dec, key=lambda r: (r["metrics"] or {}).get("avg") or 0)
+        if best["verdict"] == "QUOTABLE":
+            n_q += 1
+            hits.append("%s %.3f" % (os.path.basename(f), (best["metrics"] or {}).get("avg") or 0))
+    if hits:
+        return n_cell, n_q, "；".join(hits)
+    return n_cell, n_q, "目前 0 場可引用（掃到 %d 場帶 %s decode 列）" % (n_cell, cell)
+
+
 D7_EXCLUDED_CLOSURES = ("結案（排除）",)
 
 
@@ -216,13 +281,81 @@ def arm_census(board):
     for layer in board.get("layers") or []:
         for t in layer.get("targets") or []:
             o = t.get("options") or {}
-            n_live = len([a for a in (o.get("arms") or []) if isinstance(a, str)])
+            n_live = len([a for a in (o.get("arms") or [])
+                          if isinstance(a, str) or (isinstance(a, dict) and a.get("arm"))])
             n_rm = len([r for r in (o.get("arms_removed") or []) if isinstance(r, dict)])
             live += n_live
             removed += n_rm
             if n_rm and not n_live:
                 bare.append(t.get("id"))
     return live, removed, bare
+
+
+def precondition_census(board):
+    """回 (needed, dup, blocked, drift, drift_ids)：前置閘門的**儀表**。
+
+    這是 D12 的對稱物：D12 逐格判「宣告與現判是否一致」，這裡把 16 格的結果**彙總成一行放在頁首**
+    —— 「有幾格會產生新資訊／幾格只是重印／幾格卡在人與機制」。有了它，「還能做什麼」第一次變成
+    可核對的清單，而不是 16 條看起來都能跑的路。判準呼叫 scripts/check/runnable_gate.py（不重寫）。
+    """
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    try:
+        import runnable_gate as RG
+    except Exception:  # noqa: BLE001
+        return None
+    class RC:                       # 判詞常數（唯一定義在 runnable_gate，這裡只取用）
+        EXISTS, ABSENT = RG.EXISTS, RG.ABSENT
+    needed = dup = blocked = drift = 0
+    drift_ids = []
+    for layer in board.get("layers") or []:
+        for t in layer.get("targets") or []:
+            pre = t.get("precondition") or {}
+            if not pre:
+                continue
+            if pre.get("rerun") == "blocked":
+                blocked += 1
+                continue
+            lv, _why, _ = RG.scan(pre, ROOT)
+            ok = ((pre.get("rerun") == "needed" and lv == RC.ABSENT)
+                  or (pre.get("rerun") == "duplicate" and lv == RC.EXISTS))
+            if not ok:
+                drift += 1
+                drift_ids.append(t.get("id"))
+            elif pre.get("rerun") == "needed":
+                needed += 1
+            else:
+                dup += 1
+    return needed, dup, blocked, drift, drift_ids
+
+
+def blocked_queue(board):
+    """回 (rows, counts)：`blocked` 那幾格的**形別化決策佇列**（判準定義在 runnable_gate.BLOCK_*）。
+
+    rows ＝ [(kind, owner, id, next), ...]，排序＝決定→改動→機制→窗口（同型再按 id）。
+    理由：**最便宜又解鎖最多的先做**。這張表回答的是「誰該動、動什麼」，而不是「哪一格比較重要」。
+    欄位由 D13 強制存在（缺了 build 就紅）⇒ 這裡不防缺。
+    """
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    try:
+        import runnable_gate as RG
+    except Exception:  # noqa: BLE001
+        return [], {}
+    rows, counts = [], {}
+    for layer in board.get("layers") or []:
+        for t in layer.get("targets") or []:
+            pre = t.get("precondition") or {}
+            if pre.get("rerun") != "blocked":
+                continue
+            blk = pre.get("block") or {}
+            k = blk.get("kind") or "?"
+            _lv, _lw, _ = RG.scan_block_assert(blk, ROOT)
+            rows.append((k, blk.get("owner") or "?", t.get("id"), blk.get("next") or "",
+                         _lv, _lw))
+            counts[k] = counts.get(k, 0) + 1
+    rows.sort(key=lambda r: (RG.BLOCK_ORDER.get(r[0], 99), str(r[2])))
+    return rows, counts
 
 
 def arm_void_flags(arm):
@@ -256,16 +389,256 @@ def arm_void_flags(arm):
 # 唯一的出路是去捏一個時間讀數，或讓閘門永久紅著。
 # 所以補一條**對稱**的路：宣告 `counter_quote`（見證產物 ＋ 判它的檢查器），build 當場重跑。
 # 一樣 fail-closed：產物不見了、或判詞不再是宣告的那個，board 就紅。
-COUNTER_METRICS = ("zero_slot_flip",)
+COUNTER_METRICS = ("zero_slot_flip", "m_ratio", "fill_term_ms", "margin_ms", "feed_flip",
+                   "rho_price")
+# 每一種 counter metric 允許的**結案判詞**（D7b）：翻轉類＝FLIP；門檻／比值類＝WITHIN；
+# 定價類＝PRICED（2026-09-30 §69：交付 cell 上一個 term 的價格，端點是**區間**）。
+COUNTER_CLOSE_VERDICTS = {"zero_slot_flip": "FLIP", "m_ratio": "WITHIN",
+                          "fill_term_ms": "PRICED",
+                          # 餵料端點（2026-09-30 L20-5）：也是翻轉型（對照臂 prefetch=0/0、
+                          # 實驗臂除了 >0 之外還有 CGC-RB-FEED）——見 scripts/check/p1_feed_ab.py。
+                          "feed_flip": "FLIP",
+                          # 同格邊際（2026-09-30 §70）：要以「划算」結案，邊際必須**分離為正**
+                          # ——`NOT_SEPARATED` 不能當達標（那正是 L20-3 的判詞）。
+                          "margin_ms": "POSITIVE",
+                          # ρ 的權威 row 價格（2026-10-01，L20-7）：要以「價格成立」結案才需要
+                          # `PRICE`；`NO_EFFECT`（量不出價格）走**排除**路徑（否證式），不在此表。
+                          "rho_price": "PRICE"}
 
 
 def counter_verdict(root, cq):
-    """重跑計數器端點的檢查器 → (verdict, why)；判不了回 (None, why)。"""
+    """重跑計數器／儀器端點的檢查器 → (verdict, why)；判不了回 (None, why)。"""
     if HERE not in sys.path:
         sys.path.insert(0, HERE)
     tool = cq.get("tool") or ""
+    # ── 儀器端點：門檻／比值（2026-09-30 §63，L25-5 是第一例）─────────────────
+    # 為什麼需要第二**種**：`m`（每輪 draft 成本 ÷ 一個 plain step）不是時間讀數
+    # ⇒ quote_gate 判不了它；但它也不是二值翻轉，而是一條**門檻**（m ≤ 0.30）。
+    # 判它的東西已經存在（mtp_round_split.py 的五條閘）⇒ 這裡只做兩件事：當場重跑
+    # 那五條閘 ＋ 檢查各自宣告的門檻。fail-closed：產物不在、閘不過、窗口不是
+    # none（若宣告 require_attrib）、cell 不對、m 算不出來 ⇒ 一律不放行。
+    if tool == "mtp_round_split":
+        art = cq.get("artifact")
+        if not art:
+            return None, "counter_quote 缺 artifact（儀器端點必須指名產物）"
+        ap_ = os.path.join(root, art)
+        if not os.path.exists(ap_):
+            return None, "見證產物不存在：%s" % art
+        if cq.get("limit") is None:
+            return None, "counter_quote 缺 limit（門檻類端點必須寫死上限）"
+        lp = cq.get("log")
+        if lp and not os.path.exists(os.path.join(root, lp)):
+            return None, "見證 log 不存在：%s" % lp
+        try:
+            import mtp_round_split as M
+        except Exception as exc:  # noqa: BLE001
+            return None, "載不進 mtp_round_split：%s" % exc
+        try:
+            res = M.judge(ap_, os.path.join(root, lp) if lp else None)
+        except Exception as exc:  # noqa: BLE001
+            return None, "mtp_round_split 判不了：%s: %s" % (type(exc).__name__, exc)
+        if res.get("verdict") != "OK" or res.get("m") is None:
+            return "REFUSE", "五閘不過 ⇒ %s" % (res.get("why") or "m 算不出來")
+        if cq.get("require_attrib") and res.get("attrib") != cq["require_attrib"]:
+            return "REFUSE", "窗口 attribution=%s ≠ 要求的 %s" % (res.get("attrib"), cq["require_attrib"])
+        if cq.get("cell") and res.get("cell") != cq["cell"]:
+            return "REFUSE", "cell=%s ≠ 宣告的 %s" % (res.get("cell"), cq["cell"])
+        if float(res["m"]) > float(cq["limit"]):
+            return "REFUSE", "m=%.3f > 門檻 %.3f" % (res["m"], float(cq["limit"]))
+        return "WITHIN", ""
+    # ── 定價端點：交付 cell 上一個 term 的價格（2026-09-30 §69，L20-4 是第一例）──────
+    # 為什麼需要第三種：`ms/step` 的**價格**既不是時間讀數（正確性未證的臂不給引用）
+    # 也不是二值翻轉。判它的東西已經存在（fill_term_ab.py 的七條結構閘）⇒ 這裡只做
+    # 兩件事：當場重跑那七條閘 ＋ 檢查價格區間與宣告一致（±tol_pct）。fail-closed：
+    # 產物／log 不在、cell 不是交付 cell、窗口髒、步數不配、B 沒關掉讀取 ⇒ 一律不放行。
+    if tool == "fill_term_ab":
+        art, lga, lgb = cq.get("artifact"), cq.get("log_a"), cq.get("log_b")
+        if not (art and lga and lgb):
+            return None, "counter_quote 缺 artifact／log_a／log_b（定價端點必須指名三個見證檔）"
+        for p_ in (art, lga, lgb):
+            if not os.path.exists(os.path.join(root, p_)):
+                return None, "見證檔不存在：%s" % p_
+        band = cq.get("band")
+        if not (isinstance(band, list) and len(band) == 2):
+            return None, "counter_quote 缺 band（價格是區間 [lo, hi]，不是單點）"
+        try:
+            import fill_term_ab as F
+        except Exception as exc:  # noqa: BLE001
+            return None, "載不進 fill_term_ab：%s" % exc
+        try:
+            res = F.judge(os.path.join(root, art), os.path.join(root, lga), os.path.join(root, lgb))
+        except Exception as exc:  # noqa: BLE001
+            return None, "fill_term_ab 判不了：%s: %s" % (type(exc).__name__, exc)
+        if res.get("verdict") != "PRICED":
+            return "REFUSE", "結構閘不過 ⇒ %s" % (res.get("why") or "未定價")
+        tol = float(cq.get("tol_pct", 10)) / 100.0
+        for i, key in enumerate(("lo", "hi")):
+            live = float(res["band"][i])
+            if abs(live - float(band[i])) > tol * max(abs(float(band[i])), 1e-9):
+                return "REFUSE", "價格區間[%d] 現算 %.2f ≠ 宣告 %.2f（差 > %.0f%%）" % (
+                    i, live, float(band[i]), tol * 100)
+        return "PRICED", ""
+    # ── 同格邊際端點：B 半（靜態寬度重算）在**同一格**上的邊際（2026-09-30 §70）──────
+    # 為什麼需要第四種：上面兩種都是**單側**定價（價格／門檻）。L20-3 的錯誤是**跨格**
+    # 比較（交付 cell 的重算 vs (default) cell 的 fill）⇒ 這一端點要求兩側都指名、且由
+    # 檢查器當場現算「逐 rep x 逐趟」的符號一致性，判詞三態（POSITIVE／EXCLUDED／
+    # NOT_SEPARATED）。fail-closed：產物不在、cell 不是交付、窗口髒、探針窗口不乾淨／
+    # 幾何不符、steady 步數不足 ⇒ 一律不放行。
+    if tool == "samecell_margin":
+        ab = cq.get("artifact")
+        lga = cq.get("log_a")
+        probes = cq.get("probes") or []
+        hist = cq.get("hist")
+        if not (ab and lga and probes and hist):
+            return None, "counter_quote 缺 artifact／log_a／probes／hist（同格邊際要四個見證）"
+        for p_ in [ab, lga, hist] + list(probes):
+            if not os.path.exists(os.path.join(root, p_)):
+                return None, "見證檔不存在：%s" % p_
+        try:
+            import samecell_margin as S
+        except Exception as exc:  # noqa: BLE001
+            return None, "載不進 samecell_margin：%s" % exc
+        try:
+            res = S.judge(os.path.join(root, ab), os.path.join(root, lga),
+                          [os.path.join(root, p_) for p_ in probes],
+                          os.path.join(root, hist))
+        except Exception as exc:  # noqa: BLE001
+            return None, "samecell_margin 判不了：%s: %s" % (type(exc).__name__, exc)
+        if res.get("verdict") not in ("POSITIVE", "EXCLUDED", "NOT_SEPARATED"):
+            return "REFUSE", "同格邊際判不了 ⇒ %s" % (res.get("why") or "未判")
+        want_k = cq.get("k_star")
+        if want_k is not None and int(want_k) != int(res["k_star"]):
+            return "REFUSE", "k* 現算 %s ≠ 宣告 %s（覆蓋率表變了）" % (res["k_star"], want_k)
+        band = cq.get("margin_ms")
+        if isinstance(band, list) and len(band) == 2:
+            tol = float(cq.get("tol_ms", 0.5))
+            for i, key in enumerate(("lo", "hi")):
+                live = float(res["k_star_margin_ms"][i])
+                if abs(live - float(band[i])) > tol:
+                    return "REFUSE", "k* 邊際[%d] 現算 %.2f ≠ 宣告 %.2f（容差 %.2f ms）" % (
+                        i, live, float(band[i]), tol)
+        return res["verdict"], ""
+    # ── 翻轉端點（第二種）：餵料在**沒有 debug 插樁**的臂上活著（2026-09-30，L20-5）──────
+    # 與 zero_slot_flip 同一**型**（計數從 0 翻成 >0），但見證形狀不同：那一種是兩份 artifact
+    # （A/B 各一），這一種是**一份成對產物 ＋ 產物自己記下的兩臂 live_log**—— 因為「臂上沒有
+    # R5 列印」這件事只能從 log 判，而 live_log 記在產物裡就不会漏配。
+    # fail-closed：產物不在、兩臂分不出來、跨 build、窗口不是 none、對照臂不再 0/0、
+    # 實驗臂餵料消失、或 log 出現 MISSMASK 列印 ⇒ 一律不放行。
+    if tool == "p1_feed_ab":
+        art = cq.get("artifact")
+        if not art:
+            return None, "counter_quote 缺 artifact（翻轉端點必須指名產物）"
+        ap_ = os.path.join(root, art)
+        if not os.path.exists(ap_):
+            return None, "見證產物不存在：%s" % art
+        try:
+            import p1_feed_ab as F
+        except Exception as exc:  # noqa: BLE001
+            return None, "載不進 p1_feed_ab：%s" % exc
+        logs = [os.path.join(root, x) for x in (cq.get("logs") or [])] or None
+        try:
+            res = F.judge(ap_, logs, root=root)
+        except Exception as exc:  # noqa: BLE001
+            return None, "p1_feed_ab 判不了：%s: %s" % (type(exc).__name__, exc)
+        if res.get("verdict") == "REFUSE":
+            return "REFUSE", res.get("why") or "端點未成立"
+        if res.get("verdict") != "FLIP":
+            return None, "判詞不認得：%r" % res.get("verdict")
+        return "FLIP", ""
+    # ── 見證端點：R6 的**輸出見證**（2026-09-30，L20-1 是第一例）────────────────────
+    # 為什麼需要這一種：L20-1 的卡點是 R6（單次提交臂的輸出未驗）。「見證是紅的」原本只是
+    # block.next 裡的一句散文，誰都能寫、也沒人驗。這裡把它變成**當場重跑**：兩份 m123
+    # summary（對照臂不開旗標、見證臂開旗標）丟進 r6_witness.judge ⇒
+    # WITNESS_GREEN／WITNESS_RED／REFUSE。
+    # ⚠ 與其他端點不同：判詞直接回傳三態，不映射成 FLIP／WITHIN —— D7b 拿它跟宣告的
+    #   verdict 比，所以宣告 WITNESS_RED 而判詞變 GREEN／REFUSE ⇒ 看板紅（該回來重判 L20-1）。
+    # fail-closed：產物不在、缺 control／arm、載不進、判詞不認得 ⇒ 一律不放行。
+    if tool == "r6_witness":
+        ctl, armo = cq.get("control"), cq.get("arm")
+        if not (ctl and armo):
+            return None, "counter_quote 缺 control／arm（見證端點必須指名兩份 summary）"
+        for p_ in (ctl, armo):
+            if not os.path.exists(os.path.join(root, p_)):
+                return None, "見證產物不存在：%s" % p_
+        try:
+            import r6_witness as W
+        except Exception as exc:  # noqa: BLE001
+            return None, "載不進 r6_witness：%s" % exc
+        try:
+            res = W.judge(ctl, armo, root=root)
+        except Exception as exc:  # noqa: BLE001
+            return None, "r6_witness 判不了：%s: %s" % (type(exc).__name__, exc)
+        v = res.get("verdict")
+        if v not in ("WITNESS_GREEN", "WITNESS_RED", "REFUSE"):
+            return None, "判詞不認得：%r" % v
+        return v, res.get("why") or ""
+    # ── 儀器端點（第三種）：ρ 的**收貨端**活著且可複現（2026-09-30，L20-7 是第一例）────────
+    # 為什麼需要這一種：S3-b 的預註冊把端點拆成「① 計數器（髒窗可引用）／② 時間」。那一趟
+    # ② 判不可辨識（五支臂無一 attribution=none），但 ① **成立**——而 ① 若只留在散文裡，
+    # 下一個人就無法分辨「量具跑了」與「量具回常數」（2026-09-26 的 4.76 ms 就是估值的路徑）。
+    # ⚠ 它判的是**量具**：控制臂不得有 `CGC-RHO*`、見證臂每步 n_layer 層、`skip=0`、覆蓋
+    #   過源頭飽和門檻、多場次一致、fill 記帳全符。它**不**判 t/s、也**不**判價格。
+    # fail-closed：檔不在、缺 control／arm、判詞不認得 ⇒ 一律不放行。
+    if tool == "rho_instrument_ab":
+        ctl = cq.get("control")
+        arms_ = cq.get("arm")
+        if isinstance(arms_, str):
+            arms_ = [arms_]
+        if not (ctl and arms_):
+            return None, "counter_quote 缺 control／arm（ρ 儀器端點必須指名對照臂與見證臂）"
+        for p_ in [ctl] + list(arms_) + ([cq["fill"]] if cq.get("fill") else []):
+            if not os.path.exists(os.path.join(root, p_)):
+                return None, "見證 log 不存在：%s" % p_
+        try:
+            import rho_instrument_ab as R
+        except Exception as exc:  # noqa: BLE001
+            return None, "載不進 rho_instrument_ab：%s" % exc
+        try:
+            v, why, _ = R.judge(ctl, list(arms_), cq.get("fill"), root=root)
+        except Exception as exc:  # noqa: BLE001
+            return None, "rho_instrument_ab 判不了：%s: %s" % (type(exc).__name__, exc)
+        if v not in ("INSTRUMENT_LIVE", "REFUSE"):
+            return None, "判詞不認得：%r" % v
+        return v, why
+    # ── 判詞重播端點（第五種）：ρ 的**價格**（2026-10-01，L20-7 的第二個端點）───────
+    # 為什麼需要這一種：L20-7 的價格端點是一份**判詞**（四條權威 row、兩趟反序），判它的
+    # 是 `rho_price_authrow.judge()`（預註冊）。若不當場重跑，`verdict.json` 只是一句散文、
+    # 誰都能改。這裡只做一件事：從四份產物**當場重算**判詞，並要求它等於宣告的 verdict
+    # （fail-closed：產物不齊、判不了、判詞不認得 ⇒ 不放行）。
+    if tool == "rho_price_authrow":
+        art = cq.get("artifact")
+        if not art:
+            return None, "counter_quote 缺 artifact（判詞端點必須指名 verdict.json）"
+        ap_ = os.path.join(root, art)
+        if not os.path.exists(ap_):
+            return None, "見證產物不存在：%s" % art
+        try:
+            import rho_price_authrow as RPA
+        except Exception as exc:  # noqa: BLE001
+            return None, "載不進 rho_price_authrow：%s" % exc
+        by = {}
+        for c in RPA.plan(root):
+            cmd = list(c.get("cmd") or [])
+            if "--json" not in cmd:
+                return None, "plan() 的命令沒有 --json ⇒ 判不了（工具漂了）"
+            by[(int(c["order"]), c["arm"])] = os.path.join(root, cmd[cmd.index("--json") + 1])
+        for k in ((1, "A"), (1, "B"), (2, "A"), (2, "B")):
+            if not os.path.exists(by.get(k) or ""):
+                return None, "四份權威 row 產物不齊：缺 order%d_%s" % k
+        try:
+            oa = RPA.judge(by[(1, "A")], by[(1, "B")])
+            ob = RPA.judge(by[(2, "A")], by[(2, "B")])
+            res = RPA.both_orders(oa, ob)
+        except Exception as exc:  # noqa: BLE001
+            return None, "rho_price_authrow 判不了：%s: %s" % (type(exc).__name__, exc)
+        v = res.get("verdict")
+        if v not in ("PRICE", "NO_EFFECT", "REFUSE"):
+            return None, "判詞不認得：%r" % v
+        return v, res.get("why") or ""
     if tool != "g3_zeroslot_ab":
-        return None, "counter_quote.tool 不認得：%r（已知：g3_zeroslot_ab）" % tool
+        return None, ("counter_quote.tool 不認得：%r（已知：g3_zeroslot_ab、mtp_round_split、"
+                      "fill_term_ab、samecell_margin、p1_feed_ab、r6_witness、rho_instrument_ab、"
+                      "rho_price_authrow）") % tool
     a, b = cq.get("artifact_a"), cq.get("artifact_b")
     if not (a and b):
         return None, "counter_quote 缺 artifact_a／artifact_b"
@@ -283,8 +656,139 @@ def counter_verdict(root, cq):
     return verdict, ""
 
 
+# ── D17：棘輪 vs 認證表（2026-10-01；operator：「--check 要驗『棘輪與已認證表一致』」）────────
+# 為什麼要這一條：棘輪的單一來源是看板 `certify_anchor`，而入表的紀錄在 `certified` 那一份清單
+# —— 兩邊各自手寫就會漂移，而漂移是**靜默**的（上限指的不是表上最高的一件；或某一列宣稱
+# 「入表時高過當時的上限」，其實沒有）。判準（全部機器強制，違反 ⇒ --check rc=1）：
+#   ① 有 decode 讀數的認證列，必須宣告 `ratchet:`（參與棘輪）或 `ratchet_exempt: <why>`
+#      —— 兩個都沒有 ⇒ 紅（否則「不寫欄位」就是繞過棘輪的方式）。
+#   ② `ratchet.decode_ts` 必須**逐字**等於它自己 `quote.artifact` 的 decode 讀數（容差＝
+#      caliber_certify.HOLDER_EPS，與認證入口同一個值；不四捨五入）。
+#   ③ 每一列 decode_ts **嚴格高於**自己宣告的 `entered_above`（入表當時的上限；0＝棘輪未立）。
+#   ④ 入表時的上限只能是**表上已經有的讀數**（或 0）：把列依 entered_above 分組，任一組的上限必須
+#      等於「所有更小上限組」的最大 decode_ts ⇒ 沒有自創的錨、沒有跳號。
+#   ⑤ `certify_anchor.decode_ts` 必須等於表上最大的 decode_ts，且 `certify_anchor.artifact` 必須
+#      就是那一列的 `quote.artifact`（上限指的就是那一件）。
+RATCHET_EPS_FALLBACK = 1e-9
+RATCHET_TOL_FALLBACK = 1e-4
+
+
+def ratchet_constants():
+    """棘輪的兩個浮點常數：**唯一來源**＝ caliber_certify（認證入口）；載不進才用同名退路。"""
+    try:
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        import caliber_certify as CC
+        return float(CC.RATCHET_EPS), float(CC.HOLDER_EPS)
+    except Exception:  # noqa: BLE001
+        return RATCHET_EPS_FALLBACK, RATCHET_TOL_FALLBACK
+
+
+def ratchet_consistency(board, root=ROOT):
+    """D17：看板 `certify_anchor`（棘輪上限）與 `certified` 清單必須互相講得通 ⇒ [errs]。"""
+    errs = []
+    entries = [c for c in (board.get("certified") or []) if isinstance(c, dict)]
+    if not entries:
+        return errs
+    eps, tol = ratchet_constants()
+    try:
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        import quote_gate as QG
+    except Exception as exc:  # noqa: BLE001
+        return ["D17 載不進 quote_gate：%s: %s" % (type(exc).__name__, exc)]
+
+    def decode_readings(rel):
+        """那個產物裡的 decode 讀數（判準＝quote_gate；decode row＝shape `p0/...`）⇒ [(avg, verdict)]。"""
+        if not rel:
+            return []
+        p = os.path.join(root, rel)
+        if not os.path.exists(p):
+            return []
+        out = []
+        for r in QG.scan([p]):
+            if not str(r.get("shape") or "").startswith("p0/"):
+                continue
+            avg = (r.get("metrics") or {}).get("avg")
+            if avg is not None:
+                out.append((float(avg), r.get("verdict")))
+        return out
+
+    rows = []
+    for c in entries:
+        cid = c.get("id") or "?"
+        q = c.get("quote") or {}
+        reads = decode_readings(q.get("artifact"))
+        if not reads:
+            continue                       # 這一列沒有可判的 decode 讀數（例如 prefill／比值類）
+        rat, exempt = c.get("ratchet"), c.get("ratchet_exempt")
+        if rat is None and exempt is None:
+            errs.append("D17 %s 有 decode 讀數（%s）卻沒宣告 ratchet／ratchet_exempt ⇒ 棘輪的一致性"
+                        "沒得驗（參與棘輪的給 ratchet，基準的給 ratchet_exempt＋why）" % (cid, q.get("artifact")))
+            continue
+        if rat is None:
+            if not str(exempt or "").strip():
+                errs.append("D17 %s 的 ratchet_exempt 是空的（要寫 why：為什麼這一列不必高過上限）" % cid)
+            continue
+        if not isinstance(rat, dict) or rat.get("decode_ts") in (None, ""):
+            errs.append("D17 %s 的 ratchet 缺 decode_ts" % cid)
+            continue
+        if q.get("verdict") != "QUOTABLE":
+            errs.append("D17 %s 宣告參與棘輪，但 quote.verdict=%r ≠ QUOTABLE（棘輪只認可引用的讀數）"
+                        % (cid, q.get("verdict")))
+            continue
+        try:
+            ts = float(rat["decode_ts"])
+            above = float(rat.get("entered_above") or 0.0)
+        except (TypeError, ValueError):
+            errs.append("D17 %s 的 ratchet.decode_ts／entered_above 不是數字（%r／%r）"
+                        % (cid, rat.get("decode_ts"), rat.get("entered_above")))
+            continue
+        if not [a for a, _v in reads if abs(a - ts) <= tol]:
+            errs.append("D17 %s 宣告的 decode_ts=%s 不在 %s 的 decode 讀數裡（有 %s）⇒ 逐字抄產物的 avg_ts"
+                        % (cid, ts, q.get("artifact"), "、".join("%.6f" % a for a, _v in reads)))
+            continue
+        if ts <= above + eps:
+            errs.append("D17 %s 的 decode_ts=%s 沒有嚴格高於它入表時的上限 %s ⇒ 這一列當時進不去"
+                        % (cid, ts, above))
+        rows.append((cid, ts, above))
+
+    if not rows:
+        return errs
+    # ④ 入表時的上限只能是表上已有的讀數（或 0）
+    groups = {}
+    for cid, ts, above in rows:
+        groups.setdefault(above, []).append((cid, ts))
+    running = 0.0
+    for key in sorted(groups):
+        if key > 0 and abs(key - running) > eps:
+            errs.append("D17 有一組列的 entered_above=%s 不等於當時表上的最大值 %s ⇒ 上限只能是表上已有的"
+                        "讀數（或 0）：%s" % (key, running, "、".join(c for c, _t in groups[key])))
+        running = max(running, max(t for _c, t in groups[key]))
+    # ⑤ 上限＝表上最高那一件
+    top = max(rows, key=lambda r: r[1])
+    anchor = board.get("certify_anchor") or {}
+    try:
+        a_ts = float(anchor.get("decode_ts"))
+    except (TypeError, ValueError):
+        errs.append("D17 certify_anchor.decode_ts 不是數字（%r）⇒ 棘輪沒有單一來源"
+                    % (anchor.get("decode_ts"),))
+        return errs
+    if abs(a_ts - top[1]) > eps:
+        errs.append("D17 certify_anchor.decode_ts=%s ≠ 表上最大的 decode_ts=%s（%s）⇒ 上限必須等於"
+                    "已認證表裡最高的那一件" % (a_ts, top[1], top[0]))
+    top_art = next((((c.get("quote") or {}).get("artifact")) for c in entries
+                    if c.get("id") == top[0]), None)
+    a_art = anchor.get("artifact")
+    if a_art and top_art and os.path.normpath(a_art) != os.path.normpath(top_art):
+        errs.append("D17 certify_anchor.artifact=%s ≠ 最高那一列（%s）的 quote.artifact=%s ⇒ 上限指的"
+                    "不是那一件" % (a_art, top[0], top_art))
+    return errs
+
+
 def validate(board, nodes, root=ROOT):
     errs, targets, by_id = [], [], {}
+    rgate_cache = {}          # D12 的掃描快取（同一輪 build 內共用，避免重複掃全語料）
     for layer in board.get("layers") or []:
         for t in layer.get("targets") or []:
             t = dict(t); t["_layer"] = layer.get("id"); targets.append(t)
@@ -312,6 +816,26 @@ def validate(board, nodes, root=ROOT):
         # D6 結案規則
         ev = t.get("evidence") or {}
         st = str(t.get("state") or "")
+        # D11（2026-09-30 §63）：`state`（判定）與 `settled`（看板顯示：整列綠底）必須一致。
+        # 兩邊各自演化就會出現「結案但沒綠底」或「綠底但紀錄說還在跑」——兩種都比少一條規則糟。
+        _settled = bool(t.get("settled"))
+        if st.startswith("結案") and not _settled:
+            errs.append("D11 %s 的 state 以『結案』開頭卻沒有 settled ⇒ 看板不會整列綠底"
+                        "（顯示與判定不一致）" % t["id"])
+        if _settled and st.startswith("未結案"):
+            errs.append("D11 %s 有 settled（已了結綠底）但 state 仍以『未結案』開頭" % t["id"])
+        # D12 前置閘門（2026-09-30 §64）：宣告「可跑」之前，先證明**這一格要的判決還不存在**。
+        # 為什麼：L25-6 一直寫「✅ 現在能跑 — 前置＝加大配對 n」，而它要的那個判決
+        # （事先登記的 N=12 檢定）**兩晚前就跑完並留在樹上** ⇒ 差一點用 ~40 趟 launch 重印一次。
+        # 判準在 scripts/check/runnable_gate.py（當場重跑；判不了就紅 ⇒ fail-closed）。
+        try:
+            if HERE not in sys.path:
+                sys.path.insert(0, HERE)
+            import runnable_gate as RG
+            errs.extend(RG.check_target(t, root, rgate_cache)["errs"])
+        except Exception as exc:  # noqa: BLE001
+            errs.append("D12 %s 的前置閘門載不進／跑不動：%s: %s"
+                        % (t["id"], type(exc).__name__, exc))
         if st.startswith("結案"):
             if st.startswith("結案（排除）") or ev.get("cert_by") == "排除附機制":
                 if not (ev.get("cert_by") and ev.get("source")):
@@ -345,8 +869,13 @@ def validate(board, nodes, root=ROOT):
         # D7b 計數器端點：宣告 counter_quote 的格，當場重跑檢查器驗它（見 counter_verdict）。
         # ⚠ 它與時間引用**互斥但不強迫**：有 counter_quote 的格不必再拿一個時間引用（那正是
         #   本條存在的理由）；反之亦然。兩者都宣告就兩者都驗。
-        cq = ev.get("counter_quote")
-        if cq:
+        # [2026-10-01] 一格可以有**兩個以上**端點（L20-7 是第一例：① ρ 的儀器端點、② ρ 的價格端點）
+        # ⇒ `counter_quotes`（複數）與單數 `counter_quote` 並存，**每一個都當場重跑**（fail-closed）。
+        #   為什麼不是「留一個就好」：兩個端點判的是兩件事（量具活著／價格是多少），砍掉任一個
+        #   就等於那個端點的漂移不再有人看見 —— 那正是 D7b 存在的理由。
+        cqs = ([ev["counter_quote"]] if ev.get("counter_quote") else []) \
+            + list(ev.get("counter_quotes") or [])
+        for cq in cqs:
             if not isinstance(cq, dict) or not cq.get("verdict"):
                 errs.append("D7b %s 的 counter_quote 缺 verdict" % t["id"])
             else:
@@ -356,14 +885,16 @@ def validate(board, nodes, root=ROOT):
                 elif live != cq["verdict"]:
                     errs.append("D7b %s 宣告 counter verdict=%s，但檢查器現在判 %s"
                                 % (t["id"], cq["verdict"], live))
-            if closed_real:
-                if ev.get("metric") not in COUNTER_METRICS:
-                    errs.append("D7b %s 用 counter_quote 結案，但 evidence.metric=%r 不在 %s"
-                                % (t["id"], ev.get("metric"), list(COUNTER_METRICS)))
-                elif cq.get("verdict") != "FLIP":
-                    errs.append("D7b %s 用計數器端點結案，但 counter_quote.verdict=%s ≠ FLIP"
-                                % (t["id"], cq.get("verdict")))
-        if closed_real and not cq:
+        if closed_real and cqs:
+            want = COUNTER_CLOSE_VERDICTS.get(ev.get("metric"))
+            have = [c.get("verdict") for c in cqs if isinstance(c, dict)]
+            if want is None:
+                errs.append("D7b %s 用 counter_quote 結案，但 evidence.metric=%r 不在 %s"
+                            % (t["id"], ev.get("metric"), list(COUNTER_METRICS)))
+            elif want not in have:
+                errs.append("D7b %s 用端點結案，但宣告的端點判詞 %s 裡沒有 %s（metric=%s）"
+                            % (t["id"], have, want, ev.get("metric")))
+        if closed_real and not cqs:
             if not q:
                 errs.append("D7 %s 標結案但沒有 evidence.quote（結案必須有一場可引用的讀數）" % t["id"])
             elif q.get("verdict") != "QUOTABLE":
@@ -374,15 +905,34 @@ def validate(board, nodes, root=ROOT):
         # （per-layer hook 被跳過、計數器回傳常數）或源碼明文 never-quote 的量具時，
         # 下一個人照著跑只會再得到一個不可引用的數。這種臂不准當**選項**。
         o = t.get("options") or {}
-        live_arms = [a for a in (o.get("arms") or []) if isinstance(a, str)]
-        lived = {a.lstrip("-").strip() for a in live_arms}
-        for arm in live_arms:
+        raw_arms = o.get("arms") or []
+        live_arms = []          # [(名字, 臂字串, 宣告 dict 或 None)]
+        for a in raw_arms:
+            if isinstance(a, str):
+                live_arms.append((a, a, None))
+            elif isinstance(a, dict) and a.get("arm"):
+                live_arms.append((str(a["arm"]), str(a["arm"]), a))
+            else:
+                errs.append("D10 %s 的 options.arms 每一項要是字串或 {arm, role, why, source}"
+                            "（收到 %r）" % (t["id"], a))
+        lived = {a.lstrip("-").strip() for a, _, _ in live_arms}
+        for name, arm, rec in live_arms:
             flags, why = arm_void_flags(arm)
             if flags is None:
                 errs.append("D10 %s 的臂判不了（%s）" % (t["id"], why)); continue
-            if flags:
-                errs.append("D10 %s 的 options.arms 留著不能量交付目標的臂（%s）：%s"
-                            % (t["id"], "、".join("%s=%s" % kv for kv in sorted(flags.items())), arm))
+            if not flags:
+                continue
+            # `role: reference`（2026-09-30）：這一支是**成對量測的基準端**（終點上界或底），
+            # 不是通往目標的路 —— 它帶著 R5／R6 的量具是**本來就如此**。放行的代價是它必須
+            # 附 why ＋ source（例外要留得下理由與出處），而且畫面上標成「基準臂」，
+            # 免得下一個人把它報出來的 t/s（例：NOFILL 的 13.75）當成交付讀數。
+            if rec is not None and str(rec.get("role") or "") == "reference":
+                if not rec.get("why") or not rec.get("source"):
+                    errs.append("D10 %s 的基準臂 %s 缺 why／source（例外必須留下理由與出處）"
+                                % (t["id"], arm))
+                continue
+            errs.append("D10 %s 的 options.arms 留著不能量交付目標的臂（%s）：%s"
+                        % (t["id"], "、".join("%s=%s" % kv for kv in sorted(flags.items())), arm))
         removed = o.get("arms_removed")
         if removed is not None and not isinstance(removed, list):
             errs.append("D10 %s 的 arms_removed 必須是清單" % t["id"])
@@ -417,6 +967,35 @@ def validate(board, nodes, root=ROOT):
                                 % (t["id"], arm, r))
         if len({str(r.get("arm")) for r in recs}) != len(recs):
             errs.append("D10 %s 的 arms_removed 有重複的臂" % t["id"])
+        # D16 臂類別 vs 卡點型別（2026-09-30）——L20-1 的實例，也是我自己踩的坑：
+        # 那一格 `options.arms` 是空的（唯一一支臂被 R6 刪掉），但 `precondition.block.kind=window`
+        # ⇒ 看板同時說「不能出可引用讀數」和「等窗口就好」。順著那句話讀，結論會是「它只差窗口」——
+        # 而 R6（輸出未驗）的解**不是窗口**：抽到再乾淨的窗口，這支臂的 t/s 仍然不可引用。
+        # 這一條不重寫判準（R5／R6 的定義仍在 quote_gate 的登記表），只把兩欄的事實對齊，且三件都要：
+        #   ① 空臂 ＋ 未了結 ⇒ 不准沉默（block 必須存在 —— 卡點是臂的類別，不是判決）
+        #   ② `block.kind` 不准是 window（window 只在「臂是對的、只是窗口髒」時才是正確答案）
+        #   ③ 內文必須指名擋住它的規則，否則讀的人找不到登記表裡寫死的解除條件
+        if live_arms == [] and recs and not t.get("settled"):
+            _blk = (t.get("precondition") or {}).get("block")
+            if not isinstance(_blk, dict):
+                errs.append("D16 %s 的 options.arms 是空的（每一支臂都被 R5／R6 刪掉），但沒有 "
+                            "precondition.block —— 這一格跑不了的原因不是判決，也不是窗口，是臂的類別"
+                            % t["id"])
+            else:
+                _bk = str(_blk.get("kind") or "")
+                if _bk == "window":
+                    errs.append("D16 %s 的 arms 空（全被 R5／R6 刪除）卻寫 block.kind=window —— "
+                                "窗口修不好臂的身分：抽到再乾淨的窗口，這支臂的讀數仍然不可引用"
+                                "（要嘛換一支不在登記表裡的臂、要嘛走登記表寫死的解除條件）" % t["id"])
+                elif _bk not in ("decision", "code", "mechanism"):
+                    errs.append("D16 %s 的 block.kind=%r 不合法（空臂的格只收 decision／code／mechanism）"
+                                % (t["id"], _bk))
+                _txt = " ".join(str(_blk.get(k) or "") for k in ("why", "next")) \
+                    + " " + str((_blk.get("assert") or {}).get("why") or "") \
+                    + " " + str((t.get("precondition") or {}).get("why") or "")
+                if not re.search(r"\bR[567]\b", _txt):
+                    errs.append("D16 %s 的卡點內文沒有指名擋住它的規則（R5／R6／R7）—— 解除條件"
+                                "寫在 quote_gate 的登記表裡，這裡至少要指得出來" % t["id"])
         for f in ("expect_ms", "expect_tps"):
             v = str(t.get(f) or "").strip()
             if v.startswith("—") or v == "":
@@ -500,6 +1079,55 @@ def validate(board, nodes, root=ROOT):
                         "要嘛明文 quote_ungateable 附理由）" % c.get("id"))
         if c.get("meets") is True and (c.get("profile") != "prod-new" or c.get("entry") != "harness bench"):
             errs.append("D6 certified %s 標 meets，但 profile／entry 不是 prod-new／harness bench" % c.get("id"))
+
+    # D17 棘輪 vs 認證表（2026-10-01；operator：「--check 要驗『棘輪與已認證表一致』」）
+    errs.extend(ratchet_consistency(board, root))
+
+    # ── D15：待升級（operator 2026-09-30「搬成功要放到已認證」）────────────────────────
+    # 這一格的價值在於**跑之前就把條件寫死**，而且跑完之後**不會被忘記**：判準一旦當場成立
+    # 而它還躺在 pending，`--check` 就紅。升級的是一個**分布**，不是一個單點（§73.5）。
+    cert_ids = set(c.get("id") for c in (board.get("certified") or []))
+    try:
+        adm_profiles = list(_qg().QUOTABLE_PROFILES)
+    except Exception:  # noqa: BLE001
+        adm_profiles = ["prod-new"]
+    for p in board.get("pending_promotion") or []:
+        if p.get("id") in cert_ids:
+            errs.append("D15 %s 同時在 certified 與 pending_promotion（升級要二選一）" % p.get("id"))
+        for f in ("id", "item", "why", "accept", "judge", "state", "arms"):
+            if p.get(f) in (None, "", []):
+                errs.append("D15 pending %s 缺欄位 %s" % (p.get("id"), f))
+        if p.get("charter") and not os.path.exists(os.path.join(root, p["charter"])):
+            errs.append("D15 pending %s 的 charter 不存在（%s）" % (p.get("id"), p["charter"]))
+        # 候選臂必須在認可口徑上（R7）⇒ 這一格量到什麼都升不了級的話，就不該擺在這裡
+        for arm in (p.get("arms") or []):
+            prof = str(arm).split(":", 1)[0].strip()
+            if prof not in adm_profiles:
+                errs.append("D15 pending %s 的候選臂 %r 不在認可口徑 %s 上（R7 ⇒ 量到也不能升）"
+                            % (p.get("id"), arm, adm_profiles))
+        j = p.get("judge") or {}
+        if j.get("kind") not in PENDING_JUDGE_KINDS:
+            errs.append("D15 pending %s 的 judge.kind=%r 不認得（只收 %s）"
+                        % (p.get("id"), j.get("kind"), list(PENDING_JUDGE_KINDS)))
+            continue
+        try:
+            mn_l = int(j.get("min_launches") or 0)
+            mn_q = int(j.get("min_quotable") or 0)
+        except (TypeError, ValueError):
+            errs.append("D15 pending %s 的 judge 數字不是整數（min_launches=%r、min_quotable=%r）"
+                        % (p.get("id"), j.get("min_launches"), j.get("min_quotable")))
+            continue
+        if mn_l < 1 or mn_q < 1 or mn_q > mn_l:
+            errs.append("D15 pending %s 的 judge 數字不合理（min_launches=%s、min_quotable=%s）"
+                        % (p.get("id"), mn_l, mn_q))
+            continue
+        n_l, n_q, how = pending_cluster(root, j)
+        if n_l is None:
+            errs.append("D15 pending %s 判不了：%s" % (p.get("id"), how))
+            continue
+        if n_l >= mn_l and n_q >= mn_q:
+            errs.append("D15 pending %s **條件已達成**（%d 場可引用／門檻 %d、共 %d 場）卻還在 pending"
+                        " ⇒ 升進 certified（附 quote）：%s" % (p.get("id"), n_q, mn_q, n_l, how))
     out = board.get("out") or ""
     if not out.startswith("docs/") or not out.endswith(".html"):
         errs.append("D3 out 必須是 docs/*.html（得到 %r）" % out)
@@ -529,6 +1157,51 @@ def render_board(board, nodes, here, out_path):
           % (_live, _rm,
              ("其中 <b>%d 格（%s）已沒有任何可跑的臂</b> ⇒ 目前沒有任何一條已知的路能量到它的交付數字。"
               % (len(_bare), "、".join(_bare))) if _bare else ""))
+    _pc = precondition_census(board)
+    if _pc:
+        _ne, _du, _bl, _dr, _drids = _pc
+        _tone = "warning" if _dr else "success"
+        A('<div class="%s"><b>前置（判決存不存在）（D12）</b>：'
+          '可產出新資訊 <b>%d</b> 格 ／ 只是重印已存在判決 <b>%d</b> 格 ／ 卡在人與機制 <b>%d</b> 格（共 %d 格）。'
+          '%s判準的唯一定義在 <code>scripts/check/runnable_gate.py</code>；逐格的現判在逐子目標頁。'
+          '</div>'
+          % (_tone, _ne, _du, _bl, _ne + _du + _bl,
+             ("其中 <b>%d 格（%s）宣告與現判不符</b>（fail-closed，正常不會發生）。"
+              % (_dr, "、".join(_drids))) if _dr else ""))
+    _q, _qc = blocked_queue(board)
+    if _q:
+        _LABELS = _RG.BLOCK_LABELS if "_RG" in dir() else {}
+        try:
+            import runnable_gate as _RG3
+            _LABELS = _RG3.BLOCK_LABELS
+        except Exception:  # noqa: BLE001
+            _LABELS = {}
+        _order = " → ".join("%s %d" % (k, _qc[k]) for k in
+                            ("decision", "code", "mechanism", "window") if _qc.get(k))
+        A('<div class="warning"><b>決策佇列（D13）</b>：會產出新資訊的 <b>%d</b> 格（不在佇列裡），'
+          '其餘 <b>%d</b> 格各卡在一種東西上 —— %s。<br>排序＝<b>決定 → 改動 → 機制 → 窗口</b>'
+          '（最便宜又解鎖最多的先做）；每一項的「下一個動作」如下，'
+          '判準的唯一定義在 <code>scripts/check/runnable_gate.py</code>。</div>'
+          % ((_pc[0] if _pc else 0), len(_q), _order))
+        _nscan = sum(1 for r in _q if r[4] in ("HELD", "GONE", "CANNOT_JUDGE"))
+        _nheld = sum(1 for r in _q if r[4] == "HELD")
+        _ngone = sum(1 for r in _q if r[4] == "GONE")
+        _nun = sum(1 for r in _q if r[4] == "UNSCANNED")
+        if _ngone:
+            A('<div class="warning"><b>⚠ 有 %d 格的卡點**已經不在樹上**</b>（宣告過期，該改可跑或結案）。</div>'
+              % _ngone)
+        A('<div class="legend">卡點斷言（D14）：<b>可掃描 %d／%d</b> —— 其中 <b>%d 格現判「卡點還在」</b>'
+          '（HELD，每次 build 當場重掃）；<b>%d 格樹上掃不到</b>（UNSCANNED，只靠散文，逐列標示）。</div>'
+          % (_nscan, len(_q), _nheld, _nun))
+        A('<table class="queue"><thead><tr><th>型別</th><th>誰</th><th>格</th>'
+          '<th>卡點斷言</th><th>下一個動作</th></tr></thead><tbody>')
+        for _k, _ow, _tid, _nx, _lv, _lw in _q:
+            _tone = {"HELD": "success", "GONE": "warning"}.get(_lv, "legend")
+            A('<tr><td><b>%s</b><br><span class="legend">%s ×%d</span></td><td><code>%s</code></td>'
+              '<td><code>%s</code></td><td><div class="%s"><b>%s</b><br>%s</div></td>'
+              '<td class="qnext">%s</td></tr>'
+              % (_k, _LABELS.get(_k, ""), _qc.get(_k, 0), _ow, _tid, _tone, _lv, _lw, _nx))
+        A('</tbody></table>')
     A('<div class="grid">')
     for s in board.get("summary") or []:
         tone = (' %s' % s["tone"]) if s.get("tone") else ""
@@ -568,6 +1241,36 @@ def render_board(board, nodes, here, out_path):
     #   每一列都會各自關一次表格 ⇒ 瀏覽器把 C2／C3 擠出表格外（2026-09-30 的 7b374d03b 就是這樣壞的：
     #   縮排 4 → 8 把關閉標籤吃進了迴圈）。它必須與 `A("<table>…")` 同層。
     A("</tbody></table>")
+    # ── 待升級（D15）：operator 2026-09-30「搬成功要放到已認證」──────────────────────
+    # 畫這一區的理由：一個「待跑」的承諾如果不寫在**唯一來源**裡，就會變成人腦記著；
+    # 而條件寫死之後，`validate` 會在它成立的那一輪把 `--check` 打紅 ⇒ 升級不會被忘記。
+    pend = board.get("pending_promotion") or []
+    if pend:
+        A('<h3>待升級（D15）—— 條件<b>跑前</b>寫死；一旦當場成立，這一頁就會讓 '
+          '<code>--check</code> 變紅直到它升上去</h3>')
+        A('<div class="warning"><b>operator 2026-09-30：「搬成功要放到已認證」。</b>'
+          '所以這一格<b>先寫死怎麼算搬成功</b>（不是跑完再挑一個好看的），而且判準當場成立而它還躺在'
+          '這裡沒升進上表時，<code>scripts/check/decode_board_build.py --check</code> 就紅。'
+          '升級的對象是一個<b>分布</b>，不是一個單點——同一支臂同一格連三場是 8.933／8.486／10.923，'
+          '而前兩場各有一顆 rep 塌到 3.8–3.9（§73.5）。</div>')
+        A("<table><thead><tr><th>id</th><th>項目</th><th>怎麼才算搬成功（跑前寫死）</th>"
+          "<th>現在</th><th>候選臂</th><th>現狀</th></tr></thead><tbody>")
+        for p in pend:
+            j = p.get("judge") or {}
+            n_l, n_q, how = pending_cluster(ROOT, j)
+            mn_l, mn_q = j.get("min_launches"), j.get("min_quotable")
+            if n_l is None:
+                now = '<span class="badge b-warn">判不了</span><br><span class="legend">%s</span>' % how
+            else:
+                done = (mn_l is not None and mn_q is not None and n_l >= mn_l and n_q >= mn_q)
+                now = ('<span class="badge %s">%d／%d 場可引用</span>'
+                       '<br><span class="legend">%s</span>'
+                       % ("b-ok" if done else "b-info", n_q, n_l, how))
+            A("<tr><td><b>%s</b></td><td>%s</td><td>%s<br><span class=\"legend\">%s</span></td>"
+              "<td>%s</td><td><code>%s</code></td><td>%s</td></tr>"
+              % (p.get("id"), p.get("item"), p.get("accept"), p.get("why", ""),
+                 now, "、".join(p.get("arms") or []), p.get("state", "")))
+        A("</tbody></table>")
     # [CGC 2026-09-30 版面收斂] 本頁＝**三段**：已認證／L20／L25。operator 的指令：
     # 「三個『結案』到現在只成立三格；以下（冷啟 rep 的產物，不是機器變快）以上的內容請整理在
     #   已認證/L20/L25 上面，其餘刪除。」
@@ -678,6 +1381,31 @@ def render_page(board, t, nodes):
     A("<tr><th>預期（t/s）</th><td>%s</td></tr>" % t["expect_tps"])
     # 09-30 operator：能不能跑／前置是啥，放在現況之前，一眼可判
     A('<tr><th>現在能跑？</th><td><span class="runnable">%s</span></td></tr>' % t["runnable"])
+    _pre = t.get("precondition") or {}
+    if _pre:
+        try:
+            if HERE not in sys.path:
+                sys.path.insert(0, HERE)
+            import runnable_gate as _RG
+            _lv, _lwhy, _ = _RG.scan(_pre, ROOT)
+        except Exception as exc:  # noqa: BLE001
+            _lv, _lwhy = "CANNOT_JUDGE", "閘門載不進：%s" % exc
+        _cls = "success" if ((_pre.get("rerun") == "needed" and _lv == "ABSENT")
+                            or (_pre.get("rerun") == "duplicate" and _lv == "EXISTS")) else "warning"
+        A('<tr><th>前置（判決存不存在）</th><td><div class="%s"><b>%s</b>／<code>%s</code> ⇒ '
+          '現判 <b>%s</b><br>%s<br><span class="legend">宣告理由：%s</span></div></td></tr>'
+          % (_cls, _pre.get("rerun", "—"), _pre.get("kind", "—"), _lv, _lwhy, _pre.get("why", "")))
+        _blk = _pre.get("block") or {}
+        if _pre.get("rerun") == "blocked" and _blk.get("kind"):
+            import runnable_gate as _RG2
+            A('<tr><th>卡在哪一型（D13）</th><td><b>%s</b>（<code>%s</code>／誰＝<code>%s</code>）'
+              '<br><b>下一個動作</b>：%s</td></tr>'
+              % (_RG2.BLOCK_LABELS.get(_blk.get("kind"), _blk.get("kind")),
+                 _blk.get("kind"), _blk.get("owner"), _blk.get("next", "")))
+            _blv, _blw, _ = _RG2.scan_block_assert(_blk, ROOT)
+            A('<tr><th>卡點斷言（D14）</th><td><b>%s</b><br>%s<br>'
+              '<span class="legend">宣告的理由：%s</span></td></tr>'
+              % (_blv, _blw, _blk.get("assert_why", "")))
     A("<tr><th>現況（已量）</th><td>%s</td></tr>" % t["now"])
     A("<tr><th>action</th><td>%s</td></tr>" % t["action"])
     A("<tr><th>驗收</th><td>%s</td></tr>" % t["accept"])
@@ -702,11 +1430,28 @@ def render_page(board, t, nodes):
              q.get("verdict", "—"), art_html, q.get("why", "")))
     elif ev.get("quote_ungateable"):
         A('<div class="warning"><b>引用閘門：無從判</b> —— %s</div>' % ev["quote_ungateable"])
+    for cq in ([ev["counter_quote"]] if ev.get("counter_quote") else []) \
+            + list(ev.get("counter_quotes") or []):
+        okv = cq.get("verdict") in set(COUNTER_CLOSE_VERDICTS.values())
+        A('<div class="%s"><b>端點判詞：%s</b>（檢查器 <code>%s</code>，build 當場重跑；'
+          '這一格的端點不是時間讀數）<br>%s</div>'
+          % ("success" if okv else "warning", cq.get("verdict", "—"),
+             str(cq.get("tool", "")), cq.get("why", "")))
     o = t.get("options") or {}
     A("<h3>臂（options）</h3>")
     arms = o.get("arms") or []
     if arms:
-        A("<ul>%s</ul>" % "".join("<li><code>%s</code></li>" % esc(a) for a in arms))
+        out = []
+        for a in arms:
+            if isinstance(a, dict) and a.get("arm"):
+                tag = "（<b>基準臂</b>：成對量測的端點，報出來的 t/s 不是交付讀數）" \
+                    if str(a.get("role") or "") == "reference" else ""
+                out.append("<li><code>%s</code>%s%s</li>"
+                           % (esc(a["arm"]), tag,
+                              ("<br>%s" % esc(a.get("why", ""))) if a.get("why") else ""))
+            else:
+                out.append("<li><code>%s</code></li>" % esc(a))
+        A("<ul>%s</ul>" % "".join(out))
     else:
         A('<div class="warning">本格<b>沒有可跑的臂</b> —— 宣告過的臂全部被 R5／R6 擋掉（見下），'
           '所以 20+／25+ 不可能靠它們量到。</div>')
@@ -753,6 +1498,16 @@ def render_page_md(board, t):
          "- **預期 ms/step**：%s" % re_plain(t["expect_ms"]),
          "- **預期 t/s**：%s" % re_plain(t["expect_tps"]),
          "", "## 現況（已量）", re_plain(t["runnable"]), "", re_plain(t["now"]), "",
+         "## 前置（判決存不存在）", "",
+         "- **rerun**：`%s`／`%s`（判準＝`scripts/check/runnable_gate.py`）——%s"
+         % ((t.get("precondition") or {}).get("rerun", "—"),
+            (t.get("precondition") or {}).get("kind", "—"),
+            re_plain((t.get("precondition") or {}).get("why", ""))),
+         ("- **卡在哪一型（D13）**：`%s`／`%s`；**下一個動作**：%s"
+          % (((t.get("precondition") or {}).get("block") or {}).get("kind", "—"),
+             ((t.get("precondition") or {}).get("block") or {}).get("owner", "—"),
+             re_plain(((t.get("precondition") or {}).get("block") or {}).get("next", "—")))
+          if ((t.get("precondition") or {}).get("block") or {}).get("kind") else ""),
          "## 動作與判準", "- **action**：%s" % re_plain(t["action"]),
          "- **驗收**：%s" % re_plain(t["accept"]), "- **否證**：%s" % re_plain(t["falsify"]), "",
          "## 結案判準現況", "",
@@ -770,10 +1525,23 @@ def render_page_md(board, t):
               "- **為什麼**：%s" % re_plain(q.get("why", "")), ""]
     elif ev.get("quote_ungateable"):
         L += ["### 引用閘門", "", "> **無從判** —— %s" % re_plain(ev["quote_ungateable"]), ""]
+    cq = ev.get("counter_quote")
+    if cq:
+        L += ["### 端點判詞", "",
+              "- **verdict**：`%s`（檢查器 `%s`，build 當場重跑；這一格的端點不是時間讀數）"
+              % (cq.get("verdict", "—"), cq.get("tool", "")),
+              "- **為什麼**：%s" % re_plain(cq.get("why", "")), ""]
     o = t.get("options") or {}
     L += ["## 臂（options）", ""]
     arms = o.get("arms") or []
-    L += [("- `%s`" % a) for a in arms] or ["（本格沒有可跑的臂 —— 宣告過的臂全被 R5／R6 擋掉）"]
+    def _arm_md(a):
+        if isinstance(a, dict) and a.get("arm"):
+            tag = "（**基準臂**：成對量測的端點，報出來的 t/s 不是交付讀數）" \
+                if str(a.get("role") or "") == "reference" else ""
+            return "- `%s`%s%s" % (a["arm"], tag,
+                                   ("：%s" % re_plain(a["why"])) if a.get("why") else "")
+        return "- `%s`" % a
+    L += [_arm_md(a) for a in arms] or ["（本格沒有可跑的臂 —— 宣告過的臂全被 R5／R6 擋掉）"]
     for rec in (o.get("arms_removed") or []):
         L.append("- **已刪除** `%s`（%s）：%s"
                  % (rec.get("arm", ""), "／".join(rec.get("rules") or []), re_plain(rec.get("why", ""))))
@@ -957,6 +1725,19 @@ def cmd_build(yaml_path=DEFAULT_YAML):
           % (len(tg), len(closed), "、".join(closed) or "—", len(board.get("certified") or [])))
     _live, _rm, _bare = arm_census(board)
     if _rm:
+        _q, _qc = blocked_queue(board)
+        if _q:
+            print("[decode-board] 卡點斷言：可掃描 %d／%d（HELD %d）；樹上掃不到 %d"
+                  % (sum(1 for r in _q if r[4] in ("HELD", "GONE", "CANNOT_JUDGE")), len(_q),
+                     sum(1 for r in _q if r[4] == "HELD"),
+                     sum(1 for r in _q if r[4] == "UNSCANNED")))
+            print("[decode-board] 決策佇列：%s（共 %d 格；排序＝決定→改動→機制→窗口）"
+                  % ("／".join("%s %d" % (k, _qc[k]) for k in
+                                ("decision", "code", "mechanism", "window") if _qc.get(k)), len(_q)))
+        _pc = precondition_census(board)
+        if _pc:
+            print("[decode-board] 前置：可產新資訊 %d／重印 %d／card 卡住 %d；宣告與現判不符 %d"
+                  % (_pc[0], _pc[1], _pc[2], _pc[3]))
         print("[decode-board] 臂：可跑 %d／已刪 %d（R5／R6）；無可跑臂的格 %d（%s）"
               % (_live, _rm, len(_bare), "、".join(_bare)))
     print("VERDICT: PASS")
@@ -1003,11 +1784,14 @@ def cmd_selftest():
     art_dirty = os.path.join(gate_tmp, "gate_dirty.json")
 
     def _fixture(path, attrib):
+        # ⚠ `profile` 必要（R7，2026-09-30）：真產物的臂一定帶它，fixture 少了就會被判 DIRTY
+        #   ——那樣這一組案例會變成在測 R7，而不是在測 D7／D8（第一次上線時正是這樣紅的）。
         with open(path, "w", encoding="utf-8") as fh:
             json.dump({"rows": [{"n_prompt": 0, "n_gen": 64, "n_depth": 512,
                                  "avg_ts": 11.703, "stddev_ts": 0.348,
                                  "samples_ts": [11.65, 11.38, 12.07]}],
                        "attribution": {"verdict": attrib, "thermal_worst": "NOMINAL"},
+                       "profile": "prod-new", "tag": "prod-new",
                        "cell": {"named_cell": "delivery"}}, fh)
 
     _fixture(art_ok, "none")     # 逐 rep 穩 ＋ 窗口乾淨 ⇒ QUOTABLE
@@ -1027,6 +1811,325 @@ def cmd_selftest():
                                                 "quote": {"artifact": art_ok, "verdict": "QUOTABLE"}}
     case("D7 closure with QUOTABLE quote", not any(e.startswith("D7") or e.startswith("D6")
                                                    for e in validate(b, nodes)[0]))
+    # --- D7b 儀器端點（metric=m_ratio，2026-09-30 §63；L25-5 是第一例） ---
+    mtp_run = os.path.join(gate_tmp, "mtp_run.json")
+    mtp_log = os.path.join(gate_tmp, "mtp_run.stderr.log")
+
+    def _mtp_fixture(diff_ms, attrib="none"):
+        with open(mtp_run, "w", encoding="utf-8") as fh:
+            json.dump([{"rows": [{"n_prompt": 2048, "n_gen": 0, "avg_ts": 305.0},
+                                 {"n_prompt": 0, "n_gen": 128, "avg_ts": 9.9}],
+                        "cache": {"hit_rate_pct": 91.6}, "incomplete": False,
+                        "cell": {"named_cell": "(default)", "depths": "512"},
+                        "attribution": {"verdict": attrib}}], fh)
+        def line(cd, t):
+            return ("CGC-MTP-PERF type=draft-mtp calls_begin=%d calls_draft=%d calls_accept=%d "
+                    "gen_tokens=%d acc_tokens=%d t_begin_ms=0.0 t_draft_ms=%.1f t_accept_ms=0.2 "
+                    "acc_rate=1.0000 gen_tok_per_round=1.000 acc_tok_per_round=1.000 "
+                    "emit_tok_per_round=2.000 ms_per_round=8.0\n" % (cd - 1, cd, cd, cd, cd, t))
+        with open(mtp_log, "w", encoding="utf-8") as fh:
+            fh.write(line(160, 1000.0 - diff_ms * 1.0) if False else
+                     line(160, 1000.0) + line(192, 1000.0 + diff_ms))
+
+    # --- D12／前置閘門的儀表：precondition_census（頁首那一行帳目的算術） ---
+    def _census(rerun, globpat, kind="verdict_file"):
+        # ⚠ 用**最小**的假看板：`base` 是真 YAML（16 格都有自己的前置），拿它當底會把 16 格一起算進來。
+        bb = {"layers": [{"id": "L-selftest", "targets": [{
+            "id": "T1", "precondition": {"rerun": rerun, "kind": kind,
+                                         "spec": {"glob": globpat, "contains": "board"}}}]}]}
+        return precondition_census(bb)
+
+    _OK = "scripts/check/decode_board_2026-09-29.yaml"      # 一定存在
+    _NO = "no_such_dir_for_selftest_*/**"                  # 一定不存在
+    case("census：needed ＋ 判決不存在 ⇒ 算「可產新資訊」",
+         _census("needed", _NO) == (1, 0, 0, 0, []))
+    case("census：needed 但判決已存在 ⇒ 算漂移並點名",
+         _census("needed", _OK) == (0, 0, 0, 1, ["T1"]))
+    case("census：duplicate ＋ 判決存在 ⇒ 算「只是重印」",
+         _census("duplicate", _OK) == (0, 1, 0, 0, []))
+    case("census：duplicate 但掃不到 ⇒ 漂移",
+         _census("duplicate", _NO) == (0, 0, 0, 1, ["T1"]))
+    case("census：blocked ⇒ 歸「卡在人與機制」且不掃描",
+         _census("blocked", _NO) == (0, 0, 1, 0, []))
+
+    # --- D15／待升級：跑前寫死 ＋ 成立就紅（operator 2026-09-30「搬成功要放到已認證」）---
+    def _pend(globpat=None, **over):
+        spec = {"id": "PX", "item": "item", "why": "why", "accept": "accept",
+                "state": "待跑", "arms": ["prod-new"],
+                "judge": {"kind": "quotable_launch_cluster",
+                          "glob": globpat or "pend_run_*/**/*.json", "cell": "delivery",
+                          "min_launches": 3, "min_quotable": 2}}
+        if "judge" in over:
+            spec["judge"] = over.pop("judge")
+        spec.update(over)
+        bb = {"out": "docs/x.html", "layers": [], "certified": [],
+              "pending_promotion": [spec]}
+        # ⚠ root=gate_tmp：真 YAML 的其他格會因為路徑找不到而紅 ⇒ 只看這一格的 D15。
+        return [e for e in validate(bb, {}, root=gate_tmp)[0] if e.startswith("D15")]
+
+    case("D15 現況（還沒有這一輪的產物）⇒ 不紅", not _pend())
+    case("D15 缺 accept（驗收沒寫死）⇒ 紅", bool(_pend(accept="")))
+    case("D15 候選臂非認可口徑（R7）⇒ 紅", bool(_pend(arms=["prod25:!CGC_X=1"])))
+    case("D15 judge.kind 不認得 ⇒ 紅", bool(_pend(judge={"kind": "nope", "glob": "x/*.json"})))
+    case("D15 門檻不合理（min_quotable > min_launches）⇒ 紅",
+         bool(_pend(judge={"kind": "quotable_launch_cluster", "glob": "x/*.json",
+                           "min_launches": 3, "min_quotable": 5})))
+    # 三場真產物形狀：可引用／可引用／不可引用（第三場 spread 1.27）。
+    # ⚠ `stddev_ts` 必須與 `samples_ts` 反算值相符（R0 內部自洽）——不然閘門判 REFUSE，
+    #   這一組案例就會變成「在測 R0」而不是在測 D15（第一次寫的時候正是這樣錯的）。
+    def _sd(xs):
+        # ⚠ **樣本**標準差（除以 n−1）：quote_gate 的 R0 用樣本 CV 對回報的 `stddev_ts`，
+        #   用母體標準差（除以 n）會差 sqrt(n/(n−1))＝1.22× ⇒ 每個 fixture 都被判 REFUSE。
+        _m = sum(xs) / len(xs)
+        return (sum((x - _m) ** 2 for x in xs) / (len(xs) - 1)) ** 0.5
+    for _i, (_avg, _sm) in enumerate(((10.9, [10.34, 11.34, 11.08]),
+                                      (9.0, [8.83, 9.59, 9.70]),
+                                      (7.0, [7.00, 8.90, 7.10]))):
+        _dd = os.path.join(gate_tmp, "pend_run_%d" % _i)
+        os.makedirs(_dd, exist_ok=True)
+        with open(os.path.join(_dd, "run.json"), "w", encoding="utf-8") as fh:
+            json.dump([{"rows": [{"n_prompt": 0, "n_gen": 64, "n_depth": 512,
+                                  "avg_ts": _avg, "stddev_ts": _sd(_sm), "samples_ts": _sm}],
+                        "attribution": {"verdict": "none", "thermal_worst": "NOMINAL"},
+                        "profile": "prod-new", "tag": "prod-new",
+                        "cell": {"named_cell": "delivery"}}], fh)
+    case("D15 3 場 2 可引用 ≧ 門檻 ⇒ **紅（該升級了）**", bool(_pend()))
+    case("D15 同樣 3 場但門檻要 4 場 ⇒ 不紅（場數還不夠）",
+         not _pend(judge={"kind": "quotable_launch_cluster", "glob": "pend_run_*/**/*.json",
+                          "cell": "delivery", "min_launches": 4, "min_quotable": 2}))
+    case("D15 同樣 3 場但門檻要 3 場可引用 ⇒ 不紅（可引用數還沒到）",
+         not _pend(judge={"kind": "quotable_launch_cluster", "glob": "pend_run_*/**/*.json",
+                          "cell": "delivery", "min_launches": 3, "min_quotable": 3}))
+
+    # --- D13／決策佇列：blocked_queue 的排序與計數 ---
+    def _queue(pairs, assertion=None):
+        bb = {"layers": [{"id": "L", "targets": [
+            {"id": i, "precondition": {"rerun": "blocked", "kind": "none", "why": "f",
+                                       "block": {"kind": k, "owner": "operator", "next": "x",
+                                                 "assert": assertion or
+                                                 {"kind": "none", "why": "fixture"}}}}
+            for i, k in pairs]}]}
+        return blocked_queue(bb)
+
+    _q, _qc = _queue([("T-w", "window"), ("T-m", "mechanism"), ("T-c", "code"),
+                      ("T-d", "decision")])
+    case("queue：排序＝決定→改動→機制→窗口（不是 YAML 順序）",
+         [r[0] for r in _q] == ["decision", "code", "mechanism", "window"], _q)
+    case("queue：計數逐型分開", _qc == {"window": 1, "mechanism": 1, "code": 1, "decision": 1}, _qc)
+    _q2, _qc2 = _queue([("T-2", "decision"), ("T-1", "decision")])
+    case("queue：同型內按 id 排序", [r[2] for r in _q2] == ["T-1", "T-2"], _q2)
+    _q3, _qc3 = _queue([("T-dupe", "mechanism"), ("T-dupe", "mechanism")])
+    case("queue：不吞重複的格（守門失敗時看得見）", len(_q3) == 2, _q3)
+    # --- D14：佇列每列要帶上「卡點斷言」的現判 ---
+    _qs, _ = _queue([("T-ok", "code")],
+                    assertion={"kind": "present_in_file", "glob": "scripts/check/runnable_gate.py",
+                               "contains": "BLOCK_HELD"})
+    case("queue：斷言命中 ⇒ 該列標 HELD（卡點還在）", _qs[0][4] == "HELD", _qs[0])
+    _qg, _ = _queue([("T-gone", "code")],
+                    assertion={"kind": "present_in_file", "glob": "scripts/check/runnable_gate.py",
+                               "contains": "NO_SUCH_MARKER_ANYWHERE"})
+    case("queue：斷言不再命中 ⇒ 該列標 GONE（宣告過期，頁首會警示）", _qg[0][4] == "GONE", _qg[0])
+    _qu, _ = _queue([("T-un", "mechanism")])
+    case("queue：assert(none) ⇒ 該列標 UNSCANNED（只靠散文，要被數出來）", _qu[0][4] == "UNSCANNED", _qu[0])
+
+    def _d7b(cq, metric="m_ratio", state="結案", cert_by=None):
+        # ⚠ root=gate_tmp 會讓**其他**格既有的產物路徑一起找不到 ⇒ 只看這一格的 D7b。
+        bb = copy.deepcopy(base)
+        tt = bb["layers"][0]["targets"][0]
+        tid = tt["id"]
+        tt["state"] = state
+        if cert_by:
+            tt["evidence"]["cert_by"] = cert_by
+        tt["evidence"] = {"profile": "prod-new", "entry": "harness bench", "value": "fixture",
+                          "metric": metric, "meets": True, "counter_quote": cq}
+        return [e for e in validate(bb, nodes, root=gate_tmp)[0] if e.startswith("D7b " + tid)]
+
+    CQ = {"tool": "mtp_round_split", "artifact": "mtp_run.json", "log": "mtp_run.stderr.log",
+          "limit": 0.30, "cell": "(default)", "require_attrib": "none"}
+    _mtp_fixture(0.16 * 86.13 * 32)          # m = 0.16
+    case("D7b m_ratio + WITHIN（m=0.16 ≤ 0.30）結案",
+         not _d7b(dict(CQ, verdict="WITHIN")))
+    case("D7b m_ratio 宣告 FLIP（判詞錯）⇒ 紅", bool(_d7b(dict(CQ, verdict="FLIP"))))
+    case("D7b m_ratio 門檻 0.10（m=0.16 > 0.10）⇒ REFUSE ⇒ 紅",
+         bool(_d7b(dict(CQ, verdict="WITHIN", limit=0.10))))
+    case("D7b m_ratio metric 沒登記（tps）⇒ 紅", bool(_d7b(dict(CQ, verdict="WITHIN"), metric="tps")))
+    case("D7b 未知 tool ⇒ 判不了 ⇒ 紅", bool(_d7b(dict(CQ, verdict="WITHIN", tool="nope"))))
+    case("D7b 產物不存在 ⇒ 判不了 ⇒ 紅",
+         bool(_d7b(dict(CQ, verdict="WITHIN", artifact="missing.json"))))
+    _mtp_fixture(0.16 * 86.13 * 32, attrib="swap")
+    case("D7b 窗口 attribution=swap 但宣告要求 none ⇒ 紅",
+         bool(_d7b(dict(CQ, verdict="WITHIN"))))
+    case("D7b cell 不符 ⇒ 紅", bool(_d7b(dict(CQ, verdict="WITHIN", cell="delivery"))))
+    # --- D7b 複數端點（counter_quotes，2026-10-01；L20-7 是第一例：同一格兩個端點） ---
+    def _d7b2(cqs, metric="m_ratio", state="結案"):
+        bb = copy.deepcopy(base)
+        tt2 = bb["layers"][0]["targets"][0]
+        tid2 = tt2["id"]
+        tt2["state"] = state
+        tt2["evidence"] = {"profile": "prod-new", "entry": "harness bench", "value": "fixture",
+                           "metric": metric, "meets": True, "counter_quotes": cqs}
+        return [e for e in validate(bb, nodes, root=gate_tmp)[0] if e.startswith("D7b " + tid2)]
+
+    _mtp_fixture(0.16 * 86.13 * 32)
+    case("D7b counter_quotes：兩個端點都過 ⇒ 不紅",
+         not _d7b2([dict(CQ, verdict="WITHIN"), dict(CQ, verdict="WITHIN")]))
+    case("D7b counter_quotes：其中一個判不了 ⇒ 紅（另一個過救不了它）",
+         bool(_d7b2([dict(CQ, verdict="WITHIN"),
+                     dict(CQ, verdict="WITHIN", artifact="missing.json")])))
+    case("D7b counter_quotes：真結案時，metric 要的那個判詞必須在宣告裡",
+         bool(_d7b2([dict(CQ, verdict="WITHIN")], metric="rho_price")))
+    case("D7b counter_quotes：排除結案不套門檻映射 ⇒ 不紅",
+         not _d7b2([dict(CQ, verdict="WITHIN")], metric="rho_price", state="結案（排除）"))
+    # --- D17 棘輪 vs 認證表（2026-10-01；operator：「--check 要驗一致」） ---
+    r17a = os.path.join(gate_tmp, "ratchet_a.json")
+    r17b = os.path.join(gate_tmp, "ratchet_b.json")
+
+    def _r17(path, avg):
+        sm = [avg * 0.995, avg, avg * 1.005]      # 全 rep max/min 1.010 ⇒ QUOTABLE
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump([{"rows": [{"n_prompt": 0, "n_gen": 64, "n_depth": 512, "avg_ts": avg,
+                                  "stddev_ts": avg * 0.005, "samples_ts": sm}],
+                        "attribution": {"verdict": "none", "thermal_worst": "NOMINAL"},
+                        "profile": "prod-new", "tag": "prod-new",
+                        "cell": {"named_cell": "(default)"}}], fh)
+
+    _r17(r17a, 11.8)
+    _r17(r17b, 12.0)
+
+    def _r17row(cid, art, ts, above=None, exempt=None):
+        e = {"id": cid, "item": "fixture", "value": "%s t/s" % ts, "profile": "prod-new",
+             "entry": "harness bench", "meets": True, "source": art,
+             "quote": {"artifact": art, "verdict": "QUOTABLE"}}
+        if above is not None:
+            e["ratchet"] = {"decode_ts": ts, "entered_above": above}
+        if exempt is not None:
+            e["ratchet_exempt"] = exempt
+        return e
+
+    def _r17board(rows_, a_ts, a_art):
+        bb = copy.deepcopy(base)
+        bb["certified"] = rows_
+        bb["certify_anchor"] = {"decode_ts": a_ts, "cell": "(default)", "artifact": a_art,
+                                "at": "selftest", "why": "fixture"}
+        return [e for e in validate(bb, nodes, root=gate_tmp)[0] if e.startswith("D17 ")]
+
+    _ok17 = [_r17row("C90", r17a, 11.8, 0.0), _r17row("C91", r17b, 12.0, 11.8)]
+    case("D17 一致（上限＝表上最高、每列都高於入表時的上限）", not _r17board(_ok17, 12.0, r17b))
+    case("D17 上限 ≠ 表上最高的 decode ⇒ 紅", bool(_r17board(_ok17, 11.8, r17a)))
+    case("D17 上限 artifact 不是最高那一件 ⇒ 紅", bool(_r17board(_ok17, 12.0, r17a)))
+    case("D17 某列沒嚴格高於入表時的上限 ⇒ 紅",
+         bool(_r17board([_r17row("C90", r17a, 11.8, 11.9), _r17row("C91", r17b, 12.0, 11.8)],
+                        12.0, r17b)))
+    case("D17 入表時的上限不是表上的讀數（自創的錨）⇒ 紅",
+         bool(_r17board([_r17row("C90", r17a, 11.8, 0.0), _r17row("C91", r17b, 12.0, 11.5)],
+                        12.0, r17b)))
+    case("D17 有 decode 讀數卻沒宣告 ratchet／ratchet_exempt ⇒ 紅",
+         bool(_r17board([_r17row("C90", r17a, 11.8), _r17row("C91", r17b, 12.0, 11.8)], 12.0, r17b)))
+    case("D17 baseline（ratchet_exempt 附 why）⇒ 不紅",
+         not _r17board([_r17row("C90", r17a, 11.8,
+                                exempt="基準：交付 cell 的第一列可引用讀數，入表條件是可引用、不是高過上限"),
+                        _r17row("C91", r17b, 12.0, 0.0)], 12.0, r17b))
+    case("D17 宣告的 decode_ts 不是產物自己的讀數（沒逐字抄）⇒ 紅",
+         bool(_r17board([_r17row("C90", r17a, 11.8, 0.0), _r17row("C91", r17b, 12.05, 11.8)],
+                        12.05, r17b)))
+    # --- D7b 定價端點（metric=fill_term_ms，2026-09-30 §69；L20-4 是第一例） ---
+    fill_ab = os.path.join(gate_tmp, "fill_ab.json")
+    fill_la = os.path.join(gate_tmp, "fill_a.log")
+    fill_lb = os.path.join(gate_tmp, "fill_b.log")
+
+    def _fill_fixture(ts_a=(10.773,) * 3, ts_b=(13.733,) * 3, attrib=("none", "none"),
+                      io_b=0, log_b=True, cell="delivery"):
+        def _arm(tag, env, ts, av, iob):
+            return {"tag": tag, "extra_env": env, "contract": {"cell": cell, "ok": True},
+                    "attribution": {"verdict": av}, "cache": {"io_bytes": iob},
+                    "rows": [{"n_gen": 64, "n_prompt": 0, "warm_skip": 64, "avg_ts": ts[0],
+                              "samples_ts": list(ts)}]}
+        data = [_arm("prod-new:CGC_EB_TIMER=1", {"CGC_EB_TIMER": "1"}, ts_a, attrib[0], 4864417792),
+                _arm("prod-new:CGC_EB_TIMER=1;CGC_EB_NOFILL=1",
+                     {"CGC_EB_TIMER": "1", "CGC_EB_NOFILL": "1"}, ts_b, attrib[1], io_b)]
+        with open(fill_ab, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        with open(fill_la, "w", encoding="utf-8") as fh:
+            fh.write("CGC-EBTIMER: step_usec=7000 calls=40 miss=8 n_sum=320 seg=decode n_pf=0 n_dec=40\n" * 384)
+        if log_b:
+            with open(fill_lb, "w", encoding="utf-8") as fh:
+                fh.write("CGC-EBTIMER: step_usec=60 calls=40 miss=8 n_sum=320 seg=decode n_pf=0 n_dec=40\n" * 384)
+
+    CQF = {"tool": "fill_term_ab", "artifact": "fill_ab.json", "log_a": "fill_a.log",
+           "log_b": "fill_b.log", "band": [7.0, 20.68], "verdict": "PRICED"}
+    _fill_fixture()
+    case("D7b fill_term_ms + PRICED（儀器 7.0／牆鐘 20.0）結案",
+         not _d7b(dict(CQF), metric="fill_term_ms"))
+    case("D7b fill_term_ms 宣告 WITHIN（判詞錯）⇒ 紅",
+         bool(_d7b(dict(CQF, verdict="WITHIN"), metric="fill_term_ms")))
+    case("D7b fill_term_ms metric 沒登記（tps）⇒ 紅", bool(_d7b(dict(CQF), metric="tps")))
+    _fill_fixture(cell="(default)")
+    case("D7b fill_term_ms 非交付 cell ⇒ REFUSE ⇒ 紅（訊息指名 REFUSE）",
+         any("REFUSE" in e for e in _d7b(dict(CQF), metric="fill_term_ms")))
+    _fill_fixture()
+    case("D7b fill_term_ms 價格宣告偏離 >10% ⇒ 紅",
+         bool(_d7b(dict(CQF, band=[3.0, 8.0]), metric="fill_term_ms")))
+    case("D7b fill_term_ms band 不是兩元素 ⇒ 判不了 ⇒ 紅",
+         bool(_d7b(dict(CQF, band=[7.0]), metric="fill_term_ms")))
+    case("D7b fill_term_ms 沒宣告 log_b ⇒ 判不了 ⇒ 紅",
+         bool(_d7b({k: v for k, v in CQF.items() if k != "log_b"}, metric="fill_term_ms")))
+    case("D7b fill_term_ms log_b 不存在 ⇒ 判不了 ⇒ 紅",
+         bool(_d7b(dict(CQF, log_b="nope.log"), metric="fill_term_ms")))
+    _fill_fixture(attrib=("none", "swap"))
+    case("D7b fill_term_ms B 臂髒窗口 ⇒ REFUSE ⇒ 紅",
+         bool(_d7b(dict(CQF), metric="fill_term_ms")))
+    # --- D7b 同格邊際端點（metric=margin_ms，2026-09-30 §70；L20-3 是第一例） ---
+    sc_ab = os.path.join(gate_tmp, "sc_ab.json")
+    sc_log = os.path.join(gate_tmp, "sc.log")
+    sc_hist = os.path.join(gate_tmp, "sc_hist.log")
+    sc_p1 = os.path.join(gate_tmp, "sc_probe1.json")
+    sc_p2 = os.path.join(gate_tmp, "sc_probe2.json")
+
+    def _sc_fixture(fam1=7.62, fam2=8.71, cell="delivery", attrib="none", cls="clean"):
+        with open(sc_ab, "w", encoding="utf-8") as fh:
+            json.dump([{"tag": "prod-new:CGC_EB_TIMER=1", "extra_env": {"CGC_EB_TIMER": "1"},
+                        "contract": {"cell": cell}, "attribution": {"verdict": attrib},
+                        "cache": {"io_bytes": 4864417792, "misses": 4300},
+                        "rows": [{"n_gen": 64, "warm_skip": 64, "avg_ts": 10.773,
+                                  "samples_ts": [1, 1, 1]}]}], fh)
+        with open(sc_log, "w", encoding="utf-8") as fh:
+            for rep, us in ((0, 9000), (1, 5200), (2, 5200)):
+                for _ in range(128):
+                    fh.write("CGC-EBTIMER: step_usec=%d calls=40 miss=7 n_sum=320 seg=decode n_pf=0 n_dec=40\n" % us)
+        with open(sc_hist, "w", encoding="utf-8") as fh:
+            for st_ in range(1, 387):
+                mx = 6 if st_ in (100, 200) else 2
+                fh.write("CGC-MISSMASK-HIST: step=%d nrec=39 max=%d il_max=39 unknown=0 per=1\n" % (st_, mx))
+        for pp, fam in ((sc_p1, fam1), (sc_p2, fam2)):
+            with open(pp, "w", encoding="utf-8") as fh:
+                json.dump({"used": 8, "layers": 40, "window": {"class": cls},
+                           "rows": {"gate_exps_t1": {"tokens": 1, "ms_per_step": fam / 2},
+                                    "down_exps_t1": {"tokens": 1, "ms_per_step": fam / 2}}}, fh)
+
+    CQS = {"tool": "samecell_margin", "artifact": "sc_ab.json", "log_a": "sc.log",
+           "probes": ["sc_probe1.json", "sc_probe2.json"], "hist": "sc_hist.log",
+           # 邊際宣告的次序是 [min, max]（見 samecell_margin.judge 的 k_star_margin_ms）
+           "k_star": 6, "margin_ms": [-1.33, 3.29], "tol_ms": 0.5, "verdict": "NOT_SEPARATED"}
+    _sc_fixture()
+    # ⚠ 這一格是以**排除**結案（L20-3 的形狀）⇒ `margin_ms -> POSITIVE` 那條「達標才准」
+    #   的規則不套用；分離為正的判詞仍然不准拿來當排除結案（下面那條紅）。
+    case("D7b margin_ms + NOT_SEPARATED（k*=6）以排除結案",
+         not _d7b(dict(CQS), metric="margin_ms", state="結案（排除）"))
+    case("D7b margin_ms 宣告 POSITIVE（判詞錯）⇒ 紅",
+         bool(_d7b(dict(CQS, verdict="POSITIVE"), metric="margin_ms")))
+    case("D7b margin_ms metric 沒登記（tps）⇒ 紅", bool(_d7b(dict(CQS), metric="tps")))
+    case("D7b margin_ms k* 宣告不符 ⇒ 紅", bool(_d7b(dict(CQS, k_star=3), metric="margin_ms")))
+    case("D7b margin_ms k* 邊際宣告超容差 ⇒ 紅",
+         bool(_d7b(dict(CQS, margin_ms=[0.0, 0.0]), metric="margin_ms")))
+    case("D7b margin_ms 缺 probes ⇒ 判不了 ⇒ 紅",
+         bool(_d7b({k: v for k, v in CQS.items() if k != "probes"}, metric="margin_ms")))
+    _sc_fixture(cell="(default)")
+    case("D7b margin_ms A 臂非交付 cell ⇒ REFUSE ⇒ 紅",
+         any("REFUSE" in e for e in _d7b(dict(CQS), metric="margin_ms")))
+    _sc_fixture(cls="busy-overridden")
+    case("D7b margin_ms 探針窗口不乾淨 ⇒ REFUSE ⇒ 紅",
+         any("REFUSE" in e for e in _d7b(dict(CQS), metric="margin_ms")))
+    _sc_fixture()
     # --- D8／主節點綠燈（L20／L25） ---
     def _board_html(b):
         b = copy.deepcopy(b)
@@ -1045,13 +2148,51 @@ def cmd_selftest():
     html, e = _board_html(b)
     case("L20 達標 ⇒ 綠（<h2 class=\"layer-met\">）", '<h2 class="layer-met"' in html and not e, e)
     b = copy.deepcopy(base)
+    b["layers"][0]["targets"][0]["evidence"] = {
+        "profile": "prod-new", "entry": "harness bench", "value": "fixture", "metric": "m_ratio",
+        "meets": True,
+        "counter_quotes": [{"tool": "t1", "verdict": "WITHIN", "why": "第一個端點"},
+                           {"tool": "t2", "verdict": "NO_EFFECT", "why": "第二個端點"}]}
+    _cqy = os.path.join(gate_tmp, "cq.yaml")
+    b["out"] = "docs/__selftest_cq.html"
+    with open(_cqy, "w", encoding="utf-8") as fh:
+        _y.safe_dump(b, fh, allow_unicode=True, sort_keys=False)
+    _, _, _cqe, _cqa = build(_cqy)
+    _cqpages = " ".join(_cqa.values())
+    case("render：counter_quotes 每個端點都印（不是只印第一個）",
+         "第一個端點" in _cqpages and "第二個端點" in _cqpages, _cqe)
+    b = copy.deepcopy(base)
     b["layers"][0]["goal"] = {"metric": "decode_tps", "target": 20.0, "crit": "fixture"}
     b["layers"][0]["evidence"] = {"value": 11.703, "artifact": art_ok, "quote_verdict": "QUOTABLE"}
     html, e = _board_html(b)
     case("未達標 ⇒ 不變色（無綠標題）", '<h2 class="layer-met"' not in html and not e, e)
-    b = copy.deepcopy(base); b["layers"][0]["targets"][0]["settled"] = True
+    # D11 之後這個 case 必須「兩邊一致」：settled 要跟 state=結案 一起寫，
+    # 而且要有能過 D6／D7 的 evidence（否則 validate 會因為別的原因紅）。
+    b = copy.deepcopy(base)
+    tt = b["layers"][0]["targets"][0]
+    tt["settled"] = True
+    tt["state"] = "結案（fixture）"
+    tt["evidence"] = {"profile": "prod-new", "entry": "harness bench", "value": "11.703",
+                      "metric": "tps", "meets": True,
+                      "quote": {"artifact": art_ok, "verdict": "QUOTABLE"}}
     html, e = _board_html(b)
-    case("settled ⇒ 整列綠底（row-done）", 'class="row-done"' in html and not e, e)
+    case("settled ＋ 結案 ⇒ 整列綠底（row-done）且無錯", 'class="row-done"' in html and not e, e)
+    # --- D11：state（判定）與 settled（顯示）必須一致 ---
+    b = copy.deepcopy(base)
+    tt = b["layers"][0]["targets"][0]
+    tt["state"] = "結案（fixture）"
+    tt["settled"] = False
+    case("D11 結案卻沒 settled ⇒ 紅", any(x.startswith("D11") for x in validate(b, nodes)[0]))
+    b = copy.deepcopy(base)
+    tt = b["layers"][0]["targets"][0]
+    tt["state"] = "未結案（fixture）"
+    tt["settled"] = True
+    case("D11 settled 但 state 說未結案 ⇒ 紅", any(x.startswith("D11") for x in validate(b, nodes)[0]))
+    b = copy.deepcopy(base)
+    tt = b["layers"][0]["targets"][0]
+    tt["state"] = "結案（fixture）"
+    tt["settled"] = True
+    case("D11 結案 ＋ settled ⇒ 不紅", not any(x.startswith("D11") for x in validate(b, nodes)[0]))
     b = copy.deepcopy(base)
     b["layers"][0]["goal"] = {"metric": "decode_tps", "target": 10.0}
     b["layers"][0]["evidence"] = {"value": 11.703, "artifact": art_dirty,
@@ -1102,6 +2243,47 @@ def cmd_selftest():
     case("D10 刪掉沒有 R5／R6 量具的臂",
          bool(_d10(arms=[], removed=[{"arm": "prod-new", "rules": ["R5"], "flags": {},
                                       "why": "fixture"}])))
+    # [09-30] 基準臂（role=reference）：成對量測的端點，帶量具是本來就如此 ⇒ 附上 why＋source 才放行
+    _ref = {"arm": "prod-new:CGC_EB_NOFILL=1", "role": "reference",
+            "why": "成對量測的底／終點上界", "source": "docs/FILL_SPLIT_DELIVERY_2026-09-30.md"}
+    case("D10 基準臂（附 why＋source）放行", not _d10(arms=[_ref]))
+    case("D10 基準臂缺 why 就擋",
+         bool(_d10(arms=[dict(_ref, why="")])))
+    case("D10 基準臂缺 source 就擋",
+         bool(_d10(arms=[{k: v for k, v in _ref.items() if k != "source"}])))
+    case("D10 沒有 role 的 dict 臂一樣擋",
+         bool(_d10(arms=[{k: v for k, v in _ref.items() if k != "role"}])))
+    case("D10 role=option 一樣擋",
+         bool(_d10(arms=[dict(_ref, role="option")])))
+    case("D10 壞掉的 arms 項（dict 沒 arm）",
+         bool(_d10(arms=[{"role": "reference", "why": "fixture"}])))
+
+    # --- D16 臂類別 vs 卡點型別（空臂的格不准等窗口）---
+    def _d16(kind="code", why="解除條件見 quote_gate 的 R6 登記表", settled=False, block=True):
+        b = copy.deepcopy(base)
+        tgt = b["layers"][0]["targets"][0]
+        o = dict(tgt.get("options") or {})
+        o["arms"] = []
+        o["arms_removed"] = [{"arm": "prod-new:CGC_SEG_BATCH=1", "rules": ["R6"],
+                              "flags": {"CGC_SEG_BATCH": "R6"}, "why": "fixture"}]
+        tgt["options"] = o
+        if settled:
+            tgt["settled"] = True
+            tgt["state"] = "結案（fixture）"
+        pre = {"rerun": "blocked", "kind": "none", "why": "fixture"}
+        if block:
+            pre["block"] = {"kind": kind, "owner": "harness", "next": why,
+                            "assert": {"kind": "none", "why": "fixture"}}
+        tgt["precondition"] = pre
+        return [e for e in validate(b, nodes)[0] if e.startswith("D16")]
+
+    case("D16 空臂 ＋ block.kind=code 且指名 R6 ⇒ 放行", not _d16())
+    case("D16 空臂卻等窗口（window 修不好臂的身分）⇒ 紅", bool(_d16(kind="window")))
+    case("D16 空臂卻沒寫卡點 ⇒ 紅", bool(_d16(block=False)))
+    case("D16 卡點內文沒指名 R5／R6／R7 ⇒ 紅", bool(_d16(why="再等等看")))
+    case("D16 已了結（settled）的格不必再寫卡點 ⇒ 不紅", not _d16(block=False, settled=True))
+    case("D16 block.kind 不合法（收 window／decision／code／mechanism 之外的）⇒ 紅",
+         bool(_d16(kind="arm_class")))
 
     # --- D9 產物結構（fixture；不回讀檔案，直接餵字串）---
     good = '<table><thead><tr><th>a</th></tr></thead><tbody><tr><td>1</td></tr><tr><td>2</td></tr></tbody></table>'

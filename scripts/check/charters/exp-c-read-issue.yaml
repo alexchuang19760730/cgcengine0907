@@ -1,0 +1,56 @@
+id: exp-c-read-issue
+owner: shared
+created: 2026-09-28
+axis: C
+
+question: |
+  ⚠ 本節點**不是新門**：`io-shape`（tier 4）已經量過同一件事並判死——「合併邏輯早已存在
+  （preadv）；**固定開銷占 90%**」，且一個 expert 的三段相隔 88–115 MB ⇒ 3→1 要付 182.6× 位元組，
+  收益 ~2.9% < 3% 門檻 ⇒ 不值得 rebuild（docs/IO_AXIS_VERDICT_2026-09-25.md）。
+
+  本節點的**唯一**工作是：用 2026-09-28 E-A 的新鮮讀數（0.37 MiB/job、us/job=1856、jobs=24912、
+  fill_wait_us 僅 0.101 s／47.9 s）去**重驗那個判決**，而不是假裝沒看過它。
+  要回答的判別問題：E-A 的「讀取總時 46.2 s」與「臨界路徑只等 0.101 s」這兩件事是否**同時成立**、
+  以及若成立，是不是正好解釋了 io-shape 的 2.9%？
+  預期的正面結果是**確認** io-shape，而不是推翻它。
+
+baseline:
+  metric: "read shape: jobs=24912、bytes=9.02 GiB、0.37 MiB/job、us/job=1856、effective_rate=210 MiB/s"
+  cell: "prod25、一支臂、一個請求（376 token：prompt 220 + gen 156），E-A"
+  source: "docs/S2_OVERLAP_EXPERIMENT_2026-09-28.md"
+
+hypothesis:
+  mechanism: |
+    E-A 的兩個獨立儀器都說權重讀取的 ~98.5% 來自 RAM，而 `capacity` miss 只佔 25.8%、
+    `fill_wait_us` 只有 0.101 s／47.9 s。⇒ 瓶頸不在缺頁、也不在臨界路徑的等待，而在
+    **每次讀取的固定成本**（0.37 MiB 一筆、24912 筆、每筆 1856 µs）。候選機制有四條、
+    彼此可分辨：連續段合併不足（`as one contiguous run` 的粒度）、在途數不足（無非同步深度）、
+    跨檔案的 iovec 未合併、以及 metal／CPU 競爭下的排程延遲。
+  expected: "us/job 1856 → ≤400 ⇒ 讀取總時 46.2 s → ≤10 s；對 S0 的貢獻上限為 min(讀取, union) 的重疊量"
+  basis: "docs/S2_OVERLAP_EXPERIMENT_2026-09-28.md §15.4；src/llama.cpp/src/llama-expert-cache.cpp:170-200（batched preadv 的合併條件）"
+
+acceptance:
+  success: "重驗完成且**回填 io-shape**：E-A 的 47.9 s／0.101 s 兩數同時成立 ⇒ io-shape 的 2.9% 判決維持，本節點結案（tier 4，不新增槓桿）"
+  falsify: "若同一 run 內量到臨界路徑等待 ≥5 s（即讀取真的在擋路，而非 0.101 s），則 io-shape 的 2.9% 被判為低估，本節點升級為活躍攻關"
+  on_fail: "把 E-A 的 read-shape 四欄（jobs／bytes per job／us per job／effective rate）列入 README 常設讀數，並標明 io-shape 已結案"
+
+targets:
+  decode_tps: 14.0
+  prefill_tps: 250.0
+
+subgoals:
+  - id: sg-c-issue-merge
+    text: "連續段合併粒度：0.37 MiB/job → ≥1.5 MiB/job（同一段位元組、更少筆數）"
+    expect: "jobs 24912 → ≤6000"
+    how: "read shape 的 jobs 與 bytes/job；對照 llama-expert-cache.cpp 的合併條件（同 file_idx 且 file_offset 連續）"
+  - id: sg-c-issue-inflight
+    text: "在途數：同時可有多少筆讀取在飛"
+    expect: "若在途數 <4 且 us/job 隨在途數線性下降 ⇒ 主項是在途數"
+    how: "CGC_DEVICE_PROFILE 式的相位分解＋ us/job 對在途數的迴歸"
+  - id: sg-c-issue-attr
+    text: "把 1856 µs 拆成「等磁碟」與「等排程」兩半"
+    expect: "0（這是歸因，不是貢獻）"
+    how: "us/job 與 pread 回傳時間的差；對照 fill_wait_us 在臨界路徑上的值"
+
+arms:
+  - prod25

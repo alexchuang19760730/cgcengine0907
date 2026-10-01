@@ -1,0 +1,186 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— S1 正確版的「預測 ＋ 重算」：先壓殘差，再補最後一塊
+#   本卡是 `exp-prodnew-decode20-g4miss` 閘門（§34：6.09% ≤ 25% ⇒ 有路）的**下一張卡**。
+#   ⛔ 與 `e-asyncfill-recompute`（09-29 已結案「建議不做」）**不是同一件事**：
+#      那張卡的價值來源是「把 fill 移出臨界路徑」（誠實臂口徑，只值 fill p50 5.41 ms）；
+#      本卡的價值來源是**序列化本身**（S1 拿掉的那 ~33 ms），fill 只是必須還回去的一筆。
+#      故本卡不構成那張卡 `reopen_condition` 的重開（它要求 ≥32 GB 盒 ＋ 重測 fill ≥8.5%）。
+#   施工順序與價格的全文：docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md §35
+# ═══════════════════════════════════════════════════════════════════════
+id: e-s1-predict-recompute
+owner: |
+  線 A 開卡（S1／段邊界／wait·gap 軸）。P4 的 kernel 實作沿 `e-asyncfill-recompute`
+  `p2_adjudication.consequences` 的記載——**owner 仍未明文**，實作前須先定 owner。
+created: 2026-09-29
+
+# ── 【目標】─────────────────────────────────────────────────────────────
+question: |
+  在交付 cell（`prod-new`、MTP off、`-p 2048 -n 128 -d 512 -r 3 --warm-skip 64`）上，
+  把 S1 單次提交臂的 G4 殘差（§34 實測中位 6.09%、19.0 個 (layer, expert)/步）
+  用「A 把殘差壓到地板、剩下的用 B 補算」補到**可交付**，問三件事、順序不可顛倒：
+    (Q1) 殘差能不能從 6.09% 壓到席位掃描的地板（≤3.7%）？—— 只動預取來源／K／窗，不動圖。
+    (Q2) 壓不到的部分，能不能用**靜態 acc 補丁**（固定 320 op/step）補到 M1 9/9？
+    (Q3) 若 Q1／Q2 為是，落點在 **18.0–20.0 t/s** 帶的哪一側（目標 ≥19、非 25）？
+
+# ── 【現狀】─────────────────────────────────────────────────────────────
+baseline:
+  metric: "交付錨點 decode **11.703 t/s = 85.45 ms/token**（缺口 45.45 ms 到 25 的 40.0 ms）；S1 上限探針 24.88 t/s（錯輸出）、里程碑地圖的可回收上界 19.2 t/s"
+  cell:   "prod-new、harness bench、MTP off、交付 cell（p2048／-b -ub 5632／--warm-skip 64／fixed-fill-seed 1／reps 3）、build 2823fdc76"
+  source: "Backup/mtp_off_clean/res_2026-09-29c.json"
+  source_note: "attribution=none（swap_growth −46.68 MiB）、thermal=NOMINAL、warm_skip_applied=true ⇒ 全語料唯一三扇門全過的臂（§15）。S1 的 24.88 是**探針**不是基線。"
+  known: |
+    - §34（權威 cell 的 G4 讀數）：中位 **6.09%**（19/312）、IQR 3.85–8.65%、`cell` 14 態、
+      `instrument_gate=BOUND`（`mm_pub_n_leaf=39`/`mm_pub_wrote=39`）、`prefetch=2405/39`。
+    - 交付臂上**活的餵料只有 SpAc EMA**（`spac_update`）：`prod-new` 預設 `CGC_SPAC=1`
+      ⇒ `step/prev/hist` 三個 union 分支不可達（llama-context.cpp:2180-2262）⇒
+      `cache_step_union` 是**惰性寫入**；`CGC-RB-FEED` 那 7 行印在 `if (cgc_spac_on())` 內。
+    - 殘差地板：席位 8→96.0/96.8%、16→96.5%、64→96.3%、143→96.3/96.7%
+      ⇒ **地板 3.3–3.7%**；§34 的 6.09% 是地板的 1.6–1.8×。
+    - 交付 cell 的 fill 實測（`e-fillbudget-m-decomp.result_p1`）：**p50 5.41 ms/step**、
+      miss **1.97%**（6.31/step）、`read_mib` 2614.0、`MiB/miss` 0.524、有效吞吐 **≈1.2 GiB/s**。
+    - **G3（`CGC_ZERO_SLOT`）在交付臂單獨開是 no-op**（zero_slot=0/placeholder=0、逐層行 0 次）；
+      要生效需 `CGC_SLOT_TABLE_GPU=1`（見 `e-s1-g3-zeroslot-2026-09-29.yaml`）。
+    - 白名單現況：`CGC_SPAC_K`／`CGC_SPAC_ALPHA`／`CGC_SPAC_REFRESH`／`CGC_PREFETCH_WINDOW` **在**
+      （run_server.sh:2289/2344）；`CGC_PREFETCH_SRC` **不在**（:1482-1486，09-13 移出、註解保留 opt-in）。
+
+# ── 【假設】─────────────────────────────────────────────────────────────
+hypothesis:
+  mechanism: |
+    (A) 殘差的成因是**預算／窗**，不是「無資訊」：SpAc EMA 只把 utility top-K 常駐，
+        而交付 cell 的熱集合比 K 大 ⇒ 落在窗外的專家反覆被 LRU 淘汰。
+        ⇒ 加大 K／窗應把 6.09% 往 **3.7% 的地板**推，成本是更多 pread（目前 6.49 MiB/step）。
+    (B) 剩下的 3.7% 不能只靠預取：算一個缺席專家的 FFN **必須先有它的權重**
+        ⇒ 重算**不省 IO**，它只省「阻塞」。所以 B 的形狀是靜態圖上的 acc 補丁
+        （`ggml_acc`：`dst = a; view += b`，缺席列 `+=0` 精確、無副作用），
+        成本 = **k×n_layer 固定**（交付 cell 實測 `n_layer=40`、`k=8` ⇒ 320 op/step）
+        ⇒ × 5–10 µs/op = **1.60–3.20 ms/step，與 miss 率無關**。
+  expected: "Q1：G4 中位 6.09% → **≤3.7%**（-2.4pp）。Q2：M1 9/9 且 M2 9/9。Q3：落點 **18.0–20.0 t/s**（+6.3~+8.3），**不到 25**；20.0 剛好壓在帶的上緣 ⇒ 不保證過。"
+  basis: |
+    §35 §一~§三（機制與價格）；`e-asyncfill-recompute.p2_adjudication.J1`（D1 位元一致性：
+    列獨立 ＋ `ggml_acc` 原位寫回 ＋ `+0` 精確）、`J2`（靜態圖 ⇒ 固定 320 op/step）；
+    `MILESTONE_MAP_RECHECK:142`（`48.2 + 3.96 = 52.2 ms ⇒ 19.2 t/s`）；
+    `e-fillbudget-m-decomp.targets.result_p1`（`n_layer=40`／`k=8`／fill p50 5.41／1.2 GiB/s）。
+
+# ── 【預註冊判決規則（跑之前寫死，看到資料後不得改）】───────────────────
+acceptance:
+  window_valid: |
+    每一趟各自成立才算可裁判：(a) 起跑 thermal = NOMINAL；(b) 見證行生效
+    （`CGC-RB-FEED` 與 `prefetch` 離開 `0/0`，否則是旋鈕被丟掉 ⇒ 不結論）；
+    (c) rc=0 且跑完；(d) `instrument_gate` 不得 `UNBOUND`（`instrument_binding.py`）。
+    ⛔ Q1／Q2 的主端點是**計數／位元**，不是 paired t/s ⇒ 髒窗仍可裁判；只有 P5 要求乾淨窗。
+  success: |
+    Q1：交付 cell 上 G4 中位 **≤3.7%**，且 `n_prefetch_dropped/n_prefetch <10%`、
+        `read_mib/step ≤ 2×`（13.0 MiB）⇒ 記「殘差壓到地板」。
+    Q2：`m123_oracle_gate.py` **M1 9/9 且 M2 9/9**、`config_diffs == []`、coverage 100%、
+        無鍵碰撞警告；op 增量 **= 320 且不隨 miss 放大**；生產路徑**無新增 `synchronize`**。
+    Q3：paired 交付 cell、`attribution=none`、≥3 reps ⇒ tg **≥19.0**。20.0 以上算超額，不當承諾。
+  falsify: |
+    ① Q1 把 K／窗轉到極端仍停在 ~6% ⇒ 殘差不是預算問題而是**無資訊**
+       （那些專家在任何近期窗裡都沒出現）⇒ 跳過 Q1 直接進 Q2，並把一筆「A 沒有更多槓桿」記進 §35。
+    ② Q2 的 acc 子圖成本**隨 miss 縮放** ⇒ 靜態圖論證不成立（需逐步重建圖 ⇒ 成本量級不同）
+       ⇒ 停，不硬做。
+    ③ M1 < 1.0 且 coverage 100% 且無鍵碰撞 ⇒ 補丁不精確 ⇒ 停（不得放寬 M1/M2/M3 護欄：
+       那是口徑移動，須另開卡並經 operator 明講）。
+  undecidable: |
+    M1 因 `config_diffs != []` 而 exit 2，或 coverage < 100% 且有鍵碰撞警告
+    ⇒ 登記 UNRESOLVED，先解可比性，**不得把 exit 2 唸成 M1 FAIL**。
+    G3 的見證行 0 行（`CGC-G3-ZEROSLOT: il=..` 一次都沒印）⇒ map 仍空 ⇒ 該趟無效，不結論。
+  on_fail: |
+    Q1 與 Q2 都否証 ⇒ 「正確版 20+」在 16 GB 盒上**沒有 20 的 headroom** ⇒ 依
+    `exp-prodnew-decode20-g4miss.acceptance.on_fail` 轉回 shape/IO（絕對天花板 20.49／16.31），
+    並把本卡記成 deadend（保留 `ggml_acc` 的可行性知識，不開工單）。
+    ⛔ 不得為了保住這條路而動 MDD 8.5% 或 M1/M2/M3。
+
+# ── 【量化目標】─────────────────────────────────────────────────────────
+targets:
+  anchor_tpms: 11.703
+  anchor_ms: 85.45
+  target_ms: 40.0
+  ceiling_ms: 52.2          # MILESTONE_MAP_RECHECK:142（48.2 + 3.96）
+  ceiling_tps: 19.2
+  landing_band_tps: [18.0, 20.0]
+  miss_median_now: 0.0609   # §34（/312）；/320 為 0.0594
+  miss_median_goal: 0.037   # 席位掃描地板
+  n_layer: 40
+  k: 8
+  static_acc_ops: 320       # n_layer × k，**不隨 miss 縮放**
+  acc_cost_ms: [1.60, 3.20] # 320 × 5–10 µs（⛔ 推算，不是實測）
+  effective_read_gib_s: 1.2
+  residual_io_mib_per_step: 9.96   # 19.0 × 0.524
+  mdd_pct: 8.5              # P5 才適用；Q1/Q2 主端點不受它限制
+
+  # ── 【P2（Q1）實測結果：2026-09-29 19:0x–19:2x，交付 cell，5 臂】──────────────
+  # ⛔ 全部 t/s 一律 VOID：這五臂都是**單次提交、無重算**的錯輸出臂（架構如此）。
+  #    主端點＝每步 `misses/312` 的中位數（計數），不受 MDD 8.5% 限制。
+  #    attribution：K=4 那臂是 `none`（乾淨窗）；其餘 `swap`（窗口髒，但端點是計數）。
+  result_p2_q1:
+    verdict: "🔴 Q1 = **NO**：殘差壓不到地板，而且 6.09% **已經在旋鈕的最佳點上**——往上往下都更差。"
+    control_reproduces: "K=8 控制臂在**每一個窗口**複現 §34：med(all) 0.0609 vs 0.0609、IQR 0.0385/0.0897 vs 0.0385/0.0865、skip64 0.0545 vs 0.0513；sum_misses 9318 vs 9210（+1.2%）。⇒ 今天的盒子對那一格是**忠實複現**。"
+    arms:
+      - {arm: "K=4",            med_all: 0.1282, iqr: "0.1026/0.1571", med_skip64: 0.1186, sum_misses: 16479,  prefetch: "568/19",       file_reads: 1704,  pread_s: 0.91,  wall_s: 23.9, onset_gt_0p9: null}
+      - {arm: "K=8 (control)",  med_all: 0.0609, iqr: "0.0385/0.0897", med_skip64: 0.0545, sum_misses: 9318,   prefetch: "2477/39",      file_reads: 7431,  pread_s: 2.81,  wall_s: 23.9, onset_gt_0p9: null}
+      - {arm: "K=32",           med_all: 1.0000, iqr: "1.0000/1.0000", med_skip64: 1.0000, sum_misses: 117624, prefetch: "18568/447579", file_reads: 38998, pread_s: 14.64, wall_s: 28.2, onset_gt_0p9: 16}
+      - {arm: "SPAC=0 hist W4", med_all: 1.0000, iqr: "0.9968/1.0000", med_skip64: 1.0000, sum_misses: 118595, prefetch: "25744/444610", file_reads: 60597, pread_s: 14.30, wall_s: 26.8, onset_gt_0p9: 11}
+    mechanism: |
+      兩個「餵更多」的臂（K=32、SPAC=0 hist W4）都是**永久崩潰**到 100% miss，而崩潰的
+      共同量是 **bg 預取的落地面積**：queued 2477 → 18568/25744（7.5–10×）、
+      dropped 39 → **447 579/444 610**、`pread_usec` 2.81 s → 14.64/14.30 s（在 ~24 s 的臂內）。
+      ⇒ 不是「池子裝不下」（143 席從來沒變），是**磁碟先被打滿**，於是排進去的位元組
+      在需要之前落不了地，池子最後持有的**全是錯的專家**。⇒ 方向是**懸崖**，不是斜率。
+      K=4 那一側則是相反：餵得少一半（568 queued、0.91 s pread）⇒ miss **翻倍**到 12.82%。
+      ⇒ **K=8 是這個旋鈕的最小值，不是它的上限。**
+    direct_evidence: |
+      `CGC-SPAC-MEM: layer=0 topK=8 resident=8 (100%)` / `layer=1 topK=8 resident=4 (50%)`
+      （K=8 控制臂，feeds=39）⇒ **utility top-K 自己就有一半不在池裡**，
+      所以殘差不是「選到的 expert 沒被預測到」，而是「預測到的也留不住」。
+      ⇒ 這與 `e-fillbudget-m-decomp` 的誠實臂 1.97% 對照起來讀：
+      缺席的專家**是拿得到的**（誠實臂會等），S1 臂只是不等 ⇒ 殘差是**等/不等**的價差。
+    routing: |
+      依本卡 `acceptance.falsify` 分支①（殘差不是預算／窗問題）⇒ **`sg-a-residual` 結案為 FAIL
+      （附機制）**，不做 P1/P2 的進一步旋鈕掃描，直接進 **P4（B：靜態 acc 補丁）**。
+      ⛔ 不得用「換一個 feeder 再試一次」重開本項：兩個不同 feeder 在同樣的落地面積下
+      給出**同一個崩潰**（1.0000、onset step 11/16）⇒ 這已經是 mechanism-level 的判死。
+    note_prefetch_src: |
+      本輪為了跑 hist 臂，在 `scripts/run_server.sh` 補了 `CGC_PREFETCH_SRC` 的 3 行白名單接回
+      （§4 施工清單第 2 條）。**已驗證它不移動任何沒要它的 profile**：`resolve('prod-new', {})`
+      仍是 `SRC=None`、`SPAC='1'`。
+
+# ── 【技術子目標】───────────────────────────────────────────────────────
+subgoals:
+  - id: sg-a-decouple
+    text:   "把 `spac_update` 的餵料從 `CGC_MISS_MASK_DBG` 的回讀裡拆出來（現在是原型）"
+    expect: "**不開** `CGC_MISS_MASK_DBG` 的那一趟仍有 `CGC-RB-FEED` 與 `prefetch>0/0`"
+    how:    "P1；llama-context.cpp:4049-4090（餵料區塊）與 :4011-4048（回讀）"
+  - id: sg-a-residual
+    text:   "殘差 6.09% → ≤3.7%（只動預取來源／K／窗）"
+    expect: "交付 cell G4 中位 ≤3.7%，dropped/prefetch <10%，read_mib/step ≤13.0 MiB"
+    how:    "P2；`CGC_SPAC_K`／`CGC_SPAC_ALPHA`／`CGC_SPAC_REFRESH`（已在白名單）＋ 視需要補 `CGC_PREFETCH_SRC` 3 行"
+  - id: sg-g3-armed
+    text:   "G3（零槽）在 S1 組上真的生效（B 的前置）"
+    expect: "B 臂 `zero_slot>0 placeholder=0`；A 臂 `zero_slot=0 placeholder>0`"
+    how:    "P3；已在 `e-s1-g3-zeroslot-2026-09-29.yaml` 立卡（主端點是計數器翻轉）"
+  - id: sg-b-accpatch
+    text:   "靜態 acc 補丁把剩下的殘差補到 M1 9/9"
+    expect: "M1 9/9、M2 9/9、op 增量 = 320 不隨 miss 放大"
+    how:    "P4；`ggml_acc`（src/ 0 既有用法）＋ 未融合 combine（prod-new 的 CGC_DOWN_COMBINE=<unset>）"
+  - id: sg-speed
+    text:   "paired 交付 cell 讀數 ≥19.0 t/s"
+    expect: "attribution=none、thermal NOMINAL、≥3 reps、與 11.703 錨點成對"
+    how:    "P5"
+
+# ── 【臂】────────────────────────────────────────────────────────────────
+arms:
+  - prod-new                                        # 錨點（11.703 / 85.45）
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1
+  # ↑ §34 的那一條（權威 cell 的 G4 讀數來源）；P1/P2 在它上面只改預取旋鈕
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1   # P3 的 B 臂（A 臂＝拿掉 CGC_ZERO_SLOT）
+  # ── P2：SpAc 掃描（一場次 4 臂；共用 §34 那一格的 cell／指令，只改預取旋鈕）─────
+  # 控制臂＝§34 的原臂（K 預設 8）⇒ 應複現 miss 中位 ~6.09%；其餘為處理臂。
+  # 主端點是 **每步 miss 比例的中位數**（計數，不是 paired t/s）⇒ 髒窗仍可裁判；
+  # t/s 一律 VOID。次端點：`prefetch` 的 queued/dropped 與 `read_mib/step`（要付的 pread）。
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1  # C：控制（K=8，預設）
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1;CGC_SPAC_K=32  # T1：4× 預取額度
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1;CGC_SPAC_K=32;CGC_SPAC_ALPHA=0.95  # T2：4× 額度 ＋ 更黏的 EMA
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1;CGC_SPAC_K=128  # T3：額度上限（= 256 的一半）
+  # 每一臂都加 CGC_SPAC_DBG=1（列印式探針、上限 60 行）取 `CGC-SPAC-MEM` 的
+  # 「top-K 已駐留比例」——那個欄位直接回答「K 是不是綁住的那個變數」。

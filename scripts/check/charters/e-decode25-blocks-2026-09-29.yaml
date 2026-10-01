@@ -1,0 +1,196 @@
+# 攻關卡（Campaign charter）— decode 25 t/s 的區塊拆解
+#
+# 為什麼要有這張卡：`m-decode25` 節點（2026-09-25 生成）的立場是「判死」——理由是
+# 「交付 12.57＝79.6 ms ⇒ 要砍 49.6%；IO 全關也只 ~+5%」。但 2026-09-29 的 §16／§19／§24
+# 用 11.703（85.45 ms）這一場重拆了同一件事，得到的是**不同形狀**的結論：
+# 缺口不是「IO 全關」能解決的，也不是物理判死的，而是 5 塊**各自有已量到槓桿**的算術。
+# 這張卡把那 5 塊寫成可獨立驗收的子目標，讓「25 t/s 到底缺哪幾塊」變成可判定的。
+#
+# ⚠ 本卡是**攻關卡不是單臂卡**：它不主張自己跑出速度，主張的是「這個拆法成立」。
+#   各塊的實驗卡各自存在（見每個 subgoal 的 how）。
+
+id: e-decode25-blocks-2026-09-29
+owner: shared        # 跨線：SG-KERNEL 屬 C 軸、SG-GAP/SG-FILLSUB 屬 S 軸、SG-OFFGRAPH 無主
+created: 2026-09-29
+
+question: |
+  把 decode 25 t/s（=40.0 ms/token，現況 11.703 t/s = 85.45 ms，缺口 45.45 ms）拆成 5 個
+  可獨立量測的區塊後，**是否每一塊都有一條「已量到」的槓桿數字，且取這些實測上限加總 ≤ 40.0 ms**？
+  （若某一塊只有外推、沒有實測槓桿，這一塊就不算在拆解內，拆解本身要重寫。）
+
+baseline:
+  metric: "decode 11.703 t/s = 85.45 ms/token；目標 25 t/s = 40.0 ms/token ⇒ 缺口 45.45 ms"
+  cell:   "prod-new profile、harness bench、MTP off、預設 cell（未指定）、build 2823fdc76；全語料唯一三扇門（乾淨視窗＋乾淨歸因＋NOMINAL）全過的臂（§15）"
+  source: "Backup/mtp_off_clean/res_2026-09-29c.json   # attribution=none（swap_growth −46.7 MiB）、thermal=NOMINAL"
+
+hypothesis:
+  mechanism: |
+    85.45 ms 的每步帳（§16，同一批 48 個 ntok=1 步的 mean）可拆成互不重疊的 5 塊：
+      SG-KERNEL   GPU 淨忙（union − gap）      55.4 ms
+      SG-GAP      段間 GPU 空轉                14.0 ms
+      SG-OFFGRAPH 圖外（end-to-end − DECPROF） 11.6 ms
+      SG-FILLSUB  填充＋提交                    7.8 ms
+      SG-ORDER    正確性使能項（本身 0 ms）      —   ← 它讓 SG-GAP 的槓桿變成合法
+    關鍵不是「每塊都很大」，而是**沒有任何一塊單獨夠大**：§16 的算術顯示只把 kernel 打到
+    實測上限 108 GB/s 也只到 44.2 ms（22.6 t/s），因為另外三塊（14.0＋11.6＋7.8＝33.4 ms）不動。
+  expected: "拆解需同時命中 4 塊才過 40.0 ms；§16 的示範行（kernel 19.5 ＋ gap 7.0 ＋ 圖外 5.8 ＋ 填充提交 3.9）＝ 36.2 ms ＝ 27.6 t/s（區間 25–28 t/s）"
+  basis:    "docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md §16（每步帳與算術）、§19（gap 歸因與下界）、§24（gap 每段 0.356 ms 的實測）；docs/DECODE25_CEILING_2026-09-20.md §7（每 token 1.171 GB 的口徑）"
+
+acceptance:
+  success: "五塊各自附一條**同 build 實測**的槓桿（不是外推）：SG-KERNEL 與 SG-GAP 兩塊的槓桿必須來自同一場或同 build 的兩場；且「實測上限」加總 ≤ 40.0 ms"
+  falsify: "任一塊拿不出實測槓桿（只有外推/只有模擬）⇒ 該塊標為無槓桿並從拆解移除；移除後剩下的塊加總 > 40.0 ms ⇒ **本拆解不成立**，須改拆法（例如改以「段數」為軸而非以 ms 為軸）"
+  on_fail: "把無槓桿的塊登記進 NEXT_ACTIONS 並註明「缺的是槓桿還是儀器」；若 SG-KERNEL 也無槓桿 ⇒ m-decode25 的『判死』維持，力氣轉 m-total（pp≥250 ∧ tg>12.57 的那條 M-25 路徑）"
+
+# 機器可讀標竿
+targets:
+  decode_tps: 25.0
+  prefill_tps: 250.0
+
+# ── 技術子目標：可量化、可驗收、貢獻可分 ─────────────────────────────────
+subgoals:
+  - id: sg-kernel-busy
+    status_20260929: "無槓桿（**未判死**）—— 缺的是**槓桿**：沒有已量到的承載算子（§18 §七：六族合計 21–29 ms、**單點 ≤0.79 ms**）"
+    next_action_20260929: |
+      唯一「一次 build ＝ 一個答案」的動作：§18 §七(4) 的 **skip-probe**（env-gated、預設關、
+      跳過輸出元素數 ≤8 的 dispatch；輸出必錯 ⇒ VOID），把群集 1 的 7.4 ms **上界**換成**實測 Δstep**。
+      它同時是 `acceptance.on_fail` 第二支（「若 SG-KERNEL 也無槓桿 ⇒ 判死維持、轉 m-total」）
+      的唯一解鎖動作。⛔ 在它跑出來之前不寫 `ffn_moe_weighted`（§18 §七）。
+      依據：docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md §40 §四/§五(2)
+    text:   "SG-KERNEL：GPU 淨忙 55.4 → ≤20 ms（少而大的 dispatch；有效頻寬 10–17 → 60 GB/s）"
+    expect: "-35 ms/step（§16 示範行：19.5 ms）。單獨命中 ⇒ 44.2–45.9 ms ＝ 21.8–22.6 t/s，**到不了 25**"
+    how:    "§16 §三：每 token 1.171 GB ÷ ~360 個緩衝 ＝ 3.25 MB/dispatch；比較 union 與 bandwidth 上限。既有卡 exp-c-eff-bandwidth（C 軸，16 t/s 里程碑）、exp-k3-pair-cert"
+
+  - id: sg-gap-boundary
+    text:   "SG-GAP：段間 gap 14.0 → ≤4 ms（每段邊界稅 0.342 ms × 40 邊界；§24 實測 14.245/14.545 ÷ 40）"
+    expect: "-10 ~ -14 ms/step。已量到的上界是 -16.9 ms（§19 tier 2 的 submit-ahead，但那是錯的，見 sg-order-legal）"
+    how:    "§24 §二/§四：`CGC-GPUTIME` 的 gap ÷ segs；H-spin 實驗（只改 hook_seg 的等待策略，決策規則已在 §24 §四 寫好）。既有卡 exp-s2-overlap（S 軸，天花板 18.7 t/s）"
+    # ── 【結案（2026-09-29，§37）：FAIL（附機制）】──────────────────────────
+    verdict: "🔴 **FAIL — 這條軸上沒有獨立槓桿**（§37）"
+    result_20260929: |
+      段數先數清楚：`n_segs = (圖上 ffn_moe_argsort-* 節點數) + 1 = 41`（DECPROF 41/41），
+      其中 40 段帶 Metal buffer（`gt_nseg` 只在 gns>0 時 ++）⇒ **可量邊界 = 40**，
+      每邊界 `gap` = 14.02/40 = **0.342 ms**（其中 58% 是 cb+submit、**42% 沒有儀器**、
+      量具自己 0.07%）。
+      **唯一被量過的介入量到 ~0**：`CGC_CB_N_MAIN=1`(＋c16) 把 `gap` 15.32 → **2.25**
+      （−13.07 ms）但 `union` 80.31 → **91.45**（+11.14）⇒ `gap+union` **95.63 → 93.70
+      （淨 −1.93 ms）**，而 `bufs` 360 → 679。⇒ 邊界窗是**被挪動位置的 CPU 工作**，
+      不是空的 GPU 時間；「降 gap」≠「加速」。
+      另兩條：submit-ahead 刪掉觀察點 ⇒ −22.3% 但 racy／garbage **且 prefill 1.6–1.8× 慢**；
+      `CGC_SEG_BATCH=1` ⇒ `segs=1` 但池子路徑一次都沒跑 ⇒ 是**另一條路（S1）**，不是本軸的槓桿。
+      ⇒ **段數推不動**：每個 argsort 都要一個邊界把 top-k 拿回 host，而第 L+1 層的 argsort
+      依賴第 L 層的輸出 ⇒ 每層一邊界是**資料依賴**。
+    revised_arithmetic: |
+      ⛔ `hypothesis.expected` 那一列（demo row「空轉減半 −7 ms ⇒ 36.2 ms ＝ 27.6 t/s」）
+      的 gap 那半**沒有實測支撐**，應以 **~2 ms** 取代 7 ms ⇒ 同一列 **41.2 ms ＝ 24.3 t/s**。
+    remaining: |
+      **（已於 §38 關閉）** 本軸殘項 = 那 42% 的邊界窗（0.145 × 40 = 5.8 ms/步）。
+      §38 量到它**不是 CPU 工作** ⇒「往邊界窗裡再塞 CPU 儀器」這條路**關閉**；
+      預註冊測試 H-spin 的**正面上限仍是 §三 守恆的 ~2 ms**（未變）。
+    result_20260929_q38: |
+      §38 邊界封包（`bdcpu`/`bdhook`/`bdsub`/`gap_not_cpu`，ADD-only、掛在既有 `CGC_GPU_TIMING` 下）：
+      ntok=1、48 步、同 arm／同 default cell。控制臂 `gap` 14.015（§37 記 14.02）⇒ 同尺。
+      **CPU 封包 8.699 ms/步 = gap 的 58.5%**：`bdhook` 5.199 vs DECPROF `cb` 5.190（+0.2%）、
+      `bdsub` 3.473 vs DECPROF `submit` 3.495（**−0.6%**）⇒ 兩支獨立量具互證。
+      **殘項 6.336 ms/步（0.1545 ms/邊界）= 42.6%**：與 CPU 編碼時間 `bdsub` **r = −0.00**、
+      CV=0.11（近乎每事件常數），且**比整個 encode+commit（0.0847）還大** ⇒ **非 CPU 工作**，
+      而是 `end_i → poll 觀察` 的完成通知延遲 ＋ `commit 返回 → start` 的 launch 延遲。
+      開採性：§19 `ops_pernode` 的 `gap` 2.25 ms/步（0.055/邊界，**同樣是純 GPU 時鐘量**）
+      ⇒ 這不是固定的每 commit 成本，它**可被藏**；但那次隱藏的淨值只有 **−1.93 ms**（守恆）。
+      ⇒ §16 §四 示範行**不動**（**41.2 ms ＝ 24.3 t/s**）。本節 t/s 全 VOID（attribution=swap）。
+
+  - id: sg-offgraph
+    status_20260929: "🔴 **無獨立槓桿（附機制）**（§40 §二/§三）"
+    result_20260929_q40: |
+      §27 §四 已答（0 跑、樹上可查）：**產品路徑也每 token 全同步** ——
+      `tools/server/server-context.cpp:4170` → `common/sampling.cpp:611`（`common_sampler_sample` 第一行）。
+      ⇒ 8.858 ms **是產品成本**，但它**沒有可削的等待**：§38 的 `gap_not_cpu` = **0.1545 ms/邊界**
+      （CV 0.11、與 CPU 編碼時間 `bdsub` 相關 r = −0.00）是「完成通知＋launch」的**每事件上界**，
+      同步兩端最多經過 2 次 ⇒ 等待上界 **0.31 ms** ⇒ **≥96.5% 的 8.858 只能是尾端 GPU 忙碌**。
+      ⇒ 它的槓桿與 SG-GAP **同一支**（§27 §三 自己的判斷），而 SG-GAP 已 FAIL ⇒ **結案**。
+      `§16 §四` 示範行「圖外減半 −5.8 ms」的**依據撤銷**；單流唯一出路是併發（換 cell，不服務單流 25 t/s）。
+      邊界：此為**上界推論**；變成量測需跨時鐘域校準（新儀器），且方向不會因量測翻轉（0.31 vs 8，27 倍）。
+    text:   "SG-OFFGRAPH：圖外 11.6 ms 先**取得儀器**再談削減（目前只是 end-to-end − DECPROF 的殘差）"
+    expect: "未知 ⇒ 這是本拆解**唯一沒有實測槓桿**的一塊；§16 的示範行假設減半（-5.8 ms）"
+    how:    "要在 llama-context／sampling 層對每 token 的圖外相位加時戳（取樣、圖組裝、API 開銷）。**目前無卡、無業主** ⇒ 這是拆解裡最大的空白"
+
+  - id: sg-fillsub-spin
+    status_20260929: "**部分（未判死）** —— 缺的是**分離**：fill 成本（3.955 ms）目前與正確性前提是同一件事（C5）"
+    next_action_20260929: |
+      §36 已指出方向：`utility topK resident 8/8 → 4/8` 而全場 `n_prefetch_dropped` 僅 **39**
+      ⇒ **丟失在駐留期，不在抓取**。下一個量測：對被需要的 id 記「上次填入 / 被逐出」時戳，
+      把 miss 分成 *never-filled* / *evicted* 兩類。
+      Acceptance：兩類可分辨且 *evicted* 占多數 ⇒ 槓桿在**駐留保證（政策）**，不在抓取（旋鈕）。
+      Falsify：*never-filled* 占多數 ⇒ 回到抓取，而 §36 已把旋鈕方向量成懸崖 ⇒ 進 on_fail 登記。
+      ⛔ 不再掃 `CGC_SPAC`／K／REFRESH（§36）。
+    text:   "SG-FILLSUB：填充＋提交 7.8 ms 與主執行緒的滿載輪詢（§24 §三：每段 15 933 次 sched_yield、~107 ns/次、每步 ~60 萬次）"
+    expect: "-3.9 ms/step（§16 示範行假設減半）。單獨命中太小，必須與 SG-GAP 共用同一個機制（H-spin）"
+    how:    "§24 §三 的 `poll_iters` 欄；既有卡 e-fillbudget-m-decomp-2026-09-29、exp-singlesubmit-fillahead。注意 §16：填充成本是**冷啟動**現象，穩態已被 worker 前饋藏掉（cb 只 4.36 ms、5%）"
+
+  - id: sg-order-legal
+    status_20260929: "**未判死** —— 否證的是**其中一個修法**（E1：remap 上 GPU，實測**值 0 ms**）"
+    next_action_20260929: |
+      唯一沒試的方向（本卡 how 已寫）：**「讓 CPU 不回讀即可寫 leaf」**。
+      下一動作是**唯讀**調查：找出 remap leaf 的 producer→consumer，問消費者能否直接吃 device buffer。
+      Acceptance：找到一對可留在 device 的 producer→consumer ⇒ 開新卡（本卡 how 已記「目前沒有業主」）。
+      Falsify：消費者在**構造上**就是 host 端 argsort ⇒ 需新 kernel、成本另估 ⇒ 不在本卡範圍。
+      ⛔ 不得把 E2（`CGC_SUBMIT_AHEAD`）當成果（§30／§31）。
+    text:   "SG-ORDER：把 top-k remap 移到 GPU（或讓 CPU 不回讀即可寫 leaf），使 submit-ahead 從 RACY 變**合法**"
+    expect: "本身 0 ms，但它是 SG-GAP 那 -16.9 ms 的**前提**：不解決它，-16.9 就永遠只能當探針不能當成果"
+    how:    "`ggml-backend.cpp` 的 `CGC_SUBMIT_AHEAD` 分支：segment[i+1] 在 segment[i] 的 hook 寫完 remap leaf 前就被 commit ⇒ 讀到 stale leaf ⇒ 整張圖壞（§24 §五）。需要一張新卡，**目前沒有業主**"
+
+on_fail_executed_20260929: |
+  `acceptance.falsify` 已觸發（各塊已量上界代入 = 41.2 ms = 24.3 t/s > 40.0 ms，§39 §二）
+  ⇒ **以 ms 為軸的這個拆解不成立**。依 `acceptance.on_fail`：
+  (1) 無槓桿的塊已登記進 `docs/NEXT_ACTIONS_2026-09-29.md`，逐塊標明**缺的是什麼**
+      （槓桿 / 分離 / 機制 / 無）；`sg-gap-boundary` 與 `sg-offgraph` 結案（皆附機制）。
+  (2) **分支未定**：SG-KERNEL 的「有無槓桿」尚待 §18 §七(4) 的 **skip-probe**
+      （唯一一次 build 就能回答的動作）。若判無槓桿 ⇒ `m-decode25` 維持**判死**，
+      力氣轉 `m-total`（pp≥250 ∧ tg>12.57）；現況最接近 **pp 260.41 ＋ tg 12.195（差 3%）**。
+  (3) 四個未死塊各自的推進方式（含可用的 acceptance/falsify）見
+      `docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md` §40。
+  (4) 本卡這一步 **0 跑 / 0 build**：§40 是轉引 ＋ 一條上界推論，未新增可引用 t/s。
+arms:
+  - prod-new
+  # §37 的邊界窗 42% 拆分（儀器探針；t/s 一律 VOID，主端點是結構切分，不是速度）
+  # 與 `Backup/stepbudget_2026-09-29/gapsplit2` 同 arm／cell，只多加一個邊界封包時戳
+  - prod-new:CGC_DECODE_PROFILE=1;CGC_GPU_TIMING=1
+
+# ── §39 槓桿再盤點：25 t/s 必須為真的條件（2026-09-29，唯讀，0 跑）─────────
+# 為何要這一塊：ms 軸（§31/§37/§38）與段數軸（§37）都已量空，而「每格放在自己的
+# 已量上界上相加」= 41.2 ms = 24.3 t/s < 40.0 ms ⇒ 目標現在的性質是「以現有軸加不到」，
+# 不是「還沒做完」。下面七條是**必須為真**才算成立的條件（各附「若為假則」）。
+verdict_decode25_20260929: |
+  ❌ **未達成，且以現有軸加總到不了**：四塊一起放在各自的**已量上界**上 ⇒
+  19.5（GPU 淨忙，108 GB/s 上限）＋ 12.0（gap，只在吃到 §19 守恆的 ~2 ms 時）＋
+  5.8（圖外減半）＋ 3.9（填充＋提交減半）＝ **41.2 ms ＝ 24.3 t/s** ＞ 40.0 ms。
+  （§16 §四 原列用「空轉減半 −7 ms」得 36.2 ms／27.6 t/s，§37 已證那 −7 **沒有實測支撐**。）
+  ⇒ 唯一的正面讀數是 **20+**（G4 路，天花板 **19.2**；兩條獨立算路 52.2／48.5 ms 同帶）。
+necessary_conditions:
+  - id: C1-arithmetic-cap
+    text: "四塊同時命中時總和必須 < 40.0 ms（現在代入已量上界得 41.2）"
+    status: "❌ 目前為假"
+    if_false: "至少一格必須超過自己的已量上界，或需要第六條軸"
+  - id: C2-sg-kernel
+    text: "每 token 位元組數不變（1.171 GB）下有效頻寬 10–17 → ≥58 GB/s（108 才得 10.8 ms）"
+    status: "❌ 無已量到的承載算子（§18 §七／§17／§21／§23 已關掉併 dispatch）"
+    if_false: "kernel 側單獨最多 22.6 t/s"
+  - id: C3-sg-gap
+    text: "被觀察到的段邊界 40 → ~1：leaf 寫入不經 CPU 往返（L+1 層 argsort 依賴 L 層 ⇒ 資料依賴）"
+    status: "❌ 修法否證（E1 值 0 ms；E2 ＝ racy 順序本身）；§38 又證殘差是 Metal 側延遲"
+    if_false: "gap 只能吃到 §19 守恆下的 ~2 ms"
+  - id: C4-sg-offgraph
+    text: "`common_sampler_sample` 的 llama_synchronize（8.858 ms ＝ 殘差 80%）必須離開每 token 路徑"
+    status: "⚠ 有儀器、無槓桿、無業主（§27）；且它是刻意的產品成本"
+    if_false: "圖外 11.6 ms 原封不動進 40.0 ms 預算"
+  - id: C5-sg-fillsub
+    text: "fill 的 3.955 ms 離開臨界路徑而池子仍正確"
+    status: "❌ 未分離：S1 能拿掉它（−40.3 ms）但同一個開關把正確性前提一起拿掉（file_reads=0）"
+    if_false: "填充＋提交那 7.8 ms 只能動提交的 3.4 ms"
+  - id: C6-caliber-mtp
+    text: "若要靠每步多 token 攤薄，必須先把 MTP-on 變成交付口徑"
+    status: "⛔ 交付口徑是 MTP off（契約 §7）⇒ 交付 cell 不可測；12.62 已作廢；生產 ABBA 反而 ×0.695"
+    if_false: "C1 沒有第六條軸，25 只能靠某一格超額（產品決策，非本線槓桿）"
+  - id: C7-quotability
+    text: "那 25 t/s 的一場必須 attribution=none/NOMINAL/reps≥3/warm-skip 64/paired log/同 build"
+    status: "❌ §33–§38 全為 attribution=swap ⇒ 連「有沒有推進」都無法回答"
+    if_false: "就算某次真到 25，它也是 VOID"

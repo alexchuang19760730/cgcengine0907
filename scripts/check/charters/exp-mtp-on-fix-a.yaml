@@ -1,0 +1,51 @@
+id: exp-mtp-on-fix-a
+owner: lineA
+created: 2026-09-28
+
+# ── 【目標】可判定問題 ────────────────────────────────────────────────────
+question: |
+  方案 A（LLAMA_EXPERT_CACHE_LAYER_CAPS=40-40:16 + CGC_DRAFT_CTX_ALIGN=1 +
+  CGC_DRAFT_SMALL_BATCH=1）能否讓 MTP on 在權威 cell 上不再 rc=-6、存活出完整
+  3 reps 的 pp/tg？以及那兩道從未被實跑過的 draft 形狀閘是否真的生效（見證行有無印出）？
+
+# ── 【現狀】權威基線 ──────────────────────────────────────────────────────
+baseline:
+  metric: "MTP on 在權威 cell 一律 rc=-6（CGC-METAL-FAIL compute #41 status 5 OOM），
+    至今無任何 ≥2 reps 存活樣本；同 build OFF 對照存活 pp 276.70 / tg 11.89"
+  cell: "prod-new + --spec-type draft-mtp, -p 2048 -n 128 -d 512 -b/-ub 5632,
+    --ctx-size 0, --warm-skip 64, reps 3"
+  source: "docs/MTP_ON_RC6_ROOT_CAUSE_2026-09-28.md"
+
+# ── 【假設】機制 + 預期 ───────────────────────────────────────────────────
+hypothesis:
+  mechanism: |
+    ON 全程只比 OFF 高 ~180 MiB，而 il=39 那一刻崩與活只差 46.8 MiB ⇒ 缺的是 margin 不是
+    機制。那 180 = blk.40（MTP block）權重：experts 278 MiB 在 cap=143 下 resident 155.34，
+    加 24.95 MiB 非 expert 張量。把 blk.40 的 cap 143→16 讓 resident 155.34→17.38，
+    騰出 ~138 MiB；另兩道 draft 閘把 gen 階段的 draft ctx 從 KV 512 + compute 493 MiB
+    壓到個位數 MiB。target 只建 il=0..39（兩趟 reserve 相同 2530.72）⇒ 砍 blk.40 的
+    residency 不影響 target logits，只可能影響 draft 命中率（=速度，非正確性）。
+  expected: "騰出 120~138 MiB，約為存活所需 ~47 MiB 的 2.6~2.9× ⇒ 預期 rc=0 存活；
+    兩道閘生效則 stderr 應出現 2 條 CGC-DRAFT-* 見證行"
+  basis: "docs/MTP_ON_FIX_PLAN_2026-09-28.md §1/§3（推算式 278×N/256；僅 cap=143→177.8 MiB
+    一個實測點支撐，本趟要回頭對實測 rss 差）"
+
+# ── 【驗收】跑前定好 ──────────────────────────────────────────────────────
+acceptance:
+  success: "rc=0 且產出完整 3 reps 的 pp/tg JSON；且 stderr 同時印出 CGC-DRAFT-CTX-ALIGN
+    與 CGC-DRAFT-SMALL-BATCH 兩條見證行"
+  falsify: "仍 rc=-6 ⇒ 騰出量模型錯（實測 rss 差與推算 138 MiB 不符）；見證行沒印 ⇒ 閘未生效，
+    該趟不可拿來結論（這兩個閘在 repo 內從無實跑支撐）"
+  on_fail: "不編造成績：把實測 rss 差回填修正 §1 的線性模型，按驗證序列第 3 步（40-40:8）
+    或第 4 步（疊加方案 B）推進"
+
+# ── 【量化目標】本趟是「存活」實驗，速度目標僅供 mindmap 對齊，不是驗收項 ──
+targets:
+  decode_tps: 13.0
+  prefill_tps: 250.0
+
+# ⚠ 不要加 `!`：llama_bench_matrix.py:782 沒剝 `!`，加了會讓整顆環境變數被丟棄（靜默 no-op）。
+# 旋鈕名必須是 CGC_SERVER_LAYER_CAPS（run_server.sh 是 allowlist，導出 LLAMA_EXPERT_CACHE_LAYER_CAPS）。
+arms:
+  - prod-new:CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1
+  - prod-new:CGC_SERVER_LAYER_CAPS=40-40:64;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1

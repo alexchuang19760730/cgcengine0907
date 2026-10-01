@@ -65,8 +65,10 @@ import importlib.util
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -212,6 +214,36 @@ FORWARD_VALUED = {
     "-ctv", "--cache-type-v",
 }
 FORWARD_BARE = {"-nkvo", "--no-kv-offload", "-fa", "--flash-attn"}
+
+# The sampling the SERVER will actually use lives in its ARGV, not in its env: run_server.sh emits
+# `--temp ${CGC_SERVER_TEMP:-0.4} --top-p ${CGC_SERVER_TOP_P:-0.8} --top-k 0`, and the CGC_DUMP_ENV
+# block echoes those as `ARG` lines with no matching `ENV` line (measured 2026-09-26).
+# llama-bench's sampling-parity block reads the ENV names, and its own argv has no --temp flag, so
+# without this translation the two carriers sample differently -- measured from the engine's own
+# witness line: `[CGC seed] sampler_seed=.. temp=0.80 top_p=0.95 top_k=40`, i.e.
+# common_params_sampling's struct DEFAULTS, while the server ran 0.4 / 0.8 / 0. Since the MTP accept
+# step compares the draft against the target's sampled token, that difference is an accept-rate
+# difference: it is most of why llama-bench and llama-server disagreed on mean_len (2.02 vs 2.50).
+SAMPLING_FLAGS = {
+    "--temp": "CGC_SERVER_TEMP", "--temperature": "CGC_SERVER_TEMP",
+    "--top-p": "CGC_SERVER_TOP_P", "--top_p": "CGC_SERVER_TOP_P",
+    "--top-k": "CGC_SERVER_TOP_K", "--top_k": "CGC_SERVER_TOP_K",
+    "--min-p": "CGC_SERVER_MIN_P", "--min_p": "CGC_SERVER_MIN_P",
+}
+
+
+def sampling_env(server_argv: list[str]) -> dict[str, str]:
+    """The server's sampling params, renamed into what llama-bench's parity block reads.
+
+    LAST occurrence wins, deliberately: the resolved argv carries `--temp 0` in an earlier position
+    and `--temp 0.4` later (the server's own parser takes the last), so a reader that took the first
+    would pin temp 0 -- i.e. greedy -- while claiming parity with the server.
+    """
+    out: dict[str, str] = {}
+    for i, a in enumerate(server_argv[:-1]):
+        if a in SAMPLING_FLAGS:
+            out[SAMPLING_FLAGS[a]] = server_argv[i + 1]
+    return out
 
 CGCENV_RE = re.compile(r"^CGCENV\s+(\S+)\s+(.*)$")
 ENV_RE = re.compile(r"^ENV\s+(.*)$")
@@ -395,6 +427,42 @@ def harvest_bench_stats(stderr_text: str) -> dict:
     return mod.harvest(str(tmp))
 
 
+# 【CGC 2026-09-29】這一輪每一臂的 stderr（tag, shape, text），供收尾時寫成產物的成對 log。
+_PAIR_BUFFER: list = []
+_IBIND = None
+
+
+def ibind():
+    """`instrument_binding` 模組（成對規則與量具判準的**唯一住處**）；載入一次。"""
+    global _IBIND
+    if _IBIND is None:
+        p = Path(__file__).resolve().parent / "instrument_binding.py"
+        spec = importlib.util.spec_from_file_location("instrument_binding", str(p))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _IBIND = mod
+    return _IBIND
+
+
+def instrument_report(serr: str, extra_env: dict, res_env: dict, require=None) -> dict:
+    """[CGC 2026-09-29] 量具綁定：**設了開關** 不等於 **量具綁上了圖**。
+
+    WHY：2026-09-29 交付 cell 的四場沒有產物的嘗試，留下的日誌裡 MM-PUB/RB-FEED/MISSMASK 全是 0——
+    而 `{"verdict": "..."}` 那一套事後檢查（白名單、符號、建置產物、產物存在）**四項全過**。
+    所以判定要在「產物寫出來的那一刻」就做，寫進 `out['instrument']`，並在 stdout 上留下可見的一行；
+    後續 `experiment_sync` 把 `UNBOUND` 當成「這一輪的計數不可引用」。
+
+    判準本身住在 `instrument_binding.py`（與檢查端同一份），這裡只負責把這一輪的 env 與 stderr 餵進去。
+    """
+    p = Path(__file__).resolve().parent / "instrument_binding.py"
+    spec = importlib.util.spec_from_file_location("instrument_binding", str(p))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    env = dict(res_env or {})
+    env.update(extra_env or {})
+    return mod.binding_report(serr, env=env, require=require)
+
+
 _CELL_FWD_ALIASES = {
     "ngl": ("-ngl", "--n-gpu-layers"),
     "load_mode": ("--load-mode", "-lm"),
@@ -412,8 +480,238 @@ def _fwd_val(fwd: list[str], aliases: tuple[str, ...]):
     return None
 
 
-def run_arm(tag: str, profile: str, extra_env: dict[str, str], args) -> dict:
-    res = resolve(profile, extra_env)
+def pool_budget_mb(fwd: list[str], env: dict, scalars: dict) -> tuple:
+    """(mb, source)：這一支臂宣告的池子大小。
+
+    三個來源，順序就是「誰最接近真正生效的那個」：CLI → env → server scalars。
+    讀不出整數就回 `(None, 讀不出…)`——**不猜**：Metal 預算閘在拿不到池子大小時會回
+    `armed=False`（沒有這根桿子），而一個猜出來的池子會讓它看起來有桿子。
+    """
+    raw = _fwd_val(fwd, _CELL_FWD_ALIASES["expert_cache_bytes"])
+    src = "--expert-cache（CLI，宣告值）"
+    if raw is None:
+        raw = (env or {}).get("CGC_EXPERT_CACHE_BYTES")
+        src = "CGC_EXPERT_CACHE_BYTES（env，宣告值）"
+    if raw is None:
+        raw = (scalars or {}).get("BUDGET")
+        src = "server scalars BUDGET（profile 解出的值）"
+    if raw is None:
+        return None, "沒有宣告池子大小"
+    try:
+        return float(int(str(raw).strip())) / (1024.0 * 1024.0), src
+    except (TypeError, ValueError):
+        return None, "池子大小讀不出整數（%r）—— 不猜" % (raw,)
+
+
+# --- spec-armed gate (fail-closed) ------------------------------------------------------------
+# [CGC 2026-09-26] An arm that sets CGC_SERVER_MTP=1 while the cell carries no --spec-type is NOT an
+# MTP arm: it exports the MTP=1 env block (NO_PREFETCH, LAYER_CAPS 40-40:256, PREFIX_REUSE_CKPT,
+# NO_SEQ_RM_PROBE, WARM_NPAST) with ZERO draft/verify work, so it prices the env block and says
+# nothing about speculation. Measured 2026-09-26: such an arm reads 10.45 t/s against the MTP-off
+# baseline's 12.57, and its own artifact says `spec_type: null` -- yet the loss was quoted as "MTP
+# on is slower" because nothing refused the pair. Same family as the allowlist traps above: a knob
+# that was never armed cannot be read as "no effect".
+def mtp_without_spec(extra_env: dict[str, str], res_env: dict[str, str], spec_type: str) -> str:
+    """Evidence string when MTP is armed but the cell has no spec, else ''.
+
+    Value test, not presence: run_server.sh gates its MTP block on `= "1"`, so "0" is an honest off
+    arm (the ARMS table has two of them). Any other non-empty value is treated as ON -- fail-closed.
+    """
+    if spec_type:
+        return ""
+    for src, name in ((extra_env, "arm env"), (res_env, "resolved env")):
+        v = (src or {}).get("CGC_SERVER_MTP")
+        if v is not None and v.strip() != "0":
+            return f"{name} CGC_SERVER_MTP={v}"
+    return ""
+
+
+def _metal_line(mg: dict) -> str:
+    """一行讀得懂的 Metal 預算：每個項目帶出處在產物裡，這裡只要「哪一項」與「差多少」。"""
+    if not mg:
+        return ""
+    items = " ＋ ".join("%s %.0f" % (i["label"], i["mb"]) for i in mg.get("items") or [])
+    tot = mg.get("total_mb")
+    ceil = mg.get("ceiling_mb")
+    head = mg.get("headroom_mb")
+    s = "  %s = %s MiB  vs 上限 %s MiB（%s）" % (
+        items or "（無項目）", "%.0f" % tot if tot is not None else "?",
+        "%.0f" % ceil if ceil is not None else "?", mg.get("ceiling_source") or "?")
+    if head is not None:
+        if head >= 0:
+            s += "  餘裕 %.0f MiB" % head
+        else:
+            # 點名要點**人讀得懂的名字**（`wired_mb` 是機器名，不是項目名）。
+            _big = mg.get("biggest")
+            _lbl = next((i["label"] for i in mg.get("items") or [] if i["name"] == _big), _big)
+            s += "  超額 %.0f MiB（最大項：%s）" % (-head, _lbl)
+    return s
+
+
+# --- 串流子行程（量測中途被殺也要留下軌跡）------------------------------------------------------
+# 【CGC 2026-09-29】為什麼不是 `subprocess.run(capture_output=True)`：那條路把子行程的 stderr 收在
+# **驅動自己的記憶體**裡，只有子行程結束才輪得到寫檔（`run_arm` 是跑完之後才 `write_text`）。於是
+# 當**驅動**被殺（終端逾時、Ctrl-C、外面那把刀）時，磁碟上一行都沒有 —— 交付 cell 的 `gen 128` ＋
+# `CGC_MISS_MASK_DBG` 那四場就是這樣消失的，而「停在哪一行」正好是那四場唯一的問題。stderr 在 C
+# 裡是無緩衝的，所以只要驅動**即時**寫，被殺掉的中途也有完整軌跡。這一個 helper 因此是三件事：
+#   ① tee：每讀到一行就 append ＋ flush 到 live log（不是快取，是落地）；
+#   ② 停滯看門狗：連續 `stall_watch_s` 沒有新行 ⇒ 記 marker ＋ `sample` 子行程堆疊。
+#      「卡住」與「很慢」只能靠堆疊分，靠等分不出來；
+#   ③ 自帶剎車：`arm_timeout_s` 逾時只殺**自己的 process group**（`start_new_session=True`），
+#      驅動活下來把產物與 log 寫完 —— 讀數不該取決於外面那把刀幾點落下。
+# 預設全關（0）⇒ 既有 cell 的命令列與行為一個字都不變。
+_LIVE_ECHO = (r"CGC-MISSMASK-STEP|CGC-MISSMASK-COST|CGC-RB-FEED|CGC-OOB|CGC-PREV-PF|CGC-OOM|"
+              r"abort|Abort|GGML|rror|Segmentation|SIGSEGV|assert|watchdog")
+SAMPLE_BIN = "/usr/bin/sample"
+# 【CGC 2026-09-29】停滯判準不能是「有沒有新的一行」：引擎有一條 **心跳**（`CGC-RSS: t=.. rss=..`,
+# ~0.1 s 一顆），於是「卡住不動」在字面上永遠是「有新的一行」。第一版看門狗因此完全沒發火——
+# 而那一場的真相是：心臟在跳、工作沒有動（step 2 的寬 shape 上兩層之間 135 s）。所以停滯量的是
+# 「距離上一次**進展行**多久」，心跳不算進展。要改判準就在這裡改（或 `--stall-progress-re`）。
+_PROGRESS_RE = r"^(?!CGC-RSS)"
+
+
+def _stream_child(cmd, env, live_path: Path, echo_filter: str | None = None,
+                  arm_timeout_s: float = 0.0, stall_watch_s: float = 0.0,
+                  stall_kill: bool = False, sample_s: float = 3.0,
+                  max_samples: int = 2, kill_grace_s: float = 10.0,
+                  progress_re: str | None = _PROGRESS_RE) -> dict:
+    """跑一個子行程，**逐行**把 stderr 落地，並在停滯／逾時時留下可讀的讀數。
+
+    回傳：rc／stdout／stderr（完整文字，供下游既有解析器用）＋ 這一手的中止資訊
+    （`timed_out`／`stalls`／`samples`／`last_stderr_line`／`live_log`）。
+    """
+    live_path = Path(live_path)
+    live_path.parent.mkdir(parents=True, exist_ok=True)
+    started = time.time()
+    out_lines: list[str] = []
+    err_lines: list[str] = []
+    stalls: list[dict] = []
+    samples: list[dict] = []
+    state: dict = {"timed_out": False, "kill_signal": None, "kill_reason": None}
+    # 「進展」與「任何一行」是兩個不同的鐘：看門狗用前者（見 `_PROGRESS_RE`），尾跡用後者。
+    last_activity = {"t": started, "line": None}
+
+    f = open(live_path, "w", encoding="utf-8", errors="replace")
+    f.write("# cgc-live: started=%s  cwd=%s\n" % (time.strftime("%F %T"), ROOT))
+    f.write("# cgc-live: cmd=%s\n" % " ".join(str(c) for c in cmd))
+    _env = " ".join("%s=%s" % (k, v) for k, v in sorted((env or {}).items())
+                    if k.startswith(("CGC_", "LLAMA_EXPERT")))
+    f.write("# cgc-live: env=%s\n" % _env)
+    f.write("# cgc-live: 這個檔案是**即時**寫的（每一行都 flush），所以行程被殺也看得到停滯點。\n")
+    f.write("# cgc-live: 停滯判準 = 距上一次「進展行」> %.0fs（進展行 = 符合 %r；心跳不算）\n"
+            % (stall_watch_s, progress_re))
+    f.flush()
+
+    p = subprocess.Popen(cmd, cwd=str(ROOT), env=env, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True, errors="replace", bufsize=1,
+                         start_new_session=True)
+
+    def _pump(stream, sink: list, is_err: bool) -> None:
+        try:
+            for line in stream:
+                sink.append(line)
+                if not is_err:
+                    continue
+                if progress_re is None or re.search(progress_re, line):
+                    last_activity["t"] = time.time()
+                    last_activity["line"] = line.rstrip()[:300]
+                f.write(line)
+                f.flush()
+                if echo_filter and re.search(echo_filter, line):
+                    print("    | " + line.rstrip()[:200], flush=True)
+        except Exception as e:  # noqa: BLE001 - 管子被關掉不能把軌跡一起弄丟
+            if is_err:
+                f.write("# cgc-live-note: stderr 讀取中止（%s）\n" % e)
+                f.flush()
+
+    th_out = threading.Thread(target=_pump, args=(p.stdout, out_lines, False), daemon=True)
+    th_err = threading.Thread(target=_pump, args=(p.stderr, err_lines, True), daemon=True)
+    th_out.start()
+    th_err.start()
+
+    def _sample(why: str, silent_s: float) -> dict:
+        if not os.path.exists(SAMPLE_BIN):
+            return {"ok": False, "why": "沒有 %s（無法取堆疊）" % SAMPLE_BIN, "silent_s": silent_s}
+        sf = live_path.with_name(live_path.name.replace(".stderr.log", "") +
+                                 ".sample%d.txt" % (len(samples) + 1))
+        try:
+            r = subprocess.run([SAMPLE_BIN, str(p.pid), str(sample_s), "-mayDie",
+                                "-file", str(sf)], capture_output=True, text=True, timeout=60)
+            return {"ok": r.returncode == 0, "file": str(sf), "rc": r.returncode,
+                    "why": (r.stderr or "").strip()[:300], "silent_s": silent_s}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "why": str(e)[:300], "silent_s": silent_s}
+
+    def _stop(reason: str) -> None:
+        state["kill_reason"] = reason
+        f.write("# cgc-live-stop: reason=%s wall=%.1fs -> SIGTERM 自己的 process group %d\n"
+                % (reason, time.time() - started, p.pid))
+        f.flush()
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+            state["kill_signal"] = "SIGTERM"
+        except (ProcessLookupError, PermissionError):
+            return
+        t_kill = time.time()
+        while p.poll() is None and time.time() - t_kill < kill_grace_s:
+            time.sleep(0.1)
+        if p.poll() is None:
+            try:
+                os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+                state["kill_signal"] = "SIGKILL"
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    while p.poll() is None:
+        now = time.time()
+        if arm_timeout_s and (now - started) > arm_timeout_s and not state["timed_out"]:
+            state["timed_out"] = True
+            _stop("driver-timeout")
+            break
+        if stall_watch_s and (now - last_activity["t"]) > stall_watch_s \
+                and len(samples) < max_samples:
+            silent = now - last_activity["t"]
+            sm = _sample("stall", round(silent, 1))
+            sm["at"] = time.strftime("%F %T")
+            samples.append(sm)
+            f.write("# cgc-live-stall: %.1fs 沒有進展行; pid=%d；最後進展行 = %s；最後任何一行 = %s；"
+                    "sample=%s\n" % (silent, p.pid, last_activity["line"],
+                                   (err_lines[-1].rstrip()[:300] if err_lines else None),
+                                   sm.get("file") or ("失敗：" + str(sm.get("why")))))
+            f.flush()
+            stalls.append({"at": sm["at"], "silent_s": round(silent, 1),
+                           "last_progress_line": last_activity["line"],
+                           "last_any_line": (err_lines[-1].rstrip() if err_lines else None)})
+            print("  ⏳ 停滯 %.0fs（pid=%d）-- 已取堆疊 %s"
+                  % (silent, p.pid, sm.get("file") or sm.get("why")), flush=True)
+            last_activity["t"] = time.time()
+            if stall_kill:
+                _stop("driver-stall-kill")
+                break
+        time.sleep(0.25)
+
+    rc = p.wait()
+    for th in (th_out, th_err):
+        th.join(timeout=5)
+    wall = time.time() - started
+    tail = err_lines[-1].rstrip() if err_lines else None
+    f.write("# cgc-live-end: rc=%s reason=%s wall=%.1fs stderr_lines=%d stdout_lines=%d\n"
+            % (rc, state["kill_reason"] or "child-exit", wall, len(err_lines), len(out_lines)))
+    f.write("# cgc-live-end: last_progress=%s\n" % last_activity["line"])
+    f.write("# cgc-live-end: last_stderr=%s\n" % tail)
+    f.close()
+    return {"rc": rc, "stdout": "".join(out_lines), "stderr": "".join(err_lines),
+            "timed_out": bool(state["timed_out"]), "kill_reason": state["kill_reason"],
+            "kill_signal": state["kill_signal"], "wall_s": round(wall, 1),
+            "stalls": stalls, "samples": samples, "last_stderr_line": tail,
+            "last_progress_line": last_activity["line"],
+            "n_stderr_lines": len(err_lines), "n_stdout_lines": len(out_lines),
+            "live_log": str(live_path)}
+
+
+def run_arm(tag: str, profile: str, extra_env: dict[str, str], args, res: dict) -> dict:
+    # `res` is resolved by the caller: main() resolves every arm once so the spec gate can refuse a
+    # whole invocation before the first arm costs anyone GPU time.
     env, argv, scalars = res["env"], res["server_argv"], res["scalars"]
 
     fwd = forward_argv(argv)
@@ -471,7 +769,8 @@ def run_arm(tag: str, profile: str, extra_env: dict[str, str], args) -> dict:
         "fixed_fill_seed": getattr(args, "fixed_fill_seed", 0) or None,
     }
     import cell_contract
-    crep = cell_contract.check_cell(actual, arm_env=extra_env)
+    crep = cell_contract.check_cell(actual, arm_env=extra_env,
+                                    cell_name=getattr(args, "cell", None))
 
     print(f"\n=== arm {tag} (profile {profile}) ===", flush=True)
     print(f"  batch    : -b {b} -ub {ub}   [{why}]", flush=True)
@@ -485,25 +784,99 @@ def run_arm(tag: str, profile: str, extra_env: dict[str, str], args) -> dict:
         print(f"  arm env  : {extra_env}", flush=True)
     print(f"  cmd      : {' '.join(cmd)}", flush=True)
     print("  " + crep.render().replace("\n", "\n  "), flush=True)
-    contract_block = {"ok": crep.ok, "mismatches": crep.mismatches, "declared": crep.declared}
+    contract_block = {"ok": crep.ok, "mismatches": crep.mismatches, "declared": crep.declared,
+                      "cell": crep.cell}
+    # [CGC 2026-09-29] Metal 工作集閘的輸入之一：這支臂宣告的池子大小（dry-run 與真跑都要）。
+    _pool_mb, _pool_src = pool_budget_mb(fwd, env, scalars)
     if args.dry_run:
+        # 起跑狀態在 dry-run 也要報（但**不拒跑**）：這是唯一在花掉 44 秒之前能問「現在這台盒子
+        # 值不值得跑這一輪」的地方。dry-run 若也拒跑，會讓 selftest 隨盒子當下狀態隨機失敗。
+        _dry_pre = mempress.steady()
+        _sg = mempress.state_gate(_dry_pre, waived=os.environ.get("CGC_IGNORE_STATE_BUDGET") or None)
+        print(f"  state gate: {'OK' if _sg['ok'] else 'UNUSABLE'}  free={_sg['free_mb']} MiB"
+              f" (floor {_sg['floor_mb']})  swap={_sg['swap_used_mb']} MiB"
+              + "".join(f"\n    !! {r}" for r in _sg["reasons"]), flush=True)
+        # Metal 工作集閘在 dry-run 也要報（同樣**不拒跑**）：它是「花 44 秒之前問一次」的另一半。
+        _mg = mempress.metal_gate(_dry_pre, _pool_mb, pool_source=_pool_src, phase="pre-launch")
+        print(f"  metal gate: {'OK' if _mg['ok'] else 'REFUSE'}"
+              f"{'（未武裝）' if not _mg['armed'] else ''}" + _metal_line(_mg), flush=True)
+        for _w in _mg["warnings"]:
+            print(f"    ~~ {_w}", flush=True)
+        for _r in _mg["reasons"]:
+            print(f"    !! {_r}", flush=True)
         return {"tag": tag, "profile": profile, "extra_env": extra_env, "cmd": cmd,
-                "env": env, "scalars": scalars, "contract": contract_block, "dry_run": True}
+                "env": env, "scalars": scalars, "contract": contract_block, "dry_run": True,
+                "cell": crep.cell, "state_gate": _sg, "metal_gate": _mg}
 
     if not crep.ok:
         raise SystemExit(f"cell contract FAIL for arm {tag} — 拒跑（fail-closed），見上。")
 
     run_env = dict(os.environ)
     run_env.update(env)
+    # [CGC fix] 採樣對齊：sampling_env 把 resolved server argv 的 --temp/--top-p/--top-k/--min-p
+    # 翻成 llama-bench parity block 讀的 env。它此前定義了卻從未被調用（死代碼），導致 llama-bench
+    # 回落 common_params_sampling 的 struct 預設 temp 0.80 / top_p 0.95 / top_k 40，而 server 跑
+    # 0.4 / 0.8 / 0 —— MTP accept 被系統性低估（見證行實測 mean_len 2.02 vs server 2.50）。
+    # argv 已在 resolve 時套用 arm extra_env，故此處取到的就是該 arm 最終生效值。
+    run_env.update(sampling_env(argv))
     # A llama-bench arm is ONE child process holding the GPU for minutes with no per-request
     # boundary to hang a reading on, so the series has to come from a thread. The launch
     # reading is taken before the spawn (thermal_pressure.Sampler.start), which is the reading
     # the prefill separation is defined on -- taking it after would silently redefine it.
+    # 【CGC 2026-09-29】檔名要在**跑之前**就知道：live log 必須在子行程起跑前就開好，否則被殺掉的
+    # 那一輪連檔名都沒有（見 `_stream_child`）。下面對 `stem` 的用法完全不變。
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", tag)[:80]
+    shape = re.sub(r"[^A-Za-z0-9._-]", "-", f"p{args.prompt}_n{args.gen}_d{args.depths}_r{args.reps}")
+    stem = Path(args.workdir) / f"llama_bench_{safe}_{shape}"
+    # 有產物路徑時，live log 放在**產物旁邊**（`<json>.logs/live/`）：`--workdir`（預設 /tmp）遲早
+    # 會被清掉，而「停在哪裡」正是那種事後才想引用、卻已經不在磁碟上的東西。
+    if getattr(args, "json", None):
+        live_log = Path(str(args.json) + ".logs") / "live" / f"{safe}.{shape}.stderr.log"
+    else:
+        live_log = Path(args.workdir) / f"llama_bench_{safe}_{shape}.live.stderr.log"
+
     sampler = thermal.Sampler()
     msamp = mempress.Sampler()
     t0 = time.time()
+    refused_state = None
     with sampler, msamp:
-        proc = subprocess.run(cmd, cwd=str(ROOT), env=run_env, capture_output=True, text=True)
+        # [CGC 2026-09-28] 起跑狀態閘：在 spawn **之前**判，因為它問的正是「這台盒子現在適不適合量」。
+        # 從前那道閘是跑後的絕對成長 —— 那等於先花 44 秒，再因為「盒子當時不乾淨」把臂判死；
+        # 而絕對成長與起跑 free 的 rho 是 -0.870（出處在 memory_pressure 的 docstring），也就是
+        # 它其實在量盒子。現在那根絕對桿子降為證據（可用 CGC_SWAP_BUDGET_MB 選回），臂側的訊號
+        # 改走「成長扣掉起跑狀態期望值後的殘差」。
+        # 判的讀值是 median-of-3（`steady`）：單一 `pages_free` 樣本在這台盒子上會擺盪 GB 級，
+        # 而擺盪的兩端會落在 5000 MiB 地板的兩邊。Sampler 的 launch 讀值照舊留給 attribution，
+        # 不拿它當閘（它是一瞬，而且它的定義是「child 出現之前」，不是「穩定狀態」）。
+        _pre = mempress.steady()
+        refused_state = mempress.state_gate(
+            _pre, waived=os.environ.get("CGC_IGNORE_STATE_BUDGET") or None)
+        # [CGC 2026-09-29] Metal 工作集閘（起跑前）：池子 ＋ 起跑 Metal 駐留（＋保留）vs 上限。
+        # 它與上面那道正交：起跑 available 可以很夠而 Metal 上限已經裝不下（交付 cell 那一場就是）。
+        # 上限讀不到時 `armed=False` ⇒ 不拒跑，但會在產物與 stdout 裡說「這一輪沒有這根桿子」。
+        refused_metal = mempress.metal_gate(
+            _pre, _pool_mb, pool_source=_pool_src, phase="pre-launch",
+            waived=os.environ.get("CGC_IGNORE_METAL_BUDGET") or None)
+        if (refused_state["ok"] and refused_metal["ok"]) or args.dry_run:
+            print(f"  live log : {live_log}", flush=True)
+            print(f"  brake    : arm-timeout={getattr(args, 'arm_timeout', 0) or 'off'}s "
+                  f"stall-watch={getattr(args, 'stall_watch', 0) or 'off'}s "
+                  f"stall-kill={bool(getattr(args, 'stall_kill', False))}", flush=True)
+            stream = _stream_child(cmd, run_env, live_log,
+                                   echo_filter=(getattr(args, "live_echo", "") or _LIVE_ECHO),
+                                   arm_timeout_s=float(getattr(args, "arm_timeout", 0) or 0),
+                                   stall_watch_s=float(getattr(args, "stall_watch", 0) or 0),
+                                   stall_kill=bool(getattr(args, "stall_kill", False)),
+                                   progress_re=(getattr(args, "stall_progress_re", None)
+                                                if getattr(args, "stall_progress_re", None) is not None
+                                                else _PROGRESS_RE))
+            rc_out, sout, serr = stream["rc"], stream["stdout"], stream["stderr"]
+        else:
+            rc_out, sout, serr = None, "", ""
+            stream = {"rc": None, "stdout": "", "stderr": "", "timed_out": False,
+                      "kill_reason": None, "kill_signal": None, "wall_s": 0.0, "stalls": [],
+                      "samples": [], "last_stderr_line": None, "n_stderr_lines": 0,
+                      "n_stdout_lines": 0, "live_log": str(live_log)}
     wall = time.time() - t0
     # The filename has to carry the SHAPE. `tag` alone collides for every arm that sets its env
     # through the `PROFILE:ENV=...` form, because there the spec string *is* the tag -- so
@@ -511,33 +884,69 @@ def run_arm(tag: str, profile: str, extra_env: dict[str, str], args) -> dict:
     # expert cache's own counters land) was silently overwritten. Hit on 2026-09-16 while running
     # Backup/run_instrument_compare.sh. Distinct `--json` paths hid it: the JSON evidence of both
     # runs survived while only the last stderr did.
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", tag)[:80]
-    shape = re.sub(r"[^A-Za-z0-9._-]", "-", f"p{args.prompt}_n{args.gen}_d{args.depths}_r{args.reps}")
-    stem = Path(args.workdir) / f"llama_bench_{safe}_{shape}"
-    stem.with_suffix(".stderr.log").write_text(proc.stderr, errors="replace")
-    stem.with_suffix(".json").write_text(proc.stdout, errors="replace")
+    # （`safe`／`shape`／`stem` 已在起跑前算好：live log 需要那個檔名才寫得出來。）
+    stem.with_suffix(".stderr.log").write_text(serr, errors="replace")
+    stem.with_suffix(".json").write_text(sout, errors="replace")
+    # 【CGC 2026-09-29】產物 ↔ log 成對：stderr 是唯一能證明「量具真的動了」的東西，而上面那兩份
+    # 落在 `--workdir`（預設 /tmp ⇒ 遲早被清掉），產物卻被歸檔到 `Backup/` ⇒ 歸檔完成的那一刻就永遠
+    # 驗不了（42.9%／41.8% 那兩支就是這樣）。所以每一臂在**產物旁邊**再寫一份不可被覆寫的 log
+    # （`<stem>.logs/<tag>.stderr.log`，唯一檔名），合併版由 `main` 在收尾時寫（那時才知道這一輪的邊界）。
+    # 順序是先 log、後產物：中斷只會留下孤兒 log，不會留下一支無 log 的產物。
+    if args.json:
+        ibind().write_pair_arm(args.json, tag, serr, shape=shape)
+        _PAIR_BUFFER.append((tag, shape, serr))
 
     # Tolerate a mid-arm failure. `llama-bench` runs every (p,n,d) as its own llama_context and
     # exits non-zero on the first one that dies (usually GPU OOM at a large ubatch), so a single
     # bad shape must not discard the shapes that already succeeded -- those are the measurement.
-    rows = parse_rows(proc.stdout)
-    incomplete = proc.returncode != 0
+    rows = parse_rows(sout)
+    # 起跑狀態被拒 ⇒ 根本沒起跑：那不是 incomplete（它沒有「跑一半」），但一樣不可用，
+    # 理由由 memory_gate 的 state 那一半帶出來，rc 由 main 統一判 4。
+    incomplete = (rc_out is not None and rc_out != 0)
     err = None
     if incomplete:
         # The LAST stderr line is the cache's teardown stats, not the failure -- pick the first
         # line that actually names a failure, so the recorded reason is the real one.
         sigs = ("failed to decode", "res = -", "error:", "GGML_ASSERT", "abort", "SIGSEGV",
                 "SIGABRT", "out of memory", "Unable to")
-        lines = [l.strip() for l in proc.stderr.splitlines() if l.strip()]
+        lines = [l.strip() for l in serr.splitlines() if l.strip()]
         err = next((l for l in lines if any(s in l for s in sigs)), lines[-1] if lines else "")
-        print(f"  !! arm exited rc={proc.returncode}: {err}", flush=True)
+        print(f"  !! arm exited rc={rc_out}: {err}", flush=True)
         print(f"     recovered {len(rows)} completed instance(s) from the streamed JSON", flush=True)
-        if not rows:
-            print(proc.stdout[-1500:], flush=True)
-            raise SystemExit(f"llama-bench failed for arm {tag} (rc={proc.returncode}) with no "
+        # 【CGC 2026-09-29】驅動自己踩剎車的那一輪**不是**引擎失敗：中止點就是這次要讀的東西，
+        # 所以它不能走「沒有完成任何 instance ⇒ 放棄」那條路（那條路連產物都不寫，於是「停在哪裡」
+        # 又變成沒有讀數）。留下臂紀錄（rows 可為空），讓 json 與成對 log 照寫。
+        if not rows and not stream.get("timed_out"):
+            print(sout[-1500:], flush=True)
+            raise SystemExit(f"llama-bench failed for arm {tag} (rc={rc_out}) with no "
                              f"completed instance to report")
+    if stream.get("timed_out") or stream.get("kill_reason") == "driver-stall-kill":
+        err = ("驅動中止（%s）：arm-timeout=%ss／stall-watch=%ss；停滯點見 live log %s"
+               "（最後**進展**行：%s）"
+               % (stream.get("kill_reason") or "driver", getattr(args, "arm_timeout", 0),
+                  getattr(args, "stall_watch", 0), stream.get("live_log"),
+                  stream.get("last_progress_line")))
+        print(f"  ⛔ {err}", flush=True)
+        for s in stream.get("stalls") or []:
+            print(f"     停滯 {s['silent_s']}s @ {s['at']}：最後進展行 = {s['last_progress_line']}"
+                  f"（最後任何一行 = {s['last_any_line']}）", flush=True)
+        for sm in stream.get("samples") or []:
+            print(f"     堆疊 : {sm.get('file') or sm.get('why')}", flush=True)
 
-    stats = harvest_bench_stats(proc.stderr)
+    stats = harvest_bench_stats(serr)
+    # [CGC 2026-09-29] 量具綁定（設了開關 ≠ 綁上了圖）：寫進產物，並在 stdout 留一行可見的判定。
+    # 需求由臂自己的 env 推（`CGC_MISS_MASK_DBG` ⇒ 地圖必須填起來 …），可用 --require-instrument 補。
+    instrument = instrument_report(
+        serr, extra_env, env,
+        require=[x.strip() for x in (getattr(args, "require_instrument", "") or "").split(",")
+                 if x.strip()])
+    # 根本沒起跑的那一輪（起跑閘不合格）：stderr 是空的，量具當然不會動 —— 那不是「量具沒綁上」，
+    # 而是「沒有量具可驗」。兩者要分開，否則拒跑會把 UNBOUND 這個訊號洗掉。
+    _never_launched = ((refused_state is not None and not refused_state.get("ok"))
+                       or not (refused_metal or {}).get("ok", True))
+    if _never_launched:
+        instrument = dict(instrument, verdict="N/A", required=[], escaped=[],
+                          why="這一輪根本沒有起跑（起跑閘不合格）⇒ 沒有量具可驗")
     # [provenance] warm_skip_applied: 從產物 tg row 的 n_gen 驗證 warm-skip 是否「真生效」。
     # 名義傳了 --warm-skip 不等於被套用；被套用時 tg n_gen 應 == gen - warm_skip。
     warm_skip_n = int(getattr(args, "warm_skip", 0) or 0)
@@ -556,7 +965,19 @@ def run_arm(tag: str, profile: str, extra_env: dict[str, str], args) -> dict:
            "batch_why": why, "wall_s": round(wall, 1), "env": env, "scalars": scalars,
            "contract": contract_block,
            "rows": rows, "cache": stats, "incomplete": incomplete, "error": err,
+           "refused_preflight": bool(refused_state is not None and not refused_state["ok"])
+           or not (refused_metal or {}).get("ok", True),
+           "state_gate": refused_state,
+           "metal_gate": refused_metal,
+           "state_preflight_reading": (_pre if refused_state is not None else None),
            "thermal": sampler.result,
+           # Per-row windows, because ONE launch here measures TWO rows (a 2048-token prefill and
+           # a 64-token decode) and they can sit on opposite sides of the thermal line.
+           # Measured 2026-09-28: pp window {NOMINAL: 42} / tg window {HEAVY: 34} in the same
+           # launch, whose launch-level hist said 79/153 HEAVY. Without this, "which row was
+           # hot" is unanswerable from the artifact, and a thermal gate can only be about the
+           # launch -- i.e. about whichever row happens to dominate the histogram.
+           "thermal_windows": thermal.windows((sampler.result or {}).get("samples") or [], rows),
            "memory": msamp.result,
            "attribution": mempress.attribution(sampler.result, msamp.result),
            # Recorded, not inferred: whether a row came from the speculative gen path is a property
@@ -567,7 +988,27 @@ def run_arm(tag: str, profile: str, extra_env: dict[str, str], args) -> dict:
            "fixed_fill_seed": fixed_fill_seed_actual,
            "engine_build": engine_build,
            "ctx_size": getattr(args, "ctx_size", 0) or None,
-           "spec_draft_n_max": args.spec_draft_n_max}
+           "spec_draft_n_max": args.spec_draft_n_max,
+           # 【CGC 2026-09-29】這一手的剎車／看門狗讀數（見 `_stream_child`）：即使沒有 t/s，
+           # 「跑到哪裡停住」本身就是這次要讀的東西，所以它要進產物，並與 live log 路徑綁在一起。
+           "live_log": stream.get("live_log"),
+           "arm_timeout_s": getattr(args, "arm_timeout", 0) or None,
+           "stall_watch_s": getattr(args, "stall_watch", 0) or None,
+           "driver_abort": ({"timed_out": bool(stream.get("timed_out")),
+                             "kill_reason": stream.get("kill_reason"),
+                             "kill_signal": stream.get("kill_signal"),
+                             "wall_s": stream.get("wall_s"),
+                             "stalls": stream.get("stalls"),
+                             "samples": stream.get("samples"),
+                             "last_stderr_line": stream.get("last_stderr_line"),
+                             "last_progress_line": stream.get("last_progress_line"),
+                             "n_stderr_lines": stream.get("n_stderr_lines")}
+                            if (stream.get("timed_out") or stream.get("stalls")) else None),
+           # 量具綁定判定（見 instrument_report）：UNBOUND ⇒ 這一輪的計數器不可引用。
+           "instrument": instrument,
+           "require_instrument": [x.strip() for x in
+                                  (getattr(args, "require_instrument", "") or "").split(",")
+                                  if x.strip()] or None}
     for r in rows:
         shape = ("pp" if r["n_prompt"] > 0 else "tg")
         # llama-bench emits `test_time` as an ISO-8601 STRING, not a duration -- formatting it
@@ -595,6 +1036,58 @@ def run_arm(tag: str, profile: str, extra_env: dict[str, str], args) -> dict:
           f"-> end swap={mend.get('swap_used_mb')} MiB wired={mend.get('pages_wired_mb')} MiB "  
           f"worst_swap={mw.get('max_swap_mb')} min_free={mw.get('min_free_mb')} procs={mend.get('llama_procs')}", flush=True)
     print(f"  attribution: {attr.get('verdict')}  -- {attr.get('why')}", flush=True)
+    ibv = out.get("instrument") or {}
+    ib_mark = {"BOUND": "✅", "N/A": "·"}.get(ibv.get("verdict"), "⛔")
+    print(f"  instrument: {ib_mark} {ibv.get('verdict')}  -- {ibv.get('why')}", flush=True)
+    if ibv.get("verdict") == "UNBOUND":
+        print("  ⛔ 量具 UNBOUND：開關設了但沒綁上圖 ⇒ 這一輪的計數器與由此而來的結論不可引用。"
+              "（判準：scripts/check/instrument_binding.py）", flush=True)
+
+    # [CGC 2026-09-28] 記憶體閘：**起跑狀態**是閘門（跑前可判），跑後那一半只在「扣掉起跑狀態
+    # 的期望值」之後才當閘（殘差）。兩者的校準與為什麼改在 memory_pressure 的 docstring。
+    # 期望值的輸入用 pre-flight 的 steady 讀值（與起跑閘同一個瞬間），不是 Sampler 的單一樣本：
+    # 兩者實測差 1.2 GB，而斜率 0.44 ⇒ 光是換一個讀值就能讓期望值差 ~0.5 GB（@curve_gate）。
+    out["memory_gate"] = mempress.curve_gate(
+        msamp.result, waived=os.environ.get("CGC_IGNORE_SWAP_BUDGET") or None,
+        launch_reading=(_pre if refused_state is not None else None))
+    mg = out["memory_gate"]
+    # [CGC 2026-09-29] Metal 工作集閘（跑後那一半）：池子 ＋ **整趟峰值** Metal 駐留 vs 上限，
+    # 並且從本次的 stderr 讀引擎自己印的上限（同時把值快取下來，讓下一次起跑前那道閘有數字）。
+    out["metal_gate_peak"] = mempress.metal_gate(
+        msamp.result, _pool_mb, pool_source=_pool_src, phase="peak", log_text=serr,
+        waived=os.environ.get("CGC_IGNORE_METAL_BUDGET") or None)
+    _mgp = out["metal_gate_peak"]
+    if _mgp.get("ceiling_mb") and "本次" in str(_mgp.get("ceiling_source")):
+        # 連整趟的峰值 wired 一起記：下一次**起跑前**才能在算術上多說一句
+        # 「你這一趟的起跑合格，但上一趟的峰值告訴你整趟會超」（見 metal_gate）。
+        _peak = next((i["mb"] for i in _mgp["items"] if i["name"] == "wired_mb"), None)
+        out["metal_ceiling_cached"] = mempress.remember_metal_ceiling(
+            _mgp["ceiling_mb"], _mgp["ceiling_source"], peak_wired_mb=_peak)
+    print(f"  memory gate: {'OK' if mg['ok'] else 'UNUSABLE'}"
+          + (f"  (waived: {mg['waived']})" if mg.get("waived") else "")
+          + f"  起跑 free={mg['state_gate']['free_mb']} MiB (floor {mg['state_gate']['floor_mb']})"
+          + f"  峰值成長={mg['peak_growth_mb']} MiB  殘差={mg['residual_mb']} MiB", flush=True)
+    print(f"    absolute growth: {mg['growth_criterion']}", flush=True)
+    print(f"    residual: {mg['residual_criterion']}", flush=True)
+    print(f"    swap 曲線: {mg['sparkline']}   ({mg['n']} 個取樣，峰值在 {mg['peak_at']})", flush=True)
+    for warning in mg.get("warnings") or []:
+        print(f"    ~~ {warning}", flush=True)
+    for reason in mg["reasons"]:
+        print(f"    !! {reason}", flush=True)
+    for key, phase_tag in (("metal_gate", "起跑"), ("metal_gate_peak", "峰值")):
+        _m = out.get(key) or {}
+        if not _m:
+            continue
+        print(f"  metal（{phase_tag}）: {'OK' if _m['ok'] else 'REFUSE'}"
+              f"{'（未武裝：讀不到上限或項目 ⇒ 這一輪沒有這根桿子）' if not _m['armed'] else ''}"
+              + _metal_line(_m), flush=True)
+        for w in _m["warnings"]:
+            print(f"    ~~ {w}", flush=True)
+        for r in _m["reasons"]:
+            print(f"    !! {r}", flush=True)
+    if out.get("refused_preflight"):
+        print("    （起跑閘不合格（狀態或 Metal 預算）⇒ 根本沒有起跑，這一輪沒有量到任何 t/s）"
+              "—— 這是「拒跑」不是「跑壞了」：看到這行就別去找那一輪的 t/s。", flush=True)
     return out
 
 
@@ -739,7 +1232,127 @@ def selftest() -> int:
         else:
             print(f"  ok   [{name}]: dropped={got}")
     print(f"arm-env landed selftest: {len(dcases) - dbad}/{len(dcases)} cases passed")
-    return 0 if bad + ebad + sbad + abad + dbad == 0 else 1
+
+    # [CGC 2026-09-28] 起跑狀態閘的 e2e：它必須在「什麼都還沒跑」時就能回答，所以走 --dry-run；
+    # dry-run **不拒跑**（否則這條測試會隨盒子當下狀態隨機失敗），所以斷言的是「同一支臂、同一台
+    # 盒子，只改一個 env，判詞翻面」—— 那才是「閘真的接到 CLI 上」的證據。
+    gbad = 0
+    got = {}
+    # 用**被強制**的那條（available），不是降為警告的 free 那一條：
+    # 拿 free 當測試對象會在「free 很小但 available 夠」的盒子上誤導（開機後就是那樣子）。
+    for name, floor in (("floor=1 MiB", "1"), ("floor=999999 MiB", "999999")):
+        penv = {**os.environ, "CGC_STATE_AVAILABLE_FLOOR_MB": floor}
+        p = subprocess.run([sys.executable, str(Path(__file__).resolve()),
+                            "--arms", "prod-new", "--dry-run"],
+                           cwd=str(ROOT), env=penv, capture_output=True, text=True)
+        blob = p.stdout + p.stderr
+        got[name] = ("UNUSABLE" if "state gate: UNUSABLE" in blob else
+                     "OK" if "state gate: OK" in blob else "MISSING")
+        print(f"  ok   [{name}]: state gate = {got[name]}")
+    if not (got["floor=1 MiB"] == "OK" and got["floor=999999 MiB"] == "UNUSABLE"):
+        gbad += 1
+        print(f"  FAIL [state gate e2e]: {got} -- 期望 floor=1 → OK、floor=999999 → UNUSABLE、"
+              f"兩者都不是 MISSING（MISSING = 閘沒被跑到）")
+    print(f"state-gate selftest: {2 - gbad}/2 cases passed")
+
+    # [CGC 2026-09-29] 產物 ↔ log 成對：寫入端（這裡）與檢查端（`pair_status`）必須是同一份判準，
+    # 所以斷言的是「跑完真的產出檢查端認得的合併版」，而不是「我們有呼叫某個函式」。用 tempdir。
+    import shutil
+    import tempfile
+    pbad = 0
+    pd = tempfile.mkdtemp(prefix="mtx_pair_")
+    try:
+        art = os.path.join(pd, "run.json")
+        with open(art, "w") as f:
+            json.dump([{"tag": "prod-new:CGC_MISS_MASK=1",
+                        "rows": [{"n_prompt": 0, "n_gen": 64}]}], f)
+        ib = ibind()
+        a1 = ib.write_pair_arm(art, "prod-new:CGC_MISS_MASK=1", "CGC-RB-FEED: feeds=3\n",
+                               shape="p0_n64")
+        canon = ib.write_pair_bundle(art, [("prod-new:CGC_MISS_MASK=1", "p0_n64",
+                                            "CGC-RB-FEED: feeds=3\n")])
+        st = ib.pair_status(art)
+        if not (st["paired"] and st["arm_logs"] and st["bytes"] > 0):
+            pbad += 1
+            print(f"  FAIL [pair log]: pair_status={st}")
+        else:
+            print(f"  ok   [pair log]: 合併版 {os.path.basename(canon)} 被檢查端認得"
+                  f"（{st['bytes']} bytes，per-arm {len(st['arm_logs'])} 份）")
+        if "===== arm " not in open(canon, encoding="utf-8").read():
+            pbad += 1
+            print("  FAIL [pair log]: 合併版沒有臂分隔（多臂產物會分不出誰是誰）")
+        else:
+            print("  ok   [pair log]: 合併版有臂分隔")
+        if os.path.dirname(a1) != os.path.join(pd, "run.logs"):
+            pbad += 1
+            print(f"  FAIL [pair log]: per-arm log 不在 <stem>.logs/：{a1}")
+    finally:
+        shutil.rmtree(pd, ignore_errors=True)
+    print(f"pair-log selftest: {3 - pbad}/3 cases passed")
+
+    # 【CGC 2026-09-29】串流／剎車的性質測試。要証的是**性質**，不是呼叫過什麼：
+    #   (a) 子行程還活著的時候，它已經印出的那一行就已經在磁碟上（被殺也留得下來）；
+    #   (b) arm-timeout 會真的回收子行程（不留孤兒）、且判詞是 driver-timeout。
+    sbad2 = 0
+    sd = tempfile.mkdtemp(prefix="mtx_stream_")
+    try:
+        # (a) 子行程先印一行、再睡 20 s；我們在它還睡著時讀檔。
+        lp = Path(sd) / "alive.stderr.log"
+        box = {}
+        th = threading.Thread(
+            target=lambda: box.update(_stream_child(
+                ["bash", "-c", "echo STREAM-ALIVE >&2; sleep 20"], dict(os.environ), lp,
+                arm_timeout_s=15.0)), daemon=True)
+        th.start()
+        seen = None
+        t0 = time.time()
+        while time.time() - t0 < 8 and seen is None:
+            if lp.exists():
+                txt = lp.read_text(errors="replace")
+                if "STREAM-ALIVE" in txt:
+                    seen = (round(time.time() - t0, 2), box.get("rc", "still-running"))
+            time.sleep(0.1)
+        th.join(timeout=40)
+        if seen is None or box.get("timed_out") is not True:
+            sbad2 += 1
+            print(f"  FAIL [stream]: 子行程活著時沒讀到那一行（{seen}）；box={ {k: box.get(k) for k in ('rc','timed_out','kill_reason')} }")
+        else:
+            print(f"  ok   [stream]: 子行程還在跑（{seen[1]}）就讀到 stderr 那一行（開跑後 {seen[0]}s）")
+        if not (box.get("rc") is not None and len(box.get("stalls") or []) == 0 and
+                box.get("live_log") == str(lp)):
+            sbad2 += 1
+            print(f"  FAIL [brake]: { {k: box.get(k) for k in ('rc','kill_reason','wall_s')} }")
+        else:
+            print(f"  ok   [brake]: 逾時回收 rc={box['rc']} kill={box['kill_signal']} "
+                  f"wall={box['wall_s']}s，離場時 log 結尾={box['last_stderr_line']!r}")
+        # (c) 停滯看門狗：只印一行然後睡 ⇒ 應該抓到停滯（且不殺）。
+        lp2 = Path(sd) / "stall.stderr.log"
+        box2 = _stream_child(["bash", "-c", "echo ONLY-LINE >&2; sleep 4"], dict(os.environ),
+                             lp2, stall_watch_s=1.0, arm_timeout_s=30.0)
+        if not box2.get("stalls") or box2["stalls"][0]["last_progress_line"] != "ONLY-LINE":
+            sbad2 += 1
+            print(f"  FAIL [stall-watch]: {box2.get('stalls')}")
+        else:
+            print(f"  ok   [stall-watch]: 停滯 {box2['stalls'][0]['silent_s']}s、點名最後進展行 "
+                  f"{box2['stalls'][0]['last_progress_line']!r}，且沒有把它殺掉（rc={box2['rc']}）")
+        # (d) 心跳不得蓋住停滯：子行程只印 CGC-RSS（引擎每秒都印它）⇒ 第一版「有沒有新的一行」
+        # 的判準會永遠不發火，而真實那一場就是這樣（step 2 卡 135 s 而心跳沒斷）。
+        lp3 = Path(sd) / "hb.stderr.log"
+        box3 = _stream_child(
+            ["bash", "-c", "for i in 1 2 3 4; do echo \"CGC-RSS: t=$i rss=1\" >&2; "
+                           "sleep 0.6; done"], dict(os.environ), lp3,
+            stall_watch_s=1.0, arm_timeout_s=30.0)
+        if not box3.get("stalls") or box3["stalls"][0]["last_progress_line"] is not None:
+            sbad2 += 1
+            print(f"  FAIL [heartbeat 不蓋住停滯]: {box3.get('stalls')}")
+        else:
+            print(f"  ok   [heartbeat 不蓋住停滯]: 只有心跳也算停滯 "
+                  f"({box3['stalls'][0]['silent_s']}s，進展行={box3['stalls'][0]['last_progress_line']})"
+                  f"，而心跳本身照樣留在 log（{box3['n_stderr_lines']} 行）")
+    finally:
+        shutil.rmtree(sd, ignore_errors=True)
+    print(f"stream/brake selftest: {4 - sbad2}/4 cases passed")
+    return 0 if bad + ebad + sbad + abad + dbad + gbad + pbad + sbad2 == 0 else 1
 
 
 def main() -> int:
@@ -784,11 +1397,29 @@ def main() -> int:
     ap.add_argument("--spec-draft-n-max", type=int, default=None,
                     help="llama-bench --spec-draft-n-max (1..16). Inert without --spec-type; when "
                          "omitted, llama-bench's own default (3) applies.")
+    ap.add_argument("--require-instrument", default="",
+                    help="額外明文要求「必須真的動過」的量具探針（逗號分隔；預設由臂的 env 推）。"
+                         "例：prefetch（池的重定中心有下過單）。見 scripts/check/instrument_binding.py")
     ap.add_argument("--cell", default=None,
                     help="測試卡 §2.5 的 named cell（預設＝權威 prod-new cell）。未宣告的名字是 "
                          "fail-closed（不退回預設）——拿不到指定的 cell 不該變成另一個 cell 的數字。")
     ap.add_argument("--workdir", default="/tmp")
     ap.add_argument("--json")
+    # 【CGC 2026-09-29】驅動側的剎車與看門狗（見 `_stream_child`）。三個預設都是關的 ⇒ 既有 cell
+    # 的命令列與行為一個字都不變；需要它們的只有「跑不完」那一類診斷。
+    ap.add_argument("--arm-timeout", type=float, default=0.0,
+                    help="單臂牆鐘上限（秒）。逾時只殺**自己的 process group**（子行程用 "
+                         "start_new_session 起跑），驅動留下來把 live log／產物寫完。0 = 不設（歷史行為）")
+    ap.add_argument("--stall-watch", type=float, default=0.0,
+                    help="停滯看門狗（秒）：連續這麼久沒有新的一行 stderr ⇒ 記下停滯點並 "
+                         "`sample` 子行程堆疊（「卡住」與「很慢」只能靠堆疊分）。0 = 關")
+    ap.add_argument("--stall-kill", action="store_true",
+                    help="第一次抓到停滯就殺（先取堆疊再殺）；預設只記錄、讓 arm-timeout 決定收尾")
+    ap.add_argument("--stall-progress-re", default=None,
+                    help="「進展行」的判準（regex，逐行 search）。預設 %r：心跳（CGC-RSS）不算進展 —— "
+                         "引擎有心跳，所以「有沒有新的一行」量不出卡住" % _PROGRESS_RE)
+    ap.add_argument("--live-echo", default="",
+                    help="額外把符合這個 regex 的 stderr 行即時印到 stdout（預設用內建的那一組）")
     ap.add_argument("--md")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--selftest", action="store_true",
@@ -852,6 +1483,12 @@ def main() -> int:
 
     report(results, args)
     if args.json:
+        # 先寫 log、後寫產物（成對是寫入端的責任，不是「記得順手 cp 一下」）。
+        try:
+            canon = ibind().write_pair_bundle(args.json, _PAIR_BUFFER)
+            print(f"log pair -> {canon}（{len(_PAIR_BUFFER)} 臂）")
+        except Exception as e:  # noqa: BLE001
+            print(f"!! 成對 log 寫不進去：{e} — 產物照寫，但那一場會被判**不可引用**", flush=True)
         Path(args.json).write_text(json.dumps(results, ensure_ascii=False, indent=2))
         print(f"json -> {args.json}")
     bad = [r["tag"] for r in results if r.get("incomplete")]
@@ -860,6 +1497,27 @@ def main() -> int:
               f"the reported rows are complete, the arm just did not measure every shape.",
               file=sys.stderr)
         return 1
+
+    # [CGC 2026-09-28] run-internal 記憶體預算的閘門效果。在此處判（而不是只印一顆 verdict），
+    # 因為一個在污染下量到的 t/s 不是「比較差的數字」，是**不是那個數字**：它的壓力是這個臂
+    # 自己造成的。缺 gate 資料也算失敗（fail-closed）—— 缺量測不是通過。
+    # 逃生口：CGC_IGNORE_SWAP_BUDGET=<理由>，理由會寫進產物。
+    if not args.dry_run:
+        over = [r for r in results if not (r.get("memory_gate") or {}).get("ok", False)]
+        if over:
+            print("\n⛔ MEMORY GATE 不過 — 以下臂判不可用（rc=4）：", file=sys.stderr)
+            for r in over:
+                g = r.get("memory_gate") or {}
+                kind = "起跑狀態（跑前就拒）" if r.get("refused_preflight") else "跑後殘差"
+                if not g:
+                    print(f"   {r['tag']}: （沒有 memory_gate 資料）", file=sys.stderr)
+                for why in (g.get("reasons") or []):
+                    print(f"   {r['tag']} [{kind}]: {why}", file=sys.stderr)
+            print("   完整曲線已留在產物裡：memory.samples（原始逐取樣）／memory_gate.curve",
+                  file=sys.stderr)
+            print("   逃生口：CGC_IGNORE_STATE_BUDGET=<理由>（起跑）／CGC_IGNORE_SWAP_BUDGET=<理由>"
+                  "（跑後），兩者都把理由留在產物裡。", file=sys.stderr)
+            return 4
     return 0
 
 

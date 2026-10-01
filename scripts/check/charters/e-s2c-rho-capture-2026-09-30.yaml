@@ -1,0 +1,183 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— S2-c：把 ρ capture 搬出被跳過的 per-layer hook，接到單段路徑
+#                          已有的讀回通道（補「投遞通路」），驗收 M1 回到 9/9
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼要立這一張（S2-b 的判決，docs/S2_S3_2026-09-30.md）：
+#   ① S2-b 把 prefetch 真的打開後，**誠實臂**的 ρ 有效（hit 89.2% → 96.3%、evictions 686 → 163），
+#      而**單段臂逐項不變**（5976 req／97.4%／miss 153 全 compulsory／evictions 41）。
+#   ② 靜態根因不是「猜不中」，是**投遞通路被單段提交自己關掉**：
+#      `cgc_rho_capture()`（llama-context.cpp:4664）只在 `expert_cache_eval_cb`（:4798 → :4837）
+#      裡被呼叫，而那正是 `CGC_SEG_BATCH=1` **跳過**的 per-layer hook（:4103 的註解明寫
+#      "SKIPS THE HOOK"）⇒ `g_rho_logits` 始終為空 ⇒ `cgc_rho_prefetch()`（:4708）
+#      在 :4727 的 `empty()` 守衛直接 return。
+#   ③ 反證：單段臂的 hit（97.4%）比誠實臂（89.2%）還高 ⇒ 原假說「單段臂因跳 hook 掉駐留」
+#      不成立，「把池子填滿」也不是槓桿（全部 miss 都是 compulsory、capacity=0、
+#      layers_distinct_over_slots=0）⇒ 剩下的唯一未測分支就是**這條通路本身**。
+# 全文與兩條路的優先序：docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md（§四）。
+id: e-s2c-rho-capture
+owner: freebuff（S 線 / S2）
+created: '2026-09-30'
+axis: S
+
+# ── 【目標】── 一個可判定的問題，且**兩個答案都有意義**（不是「試試看」）────────
+question: |
+  把 ρ capture 從被單段提交跳過的 per-layer hook 搬出、接到單段路徑**已經有**的讀回通道
+  （比照 P1 的 `cgc_rb_seg_batch && (...)`，llama-context.cpp:4122）之後，單段臂
+  （`CGC_SEG_BATCH=1`）的 M1 能不能回到 **9/9**（＝ ρ 投遞通路真的是那個洞），
+  還是不論 ρ capture 有沒有送達都停在 **0/9**（＝分歧在單段提交圖本身，即已知的
+  `CGC_B_SCHEME` slot/mask 映射）？
+
+# ── 【現狀】權威基線：數字 + 口徑 + 出處（出處檔案必須存在）──────────────────
+baseline:
+  metric: "單段臂 M1 **0/9**（M2 2/9、M3 0/9）；且 ρ 在單段臂上是**結構性 no-op** —— 池計數器與 prefetch 關閉那兩趟逐項相同：runtime requests=5976／hit 97.4%／miss 153 全 compulsory／evictions 41"
+  cell:   "m123 oracle cell（`prefill250`：MTP on、pool 8 GiB、`LAYER_CAPS=40-40:256`、`CGC_NO_PREFETCH=1`）＋ `CGC_SEG_BATCH=1`；誠實臂＝同一組 env 但不開 `CGC_SEG_BATCH`"
+  source: "docs/S2_S3_2026-09-30.md"
+  source_note: "配對產物 Backup/m123_oracle_gate/summary_r6ctl-nosegbatch-2026-09-30.json（誠實／對照，9/9）與 summary_r6-segbatch-2026-09-30.json（單段，0/9）；兩份都帶 extra_env，`r6_witness.py` 判 WITNESS_RED。S2-b 的池計數器寫在該文的實測表。"
+  known: |
+    - ρ capture 的唯一呼叫點在 `llama-context.cpp:4837`，位於 `expert_cache_eval_cb`（:4798）內；
+      而 SEG_BATCH 跳過的就是那個 hook（:4103）。`cgc_rho_prefetch` 的 `empty()` 守衛在 :4727。
+    - 單段路徑**已經**在讀回時讀 `ibuf`（本步 routed ids）並數佔位：:`4102-4126`，
+      餵料閘 `if (cgc_rb_seg_batch && (cgc_miss_mask_dbg || cgc_rb_feed))`（:4122）
+      ⇒ 補一個 capture **不需要** hook、也**不需要**新的同步點（形狀與 P1 相同）。
+    - ⛔ 量具陷阱：`CGC_MISS_MASK=1` 的變體 2026-09-30 實測引擎吐**全 NaN**
+      （`non-finite values: 993280 of 993280`）⇒ 本卡**不得**用 `_DBG`／`_COST`；
+      `CGC_RHO_PROBE`／`CGC_RHO_FILL` 已在 m123 的 `DIAGNOSTIC_KEYS`（以「主張待驗」登記）。
+    - ρ capture 每層一次 `ggml_backend_tensor_get`（:4694，device→host 讀回）——
+      這是**成本**不是免費：本卡的主端點是 M1（位元），**不得**把任何 t/s 寫進本卡的成績，
+      新增的每層同步要當成「代價」回報（定價屬 S3-b）。
+
+# ── 【假設】機制 + 預期（給區間、須有依據）────────────────────────────────
+hypothesis:
+  mechanism: |
+    ρ 的價值鏈是「capture（影子 router 的 logits）→ 取 top-k 聯集 → 提前發 IO」。
+    單段提交只砍了**第一段**：capture 掛在它跳過的 hook 上 ⇒ 影子 logits 永遠是空的
+    ⇒ prefetch 在守衛就 return ⇒ 後面兩段從未執行。
+    單段路徑的讀回通道已經在讀本步的 routed ids 與佔位計數 ⇒ 在**同一個點**補一次 capture
+    是零結構成本的（不需 hook、不需新同步），而且它餵的是**下一步**的 prefetch，
+    不受「本步路由已定、補不了本步」的限制 ⇒ 若分歧就是這條通路，池計數器必須先離開
+    「prefetch-off 的常數」，M1 才有可能回到 9/9。
+  expected: "M1 **0/9 → ≥8/9（目標 9/9）**、M2/M3 9/9；且池計數器離開常數（`CGC-RHO-CAP`／`CGC-RHO-FILL` ≥1 行、prefetch queued>0）。若 capture 送達而 M1 仍 ≤2/9 ⇒ 分歧在單段提交圖本身（slot／mask 映射）"
+  basis: |
+    docs/S2_S3_2026-09-30.md（S2-b 四趟：誠實臂 prefetch 開 89.2%→96.3%／686→163 證明 ρ 機制本身有效；
+    單段臂逐項不變 ⇒ 通路關閉）；src/llama.cpp/src/llama-context.cpp:4102-4126（讀回通道）／
+    :4664／:4708／:4727／:4798／:4837（capture 與 prefetch 的呼叫圖）；
+    落地座標與**兩條實作**（(i) 在讀回區塊直接投遞＋呼叫 `cgc_rho_prefetch`；(ii) 把
+    `ggml-backend.cpp:2604` 的 forwarding 接到單段路徑）逐行表：
+    `docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md` §4.5（2026-09-30 對源碼複核）；
+    docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md §四（S2-c 的定位與判別句）。
+
+# ── 【預註冊判決規則（跑之前寫死，看到資料後不得改）】─────────────────────
+acceptance:
+  window_valid: |
+    三件事各自成立才算可裁判：
+      (a) 兩臂 rc=0 且跑完（沒被 watchdog／memory gate 擋下）；
+      (b) `m123_oracle_gate` 兩份 summary 都 `comparable=True`、`config_diffs==[]`、
+          同 `ref_md5`、同 `probe_prompt_md5`、同 `engine_digest`（跨 build 或跨參考 ⇒ 不結論）；
+      (c) **見證行存在**：該趟 stderr 至少 1 行 `CGC-RHO-CAP`（或等價的 capture 見證）。
+          0 行 ⇒ capture 沒有送達那個點 ⇒ 這一趟**無效**（先查 env 有沒有被 allowlist 丟掉、
+          以及 hook-less 前置是否成立），**不得**把「沒量到」唸成「量到 0」而據此否證。
+    ⛔ 本卡不要求乾淨窗：主端點是**位元**（M1）與**計數器**，不是配對 t/s ⇒ 髒窗仍可裁判。
+  success: |
+    單段臂 **M1 ≥ 8/9**（目標 9/9）且 M2/M3 9/9，同時
+      (i) 池計數器**離開** prefetch-off 的常數（prefetch queued>0；`dropped/total` 不是 100%），
+      (ii) ρ capture 見證行 ≥1，
+    ⇒ 投遞通路成立、ρ 在單段臂上不再是 no-op；此時 20+ 臂回到正常判準（R6 的解除路徑）。
+  falsify: |
+    capture 見證行 ≥1（確實送達）而 M1 仍 ≤ **2/9** ⇒ 分歧**不在駐留／不在投遞**
+    ⇒ 它在單段提交圖本身（slot／mask 映射）⇒ 本卡判死，S2 升級為引擎手術
+    （docs/R6_SEGBATCH_FIX_PLAN §4.2：prev-token 預測 ＋ 逐層重算，走 D5）。
+  undecidable: |
+    capture 見證行 0 行 ⇒ 登記 UNRESOLVED（通路沒接上，不是假說錯），先解接線再重跑；
+    或 `m123` 因 `config_diffs != []` exit 2 ⇒ 先解可比性，**不得**把 exit 2 唸成 M1 FAIL。
+  on_fail: |
+    判死 ⇒ 把結果回填 docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md §4.1 與本卡，
+    不再為「補駐留／補投遞」投盒子，資源轉 §4.2 的引擎手術立項。
+    ⛔ 任何情況下不得放寬 M1/M2/M3 護欄或改參考（那是口徑移動，須另開卡並經 operator 明講）。
+
+# ── 【量化目標】機器可讀───────────────────────────────────────────────────
+targets:
+  decode_tps: 20.0          # 政策目標；本卡**不主張**任何 t/s 成績
+  prefill_tps: 250.0
+  m1_success_min: 8         # 成功門檻（≥8/9）；目標 9/9
+  m1_falsify_max: 2         # ≤2/9 且 capture 已送達 ⇒ 判死，轉引擎手術
+  rho_capture_lines_min: 1  # 見證行；0 行 ⇒ UNRESOLVED（不是否證）
+  extra_sync_per_layer: 1   # 代價：capture 每層一次 device→host 讀回（不得算成免費）
+
+# ── 【技術子目標】可量化、可驗收、貢獻可分──────────────────────────────────
+subgoals:
+  - id: sg-s2c-wire
+    text:   "把 ρ capture 的觸發搬出 per-layer hook，接到單段路徑的讀回通道（`cgc_rb_seg_batch` 那一段）"
+    expect: "hook-less 臂出現 ≥1 行 `CGC-RHO-CAP`；誠實臂行為不變（byte-identical）"
+    how:    "llama-context.cpp:4102-4126 的讀回點補 capture；閘門沿用 `cgc_rb_seg_batch`"
+    delivered: |
+      2026-09-30：打成補丁 Backup/s2c_2026-09-30/s2c_rho_capture.patch（**未套用**）。
+      實際落點是那個讀回**區塊之後**的新區塊（:4269 起，檔內新行號），共用同一次 drain —— 因為
+      原區塊的閘是 `cgc_miss_mask_dbg || cgc_rb_feed`（量具或餵料），把 ρ 的投遞塞進去等於
+      「為了一個 debug 量具而讓 ρ 上不了乾淨臂」。新區塊的閘是 `CGC_SEG_BATCH=1 && CGC_RHO_PROBE=1`，
+      只有_ids 區塊沒跑時才自己補一次同步。見證行是 `CGC-RHO-S2C`（不是 `CAP`：CAP 只在 il==0 印 12 次）。
+  - id: sg-s2c-deliver
+    text:   "ρ prefetch 在單段臂上真的離開 no-op（池計數器不再與 prefetch-off 相同）"
+    expect: "prefetch queued>0、`dropped/total` ≠ 100%；hit／evictions 與常數不同"
+    how:    "同一趟 stderr 的 `final stats` ＋ `CGC-RHO-FILL` 行，並對照 S2-b 的 5976/97.4/153/41"
+  - id: sg-s2c-m1
+    text:   "單段臂 M1 回到 ≥8/9（目標 9/9）"
+    expect: "`m123_oracle_gate`：M1 ≥8/9、M2/M3 9/9、coverage 100%"
+    how:    "配對跑（誠實臂取參考 ＋ 單段臂對它比對），錨＝同 build 的誠實臂 9/9"
+  - id: sg-s2c-no-speed-claim
+    text:   "本卡不得產出任何 t/s 成績（capture 每層多一次同步是代價）"
+    expect: "報告只出現位元／計數器；新增同步當代價明列，定價交 S3-b"
+    how:    "寫報告時自查；`quote_gate` 對本臂仍判 R6-DIRTY"
+
+# ── 【臂】────────────────────────────────────────────────────────────────
+arms:
+  # 對照（誠實臂＝錨）：ρ 通路本來就活著，預期 M1 9/9（並重取本趟的參考）
+  - prefill250:CGC_SERVER_NO_PREFETCH=0;CGC_RHO_PROBE=1;CGC_RHO_FILL=1
+  # 見證（處理）：同一組 env ＋ 單段提交 —— 這張卡要把它的 M1 從 0/9 修回 ≥8/9
+  - prefill250:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_SERVER_NO_PREFETCH=0;CGC_RHO_PROBE=1;CGC_RHO_FILL=1
+# 為什麼不是 prod-new：本卡的主端點是 m123 的 **M1 位元等同**，而 v7／v8／v9 參考是在
+# `prefill250` 之下 dump 的 ⇒ 臂必須與參考同 profile，否則比的是不同錨（`ref_md5` 會不同）。
+# 速度口徑（prod-new ＋ harness bench）**不是**本卡的端點，本卡也不主張任何 t/s。
+non_prod_reason: "M1 位元等同必須與 m123 的參考同 profile（v7/v8/v9 皆 prefill250）；本卡端點是位元／計數器，不是速度口徑 ⇒ 不適用 prod-new＋harness bench 的結案規則。"
+
+# ── 【補丁與驗收（2026-09-30 交付：**不套用**、可即刻 `git apply`）】───────────────
+delivery:
+  patch: "Backup/s2c_2026-09-30/s2c_rho_capture.patch（md5 104e6d903868472b13687b64e504d65b、5948 B；targets `src/llama.cpp/src/llama-context.cpp`；2 hunks：:3566 前置宣告 ＋ :4269 投遞區塊）"
+  base: "src/llama.cpp/src/llama-context.cpp @ md5 bc65fbb4c8e1f5f2c8c1d97c282334bd（10287 行）——補丁是對這份內容產生的；別人若先改同一檔，用 `git apply --3way` 再重跑下面的檢查"
+  evidence: "Backup/s2c_2026-09-30/delivery.json（逐項結果與指令）"
+  verified:
+    - "`git apply --check -p1 …` 對**未修改的實檔** ⇒ PASS（不是只對 scratch 樹放行）"
+    - "`patch -p1` 進 scratch 樹後與我打算交付的內容 `cmp` 位元相同 ⇒ 補丁重現得了它宣稱的東西"
+    - "`-fsyntax-only`（直接取專案 build 的 compile_commands 那一條）⇒ rc=0、0 error、**兩個 hunk 內 0 warning**（其餘 7 條 warning 在別處、已存在：595／627／5821／6687／6691／6754／6759）"
+  instrument: |
+    `instrument_binding.PROBES` 新增 `rho_s2c`（`CGC-RHO-S2C: steps=\\d+ layers=(\\d+)`，值取累計 `layers=`）、
+    `PROBE_REQUIRES['rho_s2c'] = [CGC_RHO_PROBE, CGC_SEG_BATCH]`。`--self-test` ALL PASS；
+    `static_precheck` 兩個方向都拒跑過（只給 SEG_BATCH ⇒ 拒；只給 PROBE ⇒ 拒；兩個都在 ⇒ 放行）。
+    為什麼需要它：`rho_capture` 綁的是 `CGC-RHO-SUM`，而那一行印在**被跳過的 hook** 裡（:6844）⇒ 少了它，
+    事後分不開「沒送達」與「送達但沒記帳」，而 S2-b 的單段臂正好就是前者。
+  apply_and_run: |
+    1) git apply --3way Backup/s2c_2026-09-30/s2c_rho_capture.patch        # 在擁有 src/ 的那棵樹
+    2) cmake --build src/llama.cpp/build --target llama-server llama-bench -j 8
+    3) 對照臂（可重用既有錨）：
+       python3 scripts/check/m123_oracle_gate.py --profile prefill250 --tag r6ctl-nosegbatch-2026-09-30
+    4) 見證臂：
+       python3 scripts/check/m123_oracle_gate.py --profile prefill250 --tag r6-segbatch-<日期> \
+           --env CGC_SEG_BATCH=1 --env CGC_SLOT_TABLE_GPU=1 --env CGC_RHO_PROBE=1 \
+           --env CGC_RHO_FILL=1 --env CGC_SERVER_NO_PREFETCH=0
+    5) 判詞（配對見證）：
+       python3 scripts/check/r6_witness.py \
+           --control Backup/m123_oracle_gate/summary_r6ctl-nosegbatch-2026-09-30.json \
+           --arm     Backup/m123_oracle_gate/summary_r6-segbatch-<日期>.json      # 期望 WITNESS_GREEN
+    6) 見證行（跑前／跑後都可用）：
+       grep -c 'CGC-RHO-S2C:' <arm stderr>        # ≥ 1，且 layers/step == 主幹層數（本 cell 40）
+       python3 scripts/check/instrument_binding.py --log <arm stderr> \
+           --arm-env "CGC_SEG_BATCH=1;CGC_RHO_PROBE=1;CGC_RHO_FILL=1" --require rho_s2c   # 期望 BOUND
+  caveat_r5: |
+    這支臂帶 `CGC_RHO_PROBE`（`quote_gate` 的 THROUGHPUT_VOID_INSTRUMENTS）⇒ **即使 R6 解除，它的 t/s 仍不可引用**；
+    本卡端點是位元（M1）與計數器，不受影響。R5 要解除得先有 L20-7 的價格 ≤ 視窗，而 2026-09-30 的兩趟反序
+    判 **REFUSE**（docs/S3B_RHO_COST_2026-09-30.md §7.6）⇒ 本卡能主張的只有「R6 解除」，**不是**「20+ 可引用」。
+    同一輪還量到 on 臂的輪級重尾（3/4 趟 vs off 0/4、Fisher p=0.071），判別器是 A/A 空對照 ⇒ 若重尾屬 ρ 的
+    每層同步讀回，交付的形狀要改成**每步一次**讀回再談把它當機制引用。
+  fork_if_falsified: |
+    M1 ≤ 2/9 **且**見證行存在 ⇒ 先試同一區塊裡的**免費第二槓桿**：那一步的 routed ids 已經在 `ibuf` 裡
+    （且已經餵進 `cache_step_union`）⇒ 直接用它對下一步的 union 發 fill（完美預測、不新增讀回、
+    不帶 R5 旋鈕）。它也不動 M1 才轉 §4.2（prev-token 預測 ＋ 逐層重算，走 D5 引擎手術立項）。

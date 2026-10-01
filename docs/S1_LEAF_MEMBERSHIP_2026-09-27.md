@@ -120,7 +120,7 @@ if (!cgc_tensor_in_graph(gf, tb) || !cgc_is_i32_n(tb, tb->ne[1]))   { tb = nullp
 | 位置 | 对象 | 是否 leaf | 处置 |
 |---|---|---|---|
 | `:4071` | `s` = `ffn_moe_slots` 输出 | 否（GET_ROWS 的 op 结果） | 正确，**不动** |
-| `:3937` | `mk` = `ffn_moe_missmask` | 是（leaf） | **同类未修**，见 §7 |
+| `:3937` | `mk` = `ffn_moe_missmask` | ⛔ ~~是（leaf）~~ **否（GET_ROWS 的 op 结果）** | ⛔ **本行已撤回（§8）**：正确，**不动** |
 
 ---
 
@@ -182,9 +182,86 @@ CGC-S1: POST il=1 ntok=2 n_expert=256 gather=[3 105 6 7 5 106 2 84 ...]
 
 1. **不宣称任何新数字。** 本次只让一段既有探针重新可能执行；它的输出**第一次**出现，
    本身不是「测出了回退」，也不是「证明了正确性」。
-2. **`:3937` 同类未修。** `ffn_moe_missmask` 同样是 leaf，在 `CGC_MISS_MASK=1` 臂上
-   会被同一个 nodes-only 测试拒绝，MISSMASK readback 同样整段跳过。
-   这次刻意不碰：它不在 gate 默认臂上，且 828f4d1c2 的注释已经把 blast radius
-   限定在「这一个 bug」，本次也不扩大。
+2. **⛔ 已于 2026-09-28 撤回（理由与实测证据见 §8）：`ffn_moe_missmask` 不是 leaf。**
+   原文主张它是 leaf，因而「在 `CGC_MISS_MASK=1` 臂上会被同一个 nodes-only 测试拒绝，
+   MISSMASK readback 同样整段跳过」。实情相反：它是一条 `ggml_get_rows` 的 op 结果，
+   nodes-only 测试对它**是正确的**，而该 readback 一直在输出（§8.2 的 78 行）。
+   §5 表格里对应那一行同样撤回——**不要**把它换成 `cgc_tensor_in_graph`（§8.3）。
 3. **不改 `cgc_node_in_graph` 本身。** 它必须保持 nodes-only——现有调用点依赖该语义。
    修复方式是让它有一个语义更宽的兄弟函数，而不是改它。
+
+---
+
+## §8 追补更正（2026-09-28）：§7.2 的「同类未修」**不成立**，`ffn_moe_missmask` 不是 leaf
+
+> 本节的触发是一道指令：把 §7.2 那一行「用同一种修法补上」。查下去发现**要修的不是代码，是 §7.2 本身**。
+> §7.2 与其在 §5 表格里的那一行，自此**撤回**；本文其余部分不受影响。
+
+### 8.1 §7.2 引用的那一行，测试是**对的**
+
+`llama-context.cpp:4021`（§7.2 写作 `:3937`，行号随 09-26／09-27 的插入而位移）：
+
+```c
+if (!cgc_node_in_graph(gf, mk) || !cgc_node_in_graph(gf, idc)) {
+    continue;
+}
+```
+
+`mk` = `cache_missmask_tensors[il]` = `ffn_moe_missmask`，而它在 `llama-graph.cpp:2422` 的构造是：
+
+```c
+ggml_tensor * vmask = ggml_get_rows(ctx0, valid_table, ids_flat);  // ← GET_ROWS 是一个 op
+ggml_set_output(vmask);
+cb(vmask, "ffn_moe_missmask", il);
+ggml_build_forward_expand(gf, vmask);                             // ← 09-26「step 2 REBUILD · FIX #1」加的
+```
+
+`GET_ROWS`（`:2422`）有 producer op，而 09-26 那次 rebuild 之所以补上 `ggml_build_forward_expand`（`:2446`），
+正是因为**没有 expand 的节点不会被排程**（该处注释记着实测：
+`GGML_ASSERT(buffer_id >= 0) failed ggml-alloc.c:623`，rc=-6，首次启动即死）。
+⇒ `vmask` **在 `gf->nodes` 里**，`cgc_node_in_graph` 对它回 **true**。
+
+这一段里真正的 leaf 是它的**输入** `valid_table`（`ggml_new_tensor_2d` ＋ `set_output` ＋
+`cb("ffn_moe_valid")`，`llama-graph.cpp:2415-2421`），而 `valid_table` 的消费者**早就**用了宽函数：
+`:3896` 是 `cgc_tensor_in_graph(gf, vt, &vt_where)`，并把 `vt_where == 1` 计成 `n_as_leaf`。
+
+⇒ §7.2 把 **`ffn_moe_valid`（leaf）** 与 **`ffn_moe_missmask`（op 结果）** 混为一谈。
+名字相近（`valid` vs `missmask`）不是理由：两者的建構方式不同，而判定 leaf 与否只取决于此。
+
+### 8.2 用行为判，不用档案判（本 repo 自己的规矩）
+
+那条 readback **一直在输出**。`CGC_MISS_MASK_DBG=1` 的两份 log 各有 **78 行** `MISSMASK il=`：
+
+```
+Backup/cgc_logs/llama_server_20260928_124618.log   78 行
+Backup/cgc_logs/llama_server_20260928_125503.log   78 行
+范例：MISSMASK il=1 step=1 nsel=16 misses=8 exps: 193 229 249 220 181 161 250 212
+```
+
+而这两份 log 就是 `docs/S2_OVERLAP_EXPERIMENT_2026-09-28.md` §11 引用的那两份
+（`:245`、`:313`）—— 即**同一批 run** 产出了 S2 doc §11.5 的答案（`ids_src_valid=1 × 78`）。
+**一段整段被跳过的 readback 印不出 78 行。**
+
+### 8.3 因此：不要动 `:4021`
+
+`cgc_tensor_in_graph` 是 `cgc_node_in_graph` 的**严格超集**，所以把 `mk` 换过去对结果只是 no-op，
+却会**抹掉这两个函数存在的理由**（nodes vs leafs 的区分）。全站呼叫点审计（09-28 现况）：
+
+| 行 | 对象 | 是 leaf？ | 用的函数 | 判定 |
+|---|---|---|---|---|
+| `:3896` | `vt` = `ffn_moe_valid` 的 capture | **是** | `cgc_tensor_in_graph` ＋ `where` | ✅ 正确 |
+| `:4021` | `mk` = `ffn_moe_missmask` | 否（GET_ROWS） | `cgc_node_in_graph` | ✅ 正确 |
+| `:4021` | `idc` = `ffn_moe_ids_cont` | 否（`ggml_cont`） | `cgc_node_in_graph` | ✅ 正确 |
+| `:4155` | `s` = `ffn_moe_slots` | 否（GET_ROWS） | `cgc_node_in_graph` | ✅ 正确 |
+| `:4189`／`:4193` | `rm`／`tb` = remap leaf／slot table | **是** | `cgc_tensor_in_graph` | ✅ 09-27 已修 |
+
+⇒ **09-27 的修复把这个家族关干净了，没有残留的第二条死探针。**
+
+### 8.4 这条更正为什么比它看起来贵
+
+错的方向刚好**会诱导一个不必要的改动**：把一个正确的测试换成超集 —— 结果是 no-op，
+但 diff 看起来像「修好了」，而「nodes vs leafs」正是本 bug 的语义被抹平。
+第二个代价是它会让 3a／3b 那条已判「可放生产」的 miss-mask 判词**看起来像空号**——它不是。
+
+> 判准：**一个「探针死了」的句子，必须与「探针活着但没有事件」的句子长得不一样。**
+> 本节两句都给了证据：§8.1 是静态的（建构方式），§8.2 是动态的（78 行输出）。

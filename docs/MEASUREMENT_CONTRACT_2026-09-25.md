@@ -157,11 +157,44 @@ steady 欄的取得方式：`--fixed-fill-seed`（09-19 §3.2）；cold 欄需�
 
 ## §5 成果分級 — operator 2026-09-25 12:3x **修正版**
 
+### 5.0 口徑規則 — operator 2026-09-28（**唯一可接受的量測口徑**）
+
+**只有 `prod-new` profile ＋ `harness bench` 產出的數字可以當數據依據；其他測試方法的結果一律不接受。**
+
+| 維度 | 唯一可接受 | 不被接受（即使數字看起來很好） |
+|---|---|---|
+| profile | `prod-new`（registry 無覆寫） | `prod25*` ＝ profile `prod25` ＋ CGC 旋鈕（`CGC_PREFILL_STREAM=1`、`CGC_GATHER_SLAB_CAP=256` …） |
+| cell | 測試卡 §2.5 的**權威預設 cell**（prompt 2048 / gen 128 / depths 512 / batch·ubatch 5632 / ctx 4096 / warm-skip 64 / reps 3 / MTP off） | `delivery`（b 512 / prompt 0）與其孿生 `delivery-repsplit` |
+| 入口 | `scripts/check/harness.py bench`（帶 charter，fail-closed 閘門） | 直跑 `llama_bench_matrix.py`／`prod_profile.py`／任何自製腳本 |
+| 可引用性 | 仍依 §5.1（thermal ＋ rep 散度；**swap 已解耦**，只標 `stressed`） | — |
+
+**為什麼要立這條**：2026-09-28 量到，換掉 profile／cell 之後同一支臂的單次啟動散布可以到 **21%**
+（delivery cell 兩小時內 8.7–16.4 t/s），而權威預設 cell 同一支臂是 **11.03–12.20（跨 3 天）**。
+⇒ 兩邊的數字**不可互比**，而混用正是「同一個問題每隔幾天換一個答案」的來源。
+依據：`docs/ANCHOR_12_57_REPRODUCIBILITY_2026-09-28.md`。
+
+**後果（已生效）**：`12.57`（§7 ★ 那一條）是 `prod25-stream`／delivery cell 的讀數 ⇒ 在新口徑下**不合格**。
+operator 決定的處置是**先重跑 anchor、再替換**，所以它目前標「**待重驗**」，**尚未**進 §7 作廢表。
+
+**重驗立的項目** `scripts/check/charters/exp-anchor-prodnew.yaml`。同口徑已有 7 次啟動：
+
+```
+09-25  12.195 / 11.793 / 11.034            （thermal 全程 NOMINAL，可引用）
+09-28  11.664 / 11.625 / 11.607 / 11.640   （thermal worst HEAVY ⇒ 判詞 both，尚不可引用）
+                      中位 11.640   範圍 11.034–12.195
+```
+
+⚠ **已知衝突，尚未處置**：權威預設 cell 自帶一個 2048-token prefill（實測 ~290 t/s），它把盒子的
+thermal 推進 HEAVY（09-28 四次：HEAVY 取樣 79/83/80/86 個；09-25 三次則全程 NOMINAL）。
+也就是說這條口徑**在比較熱的盒子狀態下拿不到可引用的 decode row**，而它的數字本身卻是穩的
+（09-28 四次 0.2% 散布）。這是一個「cell 自帶 prefill 導致自己的 decode 不合格」的結構性問題，
+見 §5.0 末與 `exp-anchor-prodnew.yaml` 的 acceptance。
+
 ### 5.1 ★ 判別對象：① 與 ② 只看**交付里程碑「prefill ≥ 250」**
 
 | 級 | 判定規則 |
 |---|---|
-| **① 攻關成功** | **prefill ≥ 250 ∧ decode 比目前最好還要好**（目前最好＝交付錨點 **12.57**；⛔ MTP-on `12.62` **已作廢、不算「目前最好」**，見 §7） |
+| **① 攻關成功** | **prefill ≥ 250 ∧ decode 比目前最好還要好**（目前最好＝交付錨點 **`12.57`**，⚠ **2026-09-28 起標「待重驗」**——它是 `prod25-stream`／delivery cell 的讀數，在 §5.0 的新口徑下不合格，等重跑 anchor 後替換；⛔ MTP-on `12.62` 仍舊作廢，見 §7） |
 | **② 攻關過線** | **prefill ≥ 250 ∧ decode 跟現在差不多**（達標但未超越） |
 | **③ 實驗目標達成** | 達成實驗**設計目的**，但**不屬於上面那個交付里程碑**。再細分兩部分 ↓ |
 | &nbsp;&nbsp;**③a 階段性實驗成功** | 實驗達成了階段目標（機制／量測成立），**但產物還不能放進生產級設置**（前置條件未滿足） |
@@ -211,8 +244,12 @@ steady 欄的取得方式：`--fixed-fill-seed`（09-19 §3.2）；cold 欄需�
 **邊界**（避免過度擴大）：
 - 本表只收「**曾被當成決策依據**的數字」。純歷史敘述（`agent_harness/memory/`、其他線的 dated 檔）
   **不逐一改寫**，但**一律不得再被引用**（`--all` 可列出全部位置供稽核）。
-- ★ **`12.57`（交付錨點）不作廢** —— 它本身就是 llama-bench 交付口徑。
-  ⇒ **「目前最好」一律以 `12.57` 為準，不含 MTP-on `12.62`。**
+- ★ **`12.57`（交付錨點）不作廢，但自 2026-09-28 起標「待重驗」。**
+  它本身是 llama-bench 交付口徑，但用的是 `prod25-stream`（profile prod25 ＋ 兩個 CGC 旋鈕）
+  走 `llama_bench_matrix.py` 直跑，在 §5.0 的新口徑規則下**不合格** ⇒ 等
+  `exp-anchor-prodnew.yaml` 重立後替換（operator 決定：**先重跑、再替換**，不立即作廢）。
+  ⇒ **在替換完成前，「目前最好」仍暫以 `12.57` 為準，但它不再是新讀數的比較依據**
+  （新讀數與 `12.57` **不同口徑，不可互比**）；⛔ MTP-on `12.62` 維持作廢。
 - 新增作廢數字 ⇒ 只能加到本表（含理由與替代），**不得只靠口頭／註解**。
 - **引用格式與全庫盤點** ⇒ `docs/VOID_NUMBER_CITATIONS_2026-09-25.md`
   （§1 逐字依據、§2 可寫／不可寫、§3 292 處／51 檔盤點；`--citations` 可重生 §3）。

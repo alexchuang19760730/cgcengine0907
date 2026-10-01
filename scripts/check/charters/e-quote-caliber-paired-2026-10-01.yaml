@@ -1,0 +1,155 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 立項卡（Charter）— 失信口徑改革：把判別路徑上的**極值統計**換成**配對口徑**
+#                           （預註冊、前瞻、0 回填）
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼要立這一張（L20-10 結案的副產品，2026-10-01）：
+#   ① 兩道閘門都在用**全 rep max/min**（極值統計）當離散判準：
+#        quote_gate R2/R3（`max/min <= SPREAD_LIMIT(=1.10)`）
+#        l2010_verdict A4（`|Δstep| > max(all_spread−1) × max(ms_per_step)`）
+#   ② 實測它**隨 n 變嚴**：同一支臂 1.0866（n=3）→ 1.1197（n=7）（B 也 1.046 → 1.0818）
+#      ⇒ 「加 n 提升解析度」在結構上與這條閘門反向；A4 的分母不是 n 能壓的。
+#   ③ 而 L20-10 的效應自己也在 n=7 消失（診斷級只剩 +1.14%）⇒ 這一格以**否證式結案**
+#      （operator 明文、判詞維持 REFUSE）。改革的價值在**下一批格子**，不是救這一格。
+#   ⛔ 反自利條款（本卡的第一條紀律）：**不得**以「讓 L20-10 的 +4.8%／+1.14% 變成可引用」
+#      為成功條件 —— 相反，那會是**否證**（見 acceptance.falsify ③）。
+id: e-quote-caliber-paired
+owner: freebuff（口徑／S 線；adoption 的決策者是 operator）
+created: '2026-10-01'
+axis: S
+
+# ── 【目標】一個可判定的問題，且**兩個答案都有意義** ──────────────────────
+question: |
+  把兩道極值統計換成**配對、對 n 敏感**的口徑（現成機械：`ab_interleave.py` 的
+  per-pair 比率 B_r/A_r ＋ `rho_price_authrow.py --judge` 的兩趟反序讀法 ＋
+  `rho_abba_verdict.py` 的 house precision rule）之後，同一批**已結語料**（唯讀重播）
+  會不會產生任何 `REFUSE/DIRTY/UNSTABLE → QUOTABLE` 的翻轉？
+  新口徑是不是仍**拒絕** L20-10 的兩輪（n=3 的 +4.8% 與 n=7 的 +1.14%）與 A/A 空對照？
+  —— 只要任一「會」⇒ 新口徑比舊口徑**鬆**，本卡不採用（維持 A4／R2/R3 原樣）。
+
+# ── 【現狀】權威基線：數字 + 口徑 + 出處（出處檔案必須存在）──────────────
+baseline:
+  metric: "兩道閘門的統計量都是全 rep max/min；實測同一支臂 **1.0866（n=3）→ 1.1197（n=7）**
+    （B 1.046 → 1.0818）⇒ 隨 n↑ **變嚴**；而 n=7 那一輪的效應只剩診斷級 **+1.14%**
+    （配對 per-rep 比率中位數 1.0114、方向 5/7、符號檢定 **p=0.227**、t=1.23）"
+  cell: "delivery-reps7／delivery-ws192-reps7（測試卡 §2.5.4c 的 reps 孿生）＋ 已結語料（唯讀重播）"
+  source: "docs/L2010_CLEAN_WS192_20261001.md"
+  source_note: "判詞與 diagnostic：`Backup/l2010_b1b3_2026-09-30/clean_ws192_verdict.json`；
+    閘門本體：`scripts/check/quote_gate.py`（R2/R3 ＋ 檔頭 1.10 的校準缺口）與
+    `scripts/check/l2010_verdict.py`（A4）；預註冊全文：`docs/QUOTE_CALIBER_PAIRED_PREREG_2026-10-01.md`。"
+  known: |
+    - **不必發明配對機械**（已在樹上）：
+      `scripts/check/ab_interleave.py`：主量就是 **per-pair 比率 B_r/A_r 的中位數**
+      （檔頭：「drift cancels inside each pair」），列鍵 `<arm>#r<rep>`、每列帶 build 指紋；
+      `scripts/check/rho_price_authrow.py --judge`：預註冊價格判詞 —— 兩臂**各自**過 `quote_gate`、
+      效應必須大於兩臂自身散布、**兩趟反序同向**才算 `PRICE`；
+      `scripts/check/rho_abba_verdict.py`：兩次序設計（AB＝off→on、BA＝on→off；比率一律讀
+      **second/first** 並記 `ratio_orientation`）＋ house precision rule：
+      「配對比率只有在**大於兩臂自身的 launch-to-launch 散布**時才准帶號；缺一個夥伴 ⇒ 散布是
+      **未知**，不是 0」。
+    - 舊口徑的校準紀錄已在樹上（`quote_gate.py` 檔頭：乾淨場 1.008–1.034、不乾淨場 1.207–1.941
+      ⇒ 1.10 落在缺口中間）。本卡**不得**動兩支儀器的一致性，只談統計量。
+    - ⛔ 量具與窗口項（R4/R5/R6/R7/R8b、attribution、行＝格）**不在**本卡範圍：
+      換掉的只有 R2/R3 與 A4 的**統計量**，其餘判準一字不動。
+    - ⛔ 回填禁令：任何既有判詞／已結格子**不得重判**；改革只對「生效日之後立卡」的格生效。
+
+# ── 【假設】機制 + 預期（給區間、須有依據）────────────────────────────────
+hypothesis:
+  mechanism: |
+    判別問題要的是「效應有沒有超過解析度」。舊口徑把解析度定成**邊際樣本的極值跨度**
+    （max/min）：極值統計隨 n ↑ 單調變差 ⇒ 它與「加 n 提升解析度」在結構上反向。
+    配對口徑把 drift 從**對比內**消掉：每一對（同一窗、背靠背）先算比率 r_j，再對 {r_j}
+    取中位數與符號檢定 ⇒ 解析度隨**對數** n_pairs ↑ 以 1/√n 提升；而「第二趟較熱」這個
+    一階效應在**兩趟反序**裡是可辨識的次序簽名（AB/BA 表），不是被讀成效應。
+  expected: "唯讀重播 **0 個翻轉**（沒有任何既判 REFUSE/DIRTY/UNSTABLE 變成 QUOTABLE）；
+    A/A 空對照（同一支臂、兩槽）≥8 對**全數無號**；L20-10 兩輪仍拒；
+    合成 null 上精度隨 n_pairs 以 ≈1/√n 縮。任一不成立 ⇒ 不採用。"
+  basis: |
+    scripts/check/ab_interleave.py（配對驅動 ＋ per-pair 比率）；
+    scripts/check/rho_abba_verdict.py（兩次序 ＋ house precision rule）；
+    scripts/check/rho_price_authrow.py（`--judge` 的預註冊判詞）；
+    scripts/check/quote_gate.py（R2/R3 與 1.10 的校準紀錄）；
+    docs/L2010_CLEAN_WS192_20261001.md（max/min 隨 n 變嚴的實測 ＋ 配對統計量的現算）。
+
+# ── 【預註冊判決規則（跑之前寫死，看到資料後不得改）】─────────────────────
+acceptance:
+  window_valid: |
+    三個前置，缺一即不可裁判：
+      (a) 重播是**唯讀**的：只讀 preregistered.audit_globs 裡的既有產物，**不新增任何 launch**；
+      (b) 每份被判的產物要有**配對鍵**（臂序 ＋ rep 序，或 `ab_interleave` 的 `<arm>#r<rep>` 列鍵）；
+          缺鍵 ⇒ 標 `UNPAIRED`，**不得**當成獨立樣本混進配對統計；
+      (c) 新統計量與判詞要有 selftest，且**含負控制**：L20-10 的 n=3 與 n=7 兩對
+          （樣本已凍結在樹上：`Backup/l2010_b1b3_2026-09-30/clean_ws192_{A,B}.json`）都要判「不成立」。
+  success: |
+    ① 重播的翻轉數 = **0**（逐筆列出被查與未翻的帳；翻轉的定義：舊判 ∈{REFUSE,DIRTY,UNSTABLE}
+      而新判 = QUOTABLE）；
+    ② A/A 空對照 ≥ `min_pairs` 對**全數無號**（house precision rule：未超過兩臂自身散布 ⇒ 不帶號）；
+    ③ L20-10 的兩輪在新口徑下**仍拒**（負控制）；
+    ④ 合成 null 上中位數比率的散布隨 n_pairs 以 ≈1/√n 縮（容差 1.5× 內）；
+    ⑤ operator 明文採納 ＋ 測試卡宣告 `caliber: paired-v1`，且**前瞻生效日**寫進本卡
+       （該日之後立卡的格子才適用）；舊判詞 **0 改動**。
+  falsify: |
+    任一成立即否證、退回原口徑：① 重播出現任何 REFUSE/DIRTY/UNSTABLE → QUOTABLE 的翻轉；
+    ② A/A 空對照出現號；③ L20-10 的任一輪在新口徑下變成可引用（**自利簽名**）；
+    ④ 配對鍵在語料上不可得、且無法用一趟宣告過的 `ab_interleave` 交錯跑補出（配對只存在於假設，
+       不在設計裡）；⑤ 精度對 n_pairs 不敏感（那表示統計量其實還是極值）。
+  undecidable: |
+    可配對樣本 < `min_pairs`，或產物缺序資料 ⇒ UNRESOLVED（不是否證）：先補一趟
+    `ab_interleave.py` 的交錯跑（帶本卡的 caliber 宣告）再重播；**不得**把「沒量到」唸成「量到 0」。
+  on_fail: |
+    否證 ⇒ 維持 A4 與 R2/R3 原樣（`quote_gate.py` 檔頭那句照舊生效：「不能因為某個好數字被擋而放寬」），
+    結果回填本卡與 `docs/QUOTE_CALIBER_PAIRED_PREREG_2026-10-01.md`；
+    ⛔ 任何情況下不得回填：已寫出的判詞／已結的格子**一個都不重判**。
+
+# ── 【量化目標】機器可讀（policy 目標；本卡不主張任何讀數）──────────────────
+targets:
+  decode_tps: 20.0
+  prefill_tps: 250.0
+preregistered:
+  caliber: paired-v1
+  alpha: 0.05
+  min_pairs: 8
+  max_flips: 0
+  max_aa_signs: 0
+  backfill: 0
+  effective: prospective       # 生效日之後立卡的格才適用；舊判詞不動
+  audit_globs: ["Backup/**/*.json"]   # 唯讀；只收帶逐 rep 樣本＋配對鍵的產物，其餘略過並記數
+
+# ── 【技術子目標】可量化、可驗收、貢獻可分 ─────────────────────────────────
+subgoals:
+  - id: sg-caliber-stat
+    text:   "把統計量與判決規則凍結成一支模組（＋selftest，含負控制）"
+    expect: "合成 null 無號；精度隨 n_pairs ≈1/√n；L20-10 兩輪（n=3／n=7）判不成立"
+    how:    "重用 `rho_abba_verdict` 的 house precision rule 與 `rho_price_authrow --judge` 的兩趟反序讀法"
+    delivered: "**已交付（唯讀、未採納）**：`scripts/check/caliber_paired.py --selftest` **31/31 PASS** ——
+      合成 null 無號、20% 合成效應可讀、精度 ≈1/√n（n=9 vs n=36，容差 1.5×）；負控制兩輪
+      （L20-10 n=7：中位比率 1.0114、方向 5/7、單尾 p=0.227、t=1.23、兩臂散布 11.11%；
+      n=3：1.0422）**都判不成立**；統計量與判詞都在，閘門一行未動。"
+  - id: sg-caliber-audit
+    text:   "唯讀重播已結語料，產出翻轉帳（逐筆可點）"
+    expect: "flips=0；A/A 對照全數無號；UNPAIRED 的筆數與處置單獨列帳"
+    how:    "讀 preregistered.audit_globs；判詞只寫進本卡的報告，**不改任何既有檔案**"
+    delivered: "**已交付（唯讀、未採納）**：同檔的全樹重播 → `Backup/caliber_paired_2026-10-01/audit.{json,md}`
+      （2026-10-01 10:15）——掃 2762 檔（讀不出 45，逐筆列帳）、UNPAIRED 1161 單獨列帳、可判配對單元 16；
+      **翻轉 0**（門檻 0）、A/A 3 單元 0 號（低於 `min_pairs` 8 ⇒ 尚未認證）、收緊 1
+      （舊 QUOTABLE → 新不引用）；兩趟反序讀法附在 rho 那一對上（`rho_AB`／`rho_BA`）。"
+  - id: sg-caliber-schedule
+    text:   "配對鍵進產物：交錯跑（A,B,A,B,…）＋ 次序欄（AB/BA）＋ cell 宣告 caliber"
+    expect: "產物帶 rep 序／臂序／build 指紋；缺鍵 ⇒ 標 UNPAIRED（不得當獨立）"
+    how:    "`ab_interleave.py` 既有列鍵 `<arm>#r<rep>`；window runner 接線時沿用它的列鍵"
+  - id: sg-caliber-adopt
+    text:   "operator 明文採納 ＋ 測試卡宣告；兩支閘門只在 caliber 宣告下切換"
+    expect: "前瞻生效日寫進本卡；舊判詞 0 改動；切換是**條件式**（未宣告 caliber 的產物照舊判）"
+    how:    "acceptance.success ⑤；切換點：`quote_gate` R2/R3 與 `l2010_verdict` A4"
+
+# ── 【臂】預設一律 prod-new；本卡本身**不發車**（端點是重播判決，不是速度）──────
+arms:
+  - prod-new
+non_prod_reason: "本卡的主端點是**判決統計量**（重播既有語料的翻轉數、A/A 空對照、負控制），
+  不是吞吐 ⇒ 不適用 prod-new＋harness bench 的結案規則。任何要用新口徑的新窗仍只走 prod-new。"
+
+# ── 【交付計畫】──────────────────────────────────────────────────────────
+delivery:
+  doc: "docs/QUOTE_CALIBER_PAIRED_PREREG_2026-10-01.md（預註冊全文；與本卡互為單一定義）"
+  plan: "① 統計量模組＋selftest（負控制）② 唯讀重播報告（翻轉帳）③ 交錯＋次序欄的產物鍵
+    ④ 測試卡 caliber 宣告 ＋ 兩支閘門的條件式切換 ⑤ operator 採納"
+  forbidden: "回填（既有判詞與已結格子不得重判）；以「讓 L20-10 變成可引用」為成功條件"

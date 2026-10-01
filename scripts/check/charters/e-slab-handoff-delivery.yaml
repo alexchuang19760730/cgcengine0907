@@ -1,0 +1,41 @@
+# 立項卡（2026-09-30，freebuff）：交付 cell 的「全 slot 暖身」A/B
+id: e-slab-handoff-delivery
+owner: freebuff
+created: '2026-09-30'
+question: |
+  在交付 cell 上，把 prefill 的熱集在**第一個 decode step 之前**整批 publish 進 pool
+  （CGC_SLAB_HANDOFF=143 ＝ 每層填滿 143 席，即「全 slot 暖身」），能不能把 4329 個 miss
+  裡那 3727 個 compulsory 從被量的窗口移出去，並讓 decode 提升？
+baseline:
+  metric: "decode 9.702 t/s（同 cell、同基準 env；miss 4329 ＝ compulsory 3727 ＋ capacity 602；prewarm req=0）"
+  cell: "交付 cell（batch 512 / prompt 0 / gen 128 / depths 512 / reps 3 / warm-skip 64 / ctx 0 / fixed-fill-seed 1）"
+  source: "Backup/anchor_clean_2026-09-29/anchor_delivery.json"
+hypothesis:
+  mechanism: |
+    CGC_PREFILL_STREAM=1 的 slab 路徑「完全不寫 pool」（llama-context.cpp:2060 的註解、
+    docs/SLAB_POOL_HANDOFF_2026-09-19.md §1），所以交付 cell 的 512-deep 填充把 ~4.4 GiB
+    讀過了，卻沒有讓 pool 認得那些 (layer, expert)；decode 於是付出 3727 次首次觸及。
+    CGC_SLAB_HANDOFF=<cap> 在**第一個 decode step 的建圖處**用 prefill 的 freq 熱集 publish
+    （prewarm_hot_capped，走 ensure_slot ⇒ 可淘汰），cap 上限 512 ⇒ 143 ＝ slots/層，
+    就是「把每一席都填滿」。熱集需要 freq ⇒ 必須同時開 LLAMA_EXPERT_CACHE_ROUTE_RECORD=1。
+  expected: "compulsory 3727 → 期望 <1000；decode 9.7 → 10.5~13 t/s（但 09-19 的先驗是此機制負面）"
+  basis: "docs/SLAB_POOL_HANDOFF_2026-09-19.md（同一機制的先驗：cap=32 交出 1280 experts/568.8 ms，decode 不動、compulsory 1671→2089）；§59 預算閘門"
+acceptance:
+  success: "compulsory ≤ 1000 且 decode 相對同窗口對照臂中位增益 ≥3%"
+  falsify: "compulsory 不降、或 decode 無增益（含更慢）⇒ 此機制在交付 cell 上否證"
+  on_fail: "登記判死並寫進 §59；回到「ambient eviction」那一條（§59 的 PAID／UNPRICED 軸）"
+targets:
+  decode_tps: 25.0
+  prefill_tps: 250.0
+subgoals:
+  - id: sg-handoff-compulsory
+    text: "把 compulsory miss 從被量的窗口移出去（3727 → ≤1000）"
+    expect: "-2700 次首次觸及（run-wide 計數）"
+    how: "產物 cache.miss_compulsory ＋ stderr 的 CGC-SLAB-HANDOFF 行"
+  - id: sg-handoff-tps
+    text: "同一窗口的 decode 對照（control 對 treatment）"
+    expect: "+8% ~ +34%（10.5~13 t/s；區間取自 09-19 的 null 到有效之間的跨度）"
+    how: "harness bench 兩臂同一 launch，比較 tg row 與離散"
+arms:
+  - prod-new
+  - "prod-new:!CGC_SLAB_HANDOFF=143;LLAMA_EXPERT_CACHE_ROUTE_RECORD=1"

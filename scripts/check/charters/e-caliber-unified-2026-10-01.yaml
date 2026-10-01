@@ -1,0 +1,145 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 立項卡（Charter）— e-caliber-unified：量測口徑完全統一（12+ 直認證）
+#                            （預註冊、前瞻、0 回填）
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼要立這一張（operator 2026-10-01）：
+#   「量測口徑一定要完全統一，這樣過 12+ 才可以直接認證並放在已認證區。」
+#   現況是**入口一致但口徑不一致**：
+#     ① 12+ 那一族（`Backup/s3b_abba_2026-09-30/*`）是 server completion 的**輪級聚合**
+#        （`rounds=3`＋`warmup=1`、n≈98）⇒ R8c 判 REFUSE；repack 成 row 也不是任何宣告格的行（R8b）。
+#     ② 已知 fail-open 角落：三層包裝（`{plan, records:[{rows:[…]}]}`）不在 `iter_rows` 走訪範圍
+#        ⇒ 綁它的 doc 主張是 NA。§8.4 明寫「屬 operator 決定」—— 本卡就是那個決定。
+#     ③ producer 側的 `prod_profile.py` 自帶另一種 schema（`t/s` 不在 `avg_ts`）
+#        ⇒ 它的讀數（歷史上 12.57／13.10）連判都判不了。
+#   ⇒ 統一的做法不是加第二份判準，是**把入口／格子／聚合寫死成一條**，
+#      並把那條鏈做成一支「通過即認證」的入口（本卡 sg-unified-entry）。
+#   【2026-10-01 追加（operator，定稿）】「certify <產物> --target-ts 12 應該是要比現在的已認證高才
+#      進去；同時更新現在的看板 11.703 …… 這已經是舊的了」⇒ 門檻不是固定的 12，是**棘輪**：
+#      入表要**嚴格高於現行已認證上限**（單一來源＝看板 certify_anchor.decode_ts，現值 11.982966）；
+#      --target-ts 12 降為**可選下限**；上限讀不到 ⇒ 全部 REFUSED（fail-closed）；
+#      唯一例外＝紀錄本人（判的檔＝certify_anchor.artifact ⇒ 以 ≥ 上限−1e-4 放行，否則重驗自己必失敗）。
+id: e-caliber-unified
+owner: freebuff（口徑／S 線；採納者仍是 operator，但**技術判詞不再逐件裁定**）
+created: '2026-10-01'
+axis: S
+
+# ── 【目標】一個可判定的問題，且兩個答案都有意義 ──────────────────────────
+question: |
+  把「可不可以入認證表」收斂成四條跑前寫死的判準（口徑三條 ∧ R1–R8 ∧ 達標 ∧ 格子仍在），
+  並做成一支持出來就能用的認證入口之後：
+  ① 全樹重播會不會出現任何**既有已認證列翻紅**（C1–C4／C6）？
+  ② 12+ 那一族在新範圍下仍判 REFUSE（R8c/R8b）且理由逐字可查 —— 還是會被誤放行？
+  ③ `iter_rows` 硬化後，新變成可判的列是**逐筆可列帳**的，還是整批靜默翻紅？
+  —— 只要出現 ① 或 ② 的錯放行 ⇒ 本卡不採用、硬化回退。
+
+# ── 【現狀】權威基線：數字 + 口徑 + 出處（出處必須存在）────────────────────
+baseline:
+  metric: "12+ 那一族 0/4 可引用（R8c REFUSE）；三層包裝 7 份產物（`records[].rows` 帶 avg_ts）
+    完全不被判；`prod_profile.py` 的交付讀數不在任何可判 schema 內"
+  cell: "（唯一認可入口）`harness bench` ＋ 測試卡 §2.5 宣告格；目標門檻 decode ≥ 12.0、prefill ≥ 250.0"
+  source: "docs/S3B_RHO_COST_2026-09-30.md §8（§8.2 機械判詞、§8.3 代價、§8.4 fail-open 角落）"
+  source_note: "12+ 的產物：`Backup/s3b_abba_2026-09-30/rho_AB.json`（R8c 判 REFUSE，看板 L20-7
+    `evidence.quote` 每次建板當場重驗）。三層包裝例：`Backup/seg_batch_s1_pairs/abba_212809.json`。"
+  known: |
+    - 判準本體只有一份：`quote_gate.py`（R1–R8）＋ `caliber_gate.py`（入口／格子／聚合三條）；
+      `cell_contract.py` 是格子的單一定義。本卡**不新寫任何一條**。
+    - 已認證列（C1–C4／C6）與其判詞是**基準**：本輪不得動、也不得因硬化而翻。
+    - 三層包裝的判詞路徑要寫進 R8 的檔頭（與 8a／8b／8c 並列），不是藏在掃描層。
+
+# ── 【假設】機制 + 預期（給區間、須有依據）──────────────────────────────────
+hypothesis:
+  mechanism: |
+    「統一」＝同一個入口（harness bench）、同一組宣告格、同一種聚合（逐 rep 向量）、同一條判準鏈。
+    只要把鏈收成一條並機器化，任何**在這條鏈上**過 12+ 的讀數就自動落在認證側；
+    而**不在**這條鏈上的產物（server-round、自訂 schema）判詞必須是明確的 REFUSE／NOT_JUDGEABLE，
+    不是 NA —— 看得見的拒絕才是可統一的邊界。
+  expected: "① 既有已認證列翻紅數 = **0**；② 12+ 族仍 REFUSE 且理由逐字（R8c／R8b）；
+    ③ 硬化新增可判列（7 份三層包裝）逐筆列帳，處置＝修**主張的寫法**（標非主張或進凍結帳），
+    不是動判準；④ 合成負控制（髒窗／R5／R6／離散超限／reps<3／未宣告格／輪級／**棘輪沒過／
+    棘輪讀不到**）全部 REFUSED。"
+  basis: |
+    docs/S3B_RHO_COST_2026-09-30.md §8（R8 的機械判詞與已知角落）；
+    scripts/check/quote_gate.py（R1–R8 唯一實作）；scripts/check/caliber_gate.py；
+    scripts/check/cell_contract.py；docs/CALIBER_UNIFIED_PREREG_2026-10-01.md。
+
+# ── 【預註冊判決規則（跑之前寫死，看到資料後不得改）】─────────────────────
+acceptance:
+  success: |
+    ① `caliber_certify.py --selftest` 全 PASS（含九類負控制：舊七類 ＋ 棘輪沒過 ＋ 棘輪讀不到）；
+    ② `quote_gate.py --selftest` 全 PASS（新增三層包裝案例後）；
+    ③ 既有已認證列（C1–C4／C6）翻紅 = 0（`decode_board_build.py --check` PASS 即證）；
+    ④ 12+ 族在 `certify` 下為 REFUSED，理由含 R8c（輪級聚合）；
+    ⑤ 三層包裝硬化後 `doc_claim_gate.py` 交付面在**修完主張**後 rc=0，翻紅逐筆列帳（含歸檔面）。
+  falsify: |
+    任一成立即否證、硬化回退：① 任一既有已認證列翻紅；② 12+ 族被判 QUOTABLE 或 CERTIFIED；
+    ③ 硬化讓任何 REFUSE 變成靜默 NA（「沒被判到」與「判可引用」分不開）。
+  undecidable: "格子清單或判準模組讀不到 ⇒ 全部 REFUSED（fail-closed）；本卡標 UNRESOLVED，不當成功。"
+  on_fail: |
+    回退 `iter_rows` 硬化、保留 `caliber_certify.py`（它只讀既有判準），結果回填本卡與
+    `docs/CALIBER_UNIFIED_PREREG_2026-10-01.md §6`；⛔ 不得改 R1–R8 常數來救任何一格。
+
+# ── 【量化目標】機器可讀（policy 目標；本卡不主張任何 t/s 成績）──────────────
+targets:
+  decode_tps: 12.0     # 「過 12+」＝ decode 行 ≥ 12.0（本卡的認證門檻；看板 12.57 是更高的里程碑）
+  prefill_tps: 250.0
+preregistered:
+  caliber: unified-v1
+  decode_rule: "ratchet（嚴格高於看板 certify_anchor.decode_ts）＋可選下限 --target-ts（政策值 12.0）"
+  ratchet_anchor: 12.376702     # 單一來源＝看板 certify_anchor（10-01 下午第二次推升：C9＝order2_A 的 decode；
+                                # 沿革 11.703（C3）→ 11.948299（C7）→ 11.982966（C8）→ 12.376702（C9））
+                                # 【10-01 下午追加】ρ 價格窗量出首批 12+（12.3027／12.3767／12.1265）⇒
+                                # operator 決定入表＋推上限 ⇒ 新增 C9／C10／C11；審計重跑補帳在
+                                # Backup/caliber_unified_2026-10-01/audit_ratchet.json（舊上限那份留檔為
+                                # archive_audit_ratchet_anchor11.9830.json）。
+  target_decode_ts: 12.0        # 可選下限（不再是隱藏門檻；預設 0）
+  target_prefill_ts: 250.0
+  backfill: 0
+  min_reps: 3            # = quote_gate.MIN_REPS，不另立
+  spread_limit: 1.10     # = quote_gate.SPREAD_LIMIT，不另立
+  audit_globs: ["Backup/**/*.json"]
+
+# ── 【技術子目標】可量化、可驗收、貢獻可分 ────────────────────────────────
+subgoals:
+  - id: sg-unified-def
+    text:   "把『可不可以入認證表』的四條寫成單一定義（只引用既有三份判準）"
+    expect: "四條逐條指名唯一實作；任何讀不到都落在 REFUSED（fail-closed）"
+    how:    "docs/CALIBER_UNIFIED_PREREG_2026-10-01.md §2（唯一落點）＋ quote_gate／caliber_gate／cell_contract"
+    delivered: "**已交付**：`docs/CALIBER_UNIFIED_PREREG_2026-10-01.md §2`（口徑三條 ∧ R1–R8 ∧ 達標 ∧ 格子仍在；四條逐條指名唯一實作）；
+      明示邊界（不宣告 server-round 新格、不改 C1–C4／C6、不放寬 R1–R8）寫在 §2 與本卡 forbidden。"
+  - id: sg-unified-entry
+    text:   "認證入口：一支工具判『通過即認證』並吐出可貼的 certified 列"
+    expect: "`CERTIFIED` rc=0／`REFUSED` rc=1；`--board-row` 的列由看板 D7 當場重驗；selftest 含負控制"
+    how:    "scripts/check/caliber_certify.py（certify／audit／--selftest）"
+    delivered: "**已交付（10-01 棘輪定稿後重跑）**：`scripts/check/caliber_certify.py`（certify／audit／--board-row／--json；rc 0／1／2／3）；
+      selftest **21/21**（九類負控制 ＋ `--kind` 過濾 ＋ 紀錄本人／同值非本人）；
+      棘輪：`read_anchor` 讀看板 `certify_anchor`（單一來源）；實跑（a）C8 archive（紀錄本人）⇒ CERTIFIED、吐出 certified 列；
+      （b）C7 的 11.9483 現在 ≤ 上限 ⇒ REFUSED（miss 逐字說出棘輪）；
+      （c）合成 12.21 ⇒ `--target-ts 12` 下 CERTIFIED（棘輪＋下限同時過，即「過 12+ 直接認證」）；
+      （d）舊制加註：C3 錨點（prefill 302.3 ≥250）入表、12+ 族逐字 REFUSE（R8c）。"
+  - id: sg-unified-scope
+    text:   "硬化掃描範圍：`records[].rows` 進 `iter_rows`（關 §8.4 的 fail-open 角落）"
+    expect: "三層包裝逐筆可判；新判詞不得讓既有已認證列翻紅；翻紅的主張改寫法、不改判準"
+    how:    "quote_gate.iter_rows（R8 檔頭同步）；帳寫進 prereg §6"
+    delivered: "**已交付**：`quote_gate._record_rows()` ＋ `iter_rows` 接線（檔級／record 合併視圖）；
+      selftest 30/30 → **31/31**（新增三層包裝兩案例）；7 份包裝逐筆可判（全 REFUSE：缺逐 rep 樣本）。
+      交付面唯一翻紅＝`FILL_TERM_DELIVERY:63`（20.73 是四列中位數、非任何一列）⇒ 改成非主張（不可引用）後 rc=0。"
+  - id: sg-unified-audit
+    text:   "全樹帳：誰**現在進得去**（> 棘輪上限）／誰 QUOTABLE_NOT_ABOVE_ANCHOR／誰 REFUSED（理由）"
+    expect: "12+ 族理由逐字含 R8c；`prod_profile.py` 產物標 NOT_JUDGEABLE(schema)（走統一入口重跑才是解）"
+    how:    "`caliber_certify.py audit 'Backup/**/*.json'`"
+    delivered: "**已交付**：（a）目標制（舊，留存）：2769 檔 → `Backup/caliber_unified_2026-10-01/audit.json`：CERTIFIED 3（prefill 302.3／305.4／309.7）、
+      QUOTABLE_BELOW 6（decode 9.377–11.98）、REFUSED 893、NOT_JUDGEABLE 1822、UNREADABLE 45。
+      （b）**棘輪制（10-01 最終、重跑）**：2770 檔 → `Backup/caliber_unified_2026-10-01/audit_ratchet.json`：CERTIFIED 4（C8 的 archive decode 11.9830 ＋ 三筆 prefill）、
+      QUOTABLE_NOT_ABOVE_ANCHOR 5（C7 的 11.9483／A 臂 11.63／launch3 10.75 等）、REFUSED 893、NOT_JUDGEABLE 1823、UNREADABLE 45。
+      **量到的事實：全語料可引用 decode 天花板＝11.9830（`clean_logs/archive/Q3.20261001-071453/clean_ws192_B.json`；n=7 孿生 11.9483）⇒ 目前 0 個 12+ 可認證**（不是被口徑擋，是還沒量到）。"
+
+# ── 【臂】本卡不發車（端點是判詞與帳，不是速度）────────────────────────────
+arms:
+  - prod-new
+non_prod_reason: "端點是『可不可以入認證表』的判詞與全樹帳 —— 0 跑、0 build；不適用 prod-new＋harness bench 的結案規則。任何要用新入口認證的新讀數仍只走 prod-new ＋ harness bench。"
+
+# ── 【交付計畫】──────────────────────────────────────────────────────────
+delivery:
+  doc: "docs/CALIBER_UNIFIED_PREREG_2026-10-01.md（預註冊全文；與本卡互為單一定義）"
+  plan: "① 單一定義（§2）② 認證入口＋selftest（10-01 追加：棘輪＝看板 certify_anchor）③ iter_rows 硬化＋案例 ④ 全樹帳 ⑤ 回填 §6"
+  forbidden: "改 R1–R8 常數；為 server-round 宣告新格（另一條決定）；重判既有認證列（10-01 只准新增 C7／C8 與 C3 的「已被取代」註記）；把『沒被判到』唸成『可引用』；把棘輪放寬成 ≥ 或預設一個沒讀到來源的上限（⚠ 10-01 下午 operator 明文放行的第二批 C9／C10／C11 是**新增**，不是重判既有列；本禁令仍適用於 C1–C8 的判詞）"

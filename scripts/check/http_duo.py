@@ -60,6 +60,11 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 
+# [CGC 2026-09-29] 引用判準只有一份定義：`quote_gate.py`。本檔原本在自己裡面
+# 寫死 SPREAD_LIMIT/MIN_KEPT，兩支儀器（HTTP 與 bench）各有一套等價的品味 ——
+# 現在常數與判詞都指向同一個模組，校準紀錄（2026-09-18）留在 quote_gate.py 的檔頭。
+import quote_gate  # noqa: E402  (HERE 已插進 sys.path)
+
 import thermal_pressure as tp  # noqa: E402
 
 BAR_PREFILL = 250.0
@@ -533,7 +538,8 @@ def main() -> int:
         # 1.10 sits in the middle of the gap. The first draft of this guard used 1.25 and let V4
         # through -- which is precisely the failure the guard exists to prevent, so the number is
         # recorded here rather than left as a taste.
-        SPREAD_LIMIT = 1.10   # max/min over kept reps; beyond this a single number is not a reading
+        # 常數來自 scripts/check/quote_gate.py（單一定義；校準見 quote_gate 檔頭）。
+        SPREAD_LIMIT = quote_gate.SPREAD_LIMIT   # max/min over reps; beyond this a number is not a reading
         # (3) and a floor on the SAMPLE COUNT. A median of two numbers is not a median of anything:
         #     the pair [11.73, 6.04] has no central tendency to estimate, so the honest answer is
         #     "not enough reps", not the midpoint 8.89. This matters for the RECORD, not just today:
@@ -541,7 +547,7 @@ def main() -> int:
         #     guard reclassifies those too -- which is the point. The driver's own default is
         #     `--reps 4` (3 kept), so the default path stays quotable and only the shortcut is
         #     flagged. The numbers are not erased; they are marked, with the remedy printed.
-        MIN_KEPT     = 3
+        MIN_KEPT     = quote_gate.MIN_KEPT_MEDIAN   # 中位數需要 3 個 kept（⇒ --reps 4）
 
         def agg(axis):
             vs = sorted(r[axis] for r in kept if r.get(axis) is not None)

@@ -76,7 +76,11 @@ def system_state() -> dict:
     try:
         t = _load("tp_wd", "thermal_pressure.py").stamp()
         st["thermal"] = t.get("label")
-        st["thermal_level"] = t.get("lv")
+        # `stamp()` has no `lv` key -- it is `level` -- so the watchdog's numeric thermal level
+        # was None on every sample it ever took (fixed 2026-09-28; same defect as harness.py's
+        # `_sys_snapshot`). `None` is also the module's UNREADABLE value, which is why a wrong
+        # key looked like a missing instrument instead of a broken consumer.
+        st["thermal_level"] = t.get("level")
     except Exception as e:
         st["thermal"] = f"err:{e}"
 

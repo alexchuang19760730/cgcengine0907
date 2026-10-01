@@ -1,0 +1,59 @@
+id: exp-s2-overlap
+owner: shared
+created: 2026-09-28
+axis: S
+
+question: |
+  ⚠ 先對齊既有的兩個判詞，不要把它們當作沒發生：
+  ① `io-constraint`（tier 4）：「S2：**建議不做完**（段邊界／drain）」
+     （docs/S2_RESIDENCY_AND_DRAIN_VERDICT_2026-09-20.md）；
+  ② `s1-segbatch`（tier 3a）：「單段提交（41 段 → 1 段）」——那是 S3，已因前提 B（churn 42.3%）無前提。
+
+  本節點問的是**剩下那一支**，而且帶一個以前沒有過的量化格：
+  把 39 個段邊界的等待中的**可免部分**（只有零 miss 的 31.9%）拿掉 ⇒ 11.04 ms／步
+  ⇒ 17.2 → ≈18.7 t/s（引擎內部口徑，×1.087），且 union 不動。
+  新條件：其合法化前提（leaf 由 GPU 算，S1）已於 2026-09-28 首度量到成立
+  （ids_src_valid=1 × 78、gather_vs_table=[0] × 78）——那正是 io-constraint 判「不做完」時還沒有的東西。
+
+baseline:
+  metric: "引擎內部口徑 17.2 t/s（total 139.46 ms、union 104.87 ms、mean_len 2.40）"
+  cell: "prod25 暖、E2b 口徑；交付口徑生產基準 12.0–12.9（中位 12.62，但其讀數自標不可引用）"
+  source: "docs/S2_PROBE2_AND_CEILING_2026-09-20.md"
+
+hypothesis:
+  mechanism: |
+    gap_L = 1.00·cb_{L−1} + 0.29–0.35 ms（r 0.94–0.999）⇒ 段邊界的等待就是 host 的 top-k hook。
+    但可免等的**只有零 miss 的那些層**：by_m.0.n = 1251/3921 = 31.9%，而
+    cb_share.pct_from_layers_with_miss = 99.775%（零 miss 層的 cb 中位 0.01 ms）。
+    ⇒ 可拿掉的不是 34.59 ms（total→union 的全部），而是 0.319 × 34.59 = 11.04 ms。
+    S2 的合法化條件（leaf 由 GPU 算，S1）已於 2026-09-28 首度量到成立：
+    ids_src_valid=1 × 78、gather_vs_table=[0] × 78。
+  expected: "+8.7%（17.2 → ≈18.7 引擎內部口徑）＝ ×1.087；交付口徑按同比值只會更小"
+  basis: "docs/S2_PROBE2_AND_CEILING_2026-09-20.md §2.3；docs/G1_ACHIEVABLE_CEILING_2026-09-20.md；docs/S2_OVERLAP_EXPERIMENT_2026-09-28.md §11.5/§13"
+
+acceptance:
+  success: "(a) gap 塌向 ~0、(b) wait 下降量 ≈ Σcb + 被移掉的延遲、(c) union 不動——三條同時成立，且 bit-identical M1/M2/M3 全過、zero_mapped/n_fast_cold 不升"
+  falsify: "任一條不成立（尤其 busy/union 掉到 ~1.0 ⇒ 用並行換空窗、總時間守恆）即為 null result"
+  on_fail: "不改目標；把 (a)(b)(c) 哪一條不成立寫進 NEXT_ACTIONS，並宣告 44% 那格正式死亡"
+
+targets:
+  decode_tps: 18.7
+  prefill_tps: 250.0
+
+subgoals:
+  - id: sg-s2-gap
+    text: "段邊界 gap：步表頭 gap_sum 中位 21.43 ms → ≤10 ms"
+    expect: "-11.04 ms/step（= 0.319 × 34.59）"
+    how: "CGC_DECODE_PROFILE 的步內三桶；步表頭中位（不是逐層中位數的和，兩者差 39%）"
+  - id: sg-s2-guard
+    text: "護欄：busy/union 不得由 1.41 掉到 ~1.0"
+    expect: "0（正確性要求；違反即判 null）"
+    how: "同 run 三桶；n_main 的教訓（union −14.7%、gap +24%、busy/union 1.41→1.00）"
+  - id: sg-s2-ident
+    text: "bit-identical：S1 × 分段的組合必須在 M1/M2/M3 全過"
+    expect: "0（正確性要求）"
+    how: "m123 gate；注意分段本身曾讓 S1 真臂 3 輪 3 值"
+
+arms:
+  - prod25
+  - prod25:CGC_SLOT_TABLE_GPU=1

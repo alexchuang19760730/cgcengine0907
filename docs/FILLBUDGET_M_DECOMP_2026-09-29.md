@@ -305,3 +305,27 @@ plain step 的成本）兩個數字，用途只有一個：把「MTP 到底值�
 而且就算 P4 跑通、結論是「MTP 值得」，**也不得寫成「decode 提速 X%」** —— 門 2 已封
 （M2 FAIL：greedy 下 ON／OFF 輸出不同 ⇒ 是**不同的輸出函數** ⇒ t/s 不可互比），
 交付口徑維持 **MTP off／錨點 11.61**。
+
+---
+
+## 9. 口徑更正（2026-09-30，L20-4 解卡時查核）
+
+**§4 的「交付 cell」是誤標。** 那一趟的產物是
+`Backup/phase_decomp/fillbudget_m/p1/p1.json`，而它自己寫著：
+
+```
+"named_cell": "(default)"
+"batch": "5632"          （＋ p2048）
+```
+
+⇒ §4 的 `step_usec` p50 **5.41 ms** 是 **`(default)` cell** 的讀數，**不是**交付 cell
+（交付 cell 是 `p0／-b -ub 512／ctx 4096`，測試卡 §2.5.1）。依 §56 的規則，**兩者不可互比**，
+所以這一節的數字：
+
+- ✅ 對「這條線的期望值」的那個結論仍然有效（同一個 cell 內比較、方向穩健）；
+- ⛔ **不可**被當成「交付 cell 上 fill term 的定價」。立項卡 `e-fill-term-price` 要的
+  「交付 cell 上**一個**數字 ± 不確定度」到 2026-09-30 為止**仍然是空的**。
+
+同一天另一個發現：`CGC_EB_NOFILL`（本卡 §P1 用的診斷臂之一，`llama-expert-cache.cpp:3688`）
+**從來沒有被 `run_server.sh` 轉送過** ⇒ 用 `--arms` 開它會靜默地被丟掉（`arm_env_dropped()`
+回報 dropped）。2026-09-30 已補上轉送區塊並驗證落地（`arm_env_dropped()` → `[]`）。

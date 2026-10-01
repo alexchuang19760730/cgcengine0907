@@ -134,7 +134,7 @@ def binding_of(sg: dict, also: list[str] | None = None) -> dict:
         # ⚠ 欄位名不能叫 `arms`：`provenance_gate.py` 的 `server_window.MEASURED_KEYS`
         #   含 `arms`（真實產物的臂結果陣列）⇒ 一份「引用視圖」用同名鍵會被判成
         #   52 個沒有 window/digest 的量測物件。名字是為了不撞那個詞彙表。
-        "arm_strings": list(opt.get("arms") or []),
+        "arm_strings": [arm_name(a) for a in (opt.get("arms") or [])],
         "options": knobs_by_role(opt, "subject"),
         "instruments": knobs_by_role(opt, "instrument"),
         "candidates": knobs_by_role(opt, "candidate"),
@@ -204,6 +204,22 @@ def apply_integration(disp: dict[str, list[dict]], sgs: list[dict]) -> list[str]
 #   ② arms 區塊裡有**註解行**（例：`  # P1：…`）—— 只認 `- ` 開頭的行會在遇到註解時整段失配。
 # 而一條寬鬆的 regex 又會**多吃到下一個區塊的註解**（e-fillbudget 就被吃到「本卡配套的 src/ 改動」）。
 # ⇒ 改成逐行掃描，並且把區塊尾端修剪到「最後一個 item」為止（尾隨的註解／空行屬於下一節）。
+def arm_name(a) -> str:
+    """`options.arms` 的一項 → 臂字串（兩種形狀都要能吃）。
+
+    看板的 `options.arms` 允許兩種形狀，`decode_board_build.py` 的 D10 明文支援：
+    字串，或 `{arm, role, why, source}` 的 mapping（`role: reference` ＝ 成對量測的基準端，
+    它帶著 R5／R6 量具是本來就如此）。這裡是「宣告 → 文字／比對」的路徑 ⇒ dict 取它的 `arm`，
+    取不到就回空字串（由呼叫端決定是缺口還是跳過），**絕不把 dict 當字串用**。
+    2026-09-30：`audit_rows` 直接拿項去 `in txt` ⇒ L20-4 的基準臂是 dict ⇒
+    `TypeError: 'in <string>' requires string as left operand, not dict`，
+    連 `--check` 與 `--selftest` 都一起崩掉。
+    """
+    if isinstance(a, dict):
+        return str(a.get("arm") or "")
+    return str(a)
+
+
 ARMS_HEAD_RE = re.compile(r"^arms:[ \t]*\n", re.M)
 OPT_BLOCK_RE = re.compile(r"^options:\s*\n(?:[ \t].*\n?)*", re.M)
 
@@ -241,9 +257,14 @@ def charter_options_block(sg: dict) -> str:
     ln = [f"# ── 【子目標設定（由 {BOARD.name} 的 {sg['id']} 同步；勿手改，改看板）】──",
           "options:",
           f"  subgoal: {sg['id']}",
-          f"  profile: {o.get('profile', 'prod-new')}",
-          "  arms:"]
-    ln += [f"    - {_yml(a)}" for a in (o.get("arms") or [])]
+          f"  profile: {o.get('profile', 'prod-new')}"]
+    # 空的臂要寫成 `arms: []`（不是一個沒有內容的 `arms:` —— YAML 讀出來是 None，
+    # 而下一個人分不出「還沒指定」與「全部被刪掉」，這兩件事必須長得不一樣）。
+    if o.get("arms"):
+        ln.append("  arms:")
+        ln += [f"    - {_yml(arm_name(a))}" for a in o["arms"]]
+    else:
+        ln.append("  arms: []")
     if o.get("cli"):
         ln.append("  cli:")
         ln += [f"    - {_yml(c)}" for c in o["cli"]]
@@ -253,6 +274,19 @@ def charter_options_block(sg: dict) -> str:
             ln.append(f"    - {{name: {k.get('name')}, value: {_yml(k.get('value'))}, "
                       f"role: {k.get('role')}, why: {_yml(k.get('why', ''))}, "
                       f"source: {_yml(k.get('source', ''))}}}")
+    # 2026-09-30：被判準（quote_gate 的 R5／R6）擋掉的臂不能只從 `arms` 裡消失 ——
+    # 卡片上「arms: （空）」而沒有理由，讀卡的人只會以為「還沒指定」。
+    # 這一塊**不是**待跑的路，是留下來的否證，所以逐條寫出規則與出處。
+    if o.get("arms_removed"):
+        ln.append("  # 以下臂已被判準刪除（不能量交付目標）：定義在 scripts/check/quote_gate.py 的 R5／R6；")
+        ln.append("  # 逐子目標的理由與規則見看板同一格的 options.arms_removed。")
+        ln.append("  arms_removed:")
+        for r in o["arms_removed"]:
+            ln.append(f"    - arm: {_yml(r.get('arm', ''))}")
+            ln.append(f"      rules: [{', '.join(str(x) for x in (r.get('rules') or []))}]")
+            flags = ", ".join(f"{k}: {v}" for k, v in sorted((r.get("flags") or {}).items()))
+            ln.append(f"      flags: {{ {flags} }}")
+            ln.append(f"      why: {_yml(r.get('why', ''))}")
     if o.get("no_knob"):
         ln.append(f"  no_knob: {_yml(o['no_knob'])}")
     if o.get("note"):
@@ -318,7 +352,8 @@ def apply_charters(sgs: list[dict]) -> tuple[int, list[str]]:
             if ab:
                 _, b_end, indent, items = ab
                 have = {i.lstrip("-").strip() for i in items}
-                add = [a for a in (sg["options"].get("arms") or []) if a not in have]
+                add = [n for n in (arm_name(a) for a in (sg["options"].get("arms") or []))
+                       if n and n not in have]
                 if add:
                     txt = txt[:b_end] + "".join(f"{indent}- {a}\n" for a in add) + txt[b_end:]
             else:
@@ -413,8 +448,13 @@ def audit_rows(sgs: list[dict]) -> tuple[list[dict], list[str]]:
                 continue
             txt = p.read_text(encoding="utf-8", errors="ignore")
             for a in (o.get("arms") or []):
-                if a not in txt:
-                    gaps.append(f"{s['id']}：{Path(rel).name} 沒有寫入 arm `{a}`")
+                name = arm_name(a)
+                # 拿**臂名**去比對卡的文字：dict 形（`{arm, role, why, source}`）亦然。
+                # 缺 `arm` 的項是一個**宣告缺陷**，要回報缺口，而不是拿 dict 去 `in txt`。
+                if not name:
+                    gaps.append(f"{s['id']}：options.arms 有既非字串、也沒有 arm 的項（{a!r}）")
+                elif name not in txt:
+                    gaps.append(f"{s['id']}：{Path(rel).name} 沒有寫入 arm `{name}`")
             # 重複的頂層 options 區塊 = 卡上留著舊結論而 YAML 只讀最後一塊（最陰的漂移）
             nb = len(options_blocks(txt))
             if nb > 1:
@@ -455,7 +495,7 @@ def report_md(sgs: list[dict], rows: list[dict], gaps: list[str]) -> str:
         inst = "；".join(f"`{k['name']}={k['value']}`"
                         for k in (o.get("knobs") or []) if k.get("role") != "subject") or "—"
         cli = "；".join(f"`{c}`" for c in (o.get("cli") or [])) or "—"
-        arms = "<br>".join(f"`{a}`" for a in (o.get("arms") or [])) or "—"
+        arms = "<br>".join(f"`{arm_name(a)}`" for a in (o.get("arms") or [])) or "—"
         ch = "<br>".join(f"`{Path(c).name}`" for c in s["charters"]) or "—"
         nd = "<br>".join(f'[{n}](briefs/{n}.md)' for n in s["nodes"]) or "—"
         no = f"<br>⚠ {o['no_knob']}" if o.get("no_knob") else ""
@@ -497,7 +537,7 @@ def report_html(sgs: list[dict], rows: list[dict], gaps: list[str]) -> str:
                             for k in (o.get("knobs") or []) if role_p(k.get("role")))
         subj = ks(lambda r: r == "subject") or "—"
         inst = ks(lambda r: r != "subject") or "—"
-        arms = "<br>".join(f"<code>{esc(a)}</code>" for a in (o.get("arms") or [])) or "—"
+        arms = "<br>".join(f"<code>{esc(arm_name(a))}</code>" for a in (o.get("arms") or [])) or "—"
         ch = "<br>".join(f"<code>{Path(c).name}</code>" for c in s["charters"]) or "—"
         nd = "<br>".join(f'<a href="briefs/{n}.html">{esc(n)}</a>' for n in s["nodes"]) or "—"
         warn = (f'<br><span style="color:#b45309;">⚠ {esc(o["no_knob"])}</span>'
@@ -617,6 +657,22 @@ def selftest() -> bool:
     chk("node_map 反查得到", "exp-churn-delivery-630" in node_map(sgs))
     u = unbound_binding()
     chk("未歸屬綁定有說明且沒有 profile", u["subgoal"] is None and bool(u["no_knob"]))
+    # 2026-09-30：`options.arms` 的 dict 形（L20-4 的基準臂）。先單元測，再做端到端：
+    # 合成一格，其 dict 臂指向一個卡上不存在的臂名 ⇒ 稽核應**回報缺口**而不是崩潰。
+    chk("arm_name：字串原樣", arm_name("prod-new:CGC_X=1") == "prod-new:CGC_X=1")
+    chk("arm_name：dict 取 arm",
+        arm_name({"arm": "prod-new:CGC_X=1", "role": "reference"}) == "prod-new:CGC_X=1")
+    chk("arm_name：沒有 arm 的項回空字串（不丟例外）", arm_name({"role": "reference"}) == "")
+    synth = dict(sgs[0])
+    synth["id"] = "LXX-synth"
+    synth["options"] = {"arms": [{"arm": "prod-new:CGC_NOPE=1", "role": "reference"}], "knobs": []}
+    try:
+        _rows, sgaps = audit_rows(sgs + [synth])
+        chk("dict 臂：稽核不崩潰且拿臂名比對（回報缺口）",
+            any("prod-new:CGC_NOPE=1" in g and "LXX-synth" in g for g in sgaps))
+    except TypeError as exc:      # 舊行為：拿 dict 去 `in txt`
+        chk(f"dict 臂：稽核不崩潰（{exc}）", False)
+
     rows, gaps = audit_rows(sgs)
     chk("稽核抓得到缺口（brief 尚未重建時應有）", isinstance(gaps, list) and len(rows) == 52)
     return ok

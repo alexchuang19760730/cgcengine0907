@@ -1,0 +1,177 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— 用一步的「需求 − 駐留」把「駐留時機」與「單段提交圖本身」分開
+# ═══════════════════════════════════════════════════════════════════════
+# 目的：單段臂 M1 0/9 目前有兩個互斥解釋，而**現有證據無法分辨**：
+#   (i)  駐留時機：本步被選到的專家在 dispatch 時不在池裡 ⇒ remap leaf 被寫成 `e % ns` ⇒ 讀到別的專家；
+#   (ii) 圖本身：即使需求全在池裡，slot／mask 映射或讀回時序仍然錯。
+# 切法：找一個 probe，讓**所有被判的 decode 步**都滿足「本步需求的專家當時全部在池裡」
+#   （見證：`CGC-MISSMASK-STEP: misses=0`）。在那個條件下若 M1 仍是 0/9，分歧就**只能**在圖上；
+#   若 M1 轉 9/9，則駐留時機就是唯一來源。
+#
+# ⚠ 本卡修正了原始設計的兩個前提（見 baseline.known，兩者都改變了怎麼做）：
+#   ① 「placeholder == 0」**兩種臂都不可用**：對照臂（不設 CGC_SLOT_TABLE_GPU）根本沒建 leaf
+#      ⇒ 計數迴圈不跑、而印出點在迴圈外照印 ⇒ 那個 0 是真空；見證臂（有 leaf）第一槍就是
+#      地板 **4407 = 113×39**（2026-09-30 複核）⇒ 兩邊都不是判準。
+#   ② 「把本層 union 變小」**不足以**讓需求全在池裡：駐留集是 prefill 選出的 143 個，
+#      需求要不落在其中得靠**低熵／自我重複的 probe**，不是靠 union 小。
+# 全文與兩條路的優先序：docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md（§四）。
+id: e-r6-residency-vs-graph
+owner: freebuff（R6 / S1 線）
+created: '2026-09-30'
+axis: S
+
+# ── 【目標】── 兩個答案都有意義 ────────────────────────────────────────────
+question: |
+  在「本步需求的專家當時全部在池裡」（每一步 `CGC-MISSMASK-STEP: misses=0`）成立的條件下，
+  單段臂（`CGC_SEG_BATCH=1`）的 M1 還是 **0/9**（⇒ 分歧在單段提交圖本身），
+  還是回到 **9/9**（⇒ 駐留時機是唯一來源）？
+
+# ── 【現狀】── 含一個**免費**的既有讀數（0 盒子成本）────────────────────────
+baseline:
+  metric: "既有單段臂日誌（本卡的第一半答案，**已跑過、免費**）：30 個 decode 步裡**前 5 步** `CGC-MISSMASK-STEP: misses=0`，第 6 步起 ~**130/步**；同趟池：`runtime requests=5720 hits=5720 misses=0 (hit 100.0%)`、`file_reads=0`、`evictions=0`、`resident=6197 MiB`"
+  cell:   "prod-new（`-p 2048 -n 8 -d 512 -r 3`）＋ `CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1`（＋mask 見證）；槽數 **143/層**、`top_k=8`、decode graph width=8"
+  source: "Backup/zm_identity2/llama_bench_prod-new_CGC_SEG_BATCH_1_CGC_B_SCHEME_1_CGC_SLOT_TABLE_GPU_1_p2048_n8_d512_r3.stderr.log"
+  source_note: "同批的 Backup/mm_identity/ 有對照臂同名檔。r6 配對產物：Backup/m123_oracle_gate/summary_r6ctl-nosegbatch-2026-09-30.json（9/9）／summary_r6-segbatch-2026-09-30.json（0/9）。"
+  known: |
+    - **① `placeholder` 不可用（兩種臂都失效；2026-09-30 收緊）**：G3 寫入器的 `placeholder`
+      （`llama-context.cpp:3816-3826` 的 `s_g3_ph`，印在 `:3828-3834` 的 `CGC-G3-ZEROSLOT-TOTAL`）
+      數的是**每層 `slot_table[e] < 0` 的個數**，但只走**圖裡真的建了 `ffn_moe_slot_table` leaf 的層**
+      —— 那要 `CGC_SLOT_TABLE_GPU`（`llama-graph.cpp:2263`：`if (cgc_slot_table_gpu && il >= cgc_s1_min_il)`）。
+      (a) **對照臂是真空的**：`prod-new` 不設它 ⇒ map 空 ⇒ 計數迴圈不跑，而印出點在迴圈外照印
+          ⇒ 2026-09-30 新跑的兩支 `prod-new` 臂都印 6 次 `placeholder=0`
+          （`Backup/l257_s3b_2026-09-30/…stderr.log:35/182/273/371/481/653`）＝「沒東西被數」，
+          不是「沒有不駐留的專家」。
+      (b) **見證臂是地板**：設了它以後第一槍就是 **4407 = 113 × 39**
+          （`Backup/spac_sweep_2026-09-29/k_sweep_C.logs/prod-new_CGC_SEG_BATCH_1_CGC_B_SCHEME_1_CGC_SLOT_TABLE_GPU_1_CGC_MISS_MASK_1_CGC.stderr.log:43`），
+          之後每步再 +~113×40。地板的係數就是「有 leaf 的層數」：`s1_min_il=1` ⇒ blk.0 沒 leaf
+          ⇒ 39 層 ⇒ **113×39 = 4407**（若 blk.0 也算就是 113×40 = 4520）；要變 0 得每層 256 槽
+          ⇒ `41×256×1.3906 MiB ≈ 14.3 GiB` ⇒ 本機不可能（見 R6_SEGBATCH_FIX_PLAN §三 A-2）。
+      **⇒ 這條判準在對照臂假綠、在見證臂必紅，不能用。**
+    - **② 正確的量具是可達的**：`CGC-MISSMASK-STEP: step= misses= layers=`
+      （`llama-context.cpp:4198`；每步一行，`misses==0` 時**逐層** `MISSMASK il=..` 行會被抑制
+      但 step 行照印）＋逐層 `MISSMASK il=.. nsel=.. misses=.. exps:..`（`:4191`）。
+      它數的是**「本步被選到、而當時不在池裡」的個數**，也就是「會讀到佔位」的次數。
+      既有日誌已示範 `misses=0` 連續 5 步達成 ⇒ **可達，不是卡在幾何**。
+    - **③ 143 槽下 ~130/步是結構值，不是 bug**：`top_k=8`、覆蓋 143/256
+      ⇒ 每層期望 `8×(1−143/256)=3.53` 個非駐留 × 39 層 ≈ **138/步**
+      ⇒ 觀測的 ~130 就是這個算式的值。**⇒ 這告訴我們：`hits=100%` 與 `misses≈130/步` 可以同時成立**
+      —— 池的 `hits/misses` 講的是「`ensure_slot` 請求有沒有要它去讀」，而 decode 階段
+      **根本沒有發出 `ensure_slot`**（hook 被跳過）⇒ 池計數器對 decode 的需求量是盲的。
+      **這正是 R6 卡點的本體，也是為什麼「池 hit 97.4%」不能當駐留證據。**
+    - **⑤ 免費的對照（本卡登記的見證產物，0 盒子成本）**：**誠實臂**在同一個 `CGC-MISSMASK-STEP`
+      量具、同一個 cell 下是 **30 個 decode 步全 0**
+      （`Backup/mm_identity/llama_bench_prod-new_p2048_n8_d512_r3.stderr.log`：池
+      `requests=13720 hits=10947 misses=2773 (79.8%)`、`file_reads=76119` ⇒ 它確實在 decode 期間補載），
+      而單段臂是 `requests=5720 = 40×143`、`file_reads=0`、第 6 步起 ~130/步。
+      ⇒ (i) 量具**會分辨**兩臂；(ii) **`misses=0` 這個前題在同一幾何下已被證明可達**
+      （不是只靠推算）；(iii) 前 5 步乾淨**不是「union 小」的功勞**，是 prefill 熱集剛好蓋住
+      （兩臂前 5 步一致）。兩趟都在 `Backup/mm_identity/`，同批同 cell ⇒ 可直接相減。
+    - 免費那一半的結論：`hits=5720 = 40×143` 且 `file_reads=0`、`evictions=0`
+      ⇒ **駐留集在 prewarm 之後就固定**（沒有重定中心；ρ 在單段臂上是 no-op，見 S2-c）⇒
+      「某一步乾不乾淨」等價於「該步的 8 個需求是否落在 prefill 選出的那 143 個裡」。
+    - **⇒ 原設計的槓桿要換**：讓「本層 union 遠小於 143」**不能**保證需求 ⊆ 駐留集
+      （需求是 union 的子集，但駐留集不是 union）。真正要的是 **需求 ⊆ prefill 選出的 143**，
+      而最便宜的達成方式是把 probe 換成**低熵／自我重複**的輸入
+      （prefill 與 decode 走同一小群專家），而不是把 prompt 變短。
+    - **④ 兩個端點必須分兩趟（不是偏好，是被 R5 逼的）**：
+      `CGC_MISS_MASK_DBG=1` 每步多一次 `synchronize` 讀回，是 quote_gate 的 R5 條目
+      （`run_server.sh:1706`），而且 2026-09-30 那一趟帶 `CGC_MISS_MASK=1` 的 dump
+      **全 NaN**（`993280/993280`）⇒ **那一趟的 logits 不可讀**。
+      `CGC_MISS_MASK=1`（不加 `_DBG`）會建 mask 節點但**不印任何見證**
+      （`run_server.sh:1703` 與 :1714 的註解）⇒ 見證**必須**帶 `_DBG`。
+      ⇒ 駐留見證趟與 M1 趟分開跑，並用「同一 probe ＋ `worst=layer distinct=.. slots=..`／
+      `runtime requests`／`hit_pct` 相同」證明兩趟的工作集相同。
+
+# ── 【假設】────────────────────────────────────────────────────────────
+hypothesis:
+  mechanism: |
+    單段臂在 decode 階段**沒有任何成員維護**（per-layer hook 被跳過 ⇒ 沒有 `ensure_slot`）
+    ⇒ 每個 decode 步能不能讀對，只取決於「該步的 8 個需求是否已在 prewarm 留下的 143 個裡」。
+    把 probe 換成低熵／自我重複的輸入會讓 prefill 與 decode 的路由落在同一小群專家上
+    ⇒ 需求 ⊆ 駐留集 ⇒ 每一步 `misses=0` ⇒ 佔位讀取歸零。
+    在那個條件下 M1 是二值的：仍 0/9 ⇒ 圖（映射／時序）；9/9 ⇒ 駐留。
+  expected: "前置：被判的 decode 步全部 `misses=0`（且 ≥9 步可判）。達成後 M1 **0/9 ⇒ 圖**／**9/9 ⇒ 駐留**；前置未達成 ⇒ **UNDECIDABLE**（不得讀成任一側）。"
+  basis: |
+    Backup/zm_identity2/…n8…stderr.log（misses=0 前 5 步、之後 ~130/步；hits=5720=40×143；file_reads=0）；
+    llama-context.cpp:4180-4200（misses 語意、step 行、逐層行、nsel 分辨 prefill／decode）；
+    :3816-3826（placeholder 計數迴圈）／`:3828-3834`（印出點，在 tensor 迴圈外）＋ leaf 閘
+    `llama-graph.cpp:2263` ⇒ **兩邊都不是判準**；
+    llama-expert-cache.cpp:3033／:3038（compulsory vs capacity 與逐層 distinct ⇒ union 量尺）；
+    scripts/run_server.sh:1703-1718（mask 與 _DBG 的差別、R5）；
+    scripts/check/m123_oracle_gate.py:975-979（`--probe-prompt`／`--probe-max-tokens` 是**配置**，不需 rebuild）。
+
+# ── 【預註冊判決規則（跑之前寫死，看到資料後不得改）】─────────────────────
+acceptance:
+  window_valid: |
+    三件事成立才算可裁判：
+      (a) 兩趟 rc=0 跑完；
+      (b) 見證趟的 stderr 有 **≥1 行 `CGC-MISSMASK-STEP`**（0 行 ⇒ 量具沒開／被 allowlist 丟掉 ⇒ **UNRESOLVED**，
+          不得讀成「駐留完美」）；
+      (c) 被判的 decode 步（以逐層行的 `nsel == top_k` 判身分，避免把 prefill 混進來）
+          **每一步**都 `misses == 0`，且可判步數 ≥ **9**。
+    任一不成立 ⇒ **UNDECIDABLE**（本卡不給任一側）。
+    ⛔ 不需要乾淨窗：兩個端點都是**計數／位元**。
+    ⛔ 見證趟（帶 `_DBG`）的任何 t/s **一律 VOID**（R5）；它的 logits 亦不可讀。
+  success: |
+    在 (a)(b)(c) 全部成立下讀 M1，**兩個方向都算成功**（本卡目的是分辨，不是保住某一側）：
+      • M1 **0/9**（M2／M3 亦不足）⇒ **分歧在單段提交圖本身**：駐留已被排除，
+        (A) 類「讓需求全在池裡」路線作廢，資源直接轉 §4.2（prev-token 預測 ＋ 逐層重算，走 D5）。
+      • M1 **9/9**（M2/M3 9/9、coverage 100%）⇒ **駐留時機是唯一來源**：
+        把「讓需求 ⊆ 駐留集」升為主路（候選：prewarm 的 hot set 覆蓋 decode、或 S2-c 的 τ 投遞），
+        並回頭重估 (A) 的可負擔版本（不是 14.3 GiB 那種）。
+  falsify: |
+    即使把 probe 換成低熵／自我重複、並把生成步數壓到最少，仍有 decode 步 `misses > 0`
+    ⇒ 在 **143 槽**下「需求 ⊆ 駐留集」於本 cell 做不到
+    ⇒ 判死這條**切法**（不是判死兩條路），直接承認分歧**無法與駐留分離**，
+    改走 §4.2（那裡不假設可分辨）。
+  undecidable: |
+    見證行 0 行、或可判步數 < 9、或跨趟工作集不一致（`worst distinct`／`runtime requests`／`hit_pct` 不同）
+    ⇒ 登記 UNRESOLVED，先補量具／調 probe，**不得**把「沒量到」讀成任一側。
+    若 M1 趟因 `config_diffs != []` exit 2 ⇒ 先解可比性，不得把 exit 2 唸成 M1 FAIL。
+  on_fail: |
+    判死或 UNRESOLVED 兩次 ⇒ 記入 docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md §四，
+    不再為「把採樣變小」投盒子。⛔ 任何情況下不得放寬 M1/M2/M3 護欄、不得改參考、不得用 `_DBG` 的 t/s。
+
+# ── 【量化目標】──────────────────────────────────────────────────────────
+targets:
+  decode_tps: 20.0            # 政策目標；本卡**不主張**任何 t/s
+  prefill_tps: 250.0
+  mask_miss_per_step_max: 0   # 前題：被判的 decode 步每一步
+  m1_readable_steps_min: 9    # 少於 9 步不足以讀 M1
+  runs: 3                     # ①駐留見證趟 ②M1 趟 ③誠實臂錨（寫新 probe 的參考）
+  engine_rebuilds: 0          # 0：不碰 src/、不改 profile，只換 probe 與 env
+
+# ── 【技術子目標】────────────────────────────────────────────────────────
+subgoals:
+  - id: sg-probe-lowentropy
+    text:   "選出一個低熵／自我重複的 probe，使 prefill 與 decode 的路由落在同一小群專家上"
+    expect: "該 probe 下 `worst=layer .. distinct=.. slots=143` 的 distinct **< 143**（有餘裕），且 ≥9 個可判 decode 步"
+    how:    "`--probe-prompt` ＋ `--probe-max-tokens`（配置，0 rebuild）；工作集量尺＝`LLAMA_EXPERT_CACHE_MISS_ATTR_LAYERS=1`（逐層 distinct）"
+  - id: sg-mask-zero
+    text:   "駐留見證趟：每一步 `CGC-MISSMASK-STEP: misses=0`"
+    expect: "被判的 decode 步（nsel==top_k）misses 全為 0；逐層 `MISSMASK` 行 0 行（0 miss 會被抑制）"
+    how:    "`CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1`（R5：只讀計數，t/s VOID）"
+  - id: sg-m1-read
+    text:   "M1 趟：乾淨 dump 下讀 M1"
+    expect: "M1 0/9 或 9/9 二者之一，且 coverage／prompt／build 三項可比性齊備"
+    how:    "`m123_oracle_gate.py`（先由誠實臂 `--write-ref` 為這個 probe 寫參考，再用單段臂對它比）"
+  - id: sg-workload-match
+    text:   "證明兩趟的工作集相同（否則駐留結論不轉移）"
+    expect: "兩趟的 `worst=layer distinct/slots`、`runtime requests`、`hit_pct`、`resident` 一致"
+    how:    "兩份 stderr 的 teardown 行逐項比對"
+  - id: sg-no-speed-claim
+    text:   "本卡不得產出任何 t/s 成績"
+    expect: "報告只出現位元／計數器"
+    how:    "寫報告時自查；見證趟帶 R5 量具"
+
+# ── 【臂】────────────────────────────────────────────────────────────────
+arms:
+  # ① 駐留見證趟（R5：只讀計數，logits 與 t/s 皆不可讀）
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1
+  # ② M1 趟（乾淨 dump，不帶量具）
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1
+  # ③ 誠實臂錨（為這個新 probe 寫參考；它本身必須 9/9）
+  - prod-new
+# 為什麼用 prod-new：本卡的兩個端點都是**計數／位元**，不需要 m123 既有的 prefill250 參考
+# （probe 一換，`probe_prompt_md5` 就變 ⇒ 本來就得 `--write-ref` 寫新參考；既然要寫，就寫在
+# 政策口徑的 prod-new 上，見 quote_gate.py 的 QUOTABLE_PROFILES 註解）。

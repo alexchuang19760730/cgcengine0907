@@ -1,0 +1,55 @@
+# 立項卡（2026-09-30）：L20-1 的臂類別解鎖 —— 52 ms 的 S1 紅利能不能在不開 CGC_SEG_BATCH 的前提下取得
+#
+# 為什麼要立這一張：L20-1 的底（36.33 ms）經機檢是 R6-DIRTY（唯一規則＝ CGC_SEG_BATCH），
+# 而 R6 的解除條件（輸出見證）已經在 2026-09-30 跑過並且是否證的（M1 0/9 vs 對照臂 9/9，
+# 見 Backup/m123_oracle_gate/summary_r6-segbatch-2026-09-30.json）⇒ 那一格不會靠
+# 「等窗口」或「補見證」脫困。唯一的出路是**換一支臂**，或證明紅利與那面旗標不可分離。
+#
+# 這張卡把 S1 的三面旗標拆成單旗標臂，逐個量它們的 ms/step 邊際與 R5／R6 乾淨度。
+id: e-s1-flag-attrib
+owner: freebuff
+created: '2026-09-30'
+axis: S
+question: 88.29 → 36.33 ms 的 S1 step 紅利，在哪一面旗標上（CGC_SEG_BATCH／CGC_B_SCHEME／CGC_SLOT_TABLE_GPU），而其中哪些旗標是 R5／R6 乾淨的？
+baseline:
+  metric: 控制臂 88.29 ms/step（11.327 t/s）vs S1 臂 36.33 ms/step（27.526 t/s）——兩臂皆 attribution=swap ⇒ 當時不可引用
+  cell: prod-new default cell（p2048／-b -ub 5632／--warm-skip 64／fixed-fill-seed 1／reps 3／MTP off）
+  source: Backup/clean_window_2026-09-29/s1_1.json
+hypothesis:
+  mechanism: S1 的紅利來自「41 段提交 → 1 段」，而單段提交之所以需要 CGC_B_SCHEME，是因為它跳過 per-layer hook 之後 remap leaf 沒人寫（源碼自述：B_SCHEME 只是合法佔位，routing 錯、輸出 garbage、never a deliverable）⇒ 預期紅利掛在 CGC_SEG_BATCH 上；CGC_SLOT_TABLE_GPU 把每步 host 端 leaf 寫入換成裝置端 get_rows，是唯一「乾淨且可能省時」的旗標。
+  expected: 逐旗標邊際落在 −2 ~ −60 ms/step 之間；判別點＝CGC_SLOT_TABLE_GPU 單獨是否 ≥5 ms/step（若是，L20-1 有乾淨的替代臂；若否，紅利與 CGC_SEG_BATCH 不可分離）
+  basis: 源碼 llama-context.cpp:3737-3760（B_SCHEME 的用途與佔位語意）＋ :4103-4120（hook 被跳過、成員餵料全掛在 hook 上）
+acceptance:
+  success: 四臂同場跑完且每臂 attribution=none ⇒ 逐旗標邊際與 R5／R6 乾淨度一起指名，並直接回答「有沒有不用 CGC_SEG_BATCH 就能量到 ≥20 t/s 底線的臂」
+  falsify: 若每一支乾淨旗標的邊際都落在雜訊內（|Δ| < 控制臂 rep 散佈）⇒ S1 底線與 CGC_SEG_BATCH 不可分離，L20-1 只能改端點或等引擎修
+  on_fail: 任何一臂 attribution≠none ⇒ 不引用該臂，維持未結案（不採用任何一邊寫進算式）
+targets:
+  decode_tps: 20.0
+  prefill_tps: 250.0
+subgoals:
+- id: sg-flag-marginal
+  text: 三面旗標的單獨邊際（ms/step）在同一場、同一 cell 上量出來
+  expect: 至少一面旗標的邊際 ≥5 ms/step，或被證明全部在雜訊內
+  how: harness bench 四臂同場（控制臂 ＋ 三個單旗標／組合臂）
+- id: sg-clean-arm
+  text: 逐臂過 quote_gate 的 R5／R6 判定，指名哪一支是乾淨臂
+  expect: 至少一支「不用 CGC_SEG_BATCH 且 R5／R6 乾淨」的臂存在（否則結論是無此臂）
+  how: scripts/check/quote_gate.py 的 arm_void_flags／arm_instruments
+arms:
+- prod-new
+- prod-new:CGC_SLOT_TABLE_GPU=1
+- prod-new:CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1
+- prod-new:CGC_HOOK_SPLIT=1     # 機制量尺：乾淨臂上量「hook 自己每一步的 CPU 成本」＝ S1 跳過的那一項
+- prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-1 同步；勿手改，改看板）】──
+options:
+  subgoal: L20-1
+  profile: prod-new
+  arms:
+  knobs:
+    - {name: CGC_SEG_BATCH, value: "1", role: subject, why: "單段提交（R6 條目）：41 段→1 段", source: "charters/e-s1-base-calibrate-2026-09-29.yaml arms[]"}
+    - {name: CGC_B_SCHEME, value: "1", role: subject, why: "單段提交的佔位 remap（源碼自述 routing 錯、輸出 garbage）", source: "llama-context.cpp:3737-3760"}
+    - {name: CGC_SLOT_TABLE_GPU, value: "1", role: subject, why: "裝置端 slot 表（m123 的 DIAGNOSTIC_KEYS 已宣告其數值不變的主張）", source: "同上 ＋ m123_oracle_gate.py"}
+    - {name: CGC_HOOK_SPLIT, value: "1", role: instrument, why: "把 per-layer hook 的 CPU 成本拆成四塊並每 160 呼叫印一次均值 —— 它就是 S1 跳過的那一項，是「機制」側的量尺（R5 登記表未列入；旗標關時只有兩個分支）", source: "llama-context.cpp:5917-5934 ＋ run_server.sh:1657-1663"}
+  note: "控制臂＝裸 prod-new；判別點＝乾淨旗標單獨能否吃到紅利。此卡不動 src/、不改 profile，只是把既有的三面旗標拆開量。"

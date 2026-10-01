@@ -1,0 +1,150 @@
+<html style="margin:0;padding:0;">
+<title>公式推論支撐審計（250/25）—— 不能憑空推論</title>
+<div style="width:100%;box-sizing:border-box;padding:18px;font-family:-apple-system,'PingFang TC',sans-serif;color:#1a1a1a;">
+  <h2 style="margin:0 0 4px;font-size:19px;">公式推論支撐審計 —— 不能憑空推論</h2>
+  <div style="font-size:12px;color:#666;margin-bottom:14px;">
+    operator 2026-09-25 下令：<b>公式推論一定要基於量測或數學，不能憑空推論；若缺乏支撐，就要丟到廢棄</b>。
+    本頁把 <code>docs/MTP_AMORTIZATION_RECHECK_2026-09-25.*</code> 的每一條定量主張分級。
+    機檢 <code>scripts/check/formula_audit.py</code>（11/11）。
+  </div>
+
+  <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:165px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px;">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:6px;color:#166534;">M／D —— 可引用</div>
+      <div style="font-size:11.5px;line-height:1.7;">M：能指出「哪個產物檔的哪一輪」<br>D：只用定義／量綱就能推出</div>
+      <div style="margin-top:8px;font-size:22px;font-weight:700;color:#15803d;">15 條</div>
+    </div>
+    <div style="flex:1;min-width:165px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px;">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:6px;color:#7f1d1d;">X／A／S／U —— 廢棄</div>
+      <div style="font-size:11.5px;line-height:1.7;">X 外推到未量測點　A 假設獨立<br>S 推測因果　U 數字無出處</div>
+      <div style="margin-top:8px;font-size:22px;font-weight:700;color:#b91c1c;">9 條</div>
+    </div>
+    <div style="flex:1;min-width:165px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:12px;">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:6px;color:#1e40af;">口訣</div>
+      <div style="font-size:11.5px;line-height:1.7;">每個數字要指得出產物<br>每個「所以」要推得出來</div>
+      <div style="margin-top:8px;font-size:15px;font-weight:700;color:#1d4ed8;">指不出 ⇒ 進廢棄</div>
+    </div>
+  </div>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">① 六個等級（只有前兩個可引用）</div>
+  <table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px;">
+    <tr style="background:#f1f5f9;">
+      <td style="padding:6px 8px;font-weight:600;">等級</td>
+      <td style="padding:6px 8px;font-weight:600;">意思</td>
+      <td style="padding:6px 8px;font-weight:600;">判準（要能回答）</td>
+      <td style="padding:6px 8px;font-weight:600;">處置</td>
+    </tr>
+    <tr style="background:#f0fdf4;">
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">M MEASURED</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">實測</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">這個數字來自<b>哪個產物檔的哪一輪</b>？</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">可引用</td>
+    </tr>
+    <tr style="background:#f0fdf4;">
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">D IDENTITY</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">量綱恆等／定義式</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">不代入經驗假設，只用定義推得出來嗎？</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">可引用（<b>須標適用範圍</b>）</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">X EXTRAPOLATION</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">外推到未量測的參數點</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">那個參數點<b>量過嗎</b>？</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">⛔ 廢棄</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">A ASSUMPTION</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">假設兩量互相獨立</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">這個獨立性<b>量過嗎</b>？</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">⛔ 廢棄</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">S SPECULATION</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">推測因果</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">有對照臂能證因果嗎？</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">⛔ 廢棄</td>
+    </tr>
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">U UNSOURCED</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">數字無出處</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">全庫 grep 得到嗎？</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;">⛔ 廢棄</td>
+    </tr>
+  </table>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">② 這次踩到的三個坑</div>
+  <div style="font-size:12px;line-height:1.8;margin-bottom:14px;">
+    1. <b>跨量綱相除</b>：<code>42.03 ms/verify-token</code>（d(step)/dT 的斜率）÷ <code>48.2 ms/產出 token</code>
+    —— 分子是「每多一個 verify token 的 step 增量」，分母是「每產出 token 的成本」，<b>不是同一個量</b>。
+    同義口徑（<code>Δstep/step_off</code>）下是 <b>1.176</b>，不是 0.872。<br>
+    2. <b>用單點反解的 m 去外推</b>：本輪 <code>k_eff</code> 恒為 1 ⇒ 實測只有 <code>k∈{0,1}</code> 兩點，
+    <code>m = cost−1</code> 是單點反解不是擬合；把它當常數推 <code>k=3</code>、<code>k→∞</code> ⇒ 全部作廢。
+    而且 F24 證明 09-24 的 <code>m(k)</code> 本身就非常數（1.176／0.840／0.961／0.920，散佈 <b>1.40×</b>）。<br>
+    3. <b>拿他批的絕對時間套本批</b>：「draft 前向佔 7.5%」——本輪 stderr 根本沒有 <code>CGC-MTP-PERF</code> 輸出，
+    而 09-24 那份自己也寫「絕對值不可與交付併排」。
+  </div>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">③ 可引用的（KEEP，15 條）</div>
+  <table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:14px;">
+    <tr style="background:#f1f5f9;">
+      <td style="padding:6px 8px;font-weight:600;">id</td>
+      <td style="padding:6px 8px;font-weight:600;">主張</td>
+      <td style="padding:6px 8px;font-weight:600;">等級</td>
+      <td style="padding:6px 8px;font-weight:600;">支撐</td>
+    </tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F01</td><td style="padding:5px 8px;border-bottom:1px solid #eee;"><code>k_eff = 1</code></td><td style="padding:5px 8px;border-bottom:1px solid #eee;">M</td><td style="padding:5px 8px;border-bottom:1px solid #eee;"><code>SPECDBG draft=1</code> 逐輪皆是</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F02</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">輪內 S = 0.914／0.682／1.050</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">M</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">三輪 tps 比</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F03</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">E = 1.707／1.455／1.620</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">M</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">mean_len</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F04</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">a = E−1 中位 0.620</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">M</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">派生</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F05</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">m = cost−1 中位 0.868</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">M</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">派生，<b>僅 k_eff=1</b></td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F06</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">MiB/step 19.9 → 49.9</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">M</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">19.87~20.25 → 49.87~53.70</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F07</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">worst distinct 111~130 → 168~205</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">M</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">slots 143，越界 18%~43%</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F08</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">layers_over_slots 0 → 2~4</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">M</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">整數計數</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F09</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">池 hit% 94.9~95.0 → 91.9~92.3</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">M</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">計數器</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F10</td><td style="padding:5px 8px;border-bottom:1px solid #eee;"><code>S = E / cost</code></td><td style="padding:5px 8px;border-bottom:1px solid #eee;">D</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">量綱恆等，三輪誤差 &lt;1e-3</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F11</td><td style="padding:5px 8px;border-bottom:1px solid #eee;"><code>E = 1 + a·k_eff</code></td><td style="padding:5px 8px;border-bottom:1px solid #eee;">D</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">a 的定義式</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F12</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">k_eff=1 時 2× 不可達</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">D</td><td style="padding:5px 8px;border-bottom:1px solid #eee;"><code>E≤2 ⇒ 需 m≤0</code>；<b>僅 k_eff=1</b></td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F13</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">彈性 +0.383／−0.465</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">D</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">k=1 處微分；<b>局部值</b></td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F14／F15</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">原 html 高估 1.35~1.59×、低估 2.9~6.0×</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">D</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">純算術</td></tr>
+    <tr style="background:#f0fdf4;"><td style="padding:5px 8px;border-bottom:1px solid #eee;"><b>F24</b></td><td style="padding:5px 8px;border-bottom:1px solid #eee;">09-24 的 m(k) = 1.176／0.840／0.961／0.920</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">M</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">他批 step 實測</td></tr>
+  </table>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;color:#7f1d1d;">⛔ 廢棄：以下 9 條缺乏支撐，不得作為決策依據</div>
+  <table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:12px;">
+    <tr style="background:#fef2f2;">
+      <td style="padding:6px 8px;font-weight:600;">id</td>
+      <td style="padding:6px 8px;font-weight:600;">主張</td>
+      <td style="padding:6px 8px;font-weight:600;">等級</td>
+      <td style="padding:6px 8px;font-weight:600;">為什麼缺支撐</td>
+    </tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F16</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">k=3 時 S = 0.794</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">X</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">本批 k=3 從未量測</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F17</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">k→∞ 上界 a/m = 0.714</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">X</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">線性模型被 F24 證偽</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F18</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">沿 k 軸加到多大都虧</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">X</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">同 F17</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F19</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">a 拉滿 ⇒ S = 1.071（+7%）</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">A</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">假設 cost 與 a 獨立，未量測</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F20</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">m≈0.87 穩定，兩批差 0.5%</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">U</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">量綱錯配；同義口徑 1.176 vs 0.868，差 35%</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F21</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">draft 前向只佔 ~7.5%</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">U</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">本輪無 MTP-PERF 輸出，全庫無出處</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F22</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">池 hit% 崩到 57%</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">U</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">全庫無出處</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F23</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">原 html 的 S=1.19 來自兩台儀器相除</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">S</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">算術可留，因果是推測</td></tr>
+    <tr><td style="padding:5px 8px;border-bottom:1px solid #eee;">F25</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">a=0.44 是 ctx_other regression 的產物</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">A</td><td style="padding:5px 8px;border-bottom:1px solid #eee;">D5 FAIL 未歸因 ⇒ 只能說「相關但未證明」</td></tr>
+  </table>
+
+  <div style="font-size:13px;font-weight:600;margin-bottom:6px;">④ 機檢怎麼跑</div>
+  <div style="font-size:11.5px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:9px 11px;margin-bottom:12px;font-family:ui-monospace,Menlo,monospace;">
+    python3 scripts/check/formula_audit.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# 驗算＋掃描<br>
+    python3 scripts/check/formula_audit.py --selftest&nbsp;# 11/11
+  </div>
+  <div style="font-size:12px;line-height:1.8;margin-bottom:12px;">
+    它做三件事：① <b>M 類</b>從產物 JSON 重算、與聲明值比對（容差 5e-3）；
+    ② <b>D 類</b>做數值驗算（恆等式／微分／極限／算術範圍）；
+    ③ <b>X/A/S/U 類</b>的字面串<b>不得出現在報告的結論區</b>（結論區＝檔內第一個「⛔ 廢棄」錨點之前）
+    ⇒ 廢棄斷言一旦回流到結論，機檢立刻紅。
+  </div>
+
+  <div style="padding:11px 13px;background:#fffbeb;border:1px solid #fcd34d;border-radius:7px;font-size:12px;color:#78350f;line-height:1.7;">
+    <b>往後怎麼用這條規則：</b>寫任何「⇒」之前先標 <code>M</code> 或 <code>D</code>，標不出來就<b>不要寫那個 ⇒</b>；
+    說「別的參數點會怎樣」先看那個點有沒有量過（沒量過＝<code>X</code>）；
+    說「X 改善就會 Y」先看獨立性有沒有量過（沒量過＝<code>A</code>）；
+    跨報告搬數字先對<b>量綱</b>（分子分母是不是同一個量），再對 <b>regime</b>（池大小／cell／口徑）。
+  </div>
+</div>
+</html>

@@ -1525,11 +1525,19 @@ SERVER_ENV=(
 # checkpoint-backed reuse path and `forcing full prompt re-processing` (see the pass-through note at
 # the top of this script). It belongs here as well as in the MTP block because it must also be
 # settable for the MTP=0 arms, where the whole MTP env block does not run.
+# [CGC 2026-09-30 fill-path split] The pool fill path has three A/B knobs that the engine has read
+# for weeks (`llama-expert-cache.cpp`: LLAMA_EXPERT_CACHE_NO_MERGE / _NO_RDADVISE in
+# fill_segments_pool, _BATCH_SPAWN at the ensure_batch call site) and that this launcher never
+# forwarded -- the exact inert-knob trap the loop above exists to prevent. They are the brute-force
+# knobs for "which part of the fill path costs": NO_RDADVISE drops the per-job F_RDADVISE hints
+# (caller-side fcntl), NO_MERGE drops the run-merge (per-segment jobs), BATCH_SPAWN reverts to
+# thread-per-expert. Forwarded so a decomposition arm cannot silently run on profile defaults.
 for _v in LLAMA_EXPERT_CACHE_NOHOOK LLAMA_EXPERT_CACHE_NOGATHER LLAMA_EXPERT_CACHE_L3_NGL \
           LLAMA_EXPERT_CACHE_STEP_DBG CGC_PHASE_DBG CGC_SEQ_RM_TYPE CGC_PREFIX_REUSE_CKPT \
           CGC_S1_OUT_CAP CGC_S1_OUT_LAYERS CGC_S1_TABLE_CHURN CGC_S1_CLAMP_ABORT \
           CGC_LOGITS_ORACLE_TOPN CGC_LOGITS_ORACLE_FIRST_N CGC_DRAFT_CTX_ALIGN \
           CGC_DRAFT_SMALL_BATCH \
+          LLAMA_EXPERT_CACHE_NO_MERGE LLAMA_EXPERT_CACHE_NO_RDADVISE LLAMA_EXPERT_CACHE_BATCH_SPAWN \
           LLAMA_BENCH_SPEC_DBG CGC_MTP_PERF; do
     if [ -n "${!_v:-}" ]; then
         SERVER_ENV+=("$_v=${!_v}")
@@ -1739,6 +1747,28 @@ fi
 if [ -n "${CGC_EB_TIMER:-}" ]; then
     SERVER_ENV+=(CGC_EB_TIMER="$CGC_EB_TIMER")
 fi
+# [CGC 2026-09-30 L20-4 unblock] CGC_EB_NOFILL=1 -- forwarded for the first time. The engine has
+# read it since 2026-09-25 (llama-expert-cache.cpp:3688, the head of the fill path) and it was
+# NEVER forwarded here: same allowlist trap as the CGC_EB_TIMER block above. It is the diagnostic
+# arm that prices the fill term by EXCLUDING it (slots still allocated/published, no bytes read);
+# the engine's own header says TIMING ONLY, output is garbage, never a correctness measurement.
+# ⚠ So it may be armed only to price the fill, and any t/s read off that arm is **not** a reading
+#   of the honest path (see docs/FILL_COST_MEASURED_2026-09-25.md).
+# Verified landed (not just set): scripts/check/llama_bench_matrix.py `arm_env_dropped()` used to
+# report `CGC_EB_NOFILL=1` as DROPPED and now reports [] -- asking for it changes the resolved
+# surface, which is the only general test for "the switch did nothing" vs "was never set".
+if [ -n "${CGC_EB_NOFILL:-}" ]; then
+    SERVER_ENV+=(CGC_EB_NOFILL="$CGC_EB_NOFILL")
+fi
+# [CGC 2026-09-30 fill-path split] CGC_FILL_SPLIT=1 -- decompose the hook thread's time inside
+# fill_segments_pool (wake-in / pread span / wake-out / caller-side prep) instead of reporting one
+# lump. Read by llama-expert-cache.cpp since 2026-09-30; NOT forwarding it here would be the same
+# allowlist trap as CGC_EB_TIMER / CGC_EB_NOFILL above (the knob looks armed, the engine never sees
+# it, and `llama_bench_matrix.arm_env_dropped()` catches it as a DROPPED key). Diagnostic only:
+# it changes no bytes and no timing path, only what is printed at teardown.
+if [ -n "${CGC_FILL_SPLIT:-}" ]; then
+    SERVER_ENV+=(CGC_FILL_SPLIT="$CGC_FILL_SPLIT")
+fi
 # [CGC 2026-09-26 rho landing] CGC_RHO_PROBE / CGC_RHO_FILL, forwarded for the first time. Same
 # allowlist trap as every block above: the engine has read both since 2026-09-23/24, but no entry
 # here ever forwarded them -- so the only A/B that ever measured rho
@@ -1747,15 +1777,26 @@ fi
 # NOTE: the third rho knob, CGC_RHO_PREFETCH_MAXQ, is deliberately NOT repeated here -- it was
 # already forwarded on 2026-09-23 (the `rho fuse` block further down, ~:2453). A second copy would
 # be dead weight and would make the next reader think this is the only place to look.
-#   CGC_RHO_PROBE=1   builds the per-layer shadow router (qwen35moe.cpp, at `inpSA = inpL`).
-#                     WARNING: it costs a SYNCHRONOUS READBACK per layer (cgc_rho_capture,
-#                     ggml_backend_tensor_get of n_expert*n_tokens floats x 40 layers/step) and is
-#                     documented as a PROBE -- never quote throughput from an arm that has it on alone.
+#   CGC_RHO_PROBE=1   the METER: prints the `CGC-RHO-*` accounting, and (backward compatible)
+#                     brings the mechanism with it. WARNING: it costs a SYNCHRONOUS READBACK per
+#                     layer (cgc_rho_capture, ggml_backend_tensor_get of n_expert*n_tokens floats x
+#                     40 layers/step) and is documented as a PROBE -- never quote throughput from
+#                     an arm that has it on alone.
+#   CGC_RHO=1         the DELIVERY face (split 2026-09-30): shadow router (qwen35moe.cpp, at
+#                     `inpSA = inpL`) + capture + fill together, with NO `CGC-RHO-*` lines on
+#                     stderr -- this is the only rho arm whose throughput may be quoted from the
+#                     authority row (nothing on it is a never-quote gauge).
 #   CGC_RHO_FILL=1    turns the prediction into a real non-blocking batch prefetch
-#                     (cgc_rho_prefetch). Inert without PROBE TODAY, because the prediction is
-#                     computed on the HOST from the captured logits.
+#                     (cgc_rho_prefetch). Inert without a mechanism flag (PROBE or CGC_RHO),
+#                     because the prediction is computed on the HOST from the captured logits.
 if [ -n "${CGC_RHO_PROBE:-}" ]; then
     SERVER_ENV+=(CGC_RHO_PROBE="$CGC_RHO_PROBE")
+fi
+# The delivery flag the price session needs. Same allowlist trap as every block above: the engine
+# reads `CGC_RHO` as of the 2026-09-30 split, but a knob that is not forwarded here is inert for
+# every server-lane sweep (`--arms` specs resolve their env through this launcher).
+if [ -n "${CGC_RHO:-}" ]; then
+    SERVER_ENV+=(CGC_RHO="$CGC_RHO")
 fi
 if [ -n "${CGC_RHO_FILL:-}" ]; then
     SERVER_ENV+=(CGC_RHO_FILL="$CGC_RHO_FILL")
@@ -2658,6 +2699,18 @@ fi
 # `=0` 也會把它打開。所以這裡**只傳非 0 值**：`=0` 被丟掉 ⇒ 真的是關。
 if [ -n "${CGC_SEG_BATCH:-}" ] && [ "${CGC_SEG_BATCH}" != "0" ]; then
     SERVER_ENV+=(CGC_SEG_BATCH="$CGC_SEG_BATCH")
+fi
+# [CGC 2026-10-01 · L25-2 skip-probe] CGC_SKIP_TINY_DISPATCH 白名單（env-gated、預設關）。
+# 同一條規矩：引擎是 presence-based ⇒ `=0` 也會開；這裡只傳非 0 值（`=0` 被丟掉＝真的是關）。
+# 不轉送 ⇒ 旗標到不了子行程（擋住的是 skip_probe.py 的 S2 座標）。
+if [ -n "${CGC_SKIP_TINY_DISPATCH:-}" ] && [ "${CGC_SKIP_TINY_DISPATCH}" != "0" ]; then
+    SERVER_ENV+=(CGC_SKIP_TINY_DISPATCH="$CGC_SKIP_TINY_DISPATCH")
+fi
+# [CGC 2026-10-01 · L25-4 S1] CGC_MTP_NO_CTX_OTHER 白名單（attribution 臂、預設不動）。
+# 同一條規矩：引擎是 presence-based ⇒ `=0` 也會開；這裡只傳非 0 值。
+# 不轉送 ⇒ 旗標到不了子行程（bench 的 env 由這支腳本當唯一來源 ⇒ 沒轉送＝空轉一趟；擋住的是 L25-4 的 S1）。
+if [ -n "${CGC_MTP_NO_CTX_OTHER:-}" ] && [ "${CGC_MTP_NO_CTX_OTHER}" != "0" ]; then
+    SERVER_ENV+=(CGC_MTP_NO_CTX_OTHER="$CGC_MTP_NO_CTX_OTHER")
 fi
 # [CGC 2026-09-15] CGC_DUMP_ENV=1 -- print the FULLY-RESOLVED launch environment and argv, then
 # exit without launching anything. Inserted here, after every profile default / override has been

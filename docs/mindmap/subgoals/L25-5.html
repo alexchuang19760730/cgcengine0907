@@ -21,7 +21,9 @@
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
-  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
+  table.queue td.qnext { text-align: left; max-width: 46em; }
+table.queue td { vertical-align: top; }
+.layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
@@ -47,19 +49,21 @@
 <nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container">
 <h1>L25-5 ｜ MTP 的產品化上限</h1>
-<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（<b>判準兩半已答</b>：m ≈ 0.10、主項＝draft 流量；缺的是同一配置下一趟乾淨的複核）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
+<p class="subtitle">結案狀態：<span class="badge b-ok">結案（§63，端點＝<b>m 比值門檻</b>）：乾淨窗口（<code>attribution=none</code>、NOMINAL、起跑 free 7159 MB）一趟 k=1 的 <b>m ＝ 0.159</b>（T_draft <b>13.70 ms/輪</b> ÷ 86.13；五條閘全過）≤ 目標 <b>0.30</b>。<br>⇒ 卡片自己推的 k 無窮上界 <b>24.59</b> 是由 <b>m=0.474</b> 推出來的。⚠ <b>09-30 更正</b>：原文寫「實測更小 ⇒ 上界仍成立」是<b>方向反了</b> —— m 在<b>分母</b>，m 越小上界<b>越高</b>：1000/(85.8×0.159) ＝ <b>73.30</b>（不是 24.59）。<br>⚠ 兩件事要說清楚：<b>(i)</b> m 在劣化窗只會被吹大（單邊性）⇒ 乾淨窗量到的 0.159 是<b>上界</b>；<b>(ii)</b> prod-new 的 draft 成本比 09-24 舊 build 高 <b>60%</b>（0.159 vs 0.099）⇒ 但<b>「天花板比舊帳面更低」講反了</b>：draft 成本變高 ⇒ m 變大 ⇒ 上限變低；本格量到的 m <b>比舊帳面小</b>（0.159 vs 0.474）⇒ 天花板<b>反而被抬高到 73.30</b>。兩者不衝突：09-24 舊 build 的 m≈0.099 是「同 cell、pool 3 GiB」的讀數，不能與 prod-new 的 0.159 直接比價；真正的帳應以<b>同一 cell</b> 為準。</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>不需再追 2×（已判不成立）；改沿 m／acc 立判準</td></tr>
-<tr><th>預期（t/s）</th><td>m ≤0.30 ⇒ 上限 24.59</td></tr>
-<tr><th>現在能跑？</th><td><span class="runnable">⚠ 差一趟就能結案 — 前置＝盒子可回收 ≥7703 MB；先 <code>l255_close.py --check</code>（<code>bench</code> 沒有記憶體閘）過了再 <code>--go</code> 一趟 k=1。</span></td></tr>
+<tr><th>預期（t/s）</th><td>m ≤0.30 ⇒ 上限 ≥ 24.59（m 進分母：m=0.30 ⇒ 38.85、m=0.159 ⇒ 73.30）</td></tr>
+<tr><th>現在能跑？</th><td><span class="runnable">⛔ 不用再跑（§63 已經跑到）—— 乾淨窗口那一趟 09-30 02:14 完成（<code>Backup/l255_close_20260930_cli/run_cli_only.json</code>，<code>attribution=none</code>）；端點 <b>m</b> 的判決已產生（D7b 每次 build 當場重判）。<br>⚠ 若真要重跑：<code>l255_close.py --check</code> 先閘（記憶體 ≥7703 MB，<code>harness bench</code> 自己沒有閘）。</span></td></tr>
+<tr><th>前置（判決存不存在）</th><td><div class="success"><b>duplicate</b>／<code>verdict_file</code> ⇒ 現判 <b>EXISTS</b><br>命中：Backup/l255_close_20260930_cli/run_cli_only.json<br><span class="legend">宣告理由：端點 <b>m</b> 的判決已經產生，而且 build 每次都會當場重判（D7b：<code>WITHIN</code>、<b>m＝0.159</b>）⇒ 再跑一趟只會覆蓋同一個答案。</span></div></td></tr>
 <tr><th>現況（已量）</th><td>「加速比 2」<b>已判不成立</b>（k 加到多大都不到 2×；現況每產出 token 成本 45.6–56.4 vs baseline 48.2 ⇒ 攤薄 ≈ 0）。caliper：<b>同 launch ×1.06、生產 ×0.695（方向相反）</b>。<br><b>09-29 判準兩半都有答案了</b>：① <b>m ≈ 0.10</b>（k=1，差分 6 行：T_draft <b>8.41–9.45 ms/輪</b> ÷ 錨點 85.45；同趟分母讀法 0.153）② <b>主項＝draft 流量</b>：T_draft 對 k <b>線性</b>（k=1..4 ⇒ 8.4–9.5／15.6–16.5／22.8–24.2／30.3–31.2 ms/輪），斜率 ≈ <b>7.3 ms per draft token</b>、截距 ≈1.5 ⇒ 主導項是「每個 draft token 一次 forward」。<br>⚠ 那批是 09-24 <code>s1_ksweep</code>（同 cell、pool 3 GiB＋soft pool、build 0.0.578）⇒ <b>證據、非認證</b>；今晚 prod-new ＋ harness bench 兩趟都落劣化窗（B2 <code>attribution=both</code>、頁入 +12.9 M）⇒ 同臂 T_draft 變 <b>24.7 ms/輪</b>（<b>m ≤ 0.289</b>，上界）。</td></tr>
-<tr><th>action</th><td>① <b>結案只差一趟</b>：同 cell、<b>pool 8 GiB</b>、<code>attribution=none</code> 的 k=1 一趟（把 8.4 ms/輪 在今天的配置上複核）—— <b>已工具化</b>：<code>python3 scripts/check/l255_close.py --check</code> 先閘（記憶體 ≥ 實測存活線 <b>7703 MB</b>，這條 <code>harness bench</code> 自己<b>沒有閘</b>，P4 就是這樣 thrash 的），過了再 <code>--go</code>，跑完自動交 m／v；② <b>下一個該量的不是 m，是 E</b>（<code>acc_rate</code> 同 k=4 跨場次讀到 <b>0.489～0.945</b>，2× 不穩）</td></tr>
-<tr><th>驗收</th><td>m ≤0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）—— <b>已達成：m ≈ 0.10、主項＝draft 流量</b>；規則上的結案另需上面那一趟</td></tr>
+<tr><th>action</th><td>① <b>（§63 已完成）</b>同 cell、<b>pool 8 GiB</b>、<code>attribution=none</code> 的 k=1 一趟 ⇒ <b>m ＝ 0.159</b>；工具路徑 <code>l255_close.py --check/--go</code>，拆 m 的是 <code>mtp_round_split.py</code>（<b>本輪修好兩個錯</b>：欄位錯位 t_accept 當成 t_draft、閘 (a) 對單深度 cell 結構上不可能過）；② <b>下一個該量的不是 m，是 E</b>（<code>acc_rate</code> 同 k=4 跨場次讀到 <b>0.489～0.945</b>，2× 不穩）</td></tr>
+<tr><th>驗收</th><td>m ≤0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）—— <b>已達成</b>：主項＝draft 流量（k 曲線線性、斜率 ≈7.3 ms/draft token），且乾淨窗口那一趟量到 <b>m ＝ 0.159 ≤ 0.30</b>（§63）</td></tr>
 <tr><th>否證</th><td>主項壓不下來 ⇒ M 軸在交付口徑無增益</td></tr>
 </table></div>
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
-<tr><td><code>prod-new</code></td><td><code>harness bench（今晚）＋ s1_ksweep（09-24，同 cell）</code></td><td>k=1 差分 T_draft <b>8.41–9.45 ms/輪</b> ⇒ <b>m ≈ 0.10</b>（對錨點）／0.153（對同趟 step）；今晚劣化窗上界 <b>m ≤ 0.289</b>；k 曲線斜率 7.3 ms/draft token</td><td>m</td><td>✅</td></tr>
+<tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td>k=1 乾淨窗口（<code>(default)</code> cell、pool 8 GiB、k_eff 1.000、E 2.000、tg 9.991、hit 91.6%）：<b>T_draft 13.70 ms/輪</b>（差分 12.96／12.29／10.83／14.26／13.70）⇒ <b>m ＝ 0.159 ≤ 0.30</b>。<br>對照 09-24 舊 build（同 cell、pool 3 GiB、build 0.0.578）：差分 8.41–9.45 ⇒ m ≈ 0.099 ⇒ <b>prod-new 的 draft 成本 +60%</b></td><td>m_ratio</td><td>✅</td></tr>
 </tbody></table>
+<div class="success"><b>端點判詞：WITHIN</b>（檢查器 <code>mtp_round_split</code>，build 當場重跑；這一格的端點不是時間讀數）<br>build 當場重跑 <code>mtp_round_split.judge</code>：五條閘全過（(a) 完整 (b) tg 9.991 不小於 8 (c) hit 91.6 不小於 90 (d) PERF 6 行 (e) k_eff 1.000）、窗口 <code>attribution=none</code>、cell <code>(default)</code>、<b>m ＝ 0.159 ≤ 0.30</b> ⇒ 判 WITHIN。（端點是比值 ⇒ 不走引用閘門，見 D7b／COUNTER_METRICS）</div>
 <h3>臂（options）</h3>
 <ul><li><code>prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1</code></li></ul>
 <p>★ 09-29 起本格的量測口徑改為 <b>prod-new ＋ harness bench</b>（唯一認可入口），不再是 prod25／server ABBA。判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。⚠ 單邊性：窗劣化只把 wall 吹大 ⇒ 實測 <code>t_draft</code> ≥ 真值 ⇒ 由它算出的 m 是<b>上界</b>。</p>

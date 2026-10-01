@@ -1,0 +1,144 @@
+# 實驗立項卡：正確版 decode 20+ 是否可達？先量 G4 的工作清單
+#
+# 為什麼需要這張卡（2026-09-28 晚，由「把 prod-new decode steady 修到 20+」這道指令觸發）：
+#
+# 1) 語料庫裡 prod-new 的 decode 讀數，**合規且乾淨的只有一筆：9.311 t/s**
+#    （`Backup/mtp_off_clean/res.json`，harness 形狀、thermal NOMINAL 164/164）。
+#    其餘 140 筆 prod-new decode 不是 swap/both/contention/thermal 就是沒有 attribution。
+#
+# 2) 語料庫裡**所有** ≥20 的 prod-new 讀數都來自同一支臂：
+#       E2_seg 28.151 / E2_s1 28.040 / g2_smallpool 27.036 / seg_batch_abba B 27.867，
+#       以及 09-24 的單段配對 B 22.222 —— 它們的 `extra_env` **全部**含
+#       `CGC_SEG_BATCH=1`（單次提交）＋ `CGC_B_SCHEME=1` ＋ `CGC_SLOT_TABLE_GPU=1`。
+#    ⇒ 那批 27-28 **不只是入口作廢**，它們量的是**一個錯誤輸出函數**的速率。
+#    重跑不會救它；能救的只有把 routing 做對。
+#
+#    ⚠ 判詞的精確邊界（跑前查證，2026-09-28）：錯的**不是** `CGC_B_SCHEME` 單獨，
+#    而是它在**單次提交**下的角色。
+#      * `CGC_B_SCHEME` 在 `src/` 裡的活消費者**只有一個**：
+#        `llama-context.cpp:3730` 的那個「提交前把所有層的 remap 葉寫成合法佔位」分支
+#        （`grep -rn CGC_B_SCHEME src/` 只有那兩行：註解＋getenv）。
+#      * 它在一般路徑上是**無害的預播**，因為每層的 hook 會在 argsort 之後覆寫同一片葉；
+#        只有在 `CGC_SEG_BATCH=1`（hook 被跳過）時它才變成**唯一**的寫者，因而載重。
+#      * 而 `prod-new` 預設就開著它（`scripts/run_server.sh:355`），理由是註解寫的
+#        「熱門優先替換（不踢錯熱專家，讓 miss 收斂）」——**但那個語意在同名旋鈕下沒有實作**：
+#        真正的熱門優先替換是 `CGC_SPAC_HOT`（`llama-expert-cache.cpp:701`），而 prod-new 只設
+#        `CGC_SPAC=1`／`CGC_SPAC_ALPHA=0.75`，**沒有**設 SPAC_HOT。
+#        ⇒ 這是一處文件／實作不一致，本卡把它記下來，但不在此裁決（它不是本卡的問題）。
+#
+# 3) 為什麼 single-submit 會錯：`CGC_SEG_BATCH=1` 把所有層收成**一次 submit**，
+#    因而跳過每層 hook（那正是每層 `ensure_batch` 拉專家的地方）⇒ submit 當下
+#    「被選中但不在池」的專家只能用合法佔位（`e % slots`，G3 之後是零槽）。
+#    這個集合就是 **G4 的工作清單**（`llama-context.cpp:3738`：「layers whose routing touched
+#    a placeholder need recompute (miss layers), which is the next step's work」）。
+#
+# 4) 09-26 落地的 miss-mask 插樁正好把那份清單印出來：
+#       `MISSMASK il=<layer> step=<n> nsel=<k*n_tokens> misses=<n> exps: ...`
+#       `CGC-MISSMASK-STEP: step=<n> misses=<n> layers=<n>`
+#    另有 G1b 的 `CGC-MISS_MASK_COST=1` 印每步的 `total_usec/sync_usec`。
+#
+# ⇒ 本卡問的是：**single-submit 每步真正需要重算的量有多大**？
+#    小 ⇒ 「預測 + 重算」能把 27-28 保下來 ⇒ 正確的 20+ 有路；
+#    大 ⇒ 那條路沒有 headroom，20+ 必須從別的地方來（shape/IO 天花板 20.49）。
+#
+# 本卡**不**產出可引用的 t/s：臂本身是 wrong-output，t/s 一律 VOID（架構如此，不是意外）。
+# 本卡產出的是一個**結構數**（per-step miss 比例），用來判 20+ 這條路值不值得投工程。
+
+id: exp-prodnew-decode20-g4miss
+owner: lineA
+created: 2026-09-28
+
+# ── 【目標】──
+question: |
+  在**認可入口**（`harness bench`、`prod-new`、`delivery` cell、MTP off）上跑
+  **single-submit 臂**（`CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1`）並開
+  miss-mask 插樁：每一步「被選中但不在池」的 (layer, expert) 有多少？
+  換句話說，**G4 的每步重算工作清單有多大比例**？
+
+  判定的門檻（跑前定好，見 acceptance）：
+    * miss 比例（misses / nsel）**≤ 25%** ⇒ 正確版 20+ 有路：預測+重算只付 1/4 的層，
+      而 28 t/s 的臂 vs 9.3 t/s 的臂差 3×，付掉一部分仍有 20+ 的空間。
+    * **≥ 60%** ⇒ 該機制在交付上沒有 headroom，力氣轉 shape/IO。
+
+# ── 【現狀】合規起跑線，以及 20+ 的真實身份 ──
+baseline:
+  metric: "decode 9.311 t/s（合規＋乾淨＋熱啟動的唯一一筆）"
+  cell: "prod-new ＋ harness bench ＋ delivery cell ＋ MTP off ＋ gen 128 ＋ depths 512 ＋ warm-skip 64 ＋ 熱啟動暖機（warm_skip_applied=true，thermal NOMINAL 164/164）"
+  source: "Backup/mtp_off_clean/res.json"
+  # ⚠ 對照組不是「某個更好的數字」，而是「所有更好的數字都是錯的」：
+  #   22.222（Backup/seg_batch_abba/res_B2.json，09-24，entry VOID）、
+  #   27.867（Backup/seg_batch_s1_pairs/…，09-24，contention）、
+  #   27.036（Backup/phase_decomp/g2_smallpool/bench.json，09-26，swap）、
+  #   28.151/28.040（Backup/eseries/E2_seg|E2_s1/summary.json，09-25，swap/both）
+  #   —— `extra_env` 全部含 `CGC_B_SCHEME=1`，即 source 自陳的 wrong-output 臂。
+  #   其中四筆（除 22.222 外）也**沒有 harness 產物欄位**（無 box_gate/thermal_windows/charter）
+  #   ⇒ 入口也 VOID。兩層作廢疊在同一個數字上。
+  sources_extra: "Backup/seg_batch_abba/res_B2.json; Backup/phase_decomp/g2_smallpool/bench.json; Backup/eseries/E2_seg/summary.json; Backup/eseries/E2_s1/summary.json"
+
+# ── 【假設】──
+hypothesis:
+  mechanism: |
+    三件事在同一個機制上（single-submit 的必然後果），逐條寫死：
+
+    (a) **錯誤的來源不是 bug，是結構**：正常路徑在每層的 hook 裡做 `ensure_batch`
+        （拉缺的專家進池），而 `CGC_SEG_BATCH=1` 一次提交所有層 ⇒ 提交時池是「上一次
+        提交之後的狀態」⇒ 本步被選中但不在池的專家沒有機會被拉進來。
+    (b) **G3 把錯誤有界化**：那些位置從「映射到另一個真專家的權重」（無界錯誤）變成
+        寫進保留零槽 ⇒ 貢獻恰為 0（`llama-context.cpp:3765-3772`）。所以臂能跑完 128 token
+        而不是死在 ~8 token，但輸出仍是錯的。
+    (c) **G4 的工作清單 = miss 集合**：`CGC-MISSMASK-STEP misses=<n> layers=<n>` 報的
+        正是「有幾個被選中的 (layer, expert) 在提交時不在池」。
+
+    預期比例（兩個方向都寫死）：池在 decode 逐步之間幾乎不動（09-28 實測 consumed churn
+    publish 級 19.8-20.2%），且 prod-new 的池命中率 ~96%（anchor 卡的 baseline）⇒
+    被選中卻不在池的**暫時** miss 應該遠小於全部選中數。
+  expected: "misses/nsel 落在 **10–35%**；若 >60% ⇒ 判定該機制在交付上無 headroom"
+  basis: "src/llama.cpp/src/llama-context.cpp:3720-3738（B_SCHEME/SEG_BATCH 語意與 G4 定義）、:3966-4054（MISSMASK 列印）、:3765-3772（G3 零槽）；docs/PREMISE_B_CHURN_DELIVERY_2026-09-28.md（churn 19.8-20.2%）；scripts/check/charters/exp-anchor-prodnew.yaml（池命中率 96%）"
+
+# ── 【驗收】跑之前就定好 ──
+acceptance:
+  success: |
+    一次 `harness bench`、`delivery` cell、`prod-new`，臂為
+    `{CGC_SEG_BATCH=1, CGC_B_SCHEME=1, CGC_SLOT_TABLE_GPU=1, CGC_MISS_MASK=1,
+    CGC_MISS_MASK_DBG=1, CGC_MISS_MASK_COST=1}`，且**同時**滿足：
+      ① 插樁活著：stderr 出現 **≥10 行** `CGC-MISSMASK-STEP`，且 `nsel` > 0
+         （= 有量到被選中的專家；只有 `MISSMASK ... misses=nsel` 全層系列不算，
+         那正是 09-26 文件記的「publisher 沒到位」指紋）；
+      ② 報**分布**：per-step 的 `misses/nsel` 給中位數與四分位，**不得**只報一個純量；
+      ③ 分開記：本臂的 t/s 一律標 VOID（wrong-output 臂），只把 `CGC-MISSMASK-COST` 的
+         `sync_usec/total_usec` 當**代價**報，不當速率報。
+  falsify: |
+    ① 沒有 `CGC-MISSMASK-STEP` 行（插樁沒生效）⇒ 這是「**沒有讀數**」，不是「miss=0」，
+       照 `G1B_G3_INSTRUMENTS_2026-09-26.md` 的分類查是哪一種，**不得**記成結果；
+    ② 該臂在 delivery cell 上跑不完（llama-bench 中止／no rows）⇒ 記「該機制在本 cell 上
+       不可量」，並寫出中止位置；
+    ③ 若 `CGC_MISS_MASK_COST` 的 sync_usec 已經吃掉單步預算的多數 ⇒ 那個插樁自己就是
+       瓶頸，miss 比例仍可用，但**不得**用它推論可達速率。
+  on_fail: |
+    把「正確版 20+ 需要什麼」寫成一條可判定條件（而不是繼續調這支臂），
+    並把主力轉回 shape/IO（其絕對天花板 20.49／16.31，見 `TWENTY_ROUTE_INSTRUMENT_AUDIT`）。
+
+# ── 【量化目標】：這張卡服務的是 20，不是 25 ──
+targets:
+  decode_tps: 20.0
+  prefill_tps: 250.0
+
+# ── 【技術子目標】──
+subgoals:
+  - id: sg-g4-worklist
+    text:   "single-submit 臂每步的 G4 工作清單大小（missing selected experts / selected）"
+    expect: "10–35%；>60% ⇒ 該機制無 headroom"
+    how:    "讀 stderr 的 `CGC-MISSMASK-STEP: step=.. misses=.. layers=..`，對每步算 misses/nsel"
+  - id: sg-g4-cost
+    text:   "那份清單的代價（G1b 插樁）"
+    expect: "sync_usec 遠小於單步預算（單步 ~35 ms @28 t/s）"
+    how:    "讀 `CGC-MISSMASK-COST: step=.. total_usec=.. sync_usec=..`"
+  - id: sg-verdict-route
+    text:   "用 ①的結果裁決「正確版 20+」這條路的 headroom"
+    expect: "有 headroom ⇒ 寫成 G4 的實作順序；無 ⇒ 關閉並轉 shape/IO"
+    how:    "把 27-28 的臂速度、miss 比例、以及預測/重算的預期成本三者放在同一張算式裡"
+
+# ── 臂：只用 prod-new；本卡不改 profile／cell，只加旋鈕 ──
+arms:
+  - prod-new
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1

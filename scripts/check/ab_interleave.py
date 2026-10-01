@@ -65,22 +65,32 @@ def others_measuring():
     return False
 
 
-def ensure_idle(json_path, min_idle_s):
+def ensure_idle(json_path, min_idle_s, extra_paths=()):
     """Enforce a deep-cooldown gate between launches.
 
     [CGC 2026-09-23 §EN-473] 'NOMINAL' is not a point on this fanless M4 Air: the same
     anchor binary read 12.37 t/s when launched after a 10-minute GPU idle and 9.9-10.5
     after only 3 minutes. Thermal is continuous below the NOMINAL label, so the gate is
     wall-clock idle since the last measurement, not the label. The json's mtime is the
-    last write of a completed row, i.e. the end of the previous arm."""
+    last write of a completed row, i.e. the end of the previous arm.
+
+    `extra_paths` exists because a two-ORDER design (e.g. rho_AB then rho_BA) runs this
+    script twice with two different --json files: reading only its own file, the second
+    invocation prints 'no previous run on file; assuming cold start' and launches one
+    minute after the first run's last arm. That is a hot start wearing a cold-start label
+    -- measured 2026-09-30 on the rho price run (BA rho-on#r1 started 60 s after AB ended,
+    io_us/job 28530 vs 19.5-21.3k on every properly cooled launch)."""
     if not min_idle_s:
         return
-    if os.path.exists(json_path):
-        elapsed = time.time() - os.path.getmtime(json_path)
+    stamps = [p for p in (json_path, *extra_paths) if p and os.path.exists(p)]
+    if stamps:
+        last = max(os.path.getmtime(p) for p in stamps)
+        elapsed = time.time() - last
         if elapsed < min_idle_s:
             wait = min_idle_s - elapsed
+            src = "" if len(stamps) == 1 else f" (newest of {len(stamps)} files)"
             print(f"[cooldown] last arm ended {elapsed:.0f}s ago; waiting {wait:.0f}s "
-                  f"(min-idle {min_idle_s}s)", flush=True)
+                  f"(min-idle {min_idle_s}s){src}", flush=True)
             time.sleep(wait)
     else:
         print(f"[cooldown] no previous run on file; assuming cold start", flush=True)
@@ -147,6 +157,12 @@ def report(rows):
         if r["arm"] not in arms:
             arms.append(r["arm"])
 
+    # [CGC 2026-09-30] 口徑（operator 2026-09-30「請統一來做，不要有不同的跑法」）：本檔的讀數是
+    # **輪級觀測值**（decode_bench 已退役，2026-09-17 裁定；llama-bench 才是兩半唯一的紀錄儀器）
+    # ⇒ 引用閘門 quote_gate 的 R8c 判 REFUSE，**不可入認證表**。要入表走權威 row：
+    # `python3 scripts/check/cell_contract.py --cell <name>` 印的就是那一條 `harness bench` 命令。
+    print("NOTE[quote_gate R8c]: 本表是輪級觀測值（decode_bench 已退役）⇒ 不可入認證表；"
+          "入表請用 cell_contract.py --cell <name> 那條 harness bench", flush=True)
     print(f"\n{'key':22s} {'decode':>7s} {'min':>7s} {'prefill':>8s} {'hit%':>6s} "
           f"{'miss':>7s} {'loop':>5s} {'stable':>6s}  md5set")
     for r in rows:
@@ -207,7 +223,13 @@ def main():
     ap.add_argument("--no-window-check", action="store_true",
                     help="skip the foreign-process window check (only for scripted "
                          "single-session runs). [§EN-473]")
+    ap.add_argument("--idle-from", default="",
+                    help="comma-separated extra files whose mtime also counts as 'the last arm "
+                         "ended' for the --min-idle-s gate; use it when a second ORDER of the "
+                         "same design runs with its own --json (otherwise the gate sees no "
+                         "previous run and hot-starts)")
     args = ap.parse_args()
+    idle_from = [p.strip() for p in args.idle_from.split(",") if p.strip()]
 
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
     for a in arms:
@@ -243,13 +265,17 @@ def main():
                               f"(use --no-window-check only for scripted single-session runs)",
                               file=sys.stderr, flush=True)
                         return 2
-                    ensure_idle(args.json, args.min_idle_s)
+                    ensure_idle(args.json, args.min_idle_s, idle_from)
                     print(f"\n===== [{key}] arm={arm} env={ds.ARMS[arm]} =====", flush=True)
                     row = run_arm(arm, key, args.profile, args.rounds, args.warmup, args.n_predict)
                     if row is None:
                         continue
                     row["build"] = fp
                     row["rep"] = rep
+                    # [CGC 2026-09-30] 設計戳記：讓判讀器分得出「完整的一場」與「被中途停掉的
+                    # 半份資料」（後者的 0/0 不是「全乾淨」）。半份檔案不會被誤讀成結案。
+                    row["run_arms"] = list(arms)
+                    row["run_reps"] = args.reps
                     rows.append(row)
                     json.dump(rows, open(args.json, "w"), ensure_ascii=False, indent=2)
                     print(f"  -> decode {row.get('decode_tps_median')} t/s  "

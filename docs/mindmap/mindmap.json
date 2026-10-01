@@ -2176,10 +2176,10 @@
       "tier": "2",
       "goal": "跨所有實驗的 prefill/decode 最高成績排名；每條鏈到可複核檢驗檔，穩態口徑標 ✓。",
       "crit": "上榜須帶檢驗檔；穩態可信優先，非穩態口徑標註、不當生產能力。",
-      "res": "**仲裁（09-29）：17.669 t/s 降級為「分布尾端的一次抽樣」，不可作「目前最好」。** 它是 `r4_b_k2` 的第一次啟動、`-r 1`（`stddev 0` 是必然），需要 **26 rounds × 139.3 ms**；同臂／同 cell／同 shape 的三次全新啟動是 **7.63／10.51／8.17**（mean 8.77）對原本 **17.67／11.95／10.74**（mean 13.45）⇒ 儀器沒故障、沒截窗、沒貼錯 cell，是抽到分布尾端（`K3_PAIR_CERT_VERDICT_2026-09-28.md` §5.1）。而且它是 **prod25＝MTP on**（另一個輸出函數）、非 §5.0 認可口徑。⇒「目前最好」＝交付錨點 **11.703 t/s（85.45 ms，唯一三扇門全過）**。",
+      "res": "**仲裁（09-29）：17.669 t/s 降級為「分布尾端的一次抽樣」，不可作「目前最好」。** 它是 `r4_b_k2` 的第一次啟動、`-r 1`（`stddev 0` 是必然），需要 **26 rounds × 139.3 ms**；同臂／同 cell／同 shape 的三次全新啟動是 **7.63／10.51／8.17**（mean 8.77）對原本 **17.67／11.95／10.74**（mean 13.45）⇒ 儀器沒故障、沒截窗、沒貼錯 cell，是抽到分布尾端（`K3_PAIR_CERT_VERDICT_2026-09-28.md` §5.1）。而且它是 **prod25＝MTP on**（另一個輸出函數）、非 §5.0 認可口徑。⇒「目前最好」＝交付錨點 **11.703 t/s（85.45 ms，唯一三扇門全過）**。\n\n排行榜更新（20260930_091943）：decode 最高 17.669 t/s（prod25；**非 §5.0 認可口徑**）／prefill 最高 305.404 t/s（僅乾淨歸因：53/719 個臂）",
       "evid": "Backup/leaderboard/／docs/K3_PAIR_CERT_VERDICT_2026-09-28.md §5.1（同臂三次重啟重現）／docs/PREMISE_B_CHURN_DELIVERY_2026-09-28.md:228（口徑旗標與掃描統計）",
       "sub": "both",
-      "note": "綠＝穩態生產口徑；灰＝非穩態／異常口徑（短測量、熱壓、未驗正確性）。⚠ 仲裁補充：本榜的 `decode/steady` 桶是 **0 筆**（734 個臂只有 83 個乾淨）⇒ 語料庫裡**沒有可引用的生產 decode 讀數**；榜只作**歸因**紀錄。**歸因乾淨 ≠ 口徑認可**：`all` 桶的榜首是 prod25／MTP on，所以榜首必須帶口徑旗標。**17.669 不得再出現在任何 commit 標題／錨點／「要打敗的數字」**（reps=1 ⇒ 單次抽樣）。",
+      "note": "綠＝穩態生產口徑；灰＝非穩態／異常口徑（短測量、熱壓、未驗正確性）。⚠ 仲裁補充：本榜的 `decode/steady` 桶是 **0 筆**（09-30 榜規收緊後：719 個臂只有 53 個乾淨）⇒ 語料庫裡**沒有可引用的生產 decode 讀數**；榜只作**歸因**紀錄。**歸因乾淨 ≠ 口徑認可**：`all` 桶的榜首是 prod25／MTP on，所以榜首必須帶口徑旗標。**17.669 不得再出現在任何 commit 標題／錨點／「要打敗的數字」**（reps=1 ⇒ 單次抽樣）。　**09-30 榜規再收緊**：`quote_gate` 的 R5／R6 清單接上排行榜 ⇒ `CGC_EB_NOFILL` 的 13.75（診斷臂，量到的是終點上界）與 `CGC_SEG_BATCH` 的 27.338（單次提交臂，輸出未見證）不再上榜；榜首因此回到 17.669（仍帶口徑旗標、仍受 09-29 的降級裁定約束）。",
       "runs": [],
       "leaderboard": {
         "decode": {
@@ -2197,17 +2197,6 @@
               "src": "Backup/k3_pair_cert_2026-09-28/logs/r4_b_k2/launch01.json"
             },
             {
-              "v": 17.669,
-              "std": 0.0,
-              "arm": "prod25:!CGC_PREFILL_STREAM=1;!CGC_GATHER_SLAB_CAP=256",
-              "prof": "prod25",
-              "n": 64,
-              "th": "NOMINAL",
-              "spec": "draft-mtp",
-              "steady": false,
-              "src": "Backup/leaderboard/20260928_233550_launch01.json"
-            },
-            {
               "v": 15.078,
               "std": 0.0,
               "arm": "prod25:!CGC_PREFILL_STREAM=1;!CGC_GATHER_SLAB_CAP=256",
@@ -2217,17 +2206,6 @@
               "spec": "draft-mtp",
               "steady": false,
               "src": "Backup/k3_pair_cert_2026-09-28/logs/r3_a_k2/launch01.json"
-            },
-            {
-              "v": 15.078,
-              "std": 0.0,
-              "arm": "prod25:!CGC_PREFILL_STREAM=1;!CGC_GATHER_SLAB_CAP=256",
-              "prof": "prod25",
-              "n": 64,
-              "th": "NOMINAL",
-              "spec": "draft-mtp",
-              "steady": false,
-              "src": "Backup/leaderboard/20260928_233550_launch01.json"
             },
             {
               "v": 15.073,
@@ -2241,17 +2219,6 @@
               "src": "Backup/k3_pair_cert_2026-09-28/logs/r9_a_k2/launch01.json"
             },
             {
-              "v": 15.073,
-              "std": 0.0,
-              "arm": "prod25:!CGC_PREFILL_STREAM=1;!CGC_GATHER_SLAB_CAP=256",
-              "prof": "prod25",
-              "n": 64,
-              "th": "NOMINAL",
-              "spec": "draft-mtp",
-              "steady": false,
-              "src": "Backup/leaderboard/20260928_233550_launch01.json"
-            },
-            {
               "v": 14.185,
               "std": 0.0,
               "arm": "prod25:!CGC_PREFILL_STREAM=1;!CGC_GATHER_SLAB_CAP=256",
@@ -2261,17 +2228,6 @@
               "spec": "draft-mtp",
               "steady": false,
               "src": "Backup/k3_pair_cert_2026-09-28/logs/r6_a_k3/launch02.json"
-            },
-            {
-              "v": 14.185,
-              "std": 0.0,
-              "arm": "prod25:!CGC_PREFILL_STREAM=1;!CGC_GATHER_SLAB_CAP=256",
-              "prof": "prod25",
-              "n": 64,
-              "th": "NOMINAL",
-              "spec": "draft-mtp",
-              "steady": false,
-              "src": "Backup/leaderboard/20260928_233550_launch02.json"
             },
             {
               "v": 12.23,
@@ -2285,7 +2241,7 @@
               "src": "Backup/k3_pair_cert_2026-09-28/logs/r8_b_k2/launch02.json"
             },
             {
-              "v": 12.23,
+              "v": 11.955,
               "std": 0.0,
               "arm": "prod25:!CGC_PREFILL_STREAM=1;!CGC_GATHER_SLAB_CAP=256",
               "prof": "prod25",
@@ -2293,48 +2249,133 @@
               "th": "NOMINAL",
               "spec": "draft-mtp",
               "steady": false,
-              "src": "Backup/leaderboard/20260928_233550_launch02.json"
+              "src": "Backup/k3_pair_cert_2026-09-28/logs/r4_b_k2/launch02.json"
+            },
+            {
+              "v": 11.758,
+              "std": 0.0,
+              "arm": "prod25:!CGC_PREFILL_STREAM=1;!CGC_GATHER_SLAB_CAP=256",
+              "prof": "prod25",
+              "n": 64,
+              "th": "NOMINAL",
+              "spec": "draft-mtp",
+              "steady": false,
+              "src": "Backup/k3_pair_cert_2026-09-28/logs/r6_b_k2/launch01.json"
+            },
+            {
+              "v": 11.703,
+              "std": 0.348,
+              "arm": "prod-new",
+              "prof": "prod-new",
+              "n": 64,
+              "th": "NOMINAL",
+              "spec": "-",
+              "steady": false,
+              "src": "Backup/mtp_off_clean/res_2026-09-29c.json"
+            },
+            {
+              "v": 10.923,
+              "std": 0.519,
+              "arm": "prod-new",
+              "prof": "prod-new",
+              "n": 64,
+              "th": "NOMINAL",
+              "spec": "-",
+              "steady": false,
+              "src": "Backup/l253_anchor_20260930/anchor_delivery_3.json"
+            },
+            {
+              "v": 10.913,
+              "std": 0.0,
+              "arm": "prod25:!CGC_PREFILL_STREAM=1;!CGC_GATHER_SLAB_CAP=256",
+              "prof": "prod25",
+              "n": 64,
+              "th": "NOMINAL",
+              "spec": "draft-mtp",
+              "steady": false,
+              "src": "Backup/k3_pair_cert_2026-09-28/logs/r5_b_k3/launch01.json"
             }
           ]
         },
         "prefill": {
           "steady": [
             {
-              "v": 306.678,
-              "std": 2.77,
+              "v": 305.404,
+              "std": 0.622,
+              "arm": "prod-new:CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1",
+              "prof": "prod-new",
+              "n": 2048,
+              "th": "NOMINAL",
+              "spec": "draft-mtp",
+              "steady": true,
+              "src": "Backup/l255_close_20260930_cli/run_cli_only.json"
+            },
+            {
+              "v": 302.284,
+              "std": 7.551,
               "arm": "prod-new",
               "prof": "prod-new",
               "n": 2048,
               "th": "NOMINAL",
               "spec": "-",
               "steady": true,
-              "src": "Backup/mtp_off_clean/res.json"
+              "src": "Backup/mtp_off_clean/res_2026-09-29c.json"
             }
           ],
           "all": [
             {
-              "v": 306.678,
-              "std": 2.77,
+              "v": 312.103,
+              "std": 0.827,
+              "arm": "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1",
+              "prof": "prod-new",
+              "n": 2048,
+              "th": "NOMINAL",
+              "spec": "draft-mtp",
+              "steady": false,
+              "src": "Backup/l255_close_20260930_020225/run.json"
+            },
+            {
+              "v": 305.404,
+              "std": 0.622,
+              "arm": "prod-new:CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1",
+              "prof": "prod-new",
+              "n": 2048,
+              "th": "NOMINAL",
+              "spec": "draft-mtp",
+              "steady": true,
+              "src": "Backup/l255_close_20260930_cli/run_cli_only.json"
+            },
+            {
+              "v": 302.284,
+              "std": 7.551,
               "arm": "prod-new",
               "prof": "prod-new",
               "n": 2048,
               "th": "NOMINAL",
               "spec": "-",
               "steady": true,
-              "src": "Backup/mtp_off_clean/res.json"
+              "src": "Backup/mtp_off_clean/res_2026-09-29c.json"
             }
           ]
         },
         "scan": {
-          "arms_total": 730,
-          "arms_clean": 81,
+          "arms_total": 719,
+          "arms_clean": 53,
           "skipped": {
-            "沒有 attribution": 405,
-            "both": 83,
-            "swap": 130,
-            "contention": 5,
-            "thermal": 16,
-            "none／thermal=MODERATE": 10
+            "缺成對 log": 338,
+            "R6 輸出未見證臂 CGC_SEG_BATCH": 19,
+            "swap": 78,
+            "both": 62,
+            "R5 量具臂 CGC_EB_NOFILL": 2,
+            "R5 量具臂 CGC_MISS_MASK_COST/CGC_MISS_MASK_DBG/CGC_SPAC_DBG": 6,
+            "R5 量具臂 CGC_MISS_MASK_COST/CGC_MISS_MASK_DBG": 10,
+            "contention": 2,
+            "thermal": 13,
+            "沒有 attribution": 126,
+            "R5 量具臂 CGC_RHO_PROBE": 1,
+            "R5 量具臂 CGC_MISS_MASK_DBG": 5,
+            "R5 量具臂 CGC_MISS_MASK_COST/CGC_MISS_MASK_DBG/CGC_MISS_MASK_HIST": 1,
+            "none／thermal=MODERATE": 3
           }
         }
       },
@@ -2368,7 +2409,8 @@
           "ref": "C3",
           "why": "「目前最好」＝交付錨點 11.703 t/s（三扇門全過）"
         }
-      ]
+      ],
+      "res_ruling": "**仲裁（09-29）：17.669 t/s 降級為「分布尾端的一次抽樣」，不可作「目前最好」。** 它是 `r4_b_k2` 的第一次啟動、`-r 1`（`stddev 0` 是必然），需要 **26 rounds × 139.3 ms**；同臂／同 cell／同 shape 的三次全新啟動是 **7.63／10.51／8.17**（mean 8.77）對原本 **17.67／11.95／10.74**（mean 13.45）⇒ 儀器沒故障、沒截窗、沒貼錯 cell，是抽到分布尾端（`K3_PAIR_CERT_VERDICT_2026-09-28.md` §5.1）。而且它是 **prod25＝MTP on**（另一個輸出函數）、非 §5.0 認可口徑。⇒「目前最好」＝交付錨點 **11.703 t/s（85.45 ms，唯一三扇門全過）**。"
     },
     {
       "id": "exp-c-eff-bandwidth",
@@ -3559,7 +3601,7 @@
       "tier": "3a",
       "goal": "在單次提交臂上，**把每一步的 union 不經 hook 交給預取器**（`cache_step_union` 改由\nmask 回讀餵；`CGC_PREFETCH_SRC=hist` ＋ `CGC_PREFETCH_WINDOW=4` 開起來），\n提交時「被選中但未駐留」的比例會不會從 **42.9% 降到 ~3% 這個量級**？\n\n也就是：**單次提交臂的 39pp 缺口，是不是只由「餵料被 hook 綁住」造成的？**",
       "crit": "① **量具活著**：`prefetch=` 不再是 `0/0`（這是「治療真的執行了」的唯一閘；本 repo 已兩次\n   把「旗標在 env 裡」誤讀成「機制跑了」——`docs/F2_F5_OVERLAP_AND_AUDIT_RESULT_2026-09-20.md:33`）。\n② **缺口真的縮**：`CGC-MISSMASK-STEP` 的 `misses/nsel` 中位數從 42.9% 落到 **≤10%**\n   （依 (c) 預期 3–8%），且分布（四分位）一起報。\n③ **t/s 一律標 VOID**：本卡**不**驗收速率；輸出仍是 garbage（後半沒做），\n   任何 t/s 只能當作「上限探針」並明文標 VOID。\n",
-      "res": "尚無可引用讀數：1 個 run 全部非乾淨（attribution.verdict=both（thermal=HEAVY, swap_growth=3513.94 MiB）） **§52（09-29 22:06–22:08）：交付 cell（p0／b512）成對實測**——fillahead A 半 **26.45±0.51 t/s ＝ 37.81 ms/step**（`attribution=swap` ⇒ VOID）vs 同窗口控制 **10.28±0.34 t/s ＝ 97.28 ms**；**`instrument_gate=BOUND`**（`rb_feed=14000`、`prefetch=30301`、`spac=1564`、`mm_pub_n_leaf=39`）⇒「池活著」是**閘門判定**。計數器：`file_reads` **82932**（控制 26352，3.1×）、`fill_batch` 14.89 s（控制 6.01 s）⇒ 餵料代價看得見、**不出現在步時上**。⇒ 池活著時的 step 落在 **36.8 那一側**（不是 39.0）；`39.0` 是**預設 cell** 的讀數。⚠ 控制臂 swap +6511.8 MiB（臂的 4.7×）⇒ 成對 Δ 被控制臂的換頁放大。",
+      "res": "decode 27.26 t/s",
       "evid": "Backup/g4miss_2026-09-28/ctl_segmented_default.json",
       "sub": "S",
       "note": "假設：(a) **餵料被 hook 綁住**（可證）：`cache_step_union[il] = uni` 在 hook 內（`:7866`），\n    而 `CGC_SEG_BATCH=1` 跳過 hook ⇒ 預取器的三個來源（step/prev/hist）都拿到空集合。\n    證據：**兩臂的 `prefetch=0/0` 完全相同**（原始碼註解明說 `src=step` 時\n    「the hook just ensured (all resident) -> prefetch_slot drops everything」，\n    但單次提交臂是連 hook 都沒跑）。\n(b) **補齊的資訊本來就在 host**：`CGC_MISS_MASK_DBG=1` 的回讀迴圈\n    （`:4011-4042`）每步把 `cache_ids_cont_tensors[il]`（該層被選中的 id）讀回 host 只為了\n    數 miss；同一份 `ibuf` 直接寫進 `cache_step_union[il]` 即可。\n(c) **需求側的上界已知**：一步級可預測性 96.0–96.8% ⇒ 若預取器真的動起來、\n    且覆蓋到「上一步的 union」，則提交時未駐留應落到 **3–6%**（compulsory 那一側）。\n",
@@ -3718,19 +3760,130 @@
             ]
           },
           "subgoal_contrib": null
+        },
+        {
+          "when": "2026-09-30 14:40",
+          "arm": "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1",
+          "profile": "prod-new",
+          "log": "Backup/p1_rbfeed_2026-09-30/certified.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/p1_rbfeed_2026-09-30/certified.stderr.log",
+            "source": "sibling",
+            "why": "成對：certified.stderr.log（19109 bytes）（另有 2 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 0 -n 64 --warm-skip 64（由產物參數重建）",
+          "result": {
+            "tg": 27.26
+          },
+          "thermal": "NOMINAL",
+          "swap": {
+            "before": "5080 MiB",
+            "after": "5146 MiB"
+          },
+          "verdict": "none：swap_growth=25.25 MiB, thermal=NOMINAL",
+          "clean": true,
+          "void_why": "attribution.verdict=none（thermal NOMINAL）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）；但 prefetch 印了全 0（未被要求，只記錄）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "zero-only",
+                "n": 1,
+                "max": 0,
+                "last": 0,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              }
+            },
+            "incidental_zero": [
+              "prefetch"
+            ],
+            "escaped": [],
+            "escape_why": "",
+            "armed": [
+              "CGC_SEG_BATCH"
+            ]
+          },
+          "subgoal_contrib": null
         }
       ],
       "targets": {
         "decode_tps": 20.0,
         "prefill_tps": 250.0
       },
-      "best": null,
+      "best": {
+        "metric": "tg",
+        "tg": 27.26,
+        "pp": null,
+        "arm": "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1",
+        "log": "Backup/p1_rbfeed_2026-09-30/certified.json",
+        "when": "2026-09-30 14:40"
+      },
       "target_gap": {
         "decode_tps": {
-          "current": null,
+          "current": 27.26,
           "target": 20.0,
-          "gap": null,
-          "pct": null
+          "gap": 7.26,
+          "pct": 136.3
         },
         "prefill_tps": {
           "current": null,
@@ -3798,7 +3951,6 @@
           "contribs": []
         }
       ],
-      "no_throughput_claim": "本節點**不主張任何吞吐**：all runs（含 09-29 §52 的成對）皆非乾淨歸因（`attribution=both`／`swap`／`thermal=HEAVY`）⇒ 依 MEASUREMENT_CONTRACT §5.1 吞吐不得引用；節點只記判詞與計數器（`rb_feed`／`prefetch`／`file_reads`）。乾淨 = memory_pressure.is_clean()。",
       "subgoal_binding": {
         "subgoal": "L20-5",
         "title": "餵料搬家（P1）",

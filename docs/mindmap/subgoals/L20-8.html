@@ -21,7 +21,9 @@
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
-  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
+  table.queue td.qnext { text-align: left; max-width: 46em; }
+table.queue td { vertical-align: top; }
+.layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
@@ -47,19 +49,21 @@
 <nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container">
 <h1>L20-8 ｜ churn 判詞在交付口徑的重檢</h1>
-<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（未跑）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
+<p class="subtitle">結案狀態：<span class="badge b-ok">結案（排除）（§64）——<b>前置否證</b>：「逐步之間那張表是常數」在<b>今天的交付口徑上也不成立</b>：交付步（MTP off、主 context、<code>ntok=1</code>）的 churn 不是 0（publish 級 <b>19.8–20.2%</b>、entry 級 <b>3.2–3.4%</b>，兩筆獨立 run）⇒ 依本格自己的否證句（「churn 仍大 ⇒ S1 的前提維持不成立」）判。<br>⚠ 這一格沒有可引用的 t/s（兩筆都 <code>attribution=swap</code>、文件自己寫「都不得引用」）⇒ 走<b>排除</b>路徑（不是達標）。</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>—</td></tr>
 <tr><th>預期（t/s）</th><td>—（前提題：churn 是不是交付口徑的驅動項）</td></tr>
-<tr><th>現在能跑？</th><td><span class="runnable">✅ 現在能跑 — 無硬前置：交付 cell、<code>ntok=1</code> 主 context 重測 churn 即可；端點＝churn 讀數（前提題），非 tok/s。</span></td></tr>
-<tr><th>現況（已量）</th><td>未跑。它是 L20-1／L20-5 的<b>前提題</b>：S1 被判「無前提」所依據的 <b>42.3%</b> 是 <code>ntok=4</code> verify 桶、MTP-on 形狀的讀數，而交付口徑是 <code>ntok=1</code></td></tr>
+<tr><th>現在能跑？</th><td><span class="runnable">⛔ 不用再跑 — <b>量測與判決都在樹上</b>（09-28 23:06／23:11 兩筆獨立 run ＋ <code>docs/PREMISE_B_CHURN_DELIVERY_2026-09-28.md</code>）；這一格是 D12 上線後<b>第一個被抓到的過期資料列</b>（原本寫「未跑」）。</span></td></tr>
+<tr><th>前置（判決存不存在）</th><td><div class="success"><b>duplicate</b>／<code>verdict_file</code> ⇒ 現判 <b>EXISTS</b><br>命中：docs/PREMISE_B_CHURN_DELIVERY_2026-09-28.md<br><span class="legend">宣告理由：判決（交付口徑 <code>ntok=1</code> 的 churn）09-28 就跑完並寫成分析文件：publish 級 <b>19.8–20.2%</b>、entry 級 <b>3.2–3.4%</b>，兩筆獨立 run。⇒ 再跑只會重印。</span></div></td></tr>
+<tr><th>現況（已量）</th><td>§64 更正（D12 抓到）：<b>已經跑了，判決也寫了</b> —— 09-28 23:06／23:11 兩筆獨立 run（runA <code>churn.json</code> ＋ runB）在<b>交付 cell、<code>ntok=1</code>、MTP off</b> 上量到 publish 級 <b>19.8–20.2%</b>、entry 級 <b>3.2–3.4%</b>（cell 口徑 15 項嚴格維度一致、<code>clamped=0</code>／<code>zero_mapped=0</code>），分析在 <code>docs/PREMISE_B_CHURN_DELIVERY_2026-09-28.md</code>。<br>它是 L20-1／L20-5 的<b>前提題</b>：S1 被判「無前提」所依據的 <b>42.3%</b> 是 <code>ntok=4</code> verify 桶、MTP-on 形狀的讀數，而交付口徑是 <code>ntok=1</code></td></tr>
 <tr><th>action</th><td>在 <code>ntok=1</code> 主 context 上重測 churn（消費端真正讀到的映射是否移動）</td></tr>
 <tr><th>驗收</th><td>churn 在交付口徑下可與判詞對齊（或寫出兩者是不同的輸出函數）</td></tr>
 <tr><th>否證</th><td>churn 仍大 ⇒ S1 的前提維持不成立</td></tr>
 </table></div>
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
-<tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td>—（未跑）</td><td>pct</td><td>❌</td></tr>
+<tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td>交付 cell、<code>ntok=1</code>、MTP off：publish 級 churn <b>20.2%</b>（3026/14976）／<b>19.8%</b>（2958/14976）；entry 級 <b>3.4%</b>／<b>3.2%</b>；385 graphs × 40 layers 逐 (graph,layer) <code>SLOT-SEL</code> 15400 筆 <code>wrong=0</code>／<code>unowned=0</code>；coverage 99.7%</td><td>churn_pct</td><td>❌</td></tr>
 </tbody></table>
+<div class="success"><b>排除依據（前置否證（churn≠0 ⇒『兩步之間那張表是常數』不成立））</b>：docs/PREMISE_B_CHURN_DELIVERY_2026-09-28.md；Backup/churn_delivery_630_2026-09-28/{churn.json,runB_*.stderr.log}</div>
 <h3>臂（options）</h3>
 <ul><li><code>prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1;CGC_GPU_TIMING=1;CGC_DECODE_PROFILE=1</code></li></ul>
 <p>要在 ntok=1 主 context 上重測（MTP-on 的 verify 形狀 k=3 與交付口徑不是同一個量）。</p>

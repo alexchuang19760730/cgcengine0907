@@ -21,7 +21,9 @@
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
-  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
+  table.queue td.qnext { text-align: left; max-width: 46em; }
+table.queue td { vertical-align: top; }
+.layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
@@ -47,20 +49,21 @@
 <nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container">
 <h1>L20-5 ｜ 餵料搬家（P1）</h1>
-<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（P0 成立、P1 未做）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
+<p class="subtitle">結案狀態：<span class="badge b-ok">結案（P0＋P1 都成立，驗收在 <code>harness bench</code> 上達成 2026-09-30）—— 見 <b>C6</b>。<br>⚠ 兩件要一起讀：① 這一格結的是<b>機制端點</b>，<b>不是</b>速度（這支臂仍是 <b>R6</b> ⇒ t/s 不可引用）；② <code>expect_ms</code> 那條「連帶讓 debug 回讀可刪 ⇒ <b>−0.46 ms/step</b>」<b>沒有做</b>：回讀還在，只是餵料不再需要它。</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>0（搬家本身）；連帶讓 debug 回讀可刪 ⇒ <b>−0.46 ms/step</b></td></tr>
 <tr><th>預期（t/s）</th><td>0（價值在於允許後續優化，不在於本身）；§52 實測的代價 ≈ +1.5–2.5 ms/步（39.0 vs 36.x，同預設 cell）</td></tr>
-<tr><th>現在能跑？</th><td><span class="runnable">⛔ 現在不能跑 — 前置＝動 <code>src/</code>（把餵料搬到不依賴 <code>CGC_MISS_MASK_DBG</code> 回讀迴圈的位置）＋建置閘；不是純量測。</span></td></tr>
+<tr><th>現在能跑？</th><td><span class="runnable">⛔ 不用再跑 — 判決就在樹上（P1 已落地 2026-09-30；端點由 <code>p1_feed_ab</code> 當場重判）⇒ <b>本格沒有還要在佇列裡的動作</b>。後續兩件事各有自己的格子：把錯失率壓到地板是 L20-1／L20-3 的旋鈕側，武裝 G3 是 L20-9。</span></td></tr>
+<tr><th>前置（判決存不存在）</th><td><div class="success"><b>duplicate</b>／<code>verdict_file</code> ⇒ 現判 <b>EXISTS</b><br>命中：Backup/p1_rbfeed_2026-09-30/certified.json<br><span class="legend">宣告理由：P1 的驗收是一次<b>成對量測</b>，產物就在樹上（認証入口跑出來的）⇒ 再跑只會重印同一組端點。</span></div></td></tr>
 <tr><th>現況（已量）</th><td>P0 已成立（餵料讓 miss 41.99% → <b>6.09%</b>），且 <b>§52 已在交付 cell 上成對實測</b>：fillahead <b>37.81 ms（26.45 t/s、<code>instrument=BOUND</code>）</b>vs 同窗口控制 97.28 ms——但餵料仍掛在 <code>CGC_MISS_MASK_DBG</code> 的<b>回讀迴圈</b>上 ⇒「開著 debug 才有正確的池子」</td></tr>
 <tr><th>action</th><td>把餵料搬到不依賴 debug 的位置</td></tr>
 <tr><th>驗收</th><td>不開 debug 仍有 <code>CGC-RB-FEED</code> 且 <code>prefetch&gt;0/0</code></td></tr>
 <tr><th>否證</th><td>拿不到本步 id（無替代來源）⇒ 不硬做</td></tr>
 </table></div>
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
-<tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td>—（搬家未跑）</td><td>ms_per_step</td><td>❌</td></tr>
+<tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td>P1 臂：<b>7 ×</b> <code>CGC-RB-FEED</code> ＋ <code>prefetch=2271/66</code>（臂上<b>沒有</b> <code>MISS_MASK_DBG</code>／<code>_COST</code>／<code>_HIST</code>）；對照臂：<b>0 行</b> ＋ <code>prefetch=0/0</code>。同批、同 cell，兩臂 <code>base_check PASS</code>／<code>attribution=none</code>／NOMINAL（27.26 vs 26.50 t/s）</td><td>feed_flip</td><td>✅</td></tr>
 </tbody></table>
-<div class="warning"><b>引用閘門：DIRTY</b>（判準＝<code>scripts/check/quote_gate.py</code>，逐 rep 離散 ＋ 樣本數 ＋ 窗口 ＋ 參考帶）<br>產物 <a href="../../../Backup/fillahead_delivery_2026-09-29/filla_run.json"><code>Backup/fillahead_delivery_2026-09-29/filla_run.json</code></a><br>逐 rep [26.98, 26.43, 25.96] ⇒ max/min 1.018（合格）；被擋在窗口項：attribution=swap</div>
+<div class="success"><b>端點判詞：FLIP</b>（檢查器 <code>p1_feed_ab</code>，build 當場重跑；這一格的端點不是時間讀數）<br></div>
 <h3>臂（options）</h3>
 <div class="warning">本格<b>沒有可跑的臂</b> —— 宣告過的臂全部被 R5／R6 擋掉（見下），所以 20+／25+ 不可能靠它們量到。</div>
 <div class="warning"><b>已刪除的臂</b> <code>prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1</code>（R5／R6）<br>這一臂身上掛著 CGC_SPAC_DBG（餵料目前掛在 debug 之下，逐層同步讀回）＋兩個 miss 遮罩量具（R5）＋單次提交（R6）⇒ 不可引用。等 P1 把餵料搬到不依賴 debug 的位置後再立新臂。</div>

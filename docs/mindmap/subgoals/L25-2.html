@@ -21,7 +21,9 @@
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
-  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
+  table.queue td.qnext { text-align: left; max-width: 46em; }
+table.queue td { vertical-align: top; }
+.layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
@@ -47,15 +49,16 @@
 <nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container">
 <h1>L25-2 ｜ 讓某一格超過自己的已量上界</h1>
-<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（<b>§51 撤回唯一被指名的機制 B</b>；本格等**新**機制，25 維持判死）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
+<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（2026-10-01：補丁已落地、卡點解除 ⇒ 等 skip-probe 的 Δstep 判詞；首趟 A/B 的路由被帶壞，重跑後才判）。<b>§51 曾撤回唯一被指名的機制 B</b>；2026-09-30 重新指名 <code>sg-kernel-busy</code>（見 precondition）。</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>41.2 → ≤40.0（四塊各自的已量上界目前相加為 41.2）</td></tr>
 <tr><th>預期（t/s）</th><td>24.3 → ≥25.0</td></tr>
-<tr><th>現在能跑？</th><td><span class="runnable">⛔ 現在不能跑 — 前置＝有人指名「上界以外的新機制」（§51 已撤回唯一被指名的 B）；沒有指名就沒有可跑的東西。</span></td></tr>
+<tr><th>現在能跑？</th><td><span class="runnable">✅ 卡點（那支 gated 補丁）已落地（2026-10-01）—— <code>skip_probe.py --check</code> 判 <code>RUNNABLE</code>（引擎旗標×1、VOID 標記×2、launcher×5）。⛔ <b>但先不要用首趟 A/B 寫判詞</b>：B 的 expert-cache 統計被跳過的節點帶壞（hit 96.9%→91.3%、misses 4056→11271、layers_distinct 5→26）⇒ Δstep 讀到的是「垃圾路由的快取崩塌」，不是群集 1 的成本。下一步＝重建（含 <code>CGC-SKIP-TINY-NODE</code> 前 16 個被跳節點診斷）→ 看被跳的是不是路由節點 → 必要時把 skip 路由中性化 → 重跑成對 → <code>scripts/check/skip_probe.py --judge --a … --b … --write</code>。</span></td></tr>
+<tr><th>前置（判決存不存在）</th><td><div class="success"><b>needed</b>／<code>verdict_file</code> ⇒ 現判 <b>ABSENT</b><br>全部 2 個掃描都沒命中（沒有檔案符合 Backup/l252_skipprobe_*/verdict.json 且含 'delta_step_ms' ／ 沒有檔案符合 docs/L252_SKIP_PROBE_*.md 且含 '## 判決：'）<br><span class="legend">宣告理由：補丁已落地（<code>CGC_SKIP_TINY_DISPATCH</code> 在樹上、launcher 已轉送、VOID 標記在）⇒ 這一趟會產出新資訊（Δstep 的 <code>LEVER</code>／<code>DEAD</code>）；判決<b>還不存在</b>（verdict.json 與 docs 判決節都沒生）。⚠ 首趟 A/B（14:34／14:35）已跑但判詞不可寫：B 的 expert-cache 統計被跳過的節點帶壞（<code>hit 96.9%→91.3%</code>、<code>misses 4056→11271</code>）⇒ 先重建（含 <code>CGC-SKIP-TINY-NODE</code> 診斷）／必要時把 skip 路由中性化，再跑成對。收貨＝<code>scripts/check/skip_probe.py --judge --a … --b … --write</code>。</span></div></td></tr>
 <tr><th>現況（已量）</th><td>每一格都已放在<b>自己的上界</b>上（四塊代入 ⇒ 41.2 ms ＝ 24.3 t/s &gt; 40.0）。§50 曾把本格具體化成「<code>39.0 ＋ B 1.60–3.20</code>」，但 <b>§51 尖兵把 B 重新定價</b>：漏掉的主項是<b>備援重算 320 列 ＝ 8.09 ms</b> ⇒ <code>39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms（18.9–20.5 t/s）</code> ⇒ <b>本格撤回，指不出來了</b>。</td></tr>
-<tr><th>action</th><td>指名<b>一格</b> ＋ 指名它上界<b>以外的</b>機制 —— ⛔ <b>不得再指 B 半補丁</b>（§51 已把它撤回，§52 用交付 cell 底座複核：仍差 <b>7.5–11.6 ms</b>）</td></tr>
+<tr><th>action</th><td>（機制已指名）跑 skip-probe 成對（先修路由污染）⇒ 判詞：Δstep ≥1.2 ms ⇒ <code>LEVER</code>（寫承載算子 <code>ffn_moe_weighted</code>）／<1.2 ⇒ <code>DEAD</code>（附機制）／>7.4 上界 ⇒ <code>SUSPECT</code></td></tr>
 <tr><th>驗收</th><td>該格出現超出上界的實測（且 M1 過）</td></tr>
-<tr><th>否證</th><td>指不出來 ⇒ 25 維持<b>判死</b>（<b>§51 已觸發</b>：唯一被指名的 B 補丁，淨回收為負）</td></tr>
+<tr><th>否證</th><td>指不出來 ⇒ 25 維持<b>判死</b>（<b>§51 已觸發</b>：唯一被指名的 B 補丁，淨回收為負）⤴ 2026-10-01：機制已指名（skip-probe）⇒ 否證改由它的判詞承接：Δstep <1.2 ms ⇒ <code>DEAD</code>，25 一起判死（附機制）。</td></tr>
 </table></div>
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
 <tr><td><code>—</code></td><td><code>—</code></td><td>41.2 ms（上界相加）</td><td>ms_per_step</td><td>❌</td></tr>
@@ -67,6 +70,7 @@
 <h3>立項（charter）</h3>
 <ul>
 <li><a href="../../../scripts/check/charters/e-beyond-ceiling-2026-09-29.yaml"><code>scripts/check/charters/e-beyond-ceiling-2026-09-29.yaml</code></a></li>
+<li><a href="../../../scripts/check/charters/e-l252-skip-probe-2026-09-30.yaml"><code>scripts/check/charters/e-l252-skip-probe-2026-09-30.yaml</code></a></li>
 </ul>
 <h3>對應節點與其產物／log</h3>
 <div class="card"><b><code>m-decode25</code></b> ｜ <a href="../briefs/m-decode25.html">逐條白皮書（html）</a> ／ <a href="../briefs/m-decode25.md">md</a></div>

@@ -117,8 +117,6 @@ options:
   subgoal: L20-5
   profile: prod-new
   arms:
-    - "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_SPAC_DBG=1"
-    - "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_PREFETCH_SRC=hist;CGC_PREFETCH_WINDOW=4"
   knobs:
     - {name: CGC_SPAC_DBG, value: "1", role: subject, why: "餵料目前掛在 debug 之下 —— 本格就是要把它搬到不依賴 debug 的位置", source: "node exp-singlesubmit-fillahead 實跑 arm"}
     - {name: CGC_PREFETCH_SRC, value: "hist", role: subject, why: "餵料來源（history 端）", source: "charters/exp-singlesubmit-fillahead arms[]"}

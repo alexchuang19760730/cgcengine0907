@@ -59,10 +59,110 @@ import sys
 F_CRIT_DEFAULT = 3.48  # F(0.05; 4, 10)
 
 
+def bench_decode_cells(d):
+    """Every decode cell in a `prod_profile.py` record, as a list of (axis_label, row).
+
+    A cell is a decode cell by SHAPE (`n_prompt == 0 and n_depth > 0`), not by its axis
+    label, so renaming an axis cannot silently move the cell being compared.
+    """
+    out = []
+    for ax in (d.get("axes") or []):
+        if not isinstance(ax, dict):
+            continue
+        for row in (ax.get("rows") or []):
+            if not isinstance(row, dict) or row.get("n_prompt") or not row.get("n_depth"):
+                continue
+            out.append((str(ax.get("axis") or ""), row))
+    return out
+
+
+BENCH_CELL_PREF = "auto"    # set from --bench-cell; see bench_pick_cell
+BENCH_CELL_USED = {}        # path -> (label, n_samples): what was read, so it is never silent
+
+
+def bench_pick_cell(d):
+    """(axis_label, row) for the one decode cell this record means, or None.
+
+    `auto` (default) is deliberately NOT "the first one": it takes the anchor when there
+    is exactly one, else the only primary cell. The anchor is the pinned arm --
+    `prod_profile.py` calls it `-anchor` for that reason -- and `REF_ARM` is the delivery
+    cell, so preferring it is a documented rule rather than a guess between equals. When
+    the record does not fit the rule, this returns None and `unusable_reason` says why:
+    picking anyway is how an arm moves between the two cells being compared.
+
+    `--bench-cell anchor|primary` pins it explicitly for callers who know which cell they
+    registered. Whatever is chosen is echoed in `main` via BENCH_CELL_USED.
+    """
+    cells = bench_decode_cells(d)
+    anchors = [c for c in cells if "anchor" in c[0]]
+    primaries = [c for c in cells if "anchor" not in c[0]]
+    if BENCH_CELL_PREF == "anchor":
+        return anchors[0] if len(anchors) == 1 else None
+    if BENCH_CELL_PREF == "primary":
+        return primaries[0] if len(primaries) == 1 else None
+    if len(anchors) == 1:
+        return anchors[0]
+    if len(primaries) == 1 and not anchors:
+        return primaries[0]
+    return None
+
+
+def bench_rep_ts(d):
+    """Per-rep decode t/s from a `prod_profile.py` record, or None.
+
+    WHY A SECOND CALIBER READER EXISTS: the bench caliber is a different SHAPE, not a
+    different key. One `prod_profile.py` file is
+
+        {"axes": [{"axis": "decode-delivery",
+                    "rows": [{"t/s": .., "±": .., "samples_ts": [r1, r2, r3]}]}]}
+
+    while one `mtp_accept_ab.py` file is `[{"requests": [{"decode_tps": ..}]}]`.
+    Reading either with the other's rule yields ZERO usable requests -- and that is
+    exactly how this tool would have reported `docs/K3_PAIR_CERT_V2_BENCH_2026-09-23.md`
+    (which registers the bench caliber): every arm skipped, "fewer than two pairs",
+    rc=0. "n=0" would then have read as "not run yet".
+
+    Which row is the decode cell is decided by SHAPE (`n_prompt == 0 and n_depth > 0`),
+    not by the axis label, so a renamed axis cannot silently move the cell being
+    compared.
+
+    WHY THE CELL MUST BE PICKED BY A RULE AND NOT BY POSITION: `prod_profile.py` defaults
+    `--profile prefill250` and `--ref-arm prod25-stream`, and those are TWO DIFFERENT
+    NAMESPACES -- `--profile` is a server profile (run_server.sh accepts exactly
+    off|qa-zh|longform-zh|coding|legacy-25plus|prod25|prefill250|prod-new), while
+    `--ref-arm` is a `llama_bench_matrix` ARM name (`prod25-stream` = prod25 +
+    CGC_PREFILL_STREAM=1 + CGC_GATHER_SLAB_CAP=256). So `prod25-stream` CANNOT be passed
+    to `--profile` at all: one record always holds `decode-delivery` (the profile) and,
+    unless `--no-ref`, `decode-delivery-anchor` (the ref arm).
+
+    The 12.57 delivery cell that K3_PAIR_CERT_V2 is about is the ANCHOR, and §4's `--no-ref`
+    deletes exactly it. That costs the same-record control `prod_profile.py` exists to
+    provide ("if the profile and the anchor disagree, the finding is that the delivery
+    convention did not reproduce").
+
+    A first draft of this note said the 09-20 record's 9.90 (prefill250) vs 12.57
+    (prod25-stream) proved those are different arms. It does not: `prod_profile.py`'s own
+    docstring records that the two profiles' knob sets are IDENTICAL for this cell, and the
+    9.90 arm is the one whose verdict reads `worst MODERATE` -- a heat-confounded reading,
+    not a different arm. Corrected here because the wrong version would have justified a
+    rule for the wrong reason. See `bench_pick_cell`.
+    """
+    picked = bench_pick_cell(d)
+    if picked is None:
+        return None
+    ts = [float(x) for x in (picked[1].get("samples_ts") or [])
+          if isinstance(x, (int, float)) and x > 0]
+    return ts if len(ts) >= 2 else None
+
+
 def arm_rows(path):
-    """(group, [per-request decode t/s]) or None. Requests with no t/s are dropped, and an
-    arm with fewer than two usable requests cannot contribute a within-arm variance, so it
-    is dropped rather than silently counted as one."""
+    """[per-request decode t/s] or None. Requests with no t/s are dropped, and an arm with
+    fewer than two usable requests cannot contribute a within-arm variance, so it is dropped
+    rather than silently counted as one -- but a DROP IS NOT SILENT any more: `main` refuses
+    to print a paired sd when a file that named a group could not be read as an arm.
+
+    Two calibers, one arm: see `bench_rep_ts` for why both have to be understood here.
+    """
     try:
         d = json.load(open(path))
     except (OSError, ValueError):
@@ -73,9 +173,102 @@ def arm_rows(path):
         return None
     reqs = [r.get("decode_tps") for r in (d.get("requests") or [])]
     reqs = [float(x) for x in reqs if isinstance(x, (int, float)) and x > 0]
-    if len(reqs) < 2:
+    if len(reqs) >= 2:
+        return reqs
+    if isinstance(d.get("axes"), list):
+        picked = bench_pick_cell(d)
+        rr = bench_rep_ts(d)
+        if rr:
+            # Which arm was read is part of the result, not a detail: the whole reason this
+            # picks by a rule is that position would have picked the other arm.
+            BENCH_CELL_USED[os.path.basename(path)] = (picked[0], len(rr))
+        return rr
+    # THIRD CALIBER: what `harness.py bench --json` writes. It is the matrix's own record --
+    # a flat list of per-arm dicts, each with `rows[]` straight from llama-bench, plus
+    # `contract` / `env` / `spec_draft_n_max` -- NOT a prod_profile `{axes: [...]}` wrapper.
+    # The post-2026-09-25 ruling makes this the production entry (the matrix fails closed on
+    # any cell that is not the test card's §2.5 block), so this is the shape a certification
+    # actually arrives in now.
+    rr = matrix_arm_rep_ts(d)
+    if rr:
+        BENCH_CELL_USED[os.path.basename(path)] = ("matrix rows[] (tg)", len(rr))
+    return rr
+
+
+def matrix_arm_rep_ts(d):
+    """Per-rep decode t/s from one `llama_bench_matrix.py` arm record, or None.
+
+    The decode row is the one with `n_gen > 0 and n_depth > 0` -- NOT `n_prompt == 0`.
+    Under the §2.5 cell (`-p 2048 -n 128 -d 512`) llama-bench emits a pp row AND a tg row,
+    and the tg row carries `n_prompt: 0` of its own; selecting on `n_prompt == 0` would still
+    work but for a reason that is an accident of llama-bench's per-row reporting rather than
+    a property of the cell. Select on the fields that say "this row generated tokens".
+    """
+    if not isinstance(d, dict):
         return None
-    return reqs
+    for row in (d.get("rows") or []):
+        if not isinstance(row, dict) or not row.get("n_gen") or not row.get("n_depth"):
+            continue
+        ts = [float(x) for x in (row.get("samples_ts") or [])
+              if isinstance(x, (int, float)) and x > 0]
+        return ts if len(ts) >= 2 else None
+    return None
+
+
+def unusable_reason(path):
+    """The sentence a silent skip should have printed. "" exactly when `arm_rows` succeeds.
+
+    Kept separate from `arm_rows` so the loader stays a one-line predicate and the
+    explanation cannot drift into being a decision. The first two lines are what keeps the
+    two from ever disagreeing about the same file -- the failure mode this whole file
+    exists to avoid.
+    """
+    if arm_rows(path):
+        return ""
+    try:
+        d = json.load(open(path))
+    except (OSError, ValueError) as e:
+        return "unreadable json (%s)" % e
+    if isinstance(d, list):
+        d = d[0] if d else None
+    if not isinstance(d, dict):
+        return "not a json object"
+    if isinstance(d.get("axes"), list):
+        cells = bench_decode_cells(d)
+        if not cells:
+            if (d.get("axes") or []) and all(not (a or {}).get("rows") for a in d["axes"]):
+                # Axes exist but carry no rows: the arm RAN and produced nothing (the child
+                # refused). Say that, and point at the record's own evidence -- describing the
+                # shape would name something that is not the problem.
+                return ("bench caliber: every axis carries zero rows -- the arm produced "
+                        "nothing; see `rc` / `stderr_tail` in this same file and the axis's "
+                        "--log-dir output")
+            return "bench caliber (prod_profile) with no decode cell (n_prompt==0, n_depth>0)"
+        picked = bench_pick_cell(d)
+        if picked is None:
+            return ("bench caliber with decode cells [%s] but --bench-cell %s cannot pick one "
+                    "of them -- ambiguous, and guessing would move an arm between the two "
+                    "cells being compared"
+                    % (", ".join(l for l, _ in cells) or "none", BENCH_CELL_PREF))
+        if not picked[1].get("samples_ts"):
+            return ("bench caliber (prod_profile) but its decode cell carries no "
+                    "samples_ts -- mean+sd of 3 does not recover the 3; re-run with a "
+                    "prod_profile.py that passes samples_ts through")
+        return "bench decode cell has <2 positive rep samples"
+    if isinstance(d.get("requests"), list):
+        return "server caliber (mtp_accept_ab) with <2 usable decode_tps"
+    if isinstance(d.get("rows"), list):
+        for row in d["rows"]:
+            if not isinstance(row, dict) or not row.get("n_gen") or not row.get("n_depth"):
+                continue
+            if not row.get("samples_ts"):
+                return ("matrix caliber (harness.py bench / llama_bench_matrix) but its tg row "
+                        "carries no samples_ts -- re-run with a matrix that passes it through")
+            return "matrix tg row has <2 positive rep samples"
+        return ("matrix caliber but no tg row (n_gen>0, n_depth>0) -- if `contract.ok` in this "
+                "same file is false, the arm was refused before running")
+    return ("neither caliber: no non-empty `requests[]`, no `axes[]`, and no `rows[]` "
+            "(server / prod_profile / matrix)")
 
 
 def group_of(path, groups):
@@ -573,6 +766,119 @@ def selftest():
     check("a degenerate sd sizes nothing rather than 'one pair'",
           planned_n_for(1.71, 0.0) is None)
 
+    # (9) THE SECOND CALIBER. This tool is named in a protocol whose registered caliber is
+    # prod_profile (llama-bench), so "reads one caliber and silently skips the other" is not a
+    # missing feature -- it is a wrong answer with a 0 in it. Pin both directions.
+    import shutil
+    import tempfile
+    tdir = tempfile.mkdtemp(prefix="kswing_selftest_")
+    try:
+        bench = {"axes": [
+            {"axis": "decode-delivery",
+             "rows": [{"t/s": 12.57, "±": 2.26, "n_prompt": 0, "n_gen": 64, "n_depth": 512,
+                       "samples_ts": [13.40, 12.20, 12.11]}]}]}
+        p_bench = os.path.join(tdir, "r1_a_k2.json")
+        json.dump(bench, open(p_bench, "w"))
+        check("a bench-caliber arm is read, not skipped", arm_rows(p_bench) == [13.40, 12.20, 12.11])
+        check("...and its anchor axis does not shadow the cell",
+              arm_rows(p_bench) == bench_rep_ts(bench))
+        check("...and it is not reported as unusable", unusable_reason(p_bench) == "")
+
+        # the pre-fix shape: mean and sd kept, the 3 numbers gone
+        stripped = json.loads(json.dumps(bench))
+        del stripped["axes"][0]["rows"][0]["samples_ts"]
+        p_stripped = os.path.join(tdir, "r2_a_k2.json")
+        json.dump(stripped, open(p_stripped, "w"))
+        check("a bench arm with no per-rep samples is refused, not averaged",
+              arm_rows(p_stripped) is None)
+        check("...and the reason names samples_ts", "samples_ts" in unusable_reason(p_stripped))
+
+        # A record with two non-anchor decode cells is two different arms (prod_profile
+        # defaults profile=prefill250, ref-arm=prod25-stream; measured 9.90 vs 12.57 on the
+        # identical shape). Neither reading is wrong -- choosing one is.
+        two = {"axes": [{"axis": "decode-delivery",
+                         "rows": [{"t/s": 9.90, "n_prompt": 0, "n_depth": 512,
+                                   "samples_ts": [10.1, 9.9, 9.7]}]},
+                        {"axis": "decode-delivery-2",
+                         "rows": [{"t/s": 12.57, "n_prompt": 0, "n_depth": 512,
+                                   "samples_ts": [13.4, 12.2, 12.1]}]}]}
+        p_two = os.path.join(tdir, "r4_a_k2.json")
+        json.dump(two, open(p_two, "w"))
+        check("two candidate decode cells are refused, not picked", arm_rows(p_two) is None)
+        check("...and the reason says ambiguous", "ambiguous" in unusable_reason(p_two))
+
+        # (11) the anchor rule. `prod_profile.py`'s two namespaces mean the delivery cell
+        # (prod25-stream = the ref arm) can ONLY appear as an anchor axis, and the default
+        # cell is a different arm (prefill250: 9.90 vs 12.57 on the same shape).
+        both = {"axes": [{"axis": "decode-delivery",
+                          "rows": [{"t/s": 9.90, "n_prompt": 0, "n_depth": 512,
+                                    "samples_ts": [10.1, 9.9, 9.7]}]},
+                         {"axis": "decode-delivery-anchor",
+                          "rows": [{"t/s": 12.57, "n_prompt": 0, "n_depth": 512,
+                                    "samples_ts": [13.4, 12.2, 12.1]}]}]}
+        p_both = os.path.join(tdir, "r5_a_k2.json")
+        json.dump(both, open(p_both, "w"))
+        global BENCH_CELL_PREF
+        BENCH_CELL_PREF = "auto"
+        check("auto takes the anchor cell, i.e. the 12.57 delivery arm",
+              arm_rows(p_both) == [13.4, 12.2, 12.1])
+        BENCH_CELL_PREF = "primary"
+        check("...and --bench-cell primary takes the other arm instead",
+              arm_rows(p_both) == [10.1, 9.9, 9.7])
+        BENCH_CELL_PREF = "anchor"
+        check("...and --bench-cell anchor still gets the delivery arm",
+              arm_rows(p_both) == [13.4, 12.2, 12.1])
+        BENCH_CELL_PREF = "auto"
+        check("a record with two primaries and no anchor is still refused",
+              arm_rows(p_two) is None)
+        check("...while an anchor label alone does not create a second candidate",
+              arm_rows(p_bench) is not None)
+
+        # axes present, rows empty: the arm ran and produced nothing. The reason must say so
+        # rather than describe the shape -- shape is not the problem here.
+        empty = {"axes": [{"axis": "decode-delivery", "rows": [], "rc": 1,
+                           "stderr_tail": "cell contract FAIL"}]}
+        p_empty = os.path.join(tdir, "r6_a_k2.json")
+        json.dump(empty, open(p_empty, "w"))
+        check("an arm with zero rows is refused", arm_rows(p_empty) is None)
+        check("...and the reason says it produced nothing, not that the shape is wrong",
+              "produced nothing" in unusable_reason(p_empty))
+
+        # (12) the MATRIX caliber, which is what `harness.py bench --json` writes and therefore
+        # what the post-09-25 ruling makes the production entry. A flat list of arm dicts.
+        mt = [{"tag": "prod-new", "contract": {"ok": True},
+               "rows": [{"avg_ts": 210.1, "n_prompt": 2048, "n_gen": 0, "n_depth": 0,
+                         "samples_ts": [213.0, 209.0, 208.4]},
+                        {"avg_ts": 12.57, "n_prompt": 0, "n_gen": 128, "n_depth": 512,
+                         "samples_ts": [13.4, 12.2, 12.1]}]}]
+        p_mt = os.path.join(tdir, "r7_a_k2.json")
+        json.dump(mt, open(p_mt, "w"))
+        check("a matrix-caliber arm is read", arm_rows(p_mt) == [13.4, 12.2, 12.1])
+        check("...and the pp row (n_gen == 0) is not mistaken for the decode row",
+              matrix_arm_rep_ts(mt[0]) == [13.4, 12.2, 12.1])
+        check("...and it is not reported as unusable", unusable_reason(p_mt) == "")
+        mt_refused = [{"tag": "prod-new", "contract": {"ok": False}, "rows": []}]
+        p_rt = os.path.join(tdir, "r8_a_k2.json")
+        json.dump(mt_refused, open(p_rt, "w"))
+        check("an arm refused by the cell contract is refused here too",
+              arm_rows(p_rt) is None)
+        check("...and the reason points at contract.ok",
+              "contract.ok" in unusable_reason(p_rt))
+
+        p_none = os.path.join(tdir, "r3_a_k2.json")
+        json.dump({"foo": 1}, open(p_none, "w"))
+        check("a file that is neither caliber is refused", arm_rows(p_none) is None)
+        check("...and says so instead of blaming the group name",
+              "neither caliber" in unusable_reason(p_none))
+
+        # (10) the gate belongs to the df. The bench design (4 arms x 3 reps) is df=(3,8).
+        check("F(0.95;3,8) is 4.07, not the (4,10) default 3.48",
+              abs(f_ppf(0.95, 3, 8) - 4.066) < 0.01)
+        check("...so the default gate is too permissive for the registered bench design",
+              F_CRIT_DEFAULT < f_ppf(0.95, 3, 8))
+    finally:
+        shutil.rmtree(tdir, ignore_errors=True)
+
     print("selftest: %d/%d passed" % (tot - bad, tot))
     return 1 if bad else 0
 
@@ -593,6 +899,10 @@ def main():
                     help="the n fixed BEFORE the run. Below it the verdict refuses; above it "
                          "the verdict calls it a new experiment. 0 = report the numbers, no test.")
     ap.add_argument("--alpha", type=float, default=0.05)
+    ap.add_argument("--bench-cell", choices=("auto", "anchor", "primary"), default="auto",
+                    help="which decode cell of a prod_profile record is THE arm: auto takes "
+                         "the anchor when there is exactly one (that is where the prod25-stream "
+                         "delivery cell lives), else the only primary cell")
     ap.add_argument("--sd-only", action="store_true",
                     help="pilot mode: report the paired sd, its 95%% upper bound, and the n those "
                          "imply -- and REFUSE to print t or a verdict. For pre-registering n on a "
@@ -610,7 +920,41 @@ def main():
         print("nothing to do: pass --dir (or --selftest)")
         return 2
 
+    global BENCH_CELL_PREF
+    BENCH_CELL_PREF = args.bench_cell
     groups = [g.strip() for g in args.groups.split(",") if g.strip()]
+
+    # REFUSE BEFORE PRINTING, and before --sd-only / --paired changes anything. A file whose
+    # NAME named a group but whose SHAPE could not be read is not an absent arm: swallowing
+    # it is how a correctly-named directory of bench-caliber arms produced `fewer than two
+    # pairs` with rc=0, where `n=0` is indistinguishable from `not run yet`. Refusing here
+    # (rather than inside the paired branch) also stops `UNRESOLVED (need >=2 arms ...)` from
+    # being printed first -- a different claim from "this file could not be read".
+    unreadable = []
+    for dd in args.dir:
+        for pp in sorted(glob.glob(os.path.join(dd, "*.json"))):
+            if group_of(pp, groups) is None:
+                continue
+            if not arm_rows(pp):
+                unreadable.append((os.path.basename(pp), unusable_reason(pp)))
+    if unreadable:
+        print("=" * 96)
+        print("REFUSING: %d file(s) named a group but could not be read as an arm."
+              % len(unreadable))
+        for name, why in unreadable:
+            print("  %-28s %s" % (name, why))
+        print("  `n=0` and `not separated` are different claims; this run makes neither.")
+        print("=" * 96)
+        return 2
+
+    if BENCH_CELL_USED:
+        tally = {}
+        for lab, n in BENCH_CELL_USED.values():
+            tally[(lab, n)] = tally.get((lab, n), 0) + 1
+        print("bench cells read (chosen per record by rule, never by position):")
+        for (lab, n), cnt in sorted(tally.items()):
+            print("  %-26s %d reps  x%d arm(s)" % (lab, n, cnt))
+
     by, skipped = collect(args.dir, groups)
     if skipped:
         print("skipped (group not identifiable or <2 usable requests): %s"
@@ -630,6 +974,16 @@ def main():
         print("      launch-level sd %5.2f%%   F=%.2f df=%s%s"
               % (d["launch_sd_pct"] or 0.0, d["F"], d["df"],
                  "" if ub is None else "   (95%% upper bound %.2f%%)" % ub))
+        # The F gate is a quantile OF A DF, and the caller passes one for a design this run
+        # may not have. K3_PAIR_CERT_V2's bench section is 4 arms x 3 reps => df=(3,8), whose
+        # 95% point is 4.07, not the (4,10) default of 3.48. Gating 4.07 of evidence at 3.48
+        # would declare a launch term the design cannot support, so say so out loud.
+        if d["df"][0] > 0 and d["df"][1] > 0:
+            dfc = f_ppf(0.95, d["df"][0], d["df"][1])
+            if abs(dfc - args.f_crit) > 0.005:
+                print("      !! F gate %.2f is the 95%% point of a DIFFERENT df; for df=%s it is"
+                      " %.2f. The verdict below uses %.2f."
+                      % (args.f_crit, d["df"], dfc, args.f_crit))
         print("      an arm MEAN scatters %5.2f%%  (%.2f%% of that is just request noise)"
               % (d["total_arm_mean_sd_pct"] or 0.0, d["expected_arm_mean_sd_pct"] or 0.0))
         tot = d["total_arm_mean_sd_pct"] or 0.0
@@ -662,7 +1016,7 @@ def main():
                 if g is None:
                     continue
                 rr = arm_rows(pp)
-                if not rr:
+                if not rr:                      # unreachable: refused up front (see main)
                     continue
                 rep = os.path.basename(pp)[:-5].split("_")[0]
                 by_rep.setdefault(rep, {}).setdefault(g, []).append(st.mean(rr))

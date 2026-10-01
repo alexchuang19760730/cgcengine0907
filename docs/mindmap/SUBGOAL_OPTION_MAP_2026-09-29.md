@@ -13,7 +13,7 @@
 
 | 子目標 | profile | 被測 option | 儀器／候選 | CLI | arm（可複製） | 立項卡 | 節點（白皮書） |
 |---|---|---|---|---|---|---|---|
-| **L20-1**<br>底（S1 的 step）校準 | `prod-new` | `CGC_SEG_BATCH=1`；`CGC_B_SCHEME=1`；`CGC_SLOT_TABLE_GPU=1` | `CGC_MISS_MASK=1`；`CGC_MISS_MASK_DBG=1`；`CGC_MISS_MASK_COST=1` | — | — | `e-s1-base-calibrate-2026-09-29.yaml` | [exp-prodnew-decode20-g4miss](briefs/exp-prodnew-decode20-g4miss.md)<br>[s1-segbatch](briefs/s1-segbatch.md)<br>[exp-s-retro](briefs/exp-s-retro.md) |
+| **L20-1**<br>底（S1 的 step）校準 | `prod-new` | `CGC_SEG_BATCH=1`；`CGC_B_SCHEME=1`；`CGC_SLOT_TABLE_GPU=1` | `CGC_MISS_MASK=1`；`CGC_MISS_MASK_DBG=1`；`CGC_MISS_MASK_COST=1` | — | — | `e-s1-base-calibrate-2026-09-29.yaml`<br>`e-s2c-rho-capture-2026-09-30.yaml` | [exp-prodnew-decode20-g4miss](briefs/exp-prodnew-decode20-g4miss.md)<br>[s1-segbatch](briefs/s1-segbatch.md)<br>[exp-s-retro](briefs/exp-s-retro.md) |
 | **L20-2**<br>武裝 G3（CGC_ZERO_SLOT） | `prod-new` | `CGC_ZERO_SLOT=1`；`CGC_SEG_BATCH=1`；`CGC_SLOT_TABLE_GPU=1` | — | — | — | `e-s1-g3-zeroslot-2026-09-29.yaml` | [exp-prodnew-decode20-g4miss](briefs/exp-prodnew-decode20-g4miss.md)<br>[miss-3a](briefs/miss-3a.md)<br>[s1-probe](briefs/s1-probe.md) |
 | **L20-3**<br>重算本體 B（靜態 ggml_acc） | `prod-new` | —<br>⚠ 本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置的儀器已經跑完（見上）⇒ <b>前置否證，不必再印</b>。 | `CGC_MISS_MASK_HIST=1` | — | — | `e-b-accpatch-feasibility-2026-09-29.yaml` | [exp-prodnew-decode20-g4miss](briefs/exp-prodnew-decode20-g4miss.md)<br>[miss-3c](briefs/miss-3c.md) |
 | **L20-4**<br>fill 那一個 term 的定價 | `prod-new` | `CGC_EB_NOFILL=1` | `CGC_EB_TIMER=1` | — | `prod-new:CGC_EB_NOFILL=1` | `e-fill-term-price-2026-09-29.yaml` | [io-nofill](briefs/io-nofill.md) |

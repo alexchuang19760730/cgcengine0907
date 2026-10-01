@@ -1,0 +1,68 @@
+# 實驗立項卡：在權威口徑上重立 decode anchor（取代已不合格的 12.57）
+#
+# 為什麼需要這張卡：operator 2026-09-28 下令「只接受 prod-new profile ＋ harness bench，
+# 其他測試方法的結果皆不接受」。現行的「目前最好 12.57」是 `prod25-stream`（profile prod25
+# ＋ CGC_PREFILL_STREAM=1 ＋ CGC_GATHER_SLAB_CAP=256）走 `llama_bench_matrix.py` 直接跑出來的，
+# 在新規則下**不合格** ⇒ 契約 §5 的 ① 攻關失去參照點，必須重立。
+# operator 決定的處置：**先重跑 anchor、再替換**（不立即作廢）。
+
+id: exp-anchor-prodnew
+owner: shared
+created: 2026-09-28
+
+# ── 【目標】──
+question: |
+  在**權威預設 cell**（prod-new profile、`harness bench` 且不指定 cell）上，decode 的基準是多少？
+  而且它必須是**一個分布**（多次獨立啟動的中位數與範圍），不是又一個單點。
+
+  為什麼要分布而不是單點：`docs/ANCHOR_12_57_REPRODUCIBILITY_2026-09-28.md` 量到，
+  換了 profile／cell 之後同一支臂的單次啟動散布可以到 21%，而 `12.57` 正好落在
+  它自己那條分布的右尾（第 78 百分位）。用單點當門檻 ⇒ 門檻本身就是一次抽樣。
+
+# ── 【現狀】權威基線 ──
+baseline:
+  metric: "decode 11.664 t/s（5 次獨立啟動的中位數；範圍 11.034–12.195；跨 3 天）"
+  cell: "prod-new profile、測試卡 §2.5 權威預設 cell（prompt 2048, gen 128, depths 512, batch/ubatch 5632, ctx 4096, warm-skip 64, reps 3）、MTP off（spec_type 空）、熱啟動暖機"
+  source: "Backup/anchor_prodnew_2026-09-28/prodnew_default.json"
+  # `source` 只放一個路徑（harness 的 gate 把整個字串當路徑查存在）。其餘同口徑的
+  # 溯源放這裡：`Backup/mw_ab/mw_ctrl.json`（12.195, 09-25）／
+  # `Backup/nofill_prod/nf_fill.json`（11.793, 09-25）／`Backup/nofill_prod/nf2_fill.json`（11.034, 09-25）。
+  sources_extra: "Backup/mw_ab/mw_ctrl.json; Backup/nofill_prod/nf_fill.json; Backup/nofill_prod/nf2_fill.json"
+
+# ── 【假設】──
+hypothesis:
+  mechanism: |
+    這一輪不改效能，改的是**口徑本身**。被換掉的不是「一台比較慢的機器」，是三個同時改變的維度：
+      1. profile：`prod25`（＋兩個 CGC 旋鈕）→ `prod-new`（無旋鈕）
+      2. cell：`delivery`（b 512 / prompt 0 / expert-cache hit 48%）→ 權威預設（b 5632 / prompt 2048 / hit 96%）
+      3. 入口：`llama_bench_matrix.py` 直跑 → `harness bench`（帶 charter、fail-closed 閘門）
+    預計的效果是**分布變窄**，而不是變快或變慢：池命中率 48% → 96% 意味著 decode 時的
+    專家權重幾乎全在 RAM，而 b=512 那格每次都要回頭讀 SSD（f 那一項）。
+  expected: "decode 中位數落在 11.0–12.2（與既有三筆 prod-new 同族群）；單次啟動散布明顯小於 delivery cell 的 21%"
+  basis: "docs/ANCHOR_12_57_REPRODUCIBILITY_2026-09-28.md §1/§4；docs/MEASUREMENT_CONTRACT_2026-09-25.md §7（同口徑既有三筆）"
+
+# ── 【驗收】跑之前就定好 ──
+acceptance:
+  success: "≥6 次獨立啟動、全部 profile=prod-new 且 cell=權威預設、量測期間 thermal 為 NOMINAL；報**中位數與範圍**，並寫進契約 §5 取代 12.57（12.57 移入 §7 作廢表，附替代）"
+  falsify: "任一次落在 11.0–12.2 之外且**不是** thermal 作廢 ⇒ 口徑本身不穩，先查清楚再談換 anchor"
+  on_fail: "維持 12.57 為過渡門檻（標「待重驗」），把不穩定性寫進契約，並改以 prefill ≥250 那條線推進"
+
+# ── 【量化目標】──
+targets:
+  decode_tps: 25.0
+  prefill_tps: 250.0
+
+# ── 【技術子目標】──
+subgoals:
+  - id: sg-anchor-median
+    text:   "權威預設 cell 的 decode 中位數（≥6 次啟動）"
+    expect: "11.0–12.2 t/s；散布 ≤ 既有 3 筆的 10.5%"
+    how:    "harness bench --arm prod-new（不指定 cell），逐次 --workdir；取逐 rep samples 算每次的 avg 與中位數"
+  - id: sg-anchor-prefill
+    text:   "同一格的 prefill 是否維持 ≥250"
+    expect: "≥250 t/s（既有紀錄最高 296.24）"
+    how:    "同一次啟動的 pp row（p2048 n0 d512）"
+
+# ── 臂：**只用 prod-new**。本卡不接受任何非 prod-new profile ──
+arms:
+  - prod-new

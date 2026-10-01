@@ -21,7 +21,9 @@
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
-  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
+  table.queue td.qnext { text-align: left; max-width: 46em; }
+table.queue td { vertical-align: top; }
+.layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
@@ -47,19 +49,21 @@
 <nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container">
 <h1>L20-9 ｜ C 軸唯一「活著」的一格</h1>
-<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（本輪立項）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
+<p class="subtitle">結案狀態：<span class="badge b-ok">結案（排除）（§65）——<b>指名：有；邊界：量完了；而它買不到東西。</b></span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>—（先量邊界，才有數字）</td></tr>
 <tr><th>預期（t/s）</th><td>—</td></tr>
-<tr><th>現在能跑？</th><td><span class="runnable">✅ 現在能跑 — 前置＝先指名那「一處 switch case」；然後 prod-new ＋ harness bench 量邊界；端點＝天花板上界，非 tok/s。</span></td></tr>
-<tr><th>現況（已量）</th><td>節點註記 ★ <b>BEST_SHAPE＝「唯一沒被結論覆蓋、還活著的方向」（一處 switch case）</b>。C 軸依定義是天花板軸、不是攻關軸</td></tr>
+<tr><th>現在能跑？</th><td><span class="runnable">⛔ 不用再跑 — <b>指名與邊界都在樹上</b>（09-22 晚 P1-3d／P1-3e 接線；09-23 02:2x dense NSG 重掃，兩趟約 700 次探針）。<br>⚠ 原本宣告 <code>needed</code>，是<b>手寫 glob 猜錯目錄</b>（<code>Backup/ceiling_*</code> 不存在）造成的<b>假 needed</b> ⇒ §65 已改成機械規則。</span></td></tr>
+<tr><th>前置（判決存不存在）</th><td><div class="success"><b>duplicate</b>／<code>verdict_file</code> ⇒ 現判 <b>EXISTS</b><br>命中：docs/DENSE_NSG_RESCAN_2026-09-23.md、Backup/phase_decomp/L3/shape_probe/nsg_dense_big2.json、Backup/phase_decomp/L3/shape_probe/nsg_dense_lmhead.json<br><span class="legend">宣告理由：判決 09-23 就跑完並寫成文件：<code>docs/DENSE_NSG_RESCAN_2026-09-23.md</code>（＋<code>Backup/phase_decomp/L3/shape_probe/nsg_dense_*.json</code>）。再跑只會重印。</span></div></td></tr>
+<tr><th>現況（已量）</th><td>節點註記 ★ <b>BEST_SHAPE＝「唯一沒被結論覆蓋、還活著的方向」（一處 switch case）</b>。C 軸依定義是天花板軸、不是攻關軸。<br><b>§65 結案（排除）：那處 switch case 指得出來、邊界也量完了 —— 而它買不到東西。</b><br>① <b>指名</b>：<code>ggml-metal-device.cpp:1007-1015</code>（plain <code>mul_mv</code> 的 <code>case GGML_TYPE_IQ4_XS</code>）＋ helper <code>:834/:841</code>（<code>ggml_metal_nsg_env()</code> 的 <code>IQ4_XS/Q6_K/Q8_0</code> case），落地為 <b>P1-3d</b>（dense）與 <b>P1-3e</b>（<code>mul_mv_id</code> 的 IQ3_S），<b>現行 binary 已含</b>。⇐ <code>BEST_SHAPE</code> §3 那句「唯一缺的一環是那處 switch」<b>當晚就被實作取代</b>（檔案 mtime 09-22 20:10）。<br>② <b>邊界（09-23 重掃，兩趟、約 700 次探針）</b>：射程逐臂以<b>編譯出的 pipeline 名</b>驗（不是看 env）；<code>lm_head</code>（398 MiB/step，dense 最大單項、過去從未被定價）跑在<b>峰值 84-87%</b>，六臂中位數跨度 2.1 點（2.5%）＜ unset 臂自己的 10.1% 跨度；最佳最小（nsg=32 ＋5.4%）＝ unset 底噪自己的 ±5.4% ⇒ <b>不可分辨</b>。兩個大 iq4_xs 形狀底噪 ±15.9%／±73.7% ⇒ <b>拒絕讀數</b>（不是「無槓桿」）。<br>③ <b>上限</b>：整族可回收餘裕 <b>3.09 ms/step ＝ 2.16%</b>（實測 13.39 ms vs 峰值模型 10.30 ms）；25 t/s 要砍掉約 <b>30%</b> 的步 ⇒ 就算整族歸零也到不了 ⇒ <b>≤3% 門檻 ⇒ C 軸維持純背景</b>（本格自己的否證句）。<br>⚠ 保留：<code>f32</code> router（84 MiB/step）在這族 kernel 裡<b>沒有 runtime tile 維度</b>；兩個大形狀的「無讀數」要在安靜盒子 ＋ 更寬的 b-spread 才可能翻案 —— 但那是<b>重新量一個已被封在 2.16% 以下的方向</b>，不是新候選。</td></tr>
 <tr><th>action</th><td>把那「一處 switch case」指名並量它的邊界（prod-new ＋ harness bench）</td></tr>
 <tr><th>驗收</th><td>該旋鈕的邊界可量，且與既有結論不衝突</td></tr>
 <tr><th>否證</th><td>量出來在噪音內 ⇒ C 軸維持純背景</td></tr>
 </table></div>
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
-<tr><td><code>—</code></td><td><code>—</code></td><td>—（未跑）</td><td>pct</td><td>❌</td></tr>
+<tr><td><code>prod-new</code></td><td><code>shape_probe/cgc_shape_probe --op mul_mat（形狀隔離探針，非 harness bench）</code></td><td>dense 整族上限 <b>3.09 ms/step ＝ 2.16%</b> of a 143 ms step；唯一可讀通道 <code>lm_head</code> 在峰值 <b>84-87%</b>、<code>nsg</code> 2/4/8/16/32 中位數跨度 <b>2.5%</b>（＜ unset 自身 10.1% 跨度）、最佳最小 ＋5.4% ＝ unset 底噪 ±5.4% ⇒ 不可分辨；兩個大 iq4_xs 形狀底噪 ±15.9%／±73.7% ⇒ 拒絕讀數；<code>f32</code> router 無 runtime tile 維度</td><td>pct_of_step</td><td>❌</td></tr>
 </tbody></table>
+<div class="success"><b>排除依據（前置否證（量出來在噪音內 ⇒ C 軸維持純背景；且整族上限 2.16% 遠小於 25 t/s 所需的 ~30%））</b>：docs/DENSE_NSG_RESCAN_2026-09-23.md；Backup/phase_decomp/L3/shape_probe/{nsg_dense_lmhead.json,nsg_dense_big2.json,nsg_dense_bound.py}；接線 docs/KNOB_INVENTORY_VERIFIED_2026-09-22.md（P1-3d/P1-3e）</div>
 <h3>臂（options）</h3>
 <ul><li><code>prod-new</code></li></ul>
 <p>C 軸唯一還活著的一格；背景題，邊界可量且與既有結論不衝突才算過。</p>

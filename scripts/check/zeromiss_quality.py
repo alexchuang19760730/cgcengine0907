@@ -89,11 +89,19 @@ SEG = {"CGC_SEG_BATCH": "1", "CGC_B_SCHEME": "1", "CGC_SLOT_TABLE_GPU": "1"}
 MASK = {"CGC_MISS_MASK": "1", "CGC_MISS_MASK_DBG": "1"}
 ZERO = {"CGC_ZERO_MISS": "1"}
 
+# [2026-09-30 引用衛生] K4：與 `Backup/quote_hygiene_2026-09-30/k4_noflags.json` 的 bench 臂**同一個 env**
+# （SEG 家族 ＋ CGC_MISS_MASK ＋ CGC_SPAC_K=4），差別只是走 server 而不是 llama-bench。
+# 它存在的唯一理由：替 quote_gate 的 **R6（輸出見證）** 產生證據 ——
+# 那支臂（26.203 t/s、逐 rep 1.010）到底吐不吐得出與 A0 相同的 token。
+# 沒有這條臂，R6 就只是一句「輸出未驗」；有了它，那句話變成一個可判的布林。
+K4 = {**SEG, "CGC_MISS_MASK": "1", "CGC_SPAC_K": "4"}
+
 ARMS = {
     "A0": {},
     "A1": {**S1, **MASK, **ZERO},
     "B0": dict(SEG),
     "B1": {**SEG, **MASK, **ZERO},
+    "K4": K4,
 }
 
 PROMPT = ("用條列方式說明快取置換策略的取捨，並比較 LRU 與成本感知淘汰在長序列推論下的差異。"
@@ -267,7 +275,11 @@ def self_test() -> int:
         ok += 1 if cond else 0
         print(f"  [{'ok' if cond else 'FAIL'}] {name}")
 
-    chk("四臂都定義了", set(ARMS) == {"A0", "A1", "B0", "B1"})
+    chk("四臂都定義了 ＋ K4（引用衛生的見證臂）",
+        set(ARMS) == {"A0", "A1", "B0", "B1", "K4"})
+    chk("K4 = SEG 家族 ＋ MISS_MASK ＋ SPAC_K=4（與 k4_noflags 的 bench 臂同 env）",
+        all(ARMS["K4"].get(k) == v for k, v in SEG.items())
+        and ARMS["K4"].get("CGC_MISS_MASK") == "1" and ARMS["K4"].get("CGC_SPAC_K") == "4")
     chk("A1 帶 SLOT_TABLE_GPU（否則 ZERO_MISS 是 no-op）",
         ARMS["A1"].get("CGC_SLOT_TABLE_GPU") == "1")
     chk("B1 = B0 + mask + zero",
@@ -288,8 +300,8 @@ def self_test() -> int:
     chk("miss_stats 抽得到 misses", miss_stats("BATCHDBG layer=3 misses=7")["misses_sum"] == 7)
     chk("miss_stats 無資料回 None", miss_stats("")["misses_sum"] is None)
     chk("binary 存在（不跑就不該存在）", BIN.exists())
-    print(f"selftest {ok}/15" if ok == 15 else f"selftest {ok}/15")
-    return 0 if ok == 15 else 1
+    print(f"selftest {ok}/17")
+    return 0 if ok == 17 else 1
 
 
 def main() -> int:

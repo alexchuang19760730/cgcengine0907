@@ -335,7 +335,7 @@ def run_pass(which: str, profile: str, user_env: dict, pass_dir: Path, a: argpar
     print(f"\n{'─'*88}\n  PASS [{which}]  arm={arm_spec}\n{'─'*88}", flush=True)
     before = sys_snapshot()
     t0 = time.time()
-    rc = subprocess.call(cmd, cwd=str(ROOT))
+    rc = subprocess.call(cmd, cwd=str(ROOT), env={**os.environ, "CGC_INTERNAL_CALL": "1"})
     wall = time.time() - t0
     after = sys_snapshot()
 

@@ -139,6 +139,83 @@ k=7 與 k=8 兩趟：CGC-PHASE-SPLIT: cap=8 routable=15 slots / top_k=8
 ⇒ **在現行宣告下，大 k 的接受率不是「不穩定」而是「結構上量不到」。**
 **0.4631 與 0.3958 是 width=1 的產物，不得寫進 k 曲線。**
 
+### 4.2b 解除 width 之後：k=7 跑得完，但 k_eff 還是 1.6（09-30 15:31）
+
+把 `CGC_SERVER_LAYER_CAPS` 由 `40-40:16` 改成 `40-40:140`（⇒ uniform），其餘同臂，
+在**交付 cell**（`p0_n128_d512_r3`）跑一趟：
+
+| 量 | width=1（k7，稍早） | **width=8（k7_width8）** |
+|---|---|---|
+| `CGC-PHASE-SPLIT` | `routable=15 -> width=1` | **`routable=139 -> width=8`** |
+| `LAYER_CAPS` | total 5736（min 16/layer） | **total 5860（min 140/layer）** |
+| 結局 | arm-timeout 殺（rc=-15） | **跑完：NOMINAL、`attribution=none`、`base_check PASS`** |
+| `CGC-MTP-PERF` 行數 | 3 | **6** |
+| `k_eff`（末行） | 1.655 | **1.590**（區間 1.59–1.72） |
+| `acc_rate`（末行） | 0.3958 | **0.3509**（區間 0.343–0.413） |
+| position error | 98 | **194** |
+
+⇒ **width 是「能不能跑完」的閘門，不是「k 有多深」的閘門。** 解除它之後跑得完了，
+但 `k_eff` 仍然只有 **1.59**，不是 7。
+
+而且那個 `acc_rate` **自相矛盾**：`k_eff` 1.6 落在 09-24 乾淨批的 `k_eff=1`（a=1.000）
+與 `k_eff=2`（a≈0.88–0.98）之間，卻讀到 0.35 ⇒ 它**不是「大 k 的接受率」**，是被中斷的
+輪次壓低的比值。
+
+**機制**：`docs/KEFF_CAP_2026-09-26.md` 已把這個形態寫死 —— draft loop 的第二步在同一個
+位置上再解一次，`llama_decode` 因 `X = Y` 拒絕，迴圈 `break`，**實作静默地只吐一個
+token**。本趟 194 個 position error（形態正是 `X = Y`）配上
+`MTP fast path: draft calls=230` 對 `verify calls=11916`（**1:52**）就是同一件事：
+**引擎絕大多數的步都在走非投機的 verify 路徑。**
+
+⇒ **大 k 的接受率依然量不到，但卡點換人了**：不是 pool 寬度，是 `is_mem_shared` 的 draft
+位置碰撞（commit `65c76b8c7` 的 `ctx_other` 修好之後引進的那個批次佈局）。
+
+### 4.2c SPECDBG 直方圖：不是「鏈太短」，是**六成的輪次一根都沒吐**（09-30 15:37）
+
+同臂、同 cell、同 shape，只多帶 `LLAMA_BENCH_SPEC_DBG=1`（engine 自己的 per-round 量具）：
+
+```
+SPECDBG round: n_done=0 n_past=512 draft=7          <- 要 7，真的拿到 7
+SPECDBG partial-restore: n_past=512 ids(as draft)=1 pos_max=511
+SPECDBG round: n_done=0 n_past=512 draft=1
+```
+
+per-round `draft=` 直方圖（約 297 輪）：
+
+| draft | 輪數 |
+|---:|---:|
+| **0** | **180** |
+| 1 / 2 / 3 / 4 / 5 | 11 / 18 / 17 / 6 / 4 |
+| **7** | **60** |
+| 8 | 1 |
+
+⇒ 兩個結論同時成立，而且**方向與「鏈被截斷」相反**：
+
+1. **鏈沒有被截斷** —— 有 **60 輪拿到完整的 7**（`n_max=7` 全中）。最深的請求是達得到的。
+2. **`draft=0` 佔 180／297 ＝ 61%** —— 多數輪次**一根都沒拿到**，那一輪退化成單純 decode
+   （只吐 1 個 token），**而臂仍然被報成 k 臂**。加權平均
+   =(11+36+51+24+20+420+8)/297 ＝ **1.92** ✓ 與 `gen_tok_per_round` 1.71–1.74 相符。
+
+⇒ 卡點是**輪級掉線（round-level dropout）**，不是深度。修它的驗收是
+**`draft=0` 輪數 → 0**，以及 `MTP fast path` 的 `draft:verify` 呼叫比回到 ~1:1（現況 230:11916）。
+
+**失敗形態指到 target 的 verify，不是 draft 的批次**：194 次批次 init 失敗中
+**`X > Y` 144（74%）**、`X == Y` 50，而歸屬 draft 迴圈的 `llama_decode[0]` 只有 **6** 次。
+配上本 build 自己印的 `shared_kv=1`：
+
+> **`is_mem_shared=1` 下 draft 把位置寫進共用 KV，target 再從同一個起點 verify，
+> 就被 M-RoPE 的嚴格 `X < Y` 檢查拒掉。**
+
+這一條能對上 09-24 那批**乾淨**的 k=1..4（`k_eff == k`、**0 pos-err**）：它們跑在
+`65c76b8c7`（09-25 17:16）**之前** ⇒ 那時 `ctx_other` 對非 GEMMA4 arch 被丟掉 ⇒
+`is_mem_shared=false` ⇒ **draft 有自己的 KV**，verify 不會撞到已寫的位置。
+
+⇒ **乾淨的 k 曲線來自「draft 有自己 KV」的 build；KV 被共用之後，k 鏈還在（能到 7），
+但六成的輪次被 verify 碰撞打掉。** 這是一個**設計取捨**，不是一行修補：要嘛把 MTP 的
+`ctx_other` 收回去（拿回 `is_mem_shared=false`，代價是 undo `65c76b8c7` 對 MTP 的修正），
+要嘛做出**共用 KV 下正確的 verify 佈局**。兩者都要走本 repo 對引擎改動的硬規則
+（M1／M2／M3 oracle gate）。
+
 ### 4.3 為什麼會 width=1（算得出來，不是猜的）
 
 ```
@@ -191,6 +268,13 @@ src/llama-cgc-phase.h:123
 
 ## 6. 下一個該量的（照價值排序）
 
-1. **解 width**：宣告一個 `LAYER_CAPS` 下限 ≥ 64 slots/layer 的臂（或先量 `40-40:64` 起不起得來 —— 這台 16 GB 盒在 pool 8 GiB 下 Metal 峰值已達 12.6 GB > 上限 11.45 GB，見 `k7.json` 的 `metal（峰值）: REFUSE`）⇒ 這一趟會直接告訴我們「width 是唯一卡點」還是「還有資源牆疊在上面」。
-2. **k=7 一趟**（若 (1) 過）⇒ 這是**唯一**能把「k=8 需 a ≥ 0.484」那條門檻量出來的一趟。
-3. **壓接受率的場次散佈**：同 k、同臂、跨場次重複，把 0.489–0.945 收成一個帶 —— 它是 §3 表的主要誤差源。
+1. **~~解 width~~ 已做（§4.2b）**：`40-40:140` ⇒ `width=8`、跑得完、窗口乾淨 —— **但 `k_eff` 還是 1.59** ⇒ width 不是深度的卡點。
+2. **解「輪級掉線」—— 現在的頭號卡點（§4.2c 已定位）**：不是鏈太短，是 **61% 的輪次
+   `draft=0`**（能到 7 的有 60 輪），原因是 `is_mem_shared=1` 下 target 的 verify 批次
+   撞到 draft 已寫的共用 KV（194 次被拒、74% 是 `X > Y`）。在它修好之前，**任何 k > 1 的
+   `acc_rate` / `k_eff` 都不是那個 k 的性質**。判準（可量、不必推）：
+   **`draft=0` 的輪數 → 0**、`MTP fast path: draft calls` 對 `verify calls` 回到 ~1:1、
+   且 `k_eff → n_max`。
+3. **k=7 重量**（若 (2) 過）⇒ 這是**唯一**能把「k=8 需 a ≥ 0.484」那條門檻量出來的一趟。
+4. **壓接受率的場次散佈**：同 k、同臂、跨場次重複，把 0.489–0.945 收成一個帶 —— 它是 §3
+   表的主要誤差源（而且在 (2) 之後才有意義）。

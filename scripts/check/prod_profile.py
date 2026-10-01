@@ -67,6 +67,7 @@ USAGE
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -161,10 +162,28 @@ def run_axis(axis_label: str, arm: str, shape: list, reps: int, dry_run: bool,
     rec = {"axis": axis_label, "arm": arm, "shape": " ".join(shape), "cmd": " ".join(cmd[1:])}
     if dry_run:
         return rec
-    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True)
+    # [CGC 2026-09-28] `llama_bench_matrix.py:859` grew a fail-closed gate on 2026-09-25: it
+    # refuses to measure unless CGC_INTERNAL_CALL=1. Every other internal caller already sets it
+    # (harness.py:1241, commit_bench.py:62, arm_two_pass.py:338); this one did not, so from that
+    # date EVERY prod_profile launch returned rc=2 in ~0 s and produced no row -- and then died
+    # in the print step below (KeyError) instead of reporting it. This tool IS the internal
+    # automation the notice names, so it has to carry the marker it means.
+    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True,
+                          env={**os.environ, "CGC_INTERNAL_CALL": "1"})
     rec["rc"] = proc.returncode
     rec["stdout_tail"] = proc.stdout[-1200:]
     rec["stderr_tail"] = proc.stderr[-800:] if proc.returncode else ""
+    # Tee BEFORE any early return. This used to sit after the row build, so the two `no row`
+    # paths returned above it and the child's stderr -- the only place the refusal was ever
+    # written -- was thrown away, leaving a 0-second rc=2 with no evidence of why.
+    if log_dir:
+        import re as _re
+        safe = _re.sub(r"[^A-Za-z0-9._-]", "_", axis_label)
+        d = Path(log_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / (safe + ".out")).write_text(proc.stdout or "")
+        (d / (safe + ".err")).write_text(proc.stderr or "")
+        rec["log_dir"] = str(log_dir)
     if not tmp.exists():
         rec["rows"] = []
         rec["incomplete"] = True
@@ -186,18 +205,9 @@ def run_axis(axis_label: str, arm: str, shape: list, reps: int, dry_run: bool,
     rec["ctx_size"] = a0.get("ctx_size")
     rec["batch"] = a0.get("batch")
     rec["incomplete"] = bool(a0.get("incomplete"))
-    # [CGC 2026-09-24 P0/P1/P2 A/B] tee the child's FULL output when asked. The 1200-char tail
-    # above is not enough to read the miss-attribution line (`CGC-SHAPE ... compulsory= capacity=
-    # pread_us=`), which is how the three acceptance criteria get checked afterwards. Default ""
-    # keeps the old behaviour (nothing written) so no existing caller changes.
-    if log_dir:
-        import re as _re
-        safe = _re.sub(r"[^A-Za-z0-9._-]", "_", axis_label)
-        d = Path(log_dir)
-        d.mkdir(parents=True, exist_ok=True)
-        (d / (safe + ".out")).write_text(proc.stdout or "")
-        (d / (safe + ".err")).write_text(proc.stderr or "")
-        rec["log_dir"] = str(d)
+    # ([CGC 2026-09-24 P0/P1/P2 A/B] the --log-dir tee used to live here. It now runs right
+    # after the child returns, above: the two `no row` paths return before this line, and those
+    # are precisely the runs whose stderr someone needs. Default "" still writes nothing.)
     th = a0.get("thermal") or {}
     rec["thermal"] = {"launch": th.get("launch"),
                       "worst": th.get("worst"),
@@ -208,7 +218,17 @@ def run_axis(axis_label: str, arm: str, shape: list, reps: int, dry_run: bool,
                     "n_kept": r.get("n_kept"), "warm_skip": r.get("warm_skip"),
                     "ctx_override": r.get("ctx_override"),
                     "build_commit": r.get("build_commit"), "build_number": r.get("build_number"),
-                    "n_reps": len(r.get("samples_ts") or [])}
+                    "n_reps": len(r.get("samples_ts") or []),
+                    # [CGC 2026-09-28 k3 pair cert] Carry the per-rep t/s through. Until now only
+                    # `n_reps` above read `samples_ts`, so the record kept mean±sd and THREW AWAY
+                    # the 3 numbers behind them -- and mean±sd of 3 does not determine those 3.
+                    # That mattered because `k_swing_decompose.py` needs one value per rep to
+                    # separate a per-launch offset from rep noise; without them its loader saw no
+                    # usable requests and skipped every arm SILENTLY (rc=0, "fewer than two
+                    # pairs"), which reads like "not run yet" rather than "read the wrong thing".
+                    # llama-bench always emits them (`llama-bench.cpp:2190`), so this is a
+                    # pass-through, not new measurement.
+                    "samples_ts": r.get("samples_ts")}
                    for r in (a0.get("rows") or [])]
     return rec
 
@@ -216,7 +236,12 @@ def run_axis(axis_label: str, arm: str, shape: list, reps: int, dry_run: bool,
 def verdict(rec: dict, bar: float) -> dict:
     """NOMINAL at launch is a precondition, not the claim. The claim needs NOMINAL throughout."""
     if not rec.get("rows"):
-        return {"ok": False, "why": "no row"}
+        # Carry the same keys the reporting path reads. Returning a shorter dict here is how a
+        # failed arm became `KeyError: 'launch'` -- a crash where the honest answer is "this arm
+        # produced no row, here is the child's stderr".
+        return {"ok": False, "why": "no row", "launch": None, "worst": None,
+                "ts": None, "bar": bar,
+                "clean": False}
     launch = ((rec.get("thermal") or {}).get("launch") or {}).get("label", "UNREADABLE")
     worst = ((rec.get("thermal") or {}).get("worst") or {}).get("label", "UNREADABLE")
     ts = rec["rows"][0]["t/s"]
@@ -388,12 +413,20 @@ def main() -> int:
             print(f"    would run: {rec['cmd']}", flush=True)
             recs.append(rec)
             continue
-        rec["verdict"] = verdict(rec, bars[label])
+        v = verdict(rec, bars[label])
+        rec["verdict"] = v
         recs.append(rec)
         row = (rec.get("rows") or [{}])[0]
-        print("    rc=%s  t/s=%s  launch=%s worst=%s" % (
-            rec.get("rc"), row.get("t/s"), rec["verdict"]["launch"], rec["verdict"]["worst"]),
-            flush=True)
+        if v.get("launch") is None:
+            # The arm ran and produced nothing. Say that, and say why the child said no -- the
+            # reader cannot re-derive it, and the scratch dir is gone by the time they look.
+            print("    rc=%s  NO ROW  (%s)" % (rec.get("rc"), v.get("why")), flush=True)
+            tail = (rec.get("stderr_tail") or "").strip()
+            if tail:
+                print("      child stderr: " + tail.replace("\n", "\n      "), flush=True)
+        else:
+            print("    rc=%s  t/s=%s  launch=%s worst=%s" % (
+                    rec.get("rc"), row.get("t/s"), v["launch"], v["worst"]), flush=True)
 
     if args.dry_run:
         print("\n(dry run -- nothing was launched)")

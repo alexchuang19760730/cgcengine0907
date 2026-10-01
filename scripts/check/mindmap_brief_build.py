@@ -288,7 +288,8 @@ def _binding_rows_md(e: dict) -> list:
         return ['- ⚠ **尚未綁定**：本條沒有 `subgoal_binding`，跑 '
                 '`python3 scripts/check/mindmap_subgoal_sync.py --apply` 補。']
     sg = b.get("subgoal")
-    out = [f'- **子目標**：{f"`{sg}`　{b['title']}" if sg else "—（未歸屬看板 15 格中的任何一格）"}']
+    _bound = ("`%s`　%s" % (sg, b.get("title", "—"))) if sg else "—（未歸屬看板 15 格中的任何一格）"
+    out = [f'- **子目標**：{_bound}']
     if sg:
         out += [f'- **來源**：{SRC_LABEL.get(b.get("source", ""), b.get("source", "—"))}'
                 f'　·　置信度 `{b.get("confidence", "—")}`',

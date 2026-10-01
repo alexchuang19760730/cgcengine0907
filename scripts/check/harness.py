@@ -65,8 +65,10 @@ import fcntl
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -156,7 +158,27 @@ REGISTRY: dict[str, dict] = {
                                      purpose="two decode lanes, judged report"),
     "server_window.py": dict(needs_window=False, owner="shared",
                              purpose="the shared probe + launcher audit"),
+    # --- 窗口流程（2026-09-30）：流程本身與「怎麼跑」分開 ——
+    #   window_runner.py 是**流程**（步驟以資料宣告：skip／fail-fast／可接續），
+    #   rho_window.py 是**第一個宣告**（ρ 切分：S1 套用→S6 判詞）。
+    # 為什麼兩者都標 needs_window=True：runner 不產生自己的讀數，它的 output 就是各步的 receipts
+    # —— 那要由步驟的窗口決定（宣告裡發車的步不少），所以從嚴標。owner 留空（沿用預設的共用
+    # 歸屬文件）：猜錯線名會把「請你先 gate 這支」送錯人。
+    "window_runner.py": dict(needs_window=True,
+                             purpose="generic window runner: steps as data (skip / fail-fast / resumable)"),
+    "rho_window.py": dict(needs_window=True,
+                          purpose="rho flag-split window: apply -> build -> oracle -> 4 authority rows -> verdict"
+                                  "; --shadow = zero-GPU rehearsal of S1/S2 on a copy of src/ (repeatable)"),
     "window_gate.py": dict(needs_window=False, owner="shared", purpose="commit gate: launchers only go down"),
+    "l2010_verdict.py": dict(needs_window=False, owner="shared",
+                             purpose="L20-10 verdict: satisfiability -> quote gate -> pre-registered discriminators"),
+    "skip_probe.py": dict(needs_window=False, owner="shared",
+                          purpose="L25-2 skip-probe receptor: gate scan / paired plan / pre-registered delta-step verdict"),
+    "l2010_window.py": dict(needs_window=True, owner="shared",
+                            purpose="L20-10 clean-window pair: window check -> A -> B -> verdict (one command)"),
+    "landing_ledger.py": dict(needs_window=False, owner="shared",
+                              purpose="L20/L25 landing ledger: every card is closed-with-endpoint or "
+                                      "blocked-with-entry (patches re-checked with git apply --check)"),
     # --- line I: instrumentation / cache geometry
     "cb_miss_regression.py": dict(needs_window=True, owner="lineI", purpose="cb miss regression"),
     "m123_oracle_gate.py": dict(needs_window=True, owner="lineI", purpose="M1/M2/M3 oracle gate"),
@@ -204,6 +226,21 @@ REGISTRY: dict[str, dict] = {
     # Reads files, shapes JSON -- proves no window of its own.
     "bench_ingest.py": dict(needs_window=False, owner="shared",
                             purpose="reshape bench products into the gate contract + corridor stats"),
+    # 2026-09-28：這支被 audit 的**文字比對**誤判成 launcher —— 它列了執行檔路徑當掃描目標，
+    # 又把啟動檔的名稱存成一個要**讀**的常數。兩者都不是「要跑一個 server」。
+    # 它一個 server 都不會啟動：它跑 `--selftest`、`git log` 與讀 JSON。
+    # 未宣告 ⇒ `selftest` 的「every launcher has a window stance」一直是紅的。
+    # ⚠ 寫在這裡的註解也會被那個比對看到：別在註解裡照抄啟動形狀。
+    "claim_instrument_check.py": dict(needs_window=False, owner="lineA",
+                                      purpose="verify a cited number's instrument is armable/alive (reads files, launches nothing)"),
+    # 同理：讀 mindmap.json 與 Backup/*.json，不啟動任何東西。
+    "mindmap_void_check.py": dict(needs_window=False, owner="lineA",
+                                  purpose="no VOID throughput may sit on a mindmap node's result surface (reads JSON, launches nothing)"),
+    # 量具綁定：讀 stderr log 與產物 JSON，不啟動任何東西。
+    # 2026-09-29：交付 cell 的四場空白嘗試，事後才發現日誌裡每個計數器都是 0 —— 旗標、白名單、
+    # 符號、產物四項檢查全過。這支把「量具有沒有真的綁上圖」變成布林。
+    "instrument_binding.py": dict(needs_window=False, owner="lineA",
+                                  purpose="does the instrument actually run (reads logs, launches nothing)"),
 }
 
 
@@ -672,6 +709,113 @@ def selftest() -> int:
             "--prompt-file" in _bench_cmd(argparse.Namespace(**{**vars(ba), "prompt_file": "/p.txt"}),
                                           ["prod-new"])), (False, True))
 
+    print("\nbench: 第五道閘門（量具綁定）—— 跑前擋前提、跑後擋拒寫")
+    ib = _load("ibind_selftest", "instrument_binding.py")
+    # 跑前那一半：用假的 resolve（真的 resolve 要跑 run_server.sh，而這裡要驗的是閘門本身）
+    def _fake_resolve(envs):
+        return lambda s: {"env": {**dict(_parse_arm(s)[1]), **(envs or {})}}
+
+    # ⚠ 變數名不要叫 `fails`：那是本 selftest 的失敗收集器（:555），蓋掉它會讓
+    # 「有失敗」與「沒失敗」反過來報（2026-09-29 自己踩到）。
+    okp, pfails, pwarns = _instrument_precheck(
+        ib, _fake_resolve({}), ["prod-new:CGC_MISS_MASK_DBG=1"], [])
+    expect("跑前：DBG 開了但前提 MISS_MASK 不在 ⇒ 拒跑", (okp, len(pfails)), (False, 1))
+    okp, _, _ = _instrument_precheck(
+        ib, _fake_resolve({"CGC_MISS_MASK": "1"}), ["prod-new:CGC_MISS_MASK_DBG=1"], [])
+    expect("跑前：把前提補上 ⇒ 放行（prod-new 基底本來就有它）", okp, True)
+    okp, pfails, pwarns = _instrument_precheck(
+        ib, _fake_resolve({"CGC_MISS_MASK": "1", "CGC_MISS_MASK_DBG": "1"}),
+        ["prod-new"], ["rb_feed"])
+    expect("跑前：要求 rb_feed 但 SEG_BATCH 沒開 ⇒ 拒跑",
+           (okp, "SEG_BATCH" in pfails[0][1][0]), (False, True))
+    okp, _, _ = _instrument_precheck(
+        ib, _fake_resolve({"CGC_MISS_MASK": "1", "CGC_MISS_MASK_DBG": "1"}),
+        ["prod-new:CGC_SEG_BATCH=1"], ["rb_feed"])
+    expect("... 把 SEG_BATCH 補上就放行（同一條探針，只差一個開關）", okp, True)
+    okp, _, pwarns = _instrument_precheck(
+        ib, _fake_resolve({}), ["prod-new"], ["prefetch"])
+    expect("跑前：跑前判不了的探針 ⇒ 放行但要警告（不是静默放行）",
+           (okp, len(pwarns) >= 1), (True, True))
+    expect("跑前：沒武裝任何受檢量具的臂 ⇒ 放行（沒有承諾）",
+           _instrument_precheck(ib, _fake_resolve({}), ["prod-new"], [])[0], True)
+    # 跑後那一半：拒寫的判定，以及它必須說出是哪一臂
+    g = _instrument_gate(ib, [{"tag": "a", "instrument": {"verdict": "BOUND", "why": "x"}},
+                              {"tag": "b", "instrument": {"verdict": "UNBOUND", "why": "全 0"}}])
+    expect("跑後：任一臂 UNBOUND ⇒ 整份拒寫", (g["ok"], [d["tag"] for d in g["arms"]]), (False, ["a", "b"]))
+    g2 = _instrument_gate(ib, [{"tag": "a", "instrument": {"verdict": "BOUND"}},
+                               {"tag": "b", "instrument": {"verdict": "N/A"}}])
+    expect("跑後：BOUND 與 N/A 都放行", g2["ok"], True)
+    g3 = _instrument_gate(ib, [{"tag": "a"}])
+    expect("跑後：產物沒有 instrument 欄位 ⇒ 拒寫，且理由不是「量具沒綁上」",
+           (g3["ok"], g3["arms"][0]["verdict"]), (False, "NO-FIELD"))
+    g4 = _instrument_gate(ib, [{"tag": "a", "instrument": {"verdict": "UNBOUND"}}],
+                          waive_reason="急件")
+    expect("跑後：豁免則放行，但理由要留在產物裡",
+           (g4["ok"], g4["waived"]), (False, "急件"))
+    c3 = _bench_cmd(argparse.Namespace(**{**vars(ba), "require_instrument": "rb_feed,prefetch"}),
+                    ["prod-new"])
+    expect("--require-instrument 只在宣告時出現，且真的傳到 matrix",
+           ("--require-instrument" in c0, c3[c3.index("--require-instrument") + 1]),
+           (False, "rb_feed,prefetch"))
+    # 【CGC 2026-09-29】剎車與看門狗：同一個課——預設不出現，宣告了就要真的送到 matrix
+    # （否則「我以為我設了逾時」會變成又一場沒有產物的等待）。
+    c4 = _bench_cmd(argparse.Namespace(**{**vars(ba), "arm_timeout": 420.0,
+                                          "stall_watch": 45.0, "stall_kill": True}),
+                    ["prod-new"])
+    expect("剎車／看門狗預設不出現在命令列",
+           [f in c0 for f in ("--arm-timeout", "--stall-watch", "--stall-kill")],
+           [False, False, False])
+    expect("宣告了就真的傳到 matrix（含 stall-kill 這種旗標）",
+           (c4[c4.index("--arm-timeout") + 1], c4[c4.index("--stall-watch") + 1],
+            "--stall-kill" in c4), ("420.0", "45.0", True))
+
+    # verify 這扇門（另一條路：arm_two_pass 直接叫 matrix，不經過上面的 cmd_bench）
+    def _vres(emb):
+        return {"arms": [{"arm": "prod-new", "clean": {"matrix": emb}, "instrumented": {"matrix": emb}}]}
+
+    gv = _instrument_gate_verify(ib, _vres([{"tag": "i", "instrument": {"verdict": "UNBOUND"}}]))
+    expect("verify：嵌在 result.json 裡的 UNBOUND 臂 ⇒ 拒收報告", (gv["ok"], gv["checked"]), (False, 2))
+    gv2 = _instrument_gate_verify(ib, _vres([{"tag": "i", "instrument": {"verdict": "N/A"}},
+                                             {"tag": "c", "instrument": {"verdict": "BOUND"}}]))
+    expect("verify：clean 輪 N/A ＋ instrumented 輪 BOUND ⇒ 放行", gv2["ok"], True)
+    gv3 = _instrument_gate_verify(ib, _vres([{"tag": "old", "rows": []}]))
+    expect("verify：閘門存在之前的舊 result.json ⇒ 標 legacy 而不回溯拒收",
+           (gv3["ok"], gv3["legacy"]), (True, True))
+    gv4 = _instrument_gate_verify(ib, _vres([{"tag": "i", "instrument": {"verdict": "UNBOUND"}}]),
+                                  waive_reason="急件")
+    expect("verify：豁免要留在 result.json 裡（不是只印在 stdout）", gv4["waived"], "急件")
+    gv5 = _instrument_gate_verify(ib, {"arms": []})
+    expect("verify：沒有 matrix 產物（例如 gate 在跑任何 GPU 前就擋下）⇒ 不拒收",
+           (gv5["ok"], gv5["checked"]), (True, 0))
+
+    # 成對閘（兩扇門共用同一個判準：只有「產物旁邊有沒有 log」）
+    # ⚠ 這個函式後面還有 `import tempfile`（:802/:863），所以 `tempfile` 對整個函式而言是區域名；
+    # 這裡要先自己匯入一次，否則會 UnboundLocalError（2026-09-29 自己踩到）。
+    import tempfile
+    _rp = tempfile.mkdtemp(prefix="hv_pair_")
+    try:
+        _mj = os.path.join(_rp, "matrix.json")
+        with open(_mj, "w") as f:
+            json.dump([{"tag": "prod-new", "rows": [{"n_prompt": 0, "n_gen": 64}]}], f)
+        bare = ib.pair_status(_mj)
+        expect("成對閘：產物旁邊沒 log ⇒ paired=False，且說得出它缺什麼",
+               (bare["paired"], "不可引用" in bare["why"] or "缺成對" in bare["why"]), (False, True))
+        ib.write_pair_bundle(_mj, [("prod-new", "p0_n64", "CGC-RB-FEED: feeds=1\n")])
+        expect("成對閘：補上後就成對（同一份判準，不必重寫）",
+               ib.pair_status(_mj)["paired"], True)
+        expect("auto-sync 的界線：repo 內的產物才回寫決策面（/tmp 的診斷產物不回寫）",
+               (_inside_root("Backup/x.json"), _inside_root("/tmp/x.json")), (True, False))
+        vres = {"arms": [{"arm": "prod-new", "clean": {"matrix_json": _mj},
+                          "instrumented": {"matrix_json": os.path.join(_rp, "missing.json")}}]}
+        pg = _pair_gate_verify(ib, vres)
+        expect("成對閘（verify）：一輪有、一輪沒有 ⇒ 整份拒收，且逐輪點名",
+               (pg["paired"], [p["pass"] for p in pg["passes"]], pg["checked"]),
+               (False, ["prod-new/clean", "prod-new/instrumented"], 2))
+        expect("成對閘（verify）：兩輪都沒有產物（gate 在跑前就擋）⇒ 不拒收",
+               _pair_gate_verify(ib, {"arms": [{"arm": "a"}]})["paired"], True)
+    finally:
+        shutil.rmtree(_rp, ignore_errors=True)
+
     print("\nthe arm's swap line reads where the matrix actually puts the numbers")
     real = {"launch": {"swap_used_mb": 7862.44}, "end": {"swap_used_mb": 10000.19},
             "worst": {"max_swap_mb": 9060.81}}
@@ -1021,7 +1165,13 @@ def _sys_snapshot() -> dict:
     mp = _load("mpp_snap", "memory_pressure.py")
     try:
         t = tp.stamp()
-        snap["thermal"] = {"label": t.get("label"), "lv": t.get("lv"), "t": t.get("t")}
+        # `stamp()` returns {level, label, t} and has never had an `lv` key, so this field read
+        # back as None in EVERY harness artifact until 2026-09-28: the label survived and the
+        # number did not (measured live: {'label': 'NOMINAL', 'lv': None}). Worse, None is also
+        # `thermal_pressure`'s UNREADABLE value, so the defect looked like a missing instrument
+        # rather than a wrong key. Same shape as the `--fixed-fill-seed` wiring bug this file
+        # already documents: a knob/field going missing is not a typo, it is a missing consumer.
+        snap["thermal"] = {"label": t.get("label"), "lv": t.get("level"), "t": t.get("t")}
     except Exception as e:
         snap["thermal"] = {"error": str(e)}
     try:
@@ -1074,6 +1224,28 @@ def _bench_cmd(args, specs) -> list[str]:
         cmd += ["--prompt-file", args.prompt_file]
     if args.batch:
         cmd += ["--batch", str(args.batch)]
+    # Named cell from the test card §2.5. Omitted = the default (prod-new) cell, so no existing
+    # caller changes. Threaded here rather than inline so the selftest can prove it reached the
+    # matrix -- the `--fixed-fill-seed` lesson is that a knob going missing is a wiring bug, not
+    # a typo, and this builder is the one place a test can see it.
+    if getattr(args, "cell", None):
+        cmd += ["--cell", str(args.cell)]    # 【CGC 2026-09-29】需明文要求的探針（第五道閘門）：跑前擋前提、跑後擋拒寫。它以
+    # `getattr` 取（不在），否則 selftest 的假 Namespace 一呼叫就會 AttributeError。
+    if getattr(args, "require_instrument", ""):
+        cmd += ["--require-instrument", str(args.require_instrument)]
+    # 【CGC 2026-09-29】驅動側的剎車與看門狗（見 llama_bench_matrix `_stream_child`）。只在宣告時
+    # 出現 ⇒ 既有 cell 的命令列一個字都不變。它屬於「跑不完那一類診斷」：
+    # 子行程 stderr 逐行落地（被殺也留得下停滯點）＋ 逾時只殺自己的 pgid（驅動活下來寫產物）。
+    if getattr(args, "arm_timeout", 0):
+        cmd += ["--arm-timeout", str(args.arm_timeout)]
+    if getattr(args, "stall_watch", 0):
+        cmd += ["--stall-watch", str(args.stall_watch)]
+    if getattr(args, "stall_kill", False):
+        cmd += ["--stall-kill"]
+    if getattr(args, "stall_progress_re", ""):
+        cmd += ["--stall-progress-re", str(args.stall_progress_re)]
+    if getattr(args, "live_echo", ""):
+        cmd += ["--live-echo", str(args.live_echo)]
     if not args.warmup:
         cmd += ["--no-warmup"]
     if args.spec_type:
@@ -1083,13 +1255,114 @@ def _bench_cmd(args, specs) -> list[str]:
     return cmd
 
 
+def _instrument_precheck(ibind, resolve_fn, specs, require) -> tuple:
+    """(ok, fails, warnings) —— 第五道閘門的**跑前那一半**：武裝了量具卻沒開它的前提。
+
+    這一族在「不跑」的情況下就已經矛盾（引擎自己會印 `CGC-MISS-MASK: ... without ...`
+    那一行），所以它应该在花 GPU 時間之前就拒掉 —— 而那種「空白場次」事後只看得到 0，
+    看不到原因。`resolve_fn(spec) -> arm` 抽出來是為了讓 selftest 不用真的跑 `run_server.sh`。
+    """
+    fails, warnings = [], []
+    for spec in specs:
+        arm = resolve_fn(spec)
+        ok, reasons, warns = ibind.static_precheck((arm or {}).get("env", {}) or {}, require=require)
+        warnings += ["%s：%s" % (spec, w) for w in warns]
+        if not ok:
+            fails.append((spec, reasons))
+    return (not fails), fails, warnings
+
+
+_INSTRUMENT_RULE = ("每一臂的 instrument verdict 必須是 BOUND 或 N/A；"
+                    "UNBOUND／缺欄位 ⇒ 拒寫進決策面")
+
+
+def _instrument_gate(ibind, data, waive_reason=None) -> dict:
+    """第五道閘門的**跑後那一半**：這一輪的量具到底有沒有動（決定這份產物能不能進決策面）。
+
+    只有 BOUND（動過）與 N/A（沒武裝，所以沒有承諾）放行；UNBOUND（武裝了卻沒動）與
+    缺欄（拿不出證明）都不放。回傳值直接寫進產物的 `instrument_gate`，不另外靠人記得。
+    """
+    ok, details = ibind.runs_unbound(data)
+    return {"ok": ok, "waived": waive_reason, "arms": details, "legacy": False,
+            "rule": _INSTRUMENT_RULE, "checked": len(details)}
+
+
+def _instrument_gate_verify(ibind, result, waive_reason=None) -> dict:
+    """第五道閘門在 `harness verify` 這扇門上的判定。
+
+    `verify` 的每一輪是**另一次** `llama_bench_matrix` 執行，產物原封不動嵌在
+    `result.json` 的 `arms[*].{clean,instrumented}.matrix` 裡 ⇒ 判準不必重寫，只要把那些臂攤平。
+    這一扇門是必要的：`arm_two_pass` 直接把 matrix 叫起來，不經過 `cmd_bench` 的閘門，
+    所以「產線硬條件」若只做在 bench 上，verify 這條路就是空的（2026-09-29 補）。
+
+    **政策不回溯**：一份在閘門存在之前跑的 `result.json`（matrix 產物完全沒有 `instrument`
+    欄位）標成 `legacy` 而不拒 —— 否則一次政策改動會靜默改寫整份舊報告，那正是 §7 拒絕做的事。
+    """
+    embedded, total = [], 0
+    for a in (result or {}).get("arms") or []:
+        for which in ("clean", "instrumented"):
+            for arm in ((a.get(which) or {}).get("matrix") or []):
+                total += 1
+                if isinstance(arm, dict) and "instrument" in arm:
+                    embedded.append(arm)
+    if total and not embedded:
+        return {"ok": True, "legacy": True, "waived": waive_reason, "arms": [], "checked": 0,
+                "why": "這份 result.json 是閘門存在之前跑的（matrix 產物沒有 instrument 欄位）⇒ 不回溯",
+                "rule": _INSTRUMENT_RULE}
+    ok, details = ibind.runs_unbound(embedded)
+    return {"ok": ok, "legacy": False, "waived": waive_reason, "arms": details,
+            "checked": len(details), "rule": _INSTRUMENT_RULE}
+
+
+def _inside_root(p) -> bool:
+    """這個路徑在 repo 裡嗎？── 只有 repo 內的產物才可以回寫決策面。
+
+    相對路徑算在 ROOT 底下（呼叫端與 selftest 從不同 cwd 跑時，答案不該不同）。
+    """
+    s = str(p or "")
+    ap = os.path.abspath(s) if os.path.isabs(s) else os.path.join(ROOT, s)
+    try:
+        Path(ap).relative_to(Path(ROOT).resolve())
+        return True
+    except Exception:  # noqa: BLE001  不在 repo 內、或路徑不可解析
+        return False
+
+
+def _pair_gate_verify(ibind, result) -> dict:
+    """`verify` 的成對判定：每一輪的 `matrix.json` 旁邊必須有它的 stderr log。
+
+    `bench` 那扇門檢查的是 `--json` 的 sibling；這裡的產物是 `arm_two_pass` 寫的 `matrix.json`，
+    每一輪（clean／instrumented）一份，所以逐輪檢查。缺 ⇒ 那一輪不可引用（無豁免）。
+    """
+    passes = []
+    for a in (result or {}).get("arms") or []:
+        for which in ("clean", "instrumented"):
+            p = a.get(which) or {}
+            mj = p.get("matrix_json")
+            if not mj:
+                continue
+            tag = "%s/%s" % (a.get("arm"), which)
+            if not os.path.exists(mj):
+                passes.append({"pass": tag, "paired": False, "canonical": None,
+                               "why": "找不到這一輪的產物 %s" % mj})
+                continue
+            st = ibind.pair_status(mj)
+            passes.append({"pass": tag, "paired": st["paired"],
+                           "canonical": st["canonical"], "why": st["why"]})
+    return {"paired": all(p["paired"] for p in passes) if passes else True,
+            "passes": passes, "checked": len(passes)}
+
+
 def _cell(args) -> dict:
     """The cell, as a dict -- a number is only comparable to another number from the same cell."""
     return {"prompt": args.prompt, "gen": args.gen, "depths": args.depths, "reps": args.reps,
             "warm_skip": args.warm_skip, "ctx_size": args.ctx_size,
             "fixed_fill_seed": args.fixed_fill_seed, "prompt_file": args.prompt_file,
             "warmup": args.warmup, "spec_type": args.spec_type,
-            "spec_draft_n_max": args.spec_draft_n_max}
+            "spec_draft_n_max": args.spec_draft_n_max,
+            # Which §2.5 cell this artifact belongs to. Recorded because two cells' numbers are
+            # not comparable to each other, and the record has to say which one it holds.
+            "named_cell": getattr(args, "cell", None) or "(default)"}
 
 
 def _swap_line(memory: dict) -> str:
@@ -1188,6 +1461,23 @@ def cmd_bench(args) -> int:
             return 2
         print(f"[charter] 立項通過：{charter.get('id')} — owner={charter.get('owner')}")
 
+    # 第五道閘門的跑前那一半：量具武裝了但前提沒開 ⇒ 拒跑（比拒寫便宜：不花 GPU 時間）。
+    ibind = _load("ibind", "instrument_binding.py")
+    require_probes = [x.strip() for x in str(getattr(args, "require_instrument", "") or "").split(",")
+                      if x.strip()]
+    ip_ok, ip_fails, ip_warns = _instrument_precheck(
+        ibind, lambda s: matrix.resolve(*_parse_arm(s)[:2]), specs, require_probes)
+    for w in ip_warns:
+        print(f"[instrument] {w}")
+    if not ip_ok:
+        print("!! 量具前提閘 FAIL — 拒跑（這是不花 GPU 時間就能判的矛盾）：")
+        for spec, reasons in ip_fails:
+            for r in reasons:
+                print(f"    {spec}：{r}")
+        print("   理由：武裝了而沒開前提的量具，它的計數器一定是 0，而那種「空白場次」事後只看得到 0。")
+        print("   要跑就先把前提開上（例：CGC_MISS_MASK=1），或不要把那個量具的開關打開。")
+        return 2
+
     ok_all = True
     gate_report = []
     for spec in specs:
@@ -1270,18 +1560,68 @@ def cmd_bench(args) -> int:
         arm["sys_before"], arm["sys_after"] = before, after
         if rate:
             arm["sys_rate"] = rate
+
+    # 【CGC 2026-09-29】第五道閘門的跑後那一半：量具沒綁上 ⇒ **拒寫進決策面**。
+    # 「記錄 + 事後檢查」已經在樹上（`instrument_gate` 欄位、`mindmap_void_check`、`claim_instrument_check`），
+    # 但它們都是事後的；這裡是把它變成硬條件的第一道：跑得再漂亮，量具沒動就不會進 mindmap。
+    # 注意「拒寫」≠「抹掉證據」：產物照寫本地檔（含最後判定），只是不覆寫決策面。
+    waive_ib = getattr(args, "waive_instrument", None) \
+        or os.environ.get("CGC_IGNORE_INSTRUMENT_GATE") or None
+    # 【CGC 2026-09-29】產物 ↔ stderr log 成對（寫入端已落地；這裡是跑後自檢）：
+    # 缺 log ⇒ 這一場的量具根本無法查證 ⇒ 不可引用。這一條**沒有豁免**：補救的方法是把 log
+    # 寫對（或 `instrument_binding --pair-backfill` 把真的那一份登記回來），不是宣告
+    # 「我知道它不可驗但還是要算」——量具閘可以豁免，因為那是「我知道這輪儀器沒開」；
+    # 這條不行，因為沒有 log 時你不知道自己錯過了什麼。
+    pair_gate = ibind.pair_status(args.json_path)
+    ib_gate = _instrument_gate(ibind, data, waive_reason=waive_ib)
+    for arm in data:
+        arm["instrument_gate"] = ib_gate
+        arm["pair_gate"] = pair_gate
     Path(args.json_path).write_text(json.dumps(data, indent=2, ensure_ascii=False))
     print(f"\n產物已寫入 {args.json_path}（每臂含 base_check + sys_before/after + 系統指標）\n", flush=True)
+    for d in ib_gate["arms"]:
+        mark = "✅" if d["ok"] else "⛔"
+        print(f"  {mark} 量具 {d['verdict']:10s} {d['tag']}  {d['why']}", flush=True)
+    print(f"  {'✅' if pair_gate['paired'] else '⛔'} 成對 log  {pair_gate['why']}", flush=True)
+    _ib_bad = (not ib_gate["ok"]) and not waive_ib
+    if _ib_bad:
+        print("!! 量具閘 FAIL — **拒寫**：這份產物不會進 mindmap（決策面）。", flush=True)
+        print("   理由：旗標設了但量具沒動 ⇒ 那些計數器與由此而來的結論不可引用；"
+              "這一輪的 t/s 也不是你以為的那件事。", flush=True)
+        print(f"   產物仍在 {args.json_path}（證據不抹掉，只是不上成績面）。", flush=True)
+        print("   要明知不可引用還是寫入：--waive-instrument \"理由\"（理由會進產物）。", flush=True)
+    if not ib_gate["ok"] and waive_ib:
+        print(f"!! 量具閘 FAIL，但已豁免（--waive-instrument）：{waive_ib}", flush=True)
+    if not pair_gate["paired"]:
+        print("!! 成對閘 FAIL — **拒收**：這一場的產物旁邊沒有 stderr log。", flush=True)
+        print(f"   修法（不是豁免）：{pair_gate['why']}", flush=True)
+        print("   理由：log 是唯一能證明「量具真的動了」的東西；沒有它，產物裡每個計數器都無法查證，"
+              "而「沒有 log 所以驗不了」不該是一種狀態。", flush=True)
+        print("   補救：確認 llama_bench_matrix 的成對 log 寫得進去，"
+              "或用 scripts/check/instrument_binding.py --pair-backfill 把真的那一份登記回來。", flush=True)
+        return 5
+    if _ib_bad:
+        return 4
 
     # D 自動回寫：產物完整後直接 sync 到 mindmap（免手動 experiment_sync sync），best／目標進度即時更新。
     # 只在有真立項（非 waive）時做；回寫失敗不影響本次產物與成績。
     auto_cid = charter.get("id") if isinstance(charter, dict) and not charter.get("waived") else None
+    # 【CGC 2026-09-29】只有**repo 內**的產物才回寫決策面。`--json /tmp/...` 是診斷／煙霧測試用的，
+    # 它不該變成實驗節點上的一筆 run —— 我自己的 stub 測試（不跑 GPU、假產物）就因此把一筆
+    # 假的 9.9 t/s 寫進了 `exp-singlesubmit-fillahead`，還把它複製到 `Backup/exp_runs/`。
+    # 避免那一族不需要什麼智慧：產物不在 repo 內，就不回寫。
+    if auto_cid and not _inside_root(args.json_path):
+        print(f"[auto-sync] 略過：產物 {args.json_path} 不在 repo 內（診斷產物不回寫決策面）", flush=True)
+        auto_cid = None
     if auto_cid:
         try:
             esync = _load("esync", "experiment_sync.py")
             esync.sync_artifact_file(args.json_path, cid_default=auto_cid, do_rebuild=True)
         except Exception as e:  # noqa: BLE001
-            print(f"[auto-sync] mindmap 回寫失敗（不影響本次產物）：{e}", flush=True)
+            # 第三扇門（`experiment_sync.sync_gate`）擋下時帶著編號 —— 說出來比「回寫失敗」有用。
+            _c = getattr(e, "code", None)
+            _tag = f"（量具閘 rc={_c}）" if _c else ""
+            print(f"[auto-sync] mindmap 回寫失敗{_tag}（不影響本次產物）：{e}", flush=True)
 
     # 量測紀律輸出：pp + tg + thermal + swap（取自產物欄位）
     for arm in data:
@@ -1329,6 +1669,49 @@ def cmd_verify(args) -> int:
         print(f"拒跑：{e}")
         rc = 3
 
+    # 【CGC 2026-09-29】第五道閘門在 verify 這扇門上：`arm_two_pass` 把每一輪直接交給 matrix，
+    # 不經過 `cmd_bench` 的閘門（量具 UNBOUND 時那邊拒寫且 rc=4）。這裡不補，這條路就只剩「記錄」。
+    waive_ib = getattr(args, "waive_instrument", None) \
+        or os.environ.get("CGC_IGNORE_INSTRUMENT_GATE") or None
+    ib_gate = None
+    if result_json.exists():
+        res = None
+        try:
+            res = json.loads(result_json.read_text())
+        except Exception as e:  # noqa: BLE001
+            print(f"[instrument] verify 產物讀不出來，量具閘這一輪無判定：{e}", flush=True)
+        if isinstance(res, dict):
+            ib_gate = _instrument_gate_verify(_load("ibind_v", "instrument_binding.py"), res,
+                                              waive_reason=waive_ib)
+            for d in ib_gate["arms"]:
+                print(f"  {'✅' if d['ok'] else '⛔'} 量具 {d['verdict']:10s} {d['tag']}  {d['why']}",
+                      flush=True)
+            if ib_gate.get("legacy"):
+                print(f"[instrument] {ib_gate['why']}", flush=True)
+            # 判定寫進 result.json（與 bench 的產物同名同義）——報告與記錄看的是同一份。
+            # 同一扇門也要同樣的成對要求：`verify` 的每一輪是獨立一次 matrix 執行，
+            # 它的 log 必須躺在那一輪的 `matrix.json` 旁邊（見 llm_bench_matrix 的寫入端）。
+            pair_gate = _pair_gate_verify(_load("ibind_vp", "instrument_binding.py"), res)
+            res["instrument_gate"] = ib_gate
+            res["pair_gate"] = pair_gate
+            result_json.write_text(json.dumps(res, indent=2, ensure_ascii=False))
+            for p in pair_gate["passes"]:
+                print(f"  {'✅' if p['paired'] else '⛔'} 成對 log  {p['pass']}: {p['why']}", flush=True)
+            if not pair_gate["paired"]:
+                print("!! 成對閘 FAIL — **拒收**：至少一輪的產物旁邊沒有 stderr log（不可引用，"
+                      "且這一條沒有豁免）。", flush=True)
+                if rc == 0:
+                    rc = 5
+            if not ib_gate["ok"] and not waive_ib:
+                print("!! 量具閘 FAIL — 這份 verify 報告不算數：量具沒動，"
+                      "那些計數器與由此而來的結論不可引用。", flush=True)
+                print("   （HTML 仍生成，看得到是哪一臂；要明知不可引用還是接受："
+                      "--waive-instrument \"理由\"）", flush=True)
+                if rc == 0:
+                    rc = 4
+            elif not ib_gate["ok"] and waive_ib:
+                print(f"!! 量具閘 FAIL，但已豁免（--waive-instrument）：{waive_ib}", flush=True)
+
     if result_json.exists():
         hcmd = [PY, str(HERE / "arm_report_html.py"),
                 "--json", str(result_json), "--out", str(report_html)]
@@ -1338,7 +1721,7 @@ def cmd_verify(args) -> int:
     else:
         print("\n（無 result.json — 通常是 gate 在跑任何 GPU 前就擋下；未生成 HTML）", flush=True)
 
-    # 0 = 全部臂兩輪通過；非 0 = 有臂被擋/失敗（HTML 仍可看）
+    # 0 = 全部臂兩輪通過；2/3 = gate／窗口擋下；4 = 量具 UNBOUND；5 = 缺成對 log（皆拒收）
     return rc
 
 
@@ -1410,6 +1793,32 @@ def main(argv=None) -> int:
                    help="llama-bench --spec-type（僅 draft-mtp）；空 = 一般 cell（預設行為）")
     p.add_argument("--spec-draft-n-max", type=int, default=None,
                    help="llama-bench --spec-draft-n-max（1..16）；需配合 --spec-type")
+    p.add_argument("--cell", default=None,
+                   help="測試卡 §2.5 的 named cell（預設＝權威 prod-new cell）。未宣告的名字是 "
+                        "fail-closed。交付 cell（batch 512 / prompt 0）宣告為 `delivery`。")
+    p.add_argument("--require-instrument", default="",
+                   help="第五道閘門：宣告「這一輪必須證明這些量具真的動過」（逗號分隔，例："
+                        "rb_feed,prefetch）。跑前擋「武裝了沒開前提」，跑後若 UNBOUND 就拒寫進 mindmap。"
+                        "判準見 scripts/check/instrument_binding.py")
+    p.add_argument("--waive-instrument", default=None,
+                   help="理由字串：明知量具不會動而仍要寫入決策面（會連理由一起記進產物的 "
+                        "instrument_gate.waived）。rc=4 的閘門用這個放行")
+    # 【CGC 2026-09-29】「跑不完」那一類診斷用的三根桿子（見 llama_bench_matrix `_stream_child`）：
+    # 子行程 stderr 逐行落地（被殺也留得下停滯點）＋ 停滯時取堆疊 ＋ 逾時只殺自己的 pgid。
+    p.add_argument("--arm-timeout", type=float, default=0.0,
+                   help="單臂牆鐘上限（秒）：逾時只殺自己的 process group，驅動留下來寫 live log／產物。"
+                        " 0 = 不設（歷史行為）")
+    p.add_argument("--stall-watch", type=float, default=0.0,
+                   help="停滯看門狗（秒）：連續這麼久沒有新的一行 stderr ⇒ 記下停滯點並 sample 堆疊。"
+                        " 0 = 關")
+    p.add_argument("--stall-kill", action="store_true",
+                   help="第一次抓到停滯就先取堆疊再殺（預設只記錄，讓 --arm-timeout 決定收尾）")
+    p.add_argument("--stall-progress-re", default="",
+                   help="「進展行」的判準（regex）。空 = 矩陣的預設（心跳 CGC-RSS 不算進展——引擎有心跳，"
+                        "所以「有沒有新的一行」量不出卡住）")
+    p.add_argument("--live-echo", default="",
+                   help="額外把符合這個 regex 的 stderr 行即時印到 stdout（預設用矩陣內建的那一組）")
+    p.add_argument("--window-timeout-s", type=float, default=900)
     p.add_argument("--workdir", default="/tmp/harness_bench")
     p.add_argument("--json", dest="json_path", required=True, help="產物 json 路徑（含 base_check）")
     p.add_argument("--charter", default=None,
@@ -1436,6 +1845,9 @@ def main(argv=None) -> int:
     p.add_argument("--allow-dirty", action="store_true",
                    help="gate 未過也硬跑、報告標紅（不建議用於 commit）")
     p.add_argument("--run-dir", default="/tmp/harness_verify")
+    p.add_argument("--waive-instrument", default=None,
+                   help="理由字串：明知量具不會動而仍要收下這份 verify 報告（會記進 "
+                        "result.json 的 instrument_gate.waived）。rc=4 的閘門用這個放行")
     p.set_defaults(func=cmd_verify)
 
     raw = list(sys.argv[1:] if argv is None else argv)

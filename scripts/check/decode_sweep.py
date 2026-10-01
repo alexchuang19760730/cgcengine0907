@@ -110,6 +110,21 @@ def build_fingerprint():
 #     `prefill250:CGC_SPAC=0` arm that `llama_bench_matrix.py` accepts.
 ARMS = {
     "baseline":      {},
+    # [2026-09-30 S3-b / L20-7] ρ 影子路由的成對臂（給 `ab_interleave.py` 的伺服器路徑用）。
+    # 為什麼要一整對：4.76 ms/step 是估值、2026-09-24 的 10.4%/step（B/A=0.8956）與 2026-09-30 的
+    # 單側場次方向相反 ⇒ 價差只能用**同一場次、同一熱狀態內**的配對比率讀，而配對比率要求
+    # 兩支臂都命名的。 `rho-off` 的 env 與 `baseline` 相同（刻意：名字要成對才讀得出方向）。
+    # 判準與兩趟（正序＋反序）的用法寫在 docs/S3B_RHO_COST_2026-09-30.md §5。
+    "rho-off":       {},
+    "rho-on":        {"CGC_RHO_PROBE": "1"},
+    "rho-fill":      {"CGC_RHO_PROBE": "1", "CGC_RHO_FILL": "1"},
+    # [2026-09-30 S3-b] `rho-on` 的**同位孿生**：env 逐字相同（多一個名字，不是多一個旋鈕），
+    # 用來跑「帶探針的 A/A」——`--arms rho-on,rho-on-b`。兩臂都帶 CGC_RHO_PROBE ⇒ 這對跑出來的任何
+    # 比率／散布／輪級掉格都**不是臂差**；它判的是「掉格是探針這一類發射的性質，還是那三趟的巧合」。
+    # 為什麼需要它：無探針的 A/A（`baseline,rho-off`，2026-09-30 20:19）4 趟**全乾淨**（最壞輪 = 自身
+    # 中位數 97%），而探針臂 3/4 趟出現掉格（最壞 5.35 t/s = 自身中位數 45%）⇒ 只剩兩個假設：
+    # (a) 每層同步讀回會排空管線 ⇒ 重尾；(b) 那三趟恰好被外部干擾。這一對就是它們的判別器。
+    "rho-on-b":      {"CGC_RHO_PROBE": "1"},
     "mtp-off":       {"CGC_SERVER_MTP": "0"},
     # The pool-size curve, as named in NEXT_ACTIONS task 3 (8 GiB control vs 3/4/6 GiB). Each is a
     # different `-exper-cache`, i.e. a different SLOT COUNT -- measured 143 slots at 8 GiB,

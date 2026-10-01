@@ -21,7 +21,12 @@ set -u
 REPO=/Users/alexchuang/Documents/flashkv-devserver
 PY=/Users/alexchuang/.workbuddy/binaries/python/versions/3.13.12/bin/python3
 ROUNDS="${ROUNDS:-2}"
-REPS="${REPS:-1}"
+# [CGC 2026-09-27] 預設 1 → 3：權威 cell §2.5 的 `reps` 就是 3（見下面 CELL 的對齊註解）。
+# ⚠ 這兩個變數的**執行次序會說話**：下面 CELL 之前不能再對 REPS 做 `${REPS:-...}` 賦值 ——
+# 那會被這一行的結果吃掉（實測 02:49：在 45 行寫 `REPS="${REPS:-3}"`，因為 24 行已把 REPS
+# 設成 "1"，`${REPS:-3}` 取的是既有的 1 ⇒ 命令騙人地帶著 `-r 1` 跑，再被 cell_contract fail-closed
+# 擋下，而且擋下的是**我以為改好了的那一行**）。要覆寫就 export REPS，不要在下游重宣。
+REPS="${REPS:-3}"
 TAG="${TAG:-$(date +%H%M%S)}"
 EXTRA_SEG="${SEG:-1}"   # SEG=1 ⇒ ρ 臂加細分段（CGC_N_CB=16 + CGC_CB_N_MAIN=1）
 # [CGC 2026-09-24] PIN_PROFILE 靜態釘住的 profile（§EN-476 實測：由 --prompt 0 的
@@ -31,8 +36,21 @@ PIN_PROFILE="${PIN_PROFILE:-${REPO}/scripts/check/pin_profiles/route_top142_p0_2
 # 交付 cell：prod-new 統一介面（2026-09-23 拍板）——每臂自己帶 arm spec：
 #   off（MTP off 交付口徑基準）vs on（MTP on）vs ρ 系列（MTP on + 影子 router + 提前 fill）。
 # 形狀與原 prod25-stream 交付格一致（--warm-skip 64 跳過池預熱段）。
-CELL=(--reps "${REPS}" --prompt 0 --gen 128 --depths 512 \
-      --batch 512 --ctx-size 4096 --warm-skip 64)
+# [CGC 2026-09-27 cell 對齊] 這一行原本是 **-p 0 -b 512 --ctx-size 4096**，與
+# `PROD_NEW_TEST_CARD_2026-09-24.md` §2.5 的 machine-readable CELL **四項不符** ⇒
+# `cell_contract.py` **fail-closed 拒跑**（實測 2026-09-27 02:48，見 /tmp/rho_ab_024812/base_r1/driver.log）：
+#     batch 512 ≠ 5632 / ubatch 512 ≠ 5632 / prompt 0 ≠ 2048 / reps 1 ≠ 3
+# 也就是說**這支腳本從 2026-09-23 寫成以來就跑不通**：歷史上那兩個 ρ 數字（`+14.2%`／`+4.7%`）
+# 的原始樣本，跑的不是現在的權威 cell ⇒ **與本次不可比**，引用時要連這一條一起講。
+#
+# 對齊之後 decode 軸仍然拿得到（`commit_bench.py` 就是用這個形狀：先 2048 prefill，再 128 decode，
+# decode t/s 取自同一 rep 的 tg 軸）—— 只是每一 rep 多付一次 prefill，且 batch/ubatch 從 512 變成
+# 5632（對 decode 步應近乎中性，它每步只處理 ntok 個 token；主要吃的是 compute buffer 的駐留）。
+# ⚠ reps 從 1 變成 3：每臂時間約 ×3，夾熱浸冷卻，一輪三臂約 15~25 分鐘。
+# REPS 的預設已在本檔第 24 行改成 3；**這裡不要再賦值**（原因見那裡的註解），
+# 否則 `${REPS:-...}` 會取到上游already設好的值，命令就騙人了。
+CELL=(--reps "${REPS}" --prompt 2048 --gen 128 --depths 512 \
+      --batch 5632 --ubatch 5632 --ctx-size 0 --warm-skip 64)
 
 # 視窗閘門：任何 listener 或別條線的量測行程在跑就停手（建置產物與 GPU 都是共用的）。
 # SKIP_WINDOW_CHECK=1 跳過（用戶明確插隊時用；結果要標記「並行污染風險」）。
@@ -93,6 +111,17 @@ PYEOF
 }
 
 arm_spec() {
+    # [CGC 2026-09-27 rho-on-mtp-off] MTP_OFF=1 ⇒ **全臂強制 MTP off 交付口徑**。
+    # 為什麼要這個開關：`rho` / `probe` 原本落進下面 `*` 分支 ⇒ `prod-new:CGC_SERVER_MTP=1`
+    # ⇒ 歷史上所有 ρ 的 A/B 量到的都是 **MTP on** 的淨增益，而**交付 cell 是 MTP off**
+    # （`PROD_NEW_TEST_CARD`：`CGC_SERVER_MTP | 0`；`MTP_AMORTIZATION_RECHECK` §1：
+    # 交付口徑 MTP off = 11.03~12.20）⇒ 「ρ 在交付 cell 的淨增益」這件事**從來沒量過**，
+    # 不是「量過是 0」。MTP_OFF=1 把 *base 之外* 的臂也拉回 prod-new + 不帶 --spec-type。
+    # 預設（未設 MTP_OFF）行為與 2026-09-23 以來完全一致。
+    if [ -n "${MTP_OFF:-}" ]; then
+        echo "prod-new"
+        return
+    fi
     case "$1" in
         base)  echo "prod-new";;                                  # MTP off 交付口徑基準
         on)    echo "prod-new:CGC_SERVER_MTP=1";;                # MTP on 基準（無 ρ）
@@ -107,6 +136,13 @@ arm_spec() {
 }
 
 arm_spec_flag() {
+    # [CGC 2026-09-27] 與 arm_spec 的 MTP_OFF 同源：MTP off 下**所有**臂都不傳 --spec-type
+    # （否則 llama-bench 會替我們把 MTP 打開，MTP_OFF 就只改了 arm_spec 而沒改實際形狀 ——
+    # 一個只看一半的開關，比沒有這個開關更危險）。
+    if [ -n "${MTP_OFF:-}" ]; then
+        echo ""
+        return
+    fi
     case "$1" in
         base)  echo "";;                         # MTP off：不傳 spec-type（與 run_server.sh 1345 一致）
         *)     echo "--spec-type draft-mtp";;    # MTP on：draft-mtp

@@ -246,18 +246,46 @@ DIAGNOSTIC_KEYS = {
     # report "incomparable" against a knob-off reference, i.e. the gate could not express the one
     # proposition the knob rests on. If the claim is false the gate fails on the LOGITS.
     "CGC_FILL_NOCACHE",
-    # [CGC 2026-09-30 線A · S2] The ρ prefetch pair, registered for the same reason and with the
-    # same caveat as the other keys here: this is the mechanism the R6 witness is meant to TEST, and
-    # a knob that makes a run "incomparable" cannot be tested by any measurement. The claim is
-    # narrow -- CGC_RHO_PROBE builds a per-layer shadow router and CGC_RHO_FILL turns its prediction
-    # into a non-blocking batch prefetch of the SAME experts the per-layer fill would read, so which
-    # bytes reach the MoE is unchanged; only WHEN they arrive differs. It is not a claim that the
-    # arm's output is already correct: on the hook-less arm residency was measured at 57.1% versus
-    # 96.3% on the honest path, and a non-resident selection falls back to `e % ns` and lands on a
-    # DIFFERENT real expert. So the expectation this registration makes testable is directional: if
-    # missing residency is the whole divergence, M1 goes 0/9 -> 9/9; if the divergence lives in the
-    # single-submit graph itself, M1 stays red -- and that, not a green M1, is the finding.
+    # [CGC 2026-09-30 R6 witness] The third key of this kind, and the one whose claim is being
+    # **tested** rather than presumed. `CGC_SEG_BATCH=1` submits the 41 decode segments as one,
+    # which SKIPS the per-layer top-k hook (llama-context.cpp:4059 "CGC_SEG_BATCH=1 SKIPS THE
+    # HOOK") and maintains the pool's members through the read-back path instead. The claim that
+    # makes it comparable -- and therefore testable -- is: WHERE the members are maintained does
+    # not change WHICH members are used (same id vector, same logits).
+    # Why it has to live here rather than be measured around: `quote_gate.py`'s R6 blocks every
+    # throughput reading from this arm *because its output is unverified*, and it names exactly one
+    # release condition -- an M1/answer-hash witness on the server path (`m123_oracle_gate.py` IS
+    # that path: run_server.sh + --env). Without this key, the very run meant to produce the witness
+    # reports INCOMPARABLE against the reference, so the release condition could never be satisfied
+    # by any measurement. Marking the claim comparable is not assuming it true: if it is false, the
+    # gate fails on the LOGITS, which is exactly where it should fail.
+    # ⚠ The registry's own text predicts which way this can go: with G3 (`CGC_ZERO_SLOT`) unarmed, a
+    # non-resident selection falls back to `e % ns` and lands on a DIFFERENT real expert ⇒ a red M1
+    # here is a live possibility, and it would be a finding about the arm, not a harness bug.
+    "CGC_SEG_BATCH",
+    # [CGC 2026-09-30 線A · S2] The prefetch pair, registered for the same reason and with the same
+    # caveat as CGC_SEG_BATCH: this is the mechanism the R6 witness is meant to TEST, and a knob that
+    # makes a run "incomparable" cannot be tested by any measurement. The claim is narrow --
+    # CGC_RHO_PROBE builds a per-layer shadow router and CGC_RHO_FILL turns its prediction into a
+    # non-blocking batch prefetch of the SAME experts the per-layer fill would read, so which bytes
+    # reach the MoE is unchanged; only WHEN they arrive differs. It is not a claim that the arm's
+    # output is already correct: on the hook-less arm residency was measured at 57.1% versus 96.3%
+    # on the honest path, and a non-resident selection falls back to `e % ns` and lands on a
+    # DIFFERENT real expert. So the expectation this registration makes testable is directional:
+    # if missing residency is the whole divergence, M1 goes 0/9 -> 9/9; if the divergence lives in
+    # the single-submit graph itself, M1 stays red -- and that, not a green M1, is the finding.
     "CGC_RHO_PROBE", "CGC_RHO_FILL",
+    # [CGC 2026-10-01 rho split · delivery flag] `CGC_RHO=1` is the flag the split
+    # (`Backup/rho_split_2026-09-30/rho_delivery_split.patch`) introduces so the delivery arm can
+    # run the mechanism with the meter OFF: `cgc_rho_meter()` gates the four delivery-path prints
+    # on `CGC_RHO_PROBE`, so a delivery run's stderr contains zero `CGC-RHO-*` lines while the
+    # prefetch itself still fires. Its claim is exactly numerics-neutral: the split changes WHERE
+    # the meter prints, never WHICH experts are prefetched, so the id vector and logits must be
+    # unchanged. Leaving the key out makes the delivery arm's oracle report INCOMPARABLE against
+    # a probe-off reference (`ENV.CGC_RHO: ref=<absent> now=1`), i.e. the split's pre-registered
+    # receipt (`rho_window.py` S4: 同 build、同一份參考、M1 9/9) could never be satisfied by any
+    # measurement. If the claim is false the gate fails on the LOGITS, which is where it should.
+    "CGC_RHO",
 }
 # CGCENV scalars that are comparability-irrelevant (paths/timing only).
 DIAGNOSTIC_CGCENV = {"LOG", "PORT"}
@@ -1341,6 +1369,13 @@ def main() -> int:
     summary = {
         "tag": tag, "profile": args.profile, "ref": str(ref), "ref_md5": ref_hex,
         "ref_pinned": (ref_pin == ref_hex), "dump": str(dump),
+        # [CGC 2026-09-30 §R6 witness] The EFFECTIVE override set (`--env` merged over the oracle
+        # pin). Without it a summary records what the numbers were but not WHICH ARM produced them,
+        # so the paired witness checker (`scripts/check/r6_witness.py`) would have to trust a
+        # hand-written label -- exactly the class of hand-written copy this file's docstring forbids.
+        # Additive, so summaries written before today stay readable; the checker fail-closes when
+        # the field is absent (it refuses to guess which side is the witness arm).
+        "extra_env": dict(merged_env),
         "probe_prompt_md5": hashlib.md5(args.probe_prompt.encode()).hexdigest(),
         "ref_probe_prompt_md5": (ref_cap or {}).get("probe_prompt_md5"),
         "probe_prompt_match": (None if (ref_cap or {}).get("probe_prompt_md5") is None
@@ -1392,6 +1427,29 @@ def main() -> int:
                   f"({_rpm}) => the shortfall is NOT a prompt artefact: the record keys diverged "
                   f"because this arm produced a different token sequence. That IS the finding, and "
                   f"the M1/M2 verdicts above are readable.")
+    print("=" * 74)
+    if not comparable:
+        print(f"GATE {tag}: INVALID COMPARISON -- reference was dumped under a different "
+              f"numerics-determining configuration ({len(cfg_diffs)} diffs).")
+        print(f"  observed M1={summary['m1_numeric_identity']}  M2={summary['m2_decision_agreement']}  "
+              f"M3={summary['m3_topk_set_agreement']}  n={summary['n_compared']} "
+              f"(printed for information, NOT a verdict)")
+    else:
+        print(f"GATE {tag}: {'PASS' if summary['ok'] else 'FAIL'}   "
+              f"M1(bit-identical)={summary['m1_numeric_identity']}  "
+              f"M2(argmax)={summary['m2_decision_agreement']}  "
+              f"M3(topk)={summary['m3_topk_set_agreement']}  n={summary['n_compared']}")
+        print(f"cross-tab: {d['cross_tab']}")
+    print(f"summary  : {RESULT_DIR / f'summary_{tag}.json'}")
+    print("  build   : " + "  ".join(
+        f"{k}={v['md5']}" for k, v in summary["engine_digest"].items()) or "  build   : (none)")
+    tr = summary["tree"]
+    if tr:
+        print(f"  tree    : {tr.get('head')} dirty_tracked={tr.get('dirty_tracked')}")
+    print("=" * 74)
+    if not comparable:
+        return 2 if not args.allow_incomparable else (0 if summary["ok"] else 1)
+    return 0 if summary["ok"] else 1
 
 
 if __name__ == "__main__":

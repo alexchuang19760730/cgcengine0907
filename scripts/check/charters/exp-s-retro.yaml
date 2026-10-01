@@ -1,0 +1,45 @@
+# 跑前立項卡（charter）—— S 序列化消減線（G0–G7）復盤
+# 本卡由 2026-09-27 復盤補建：這條線的實驗多發生在 charter gate 建立之前，
+# 因此這張卡是「拿歷史真實實驗當範例」回填，用於驗證 experiment_sync 流程。
+
+id: exp-s-retro
+owner: line-S（序列化／調度消減）
+created: 2026-09-27
+axis: S   # 掛在 mindmap「S 序列化消減」軸
+
+question: >
+  G0–G7 序列化／調度消減（41 段→1 段、縮 union、藏 gap、消 cb）能否在保持
+  M1/M2/M3 bit-identical 的前提下，帶來可交付（生產口徑可復現）的 decode 提升？
+
+baseline:
+  metric: decode t/s（交付權威）
+  cell:   prod-new 穩態、--warm-skip 64、ntok=1
+  value:  12.57 t/s（79.6 ms/token）
+  source: docs/CEILING_STACK_2026-09-21.md
+
+hypothesis:
+  mechanism: >
+    41 段提交的段間同步與 top-k hook（cb）是串行開銷；合成單段（CGC_SEG_BATCH＋
+    B_SCHEME）可消掉段間同步，宣稱 step −40.3 ms（11.30→20.73 t/s）。
+  expected: 生產口徑 decode 提升 ≥ 3%
+  basis:    docs/mindmap/briefs/s1-segbatch.md、Backup/seg_batch_s1_pairs/
+
+acceptance:
+  success: >
+    保留 hook 與 demand-fill 的生產口徑下，ABBA 配對 decode 提升 ≥ 3%，
+    且 M1/M2/M3 全過（護欄不讓步）。
+  falsify: >
+    大數字（20.73 t/s、busy −42 ms）只在「無 hook／無 demand-fill」時出現，
+    生產口徑復現不了；或待測效應 < 實測噪音底（臂間極差 11.9%）。
+  on_fail: 判死、回退未提交源碼，把根因寫進白皮書與 mindmap（tier 4）。
+
+arms:
+  - "prod-new（現況，保留 hook/fill）"
+  - "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1（單段）"
+
+# 復盤已得到的實測判決（2026-09-27）：
+retro_verdict:
+  - "20.73 t/s 是在『無 hook、無 demand-fill、無 spec』下測的 ⇒ 拆掉正確性機制，miss expert 輸出 INVALID，不可交付。"
+  - "n_main=32 八臂實測：union −16.2%、busy −41.9%，但 tg 僅 +1.9%（控制臂極差 5.1%）⇒ 消掉的重疊本就不在臨界路徑，總時間守恆。"
+  - "G1 藏 gap：可達下界 9.0% > 要求 5%，四面封死；唯一 ×1.702 探針故意寫錯 remap，被 G2 否決。"
+  - "G4 融合：單個 dispatch 僅值 0.0736%，過門檻需砍 ~174 dispatch，工程做不到。"

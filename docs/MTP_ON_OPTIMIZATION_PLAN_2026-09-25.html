@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MTP ON 優化計畫（可支撐證據版）— 2026-09-25</title>
+<style>
+  :root { --fg:#1a1a1a; --fg2:#5f5e5a; --bg:#fff; --line:rgba(0,0,0,.12); --card:#f7f7f5;
+          --ok:#1D9E75; --warn:#BA7517; --bad:#D85A30; --blue:#378ADD; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg:#f0efe9; --fg2:#b4b2a9; --bg:#1c1c1a; --line:rgba(255,255,255,.16); --card:#262624; }
+  }
+  body { margin:0; padding:28px 24px 44px; background:var(--bg); color:var(--fg);
+         font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang TC",sans-serif; line-height:1.6; }
+  h1 { font-size:17px; font-weight:500; margin:0 0 6px; }
+  h2 { font-size:14px; font-weight:500; margin:30px 0 10px; padding-top:14px; border-top:1px solid var(--line); }
+  h3 { font-size:13px; font-weight:500; margin:20px 0 6px; color:var(--fg); }
+  p.sub { font-size:13px; color:var(--fg2); margin:0 0 8px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:10px 0 0; }
+  .card { background:var(--card); border-radius:8px; padding:13px 15px; }
+  .card .lbl { font-size:12px; color:var(--fg2); margin:0 0 5px; }
+  .card .num { font-size:20px; font-weight:500; margin:0; }
+  .card .note { font-size:12px; color:var(--fg2); margin:4px 0 0; }
+  table { border-collapse:collapse; width:100%; margin-top:12px; font-size:13px; }
+  th,td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-weight:500; color:var(--fg2); }
+  td.n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+  pre { background:var(--card); border-radius:8px; padding:12px 14px; overflow:auto; font-size:12px;
+        font-family:ui-monospace,SFMono-Regular,Menlo,monospace; margin:10px 0 0; }
+  .verdict { border-left:3px solid var(--bad); padding:10px 14px; margin:14px 0 0; background:var(--card); border-radius:0 8px 8px 0; }
+  .goal { border-left:3px solid var(--ok); padding:10px 14px; margin:12px 0 0; background:var(--card); border-radius:0 8px 8px 0; }
+  .warnbox { border-left:3px solid var(--warn); padding:10px 14px; margin:12px 0 0; background:var(--card); border-radius:0 8px 8px 0; }
+  .note { font-size:13px; color:var(--fg2); margin-top:10px; }
+  .gr { display:inline-block; font-size:11px; padding:1px 6px; border-radius:4px; border:1px solid var(--line); color:var(--fg2); }
+</style>
+</head>
+<body>
+
+<h1>MTP ON 優化計畫 —— 只建立在可支撐證據上的那一份</h1>
+<p class="sub">2026-09-25 ｜ 無新 GPU 量測。新增內容＝<b>同輪交叉檢核</b> ＋ <b>用既有係數算出的決策門檻</b>，兩者皆可離線複算。
+支撐分級沿用 <code>scripts/check/formula_audit.py</code>：<span class="gr">M 實測</span>
+<span class="gr">D 量綱恆等／定義</span>，其餘一律不進結論。</p>
+
+<div class="verdict">
+<b>先講不能引用的那個洞：</b>MTP ON 在<b>交付 cell</b> 的增益目前是 <b>UNRESOLVED</b>
+（<code>docs/MEASUREMENT_CONTRACT_2026-09-25.md</code> §7）。所以「優化 MTP」的第一個動作不是改東西，
+是先把 §1.3 那個 <b>1.92× 的矛盾</b>裁定掉。
+</div>
+
+<h2>0. 今天仍然可以引用的三條主結論</h2>
+
+<div class="cards">
+  <div class="card">
+    <p class="lbl">N1 ｜ 成本在哪一端 <span class="gr">M</span></p>
+    <p class="num">12% / 88%</p>
+    <p class="note">verify 多一個 token 的成本：<b>draft head 僅 ~12%</b>，<b>target verify 路徑 ~88%</b>
+    （斜率 +8.35 vs +61.21 ms/k，dof=2）⇒ 優化 head 不對症。<br><code>MTP_K_SWEEP_2026-09-22.md</code> §3</p>
+  </div>
+  <div class="card">
+    <p class="lbl">N2 ｜ 邊際 token 的通道 <span class="gr">M</span></p>
+    <p class="num">56–61% device</p>
+    <p class="note">+51~55 ms/token 拆開：<b>device span 56–61%</b>／<b>expert-cache host hook 35–40%</b>／
+    <b>dispatch ~2%</b> ⇒ 批次化 host 路徑是死路。<br><code>VERIFY_TOKEN_CHANNELS_2026-09-23.md</code> §2</p>
+  </div>
+  <div class="card">
+    <p class="lbl">N3 ｜ 加深 k <span class="gr">M+模型</span></p>
+    <p class="num">加深 = UNRESOLVED</p>
+    <p class="note">部署接受率下 <b>k=1 最好</b>；寬 verify 要 <b>a ≈ 0.80</b> 才開始划算；
+    <b>任何 a 都到不了 25 t/s</b>（最佳臂停在 13.5–14.1；⚠ 帶前提，見 §2.4）。<br><code>VERIFY_TOKEN_CHANNELS</code> §9b</p>
+  </div>
+</div>
+
+<div class="goal">
+<b>⇒ N1＋N2 的唯一讀法：</b>可以動的空間不在 draft head，在 <b>verify 路徑</b>；而 verify 路徑有約
+<b>6 成是 device 時間（至今沒有地板）</b>、近 <b>4 成是 expert cache 的 host hook（今天只吃到 ~92%）</b>。
+</div>
+
+<h2>1. 現狀座標</h2>
+
+<h3>1.1 交付 cell（唯一用來下決策的口徑）</h3>
+<pre>cell   : prod_profile.py 的 decode-delivery
+         --prompt 0 --gen 128 --depths 512 --batch 512 --ctx-size 4096
+         --warm-skip 64 --spec-type draft-mtp      （reps=3、NOMINAL 全程）
+基線   : 12.57 t/s ／ step 247.98 ms   ⇒ ASL = tps × step = 3.117 token/step   [D 恆等 + M 同源]
+產物   : Backup/prod_profile/prod_profile_decode_20260920_2041.json</pre>
+<p class="note">若這個 step 真的以 k=3 運作，反解 chain 接受率 <b>p = 0.8356</b>。⚠ 12.57 本身是 MTP ON 的數字，
+<b>不是 OFF 參考</b>；交付 cell 的 ON/OFF 配對＝缺量測 ⇒ UNRESOLVED。</p>
+
+<h3>1.2 今天的 MTP 配對（prod-new，ABBA 3 輪，全程 NOMINAL）</h3>
+<table>
+  <thead><tr><th>輪</th><th class="n">t/s OFF</th><th class="n">t/s ON</th><th class="n">step OFF</th><th class="n">step ON</th>
+  <th class="n">E（rounds）</th><th class="n">cost</th><th class="n">S</th><th class="n">k_eff</th></tr></thead>
+  <tbody>
+    <tr><td>r1</td><td class="n">8.315</td><td class="n">7.596</td><td class="n">120.26</td><td class="n">224.68</td><td class="n">1.7067</td><td class="n">1.8683</td><td class="n"><b>0.9135</b></td><td class="n">1</td></tr>
+    <tr><td>r2</td><td class="n">8.552</td><td class="n">5.828</td><td class="n">116.94</td><td class="n">249.58</td><td class="n">1.4545</td><td class="n">2.1343</td><td class="n"><b>0.6815</b></td><td class="n">1</td></tr>
+    <tr><td>r3</td><td class="n">7.102</td><td class="n">7.458</td><td class="n">140.81</td><td class="n">217.25</td><td class="n">1.6203</td><td class="n">1.5429</td><td class="n"><b>1.0502</b></td><td class="n">1</td></tr>
+    <tr><td>中位</td><td class="n">8.315</td><td class="n">7.458</td><td class="n">—</td><td class="n">—</td><td class="n">1.6203</td><td class="n">1.8683</td><td class="n"><b>0.9135</b></td><td class="n">1</td></tr>
+  </tbody>
+</table>
+<p class="note">⚠ 絕對 t/s 不可引用（<code>-r 1</code>、無 warm-skip、冷池）；比值可引用。三輪 S 散在 0.682~1.050，
+在單臂噪音底（±27%）之內 ⇒ 只能說「量不到正增益」，<b>不能說 MTP 是淨虧</b>。</p>
+
+<h3>1.3 ★ C1：兩個實測互相矛盾（目前最大的未知）</h3>
+<table>
+  <thead><tr><th>觀測</th><th class="n">值</th><th>來源</th></tr></thead>
+  <tbody>
+    <tr><td>交付 cell 的 <code>ASL = tps × step</code></td><td class="n"><b>3.117</b> token/step</td><td>§1.1（同一 launcher 的兩個數）</td></tr>
+    <tr><td>今天直數 verify round 的 <code>E</code></td><td class="n"><b>1.62</b> token/step</td><td>§1.2（round 計數）</td></tr>
+    <tr><td>比值</td><td class="n"><b>1.92×</b></td><td>—</td></tr>
+  </tbody>
+</table>
+<div class="warnbox">
+兩種可能（本篇<b>不裁定</b>）：<b>(a)</b> 兩個 cell 的 draft 深度真的不同（k_eff 3 vs 1，例如 ckpt／profile 的 MTP 設定）；
+<b>(b)</b> 其中一個計數器不是它看起來的意思；<b>(c)</b> step 定義不同（round vs per-token wall clock）。
+⇒ 在裁定之前，「加深 k」與「提高 a」的期望值都無法寫死 —— 因為它們的前提就是 <code>k_eff</code>。
+</div>
+
+<h2>2. 離線交叉檢核（本篇新增，可複算）</h2>
+
+<h3>2.1 好消息：今天這一輪的兩個 E 來源完全重合</h3>
+<table>
+  <thead><tr><th>輪</th><th class="n">ASL（tps×step）</th><th class="n">E（rounds）</th><th class="n">差</th></tr></thead>
+  <tbody>
+    <tr><td>r1</td><td class="n">1.7067</td><td class="n">1.7067</td><td class="n">0.0000</td></tr>
+    <tr><td>r2</td><td class="n">1.4545</td><td class="n">1.4545</td><td class="n">0.0000</td></tr>
+    <tr><td>r3</td><td class="n">1.6203</td><td class="n">1.6203</td><td class="n">0.0000</td></tr>
+  </tbody>
+</table>
+<p class="note"><span class="gr">D</span> <code>ASL = tps × step</code> 是定義；<span class="gr">M</span> 兩端都是同輪實測
+⇒ 今天的 <code>E=1.62</code> 與「這台機器這輪跑多快」自洽，§1.3 的矛盾不是今天的算術錯。</p>
+
+<h3>2.2 壞消息：仿射 <code>step(T) = c + m·T</code> 被今天的資料自己證偽</h3>
+<table>
+  <thead><tr><th>輪</th><th class="n">step(T=1)</th><th class="n">step(T=2)</th><th class="n">Δ ms</th>
+  <th class="n">反解 c</th><th class="n">反解 m/token</th><th class="n">m/c</th></tr></thead>
+  <tbody>
+    <tr><td>r1</td><td class="n">120.26</td><td class="n">224.68</td><td class="n">104.42</td><td class="n">+15.84</td><td class="n">104.42</td><td class="n">6.59</td></tr>
+    <tr><td>r2</td><td class="n">116.94</td><td class="n">249.58</td><td class="n">132.64</td><td class="n"><b>−15.70</b></td><td class="n">132.64</td><td class="n"><b>−8.45</b></td></tr>
+    <tr><td>r3</td><td class="n">140.81</td><td class="n">217.25</td><td class="n">76.44</td><td class="n">+64.37</td><td class="n">76.44</td><td class="n">1.19</td></tr>
+  </tbody>
+</table>
+<div class="verdict">
+r2 的固定成本是<b>負的</b>（物理上不可能），三輪 m 散佈 <b>1.74×</b>（76~133 ms）。
+⇒ 在這個噪音底下，<b>任何「把兩個點擬成一條直線再外推」的做法都不合格</b>。決策要用同一輪內的比值，
+或用 ≥4 點且逐 rep 擬合（<code>mtp_k_sweep.py</code> 的設計，dof=2）。
+</div>
+
+<h3>2.3 加深 k 的門檻（模型一：<code>mean_len = 1 + k·acc</code>）</h3>
+<div class="verdict">
+<b>★ 係數的出處要先過它自己的閘門</b>（§2.3–2.5 的所有門檻都踩在這裡）：
+<code>Backup/s1_ksweep/20260924_225548/s1_ksweep.json</code> 裡 <code>quotable: False</code> ——
+<code>polluted_launches = nospec#r1, k4#r1, k3#r2, k4#r2, nospec#r2</code>（<b>10 次 launch 有 5 次被自己的閘門判污染</b>）、
+<code>window.class = unknown</code>（「這個 process 從來沒問共享探針，這份產物回答不了機器當時忙不忙」）、
+<code>io_symmetry_between_arms</code> 第一筆是 <b>blocking asymmetric</b>（nospec 做了 186171 次 cache 讀取、k1 一次都沒有）。
+⇒ <code>14.61 / 42.03</code> <b>不是可引用量測</b>，門檻只能當「結構示意」；裁定要用 P1 在乾淨視窗重跑。
+這也是本篇把「加深」判成 <b>UNRESOLVED</b> 而不是「別加深」的理由。
+</div>
+
+<pre>step(T) = 14.61 + 42.03 × T          （T = k+1；單段提交＋凍結 3 GiB 池 ⇒ 絕對值不可引用）
+⇒ step(k) = 56.64 + 42.03 × k
+⇒ t/s(k) = 1000·(1 + k·acc) / (56.64 + 42.03·k)
+⇒ d/dk &gt; 0  ⇔  acc &gt; 42.03 / 56.64 = 0.742      [D，且與 k 無關，因為上下都是 k 的線性式]</pre>
+<table>
+  <thead><tr><th class="n">acc</th><th class="n">k=1</th><th class="n">k=2</th><th class="n">k=3</th><th class="n">k=4</th><th>判讀</th></tr></thead>
+  <tbody>
+    <tr><td class="n">0.465</td><td class="n">14.85</td><td class="n">13.72</td><td class="n">13.11</td><td class="n">12.72</td><td>越深越差</td></tr>
+    <tr><td class="n">0.5825</td><td class="n">16.04</td><td class="n">15.39</td><td class="n">15.04</td><td class="n">14.82</td><td>越深越差</td></tr>
+    <tr><td class="n">0.62</td><td class="n">16.42</td><td class="n">15.92</td><td class="n">15.65</td><td class="n">15.48</td><td>越深越差</td></tr>
+    <tr><td class="n"><b>0.742</b></td><td class="n">17.65</td><td class="n">17.65</td><td class="n">17.65</td><td class="n">17.65</td><td>門檻：與 k 完全無關</td></tr>
+    <tr><td class="n">0.836</td><td class="n">18.61</td><td class="n">18.99</td><td class="n">19.20</td><td class="n">19.33</td><td>才開始微幅划算</td></tr>
+  </tbody>
+</table>
+<p class="note">⚠ 這些 t/s 絕對值不可引用。可引用的是門檻的<b>結構</b>與方向：<b>acc ≤ 0.62 時加深是淨虧</b>。</p>
+
+<h3>2.4 四個 k 點的直接讀數（同一支 driver、同一 cell，連它的閘門一起看）</h3>
+<p class="sub">同一份產物的 <code>medians</code>：<code>step</code> 與 <code>mean_len</code> 都取自<b>同一臂</b>，沒有跨批、沒有引用別批的分母。</p>
+<table>
+  <thead><tr><th>臂</th><th class="n">T</th><th class="n">step ms</th><th class="n">E（mean_len）</th><th class="n">該臂自己的 acc</th><th class="n">推算 t/s</th></tr></thead>
+  <tbody>
+    <tr><td>k1</td><td class="n">2</td><td class="n">104.87</td><td class="n">2.000</td><td class="n">1.000</td><td class="n">19.07</td></tr>
+    <tr><td>k2</td><td class="n">3</td><td class="n">129.16</td><td class="n">2.830</td><td class="n">0.915</td><td class="n"><b>21.91</b></td></tr>
+    <tr><td>k3</td><td class="n">4</td><td class="n">187.19</td><td class="n">3.319</td><td class="n">0.773</td><td class="n"><b>17.73</b></td></tr>
+    <tr><td>k4</td><td class="n">5</td><td class="n">225.61</td><td class="n">4.730</td><td class="n">0.932</td><td class="n">20.96</td></tr>
+  </tbody>
+</table>
+<div class="warnbox">
+這張表<b>不是單調</b>的（k2 最好、k3 最差，散佈 22%），而且<b>各臂的接受率本身就不一樣</b>（1.000／0.915／0.773／0.932）
+⇒ 「加深」與「吞吐」之間沒有任何模型能從這張表裡抽出因果。<br>
+另一件值得單獨講的事：<b>step 的一階差分是 24.29／58.03／38.42 ms</b>（k1→k2→k3→k4），
+而 §2.3 那條直線假設它是常數 42.03 ⇒ <b>仿射模型連這份自己產生的四個點都描述不了。</b><br>
+⚠ 同一份產物的 pool 計數器還給出一個<b>與既有結論直接衝突</b>的讀數：k1–k4 四臂全是
+<code>requests 2173 / hits 2173 / misses 0 / hit_pct 100.0</code>（只有 nospec 臂是 125320/103751/21569、82.8%）
+⇒ 這裡<b>看不到</b> §3 引用的「MTP 臂 miss 數約為 OFF 臂的 3×」（出自 <code>docs/MTP_K_SWEEP_2026-09-22.md</code> §4）。
+兩份產物要不量到不同的 pool 路徑，要不其中一份的計數器不成立 ⇒ <b>本篇不替它們調停</b>，P1 要一起量同一組計數器。
+</div>
+
+<h3>2.5 模型二：chain 接受模型的 <code>m/c</code> 門檻（用既有工具函數機械複算）</h3>
+<table>
+  <thead><tr><th>加深</th><th class="n">打平門檻 m/c（p=0.5825）</th><th class="n">今天的係數 m/c</th><th>讀法</th></tr></thead>
+  <tbody>
+    <tr><td>k=1 → 2</td><td class="n"><b>0.3754</b></td><td class="n">0.7421</td><td>高於門檻 ⇒ 淨虧</td></tr>
+    <tr><td>k=2 → 3</td><td class="n">0.1487</td><td class="n">0.7421</td><td>更高 ⇒ 更虧</td></tr>
+    <tr><td>k=3 → 4</td><td class="n">0.0694</td><td class="n">0.7421</td><td>⇒ 淨虧</td></tr>
+  </tbody>
+</table>
+<p class="sub" style="margin-top:14px">但這遊戲對接受率極度敏感 —— 而接受率正是 §1.3 的 C1 在爭的東西：</p>
+<table>
+  <thead><tr><th>接受率 p</th><th class="n">k=1→2 門檻</th><th class="n">k=2→3</th><th class="n">k=3→4</th><th>係數 0.7421 之下的建議</th></tr></thead>
+  <tbody>
+    <tr><td>0.5825（部署值）</td><td class="n">0.3754</td><td class="n">0.1487</td><td class="n">0.0694</td><td>全部低於係數 ⇒ <b>k=1</b></td></tr>
+    <tr><td>0.62（今天中位）</td><td class="n">0.4516</td><td class="n">0.1848</td><td class="n">0.0895</td><td>⇒ <b>k=1</b></td></tr>
+    <tr><td><b>0.8356</b>（交付 ASL 反解，前提 k=3）</td><td class="n"><b>1.59</b></td><td class="n"><b>0.7446</b></td><td class="n">0.4177</td><td>⇒ <b>最佳落在 k≈2~3</b>（接近今天部署的設定）</td></tr>
+  </tbody>
+</table>
+<div class="warnbox">
+<b>★ 「該不該加深」的答案會因為 C1 的解不同而翻面</b>（0.5825／0.62 ⇒ k=1；0.8356 ⇒ k≈2~3）。
+這就是為什麼 <b>P0 排在一切之前</b>：它不是「多跑一份報告」，它是唯一能把這張表寫死的動作。<br>
+<code>m/c &lt; 0.3754</code>（今天 0.7421）；<code>MTP_VERIFY_HEADROOM</code> §3 的第三個口徑
+（k=3→4 門檻 0.4176，實測估 0.9172）亦然 ⇒ 在部署接受率下<b>沒有觀察到「加深更划算」</b>（⚠ 帶前提，見 §2.4）。
+⚠ 但這三個都<b>帶前提</b>（模型一假設 mean_len 線性於 k；模型二假設逐位置接受率獨立且恆定 —— 未量測）
+⇒ 只能給方向，<b>不能給數字</b>；真正的裁定要等 P1。
+</div>
+
+<h2>3. 成本在哪裡（與接受率無關的那一層）</h2>
+<table>
+  <thead><tr><th>計數器</th><th class="n">MTP off</th><th class="n">MTP on（k_eff=1）</th><th>讀法</th></tr></thead>
+  <tbody>
+    <tr><td>MiB/step</td><td class="n">19.87 ~ 20.25</td><td class="n"><b>49.87 ~ 53.70</b></td><td>多驗 1 token ⇒ <b>+30 MiB</b> 專家讀取</td></tr>
+    <tr><td>worst layer distinct / slots</td><td class="n">111~130 / 143</td><td class="n"><b>168~205 / 143</b></td><td>工作集撐破 per-layer 配額（越界 18%~43%）</td></tr>
+    <tr><td>layers_over_slots</td><td class="n"><b>0</b></td><td class="n"><b>2 ~ 4</b></td><td>整數計數，非擬合</td></tr>
+    <tr><td>池 hit%</td><td class="n">94.9 ~ 95.0</td><td class="n"><b>91.9 ~ 92.3</b></td><td>−2.7 pp</td></tr>
+    <tr><td>miss_compulsory / capacity</td><td class="n">2331 / 20</td><td class="n">3559 / 156</td><td>capacity miss 只佔 ~4%</td></tr>
+  </tbody>
+</table>
+<p class="note">同向且更強：<code>MTP_K_SWEEP</code> §4 實測 <b>MTP 臂的 miss 數約為 OFF 的 3×，且隨 k 上升</b>
+（hit 96.3–96.7% → 85.0–87.7%）⇒ 任何 verify 成本模型若不帶 pool-churn 項，就少算了與主項同量級的一項。</p>
+
+<svg viewBox="0 0 680 96" role="img" aria-label="verify 邊際 token 的成本歸因：draft head 12%、target verify 88%；通道：device span 56-61%、host hook 35-40%、dispatch 2%">
+  <text x="0" y="16" font-size="12" fill="#5f5e5a">N1：per-token 邊際成本歸因（MTP_K_SWEEP §3，dof=2 實測）</text>
+  <rect x="0" y="24" width="81.6" height="22" fill="#378ADD"></rect>
+  <rect x="81.6" y="24" width="598.4" height="22" fill="#D85A30"></rect>
+  <text x="6" y="39" font-size="11" fill="#fff">draft head 12%</text>
+  <text x="88" y="39" font-size="11" fill="#fff">target verify path 88%（ residual +61.21 ms/k ）</text>
+  <text x="0" y="66" font-size="12" fill="#5f5e5a">N2：+51~55 ms/token 的通道拆分（VERIFY_TOKEN_CHANNELS §2，三次 launch）</text>
+  <rect x="0" y="74" width="399" height="22" fill="#BA7517"></rect>
+  <rect x="399" y="74" width="267" height="22" fill="#1D9E75"></rect>
+  <rect x="666" y="74" width="14" height="22" fill="#888780"></rect>
+  <text x="6" y="89" font-size="11" fill="#fff">device span 56–61%</text>
+  <text x="405" y="89" font-size="11" fill="#fff">host hook（expert cache）35–40%</text>
+</svg>
+
+<h3>3.2 為什麼 MoE 攤不開（成因算得出來）</h3>
+<pre>expert bank shape-probe（真幾何 256 experts × top-8 × 40 層）：
+   T=1..4 → 8.09 / 15.98 / 23.79 / 31.81 ms/步   ⇒ extra_over_first = 0.977   [M]
+成因：top-8 of 256 ⇒ 兩個 token 的專家集期望重疊 = 8²/256 = 0.25 個   [D 定義算術]
+⇒ verify 時多驗的 token 幾乎不共享專家 ⇒ expert bank 近似線性，沒有 batching 收益</pre>
+<table>
+  <thead><tr><th>share</th><th class="n">T=4 家族成本</th><th class="n">對今天</th></tr></thead>
+  <tbody>
+    <tr><td>0.977（今天）</td><td class="n">31.81</td><td class="n">—</td></tr>
+    <tr><td>0.750</td><td class="n">26.29</td><td class="n">−17.3%</td></tr>
+    <tr><td><b>0.500</b></td><td class="n"><b>20.23</b></td><td class="n"><b>−36.4%</b></td></tr>
+  </tbody>
+</table>
+<p class="note">⛔ 上表是<b>家族內</b>的降幅，缺「expert bank 佔交付 device 的比例」⇒ <b>不可乘到 t/s</b>。</p>
+
+<h2>4. 槓桿矩陣（推算欄 × 量測欄 × 判定）</h2>
+<p class="sub">門檻沿用契約：<b>3%</b>（單臂噪音底 ±27% ⇒ 一律配對輪內比值）；缺量測的格子顯式標「⚠ 缺量測」，不靜默通過。</p>
+<table>
+  <thead><tr><th>槓桿</th><th>推算欄（上界＋前提）</th><th>量測欄（實測＋產物）</th><th>判定</th><th>下一步</th></tr></thead>
+  <tbody>
+    <tr><td><b>A. 提高 a / 練 draft head</b></td>
+        <td><code>E = 1 + a·k_eff</code>（定義式）；k_eff=1 時 a 0.62→0.90 ⇒ E +17%</td>
+        <td>draft head forward 只佔邊際 token <b>12%</b>，且已在自己的 kernel 地板（8.36 ms/token）；既有 ceiling 判決已判「別練 draft head」</td>
+        <td>❌ 不做</td><td>不排程</td></tr>
+    <tr><td><b>B. 加深 draft</b></td>
+        <td>門檻 <code>acc &gt; 0.742</code>／<code>m/c &lt; 0.3754</code></td>
+        <td>現實 acc 0.465~0.62（<code>DIAGNOSTIC_ARMS_LEDGER</code> §2.3／<code>VERIFY_TOKEN_CHANNELS</code> §9b）</td>
+        <td>⚠ <b>UNRESOLVED</b>（不是「別加深」的實證結論）</td><td>P0 解 C1；P1 乾淨視窗重跑多點 k</td></tr>
+    <tr><td><b>C. verify 的 device 時間 ＝ C 軸</b></td>
+        <td>擁有邊際 token 的 <b>56–61%</b>（這比例本身是實測）</td>
+        <td>⚠ <b>缺地板</b>：45 份 log 帶 op 表，25 被 sampling mix 拒、17 被寬度 cell 拒、<b>0 份通過</b>；補跑的 NSM capture 得 rank 20/44、R² 0.67</td>
+        <td>⚠ 最大空間，但今天沒有數字</td><td><b>P3：shape probe</b></td></tr>
+    <tr><td><b>D. expert-cache host hook（35–40%）</b></td>
+        <td>理論天花板：路由 top-143 覆蓋 <b>98.8~98.9%</b>（masscov 與 route-dump 兩個獨立口徑）</td>
+        <td><code>LLAMA_EXPERT_CACHE_PIN_PROFILE</code> 實測 count-cold <b>34.2% → 10.6%</b>；⚠ t/s 未驗證（三趟 swap 狀態不同）</td>
+        <td>⚠ 有潜力，未定案</td><td><b>P2：乾淨配對</b></td></tr>
+    <tr><td><b>E. 讓 verify token 共享專家</b></td>
+        <td>唯一能降 <code>extra_over_first 0.977</code> 的機制 ⇒ 家族內 −36.4%（不可乘到 t/s）</td>
+        <td>AcceptMoE 定價：今天的駐留覆蓋下要付 <b>21.26% 路由質量</b>換 +17.5% 結構上限</td>
+        <td>⚠ 排在 D 之後</td><td>D 有結論才輪到</td></tr>
+    <tr><td><b>F. 純 IO 軸（填池／prefetch／併發度）</b></td>
+        <td>交付 cell 的 fill 同步只佔 step <b>4.7%</b> ⇒ 上限 ~5%</td>
+        <td>M-W：us/job −11.1% 但 t/s <b>−0.6%</b>；layer-ahead prefetch <b>−7.1%</b>（門檻 15%，未分離）</td>
+        <td>❌ 已結案</td><td>—</td></tr>
+  </tbody>
+</table>
+<div class="warnbox">
+⛔ <b>不要同時做兩件</b>（每個比較都建立在「同一 build、同一 cell、swap=0」上）。
+⛔ <b>收益不可相加</b>：C 與 D 打的是同一個 step 的不同 slice，baseline 重疊；既有判決「分量相加在這個 regime 不閉合」。
+</div>
+
+<h2>5. 建議的執行順序（全部 0 重建）</h2>
+<table>
+  <thead><tr><th>步驟</th><th>動作</th><th class="n">時間</th><th>判準（預先寫死）</th><th>解什麼</th></tr></thead>
+  <tbody>
+    <tr><td><b>P0</b></td><td>交付口徑重跑 MTP ON/OFF 配對 ＋ 抓 <code>CGC-MTP-PERF</code> 與 round 計數</td><td class="n">~25 min</td>
+        <td>① ASL 與 E 相差 ≤10%；② 三輪輪內 S 能否全部 &gt;1.03；③ 12/88 是否複現</td><td>§1.3 的 C1、交付 ON/OFF 的洞</td></tr>
+    <tr><td><b>P1</b></td><td><code>mtp_k_sweep</code>（4 點，dof=2）搬到交付 caliber</td><td class="n">~40 min</td>
+        <td>per-rep 的 <code>c_tok</code> 是否重現 69.56 ms；<code>acc</code> 是否不再 = 1.000</td><td>是否真的別加深</td></tr>
+    <tr><td><b>P2</b></td><td>PIN_PROFILE vs base，delivery cell，ABBA ×3，swap=0 全程</td><td class="n">~25 min</td>
+        <td>輪內 <code>cb</code> ms/step 下降 ≥15% 才算分離</td><td>D 這一格能不能收</td></tr>
+    <tr><td><b>P3</b></td><td>verify device 時間的 shape probe（attention/GDN/expert bank 分別要有地板）</td><td class="n">半天</td>
+        <td>先產出地板，不設 t/s 門檻</td><td>C 軸唯一能開始設計的前置</td></tr>
+  </tbody>
+</table>
+
+<h3>P0 命令</h3>
+<pre># 交付口徑：工具不吃 --warm-skip，所以走 env（llama-bench.cpp:516 讀 CGC_BENCH_WARM_SKIP）
+# profile 沿用 anchor 那支（prod25-stream），避免再引入一個新變因
+CGC_BENCH_WARM_SKIP=64 LLAMA_BENCH_SPEC_DBG=1 CGC_MTP_PERF=1 \
+python3 scripts/check/spec_cost_curve.py --profile prod25-stream --ks 0,3 --rounds 3 \
+  --prompt 0 --gen 128 --depth 512 --batch 512 --ubatch 512 \
+  --json Backup/phase_decomp/spec_cost_delivery_&lt;tag&gt;.json</pre>
+
+<h3>P1 / P2 命令</h3>
+<pre># P1：4 個 k 點 + OFF（OFF 跑 -b 512、decode-spec 跑 -b 8 ⇒ OFF 是外部參考，不是擬合點）
+python3 scripts/check/mtp_k_sweep.py --reps 3 --logdir /tmp/mtp_ksweep_&lt;tag&gt;
+
+# P2：先產生 profile，再靜態釘住（⚠ 必須全程 swap=0）
+CGC_MASSCOV=1 LLAMA_EXPERT_CACHE_ROUTE_RECORD=1 LLAMA_EXPERT_CACHE_ROUTE_DUMP=/tmp/route_dump.txt \
+  python3 scripts/check/llama_bench_matrix.py --arms prod25-stream --reps 1 --prompt 0 \
+  --gen 128 --depths 512 --batch 512 --ctx-size 4096 --warm-skip 64 --workdir /tmp/x
+CGC_MASSCOV=1 LLAMA_EXPERT_CACHE_PIN_PROFILE=/tmp/route_dump.txt \
+  python3 scripts/check/llama_bench_matrix.py --arms prod25-stream --reps 3 --prompt 0 \
+  --gen 128 --depths 512 --batch 512 --ctx-size 4096 --warm-skip 64 --workdir /tmp/y</pre>
+
+<h2>6. 明確不要做的事</h2>
+<div class="verdict">
+1. 別相信 <code>13.7 t/s</code>／<code>S=1.19</code>／<code>E=2.31</code>／<code>a=0.44</code>／<code>m=0.19</code>（已作廢歸檔）。<br>
+2. 別用 <code>cost = 1 + m·k</code> 外推到沒量過的 k（今天 §2.2 更慘：<code>c</code> 出現負值）。<br>
+3. 別把 expert-bank 家族的 −36.4% 乘到 t/s（缺佔比）。<br>
+4. 別把 S1 的 1.83× 算成 MTP 的（那是序列化）。<br>
+5. 別用 pooled fit 下結論（rep 間漂移到 1.5×），一律 per-rep。<br>
+6. 別在 swap &gt; 0 的機器上報任何 t/s。
+</div>
+
+<h2>7. 複算與引用</h2>
+<pre>cd /Users/alexchuang/Documents/flashkv-devserver
+python3 - &lt;&lt;'PY'
+import json, sys
+sys.path.insert(0,'scripts/check')
+import mtp_verify_headroom as H
+d=json.load(open('Backup/phase_decomp/spec_cost_en-mtp-repro-250925.json'))
+runs={(r['k'],r['round']):r for r in d['runs']}
+for rd in (1,2,3):                                    # 2.1 同輪交叉檢核
+    on=runs[(3,rd)]; off=runs[(0,rd)]
+    asl=H.tok_per_step(on['tps_tg'], on['ms_per_step'])
+    print(rd, round(asl,4), on['E'], round(on['ms_per_step']/off['ms_per_step'],4),
+          round(on['E']/(on['ms_per_step']/off['ms_per_step']),4))
+Cf,ctok=14.61,42.03; c=Cf+ctok                        # 2.3 加深門檻
+for k in (1,2,3): print('k',k,'->',k+1,'m/c門檻', round(H.breakeven_m(0.5825,k,c)/c,4))
+print('係數 m/c =', round(ctok/c,4))
+PY</pre>
+<table>
+  <thead><tr><th>產物</th><th>內容</th></tr></thead>
+  <tbody>
+    <tr><td><code>Backup/phase_decomp/spec_cost_en-mtp-repro-250925.json</code></td><td>今天 6 趟原始羽毛：tps、rounds、E、read MiB、hit%、worst distinct</td></tr>
+    <tr><td><code>docs/MTP_K_SWEEP_2026-09-22.md</code></td><td>4 點 k sweep、c_tok=69.56、12/88 拆分、pool churn 3×</td></tr>
+    <tr><td><code>docs/VERIFY_TOKEN_CHANNELS_2026-09-23.md</code></td><td>邊際 verify token 的通道拆分與 §9b 的接受率決策</td></tr>
+    <tr><td><code>docs/DIAGNOSTIC_ARMS_LEDGER_2026-09-25.md</code> §2.3</td><td>可移植的 <code>step = 14.61 + 42.03·T</code></td></tr>
+    <tr><td><code>docs/MTP_VERIFY_HEADROOM_2026-09-24.md</code></td><td>m/c 門檻幾何、expert bank 線性成因</td></tr>
+    <tr><td><code>docs/REPLACEMENT_POLICY_75PCT_2026-09-23.md</code></td><td>池治理：hit 天花板 98.8% vs 今天 65.8~92%</td></tr>
+    <tr><td><code>docs/NEXT_STEP_MISS_HANDLER_2026-09-24.md</code></td><td>miss 是穩態；capacity miss 只佔 ~4%</td></tr>
+  </tbody>
+</table>
+<div class="warnbox">
+⚠ <b>OPEN（本篇不替它們調停）</b>：「加大池／換替換策略只能消 4%」與「PIN_PROFILE 把 count-cold 從 34.2% 打到 10.6%」張力很大 ——
+兩者量的是不同東西（miss 分類 vs count-cold 比例）。P2 的判準是 <code>cb</code> ms/step，不是任一個百分比。
+</div>
+
+</body>
+</html>

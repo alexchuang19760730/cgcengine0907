@@ -145,6 +145,59 @@ llama-bench -m models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
   "cache_type_v": "q8_0",
   "fixed_fill_seed": null
  },
+ "delivery-ws192": {
+  "ngl": 99,
+  "load_mode": "none",
+  "threads": 8,
+  "batch": 512,
+  "ubatch": 512,
+  "prompt": 0,
+  "gen": 256,
+  "depths": 512,
+  "reps": 3,
+  "warm_skip": 192,
+  "ctx_size": 4096,
+  "expert_cache_bytes": 8589934592,
+  "cache_type_k": "q8_0",
+  "cache_type_v": "q8_0",
+  "fixed_fill_seed": null
+ },
+ "delivery-reps7": {
+  "twin_of": "delivery",
+  "ngl": 99,
+  "load_mode": "none",
+  "threads": 8,
+  "batch": 512,
+  "ubatch": 512,
+  "prompt": 0,
+  "gen": 128,
+  "depths": 512,
+  "reps": 7,
+  "warm_skip": 64,
+  "ctx_size": 4096,
+  "expert_cache_bytes": 8589934592,
+  "cache_type_k": "q8_0",
+  "cache_type_v": "q8_0",
+  "fixed_fill_seed": null
+ },
+ "delivery-ws192-reps7": {
+  "twin_of": "delivery-ws192",
+  "ngl": 99,
+  "load_mode": "none",
+  "threads": 8,
+  "batch": 512,
+  "ubatch": 512,
+  "prompt": 0,
+  "gen": 256,
+  "depths": 512,
+  "reps": 7,
+  "warm_skip": 192,
+  "ctx_size": 4096,
+  "expert_cache_bytes": 8589934592,
+  "cache_type_k": "q8_0",
+  "cache_type_v": "q8_0",
+  "fixed_fill_seed": null
+ },
  "default-b512": {
   "ngl": 99,
   "load_mode": "none",
@@ -249,6 +302,58 @@ llama-bench -m models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
 - `default-b512`（B3）：(default) 的一切不變，只把 `batch`/`ubatch` 5632 → 512（保留 `prompt 2048`）。
   判別句：**掉到 ~9.7 ⇒ batch 是主因**。
 - 兩者互斥且都只改一個維度 ⇒ 任一格單獨達標即分離成功；都不達標 ⇒ 主因在別處（不是 11.703 vs 8.26 的差）。
+
+#### 2.5.4b `cells.delivery-ws192` — L20-10 的**可滿足**起點格（2026-09-30 線A 新增，取代 `delivery-ws256`）
+
+- 由來（實測，`scripts/check/l2010_verdict.py`）：`delivery-ws256` **不可滿足** —— 它的 shape 是
+  `gen=128 / warm_skip=256` ⇒ 計時段 `gen − warm_skip = −128`。引擎語意是「每個 rep 先跑 N 個
+  **不計時**的 token，計時的段落是 `gen−N`」（`src/llama.cpp/tools/llama-bench/llama-bench.cpp:474`），
+  所以那一格**定義上不存在**：產物自報 `warm_skip_applied=false` 不是「引擎沒套用」，是這條算式的
+  必然結果。⇒ 照它跑的 B1 只證明「格不成立」，起點假設**未被測**。
+- `delivery-ws192`：delivery 的一切不變，`gen` 128 → 256、`warm_skip` 64 → 192 ⇒
+  **計時段仍是 64**（與 `delivery` 逐字相同的權威 row `p0/n64`），只有**起點**不同（每 rep 先warm
+  192 個 token 再計時，對照臂只 warm 64）。
+- 判別句（跑前寫死，與 `delivery-ws256` 同一家族）：
+  **起點是主因 ⇒ 本格升到 ~11.5**（(default) 錨 11.3–11.7 的中值，±5% 內）；
+  **本格落在 `10.5 ± 5%`（≈ 對照臂的 10.2–10.3）⇒ 起點不是主因**。
+- 為何不改成「`gen=128 / ws=112`」：那會把計時段壓到 16 個 token（樣本變少、離散變大），
+  與對照臂不同形 ⇒ 分不開「起點」與「樣本量」。保住 64 就保住「唯一差異＝起點」。
+
+#### 2.5.4c `cells.delivery-reps7` / `cells.delivery-ws192-reps7` — L20-10 的**解析度**孿生（2026-10-01 線A 新增）
+
+- 由來（實測）：§2.5.4b 的一對在乾淨窗裡**兩臂首次都可引用**
+  （A `[11.1961, 11.5185, 12.1653]` median 11.5185／B `[11.669, 12.0732, 12.2068]` median 12.0732、
+  `attribution=none`、swap 成長 0.0 MiB、thermal NOMINAL），但判詞仍是 `REFUSE`——**A4 可辨識性**：
+  `|Δstep| 3.989 ms ≤ 兩臂散布 7.515 ms`。效應（+4.8%）不是不存在，是 **n=3 的逐 rep 散布
+  （~1.05–1.09）比它大** ⇒ 在這一對裡量不到那個差。
+- 所以宣告兩個**同形孿生**：各自與其基底**只差 `reps`**（3 → 7），其餘維度逐字相同、計時段不變
+  （A：`gen 128 − ws 64 = 64`；B：`gen 256 − ws 192 = 64` ⇒ 權威 row 仍是逐字相同的 `p0/n64`）。
+  孿生由 `twin_of` 宣告，`cell_contract.validate_reps_twins()` 逐項驗（差一個別維度就 fail-closed；
+  `reps` 只能加大 —— 孿生不可用來量比較少的 rep）。
+- 判別句（跑前寫死）：**與 §2.5.4b 逐字相同**（B 落在 11.5±5% ⇒ 起點是主因；落 10.5±5% ⇒ falsify），
+  加的是**前置**：兩臂的逐 rep 散布要小到讓 `|Δstep| > 散布`（A4）——否則維持 `REFUSE`
+  （不可辨識 ≠ 否證）。
+- 為什麼是「加 n」而不是動別的維度：`reps` 是兩格的**嚴格維度**，孿生機制只開放
+  `reps`／`rep_split` ⇒ 要 n↑ 只能宣告孿生（不能用 CLI 對齊）。
+- ⚠ 為什麼不直接改既有兩格：`delivery`／`delivery-ws192` 是**已量測的權威格**（跨時間比較的入口）；
+  改它們的 `reps` 等於換格，會讓既有讀數失去可比的格。
+- **2026-10-01 07:22 結果（兩格都已實跑，同一個乾淨窗）**：n↑ **沒有**解掉 A4，而且方向意外——
+  同一支臂的全 rep max/min 由 **1.0866（n=3）升到 1.1197（n=7）**（B 也由 1.046 → 1.0818）：
+  `max/min` 是**極值統計**，樣本愈多愈容易碰到極端值 ⇒ A4 的分母不是 n 能壓的；而**效應本身也消失**：
+  n=3 的 +4.8%（A 11.5185／B 12.0732）在 n=7 只剩 **+1.14%**（A 11.7941／B 11.9281），兩臂都落在
+  11.5±5% ⇒ 起點在 n=7 下**不再可辨**（W0 的 A 也読 11.804，兩趟一致）。⇒ 這一對的孿生**不是**
+  「更多樣本 ⇒ 可判定」的路；要嘛換 A4 的解析度量（中位數差的標準誤／配對 per-rep 比率），
+  要嘛以這兩輪為證據否證式結案——**兩者都是 operator 的決定**（看板 L20-10 的 `precondition.block`）。
+- **2026-10-01 結案（operator 明文，排除）**：判詞**維持 `REFUSE`**（A 不可引用），結案是 operator 的明文處置——結成
+  「**起點在 n=7 下不再可辨**」（n=3 的 +4.8% 是第一 rep 冷啟對 n=3 中位數的拉扯）。以**配對 per-rep 比率**（B/A）現算：
+  中位數 `1.0114`、方向 5/7、符號檢定 `p=0.227`、t=1.23 ⇒ 就算換成 A4 的解析度量，這份 n=7 資料也不會變成可判定；
+  A4／引用閘門的統計量改革**另立前瞻 charter**（不回填這一格）。看板：L20-10 已 `settled`（`precondition.rerun=duplicate`
+  指 `docs/L2010_CLEAN_WS192_20261001.md` 與判詞檔）。
+- **前瞻改革已立卡（2026-10-01）**：`scripts/check/charters/e-quote-caliber-paired-2026-10-01.yaml`
+  ＋ 預註冊全文 `docs/QUOTE_CALIBER_PAIRED_PREREG_2026-10-01.md`（**paired-v1**：配對 per-pair 比率＋兩趟反序＋
+  house precision rule；唯讀重播 0 翻轉、A/A 空對照無號、L20-10 兩輪仍拒為採納前提；前瞻生效、0 回填）。
+  原始數據：`Backup/l2010_b1b3_2026-09-30/clean_ws192_{A,B}.json`、`clean_ws192_verdict.json`（含
+  `diagnostic`）、`docs/L2010_CLEAN_WS192_20261001.md`。
 
 #### 2.5.5 `cells.delivery-mmap-p6` — L25-1 的 B 臂（2026-09-30 線A 新增）
 

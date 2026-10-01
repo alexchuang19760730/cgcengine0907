@@ -3971,6 +3971,49 @@ ggml_status llama_context::graph_compute(
         }
     }
 
+    // [CGC 2026-10-01 · L25-2 skip-probe] env-gated（預設關）：把「輸出元素數 ≤8」的 dispatch 拿掉。
+    // 落地形狀與立項卡草稿（「在 llama-graph.cpp 的站點換 op」）不同，理由寫在跑完的判詞裡：
+    //   ① 「所有 ≤8」才真的是所有（不必逐站點枚舉）；
+    //   ② 形狀與 buffer 完全保留（節點還在圖裡、下游拿到的 ne 不變，只是值不再被算）⇒ VOID by design；
+    //   ③ 旗標不在 ⇒ 這一段一個位元組都不執行（樹行為逐位元不變）。
+    // 收貨靠 stderr 的 CGC-SKIP-TINY 標記（1 行即算）；這一臂的輸出必然錯，判詞只取 Δstep。
+    // view/reshape/permute 本來就不發 dispatch（ggml-metal-ops.cpp:524）⇒ 不列入 skip 的計數。
+    static const bool cgc_skip_tiny = getenv("CGC_SKIP_TINY_DISPATCH") != nullptr;
+    if (cgc_skip_tiny) {
+        static uint64_t sk_steps = 0, sk_nodes = 0, sk_elems = 0;
+        int sk_n = 0; int64_t sk_e = 0;
+        const int sk_total = ggml_graph_n_nodes(gf);
+        for (int sk_i = 0; sk_i < sk_total; ++sk_i) {
+            ggml_tensor * sk_t = ggml_graph_node(gf, sk_i);
+            if (sk_t == nullptr || sk_t->op == GGML_OP_NONE || sk_t->view_src != nullptr) {
+                continue;
+            }
+            if (sk_t->op == GGML_OP_RESHAPE || sk_t->op == GGML_OP_VIEW ||
+                sk_t->op == GGML_OP_TRANSPOSE || sk_t->op == GGML_OP_PERMUTE) {
+                continue;
+            }
+            if (ggml_nelements(sk_t) > 8) {
+                continue;
+            }
+            static int sk_dbg = 0;
+            if (sk_dbg < 16) {
+                sk_dbg += 1;
+                fprintf(stderr, "CGC-SKIP-TINY-NODE: %s op=%s elems=%lld\n",
+                        sk_t->name, ggml_op_name(sk_t->op), (long long) ggml_nelements(sk_t));
+            }
+            sk_t->op = GGML_OP_NONE;   // 形狀不動；值＝stale ⇒ VOID
+            sk_n += 1;
+            sk_e += ggml_nelements(sk_t);
+        }
+        sk_steps += 1; sk_nodes += (uint64_t) sk_n; sk_elems += (uint64_t) sk_e;
+        if (sk_steps <= 12 || sk_steps % 200 == 0) {
+            fprintf(stderr, "CGC-SKIP-TINY: step=%llu skipped=%d elems=%lld total_nodes=%d "
+                            "(cum: nodes=%llu elems=%llu; VOID by design, shapes preserved)\n",
+                    (unsigned long long) sk_steps, sk_n, (long long) sk_e, sk_total,
+                    (unsigned long long) sk_nodes, (unsigned long long) sk_elems);
+        }
+    }
+
     auto status = ggml_backend_sched_graph_compute_async(sched.get(), gf);
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: ggml_backend_sched_graph_compute_async failed with error %d\n", __func__, status);
@@ -4661,6 +4704,17 @@ static std::vector<uint64_t>          g_rho_shadow_stamp;
 static std::vector<uint64_t>          g_rho_hook_stamp;
 static std::vector<uint64_t>          g_rho_seen_stamp;
 
+// [CGC 2026-09-30 rho split] **量具閘門**：只有探針在印帳（charter e-rho-delivery-flag）。
+//
+// 交付臂（`CGC_RHO=1`、probe 不在）跑的是**同一條機制**，但 stderr 不得出現任何 `CGC-RHO-*`
+// —— 這是收貨條件（`grep -c 'CGC-RHO-'` 為零），也是「機制與量具真的分家」與「只是把旗標
+// 改名」的差別。交付路徑上的四處列印（CAP／FILL-SKIP／FILL／PHASE-SKIP）全部走這裡，
+// 不要各自再寫一次 `getenv`（多一個定義就是多一個會漂移的地方）。
+static bool cgc_rho_meter() {
+    static const bool on = getenv("CGC_RHO_PROBE") != nullptr;
+    return on;
+}
+
 static void cgc_rho_capture(ggml_tensor * t) {
     const char * dash = strrchr(t->name, '-');
     if (dash == nullptr) {
@@ -4682,7 +4736,7 @@ static void cgc_rho_capture(ggml_tensor * t) {
     }
     {
         static int dbg = 0;
-        if (il == 0 && dbg++ < 12) {
+        if (cgc_rho_meter() && il == 0 && dbg++ < 12) {
             fprintf(stderr, "CGC-RHO-CAP: name=%s il=%d ne=[%lld,%lld] type=%d\n",
                     t->name, il, (long long) t->ne[0], (long long) t->ne[1], (int) t->type);
         }
@@ -4706,7 +4760,10 @@ static void cgc_rho_capture(ggml_tensor * t) {
 // 最壞情形（ρ 全猜錯）不會出錯：真實 on_topk 的 ensure 會自己同步 pread，而猜對的那一批
 // 已經在路上了 ⇒ 退化成基線。這就是為什麼先量 cov 再動手：猜錯不罰，猜對才賺。
 void llama_context::cgc_rho_prefetch(int il) {
-    static const bool on = getenv("CGC_RHO_FILL") != nullptr;
+    // [CGC 2026-09-30 rho split] 交付面（`CGC_RHO`）＝影子節點＋capture＋**fill** 一起；
+    // `CGC_RHO_FILL` 保持它的舊語意（探針臂上的「要不要真的發 IO」）。兩者有一個在，fill 就開。
+    static const bool cgc_rho_deliver = getenv("CGC_RHO") != nullptr;
+    static const bool on = cgc_rho_deliver || getenv("CGC_RHO_FILL") != nullptr;
     if (!on) {
         return;
     }
@@ -4762,7 +4819,7 @@ void llama_context::cgc_rho_prefetch(int il) {
     const uint32_t layer_cap = llama_expert_cache_slots_per_layer_l(cache, (uint32_t) il);
     if (layer_cap > 0 && uni.size() > (size_t) layer_cap) {
         s_skip_cap += 1;
-        if (il == 0) {
+        if (cgc_rho_meter() && il == 0) {
             fprintf(stderr, "CGC-RHO-FILL-SKIP: il=%d uni=%zu > layer_cap=%u -- a union that does not "
                             "fit the layer is a full-layer read, not a prefetch (cum_skipped=%llu)\n",
                     il, uni.size(), layer_cap, (unsigned long long) s_skip_cap);
@@ -4787,7 +4844,7 @@ void llama_context::cgc_rho_prefetch(int il) {
     static uint64_t s_layers = 0, s_queued = 0;
     s_layers += 1;
     s_queued += uni.size();
-    if (il == 0) {
+    if (cgc_rho_meter() && il == 0) {
         fprintf(stderr, "CGC-RHO-FILL: layers=%llu queued=%llu per_layer=%.2f (cum_skipped=%llu)\n",
                 (unsigned long long) s_layers, (unsigned long long) s_queued,
                 s_layers ? (double) s_queued / (double) s_layers : 0.0,
@@ -4798,7 +4855,10 @@ void llama_context::cgc_rho_prefetch(int il) {
 bool llama_context::expert_cache_eval_cb(ggml_tensor * t, bool ask, void * user_data) {
     llama_context * ctx = static_cast<llama_context *>(user_data);
     static const bool cgc_rho_probe = getenv("CGC_RHO_PROBE") != nullptr;
-    if (cgc_rho_probe && !ask && strncmp(t->name, "cgc_rho_logits", 14) == 0) {
+    // [CGC 2026-09-30 rho split] 機制的閘＝交付旗標或量具（量具向後相容地帶著機制）。
+    // 量具那一支只管「印不印帳」（cgc_rho_meter），不管機制跑不跑。
+    static const bool cgc_rho_deliver = getenv("CGC_RHO") != nullptr || cgc_rho_probe;
+    if (cgc_rho_deliver && !ask && strncmp(t->name, "cgc_rho_logits", 14) == 0) {
         // [CGC 2026-09-26 rho decode-only] ρ 是 **decode 的**機制，不是 prefill 的。這道閘用本
         // repo 唯一的相位判據 `cgc_is_decode_graph`（llama-cgc-phase.h:141），**不自己另立門檻** ——
         // llama-context.h:522-526 明文要求四個站點對「哪一步算 decode」必須一致（n_batch clamp／
@@ -4825,7 +4885,7 @@ bool llama_context::expert_cache_eval_cb(ggml_tensor * t, bool ask, void * user_
             // 印一次就好：讓「閘真的擋了」是可觀測的，而不是「靜默沒跑」。
             // （本 repo 的老教訓：不要把「沒量到」和「量到很低」混在一起。）
             static bool s_rho_phase_skip_printed = false;
-            if (!s_rho_phase_skip_printed) {
+            if (cgc_rho_meter() && !s_rho_phase_skip_printed) {
                 s_rho_phase_skip_printed = true;
                 fprintf(stderr, "CGC-RHO-PHASE-SKIP: ntok=%lld > decode_width=%u -- shadow capture and "
                                 "rho fill are decode-only (a prefill top-8 union spans ~all %d experts, "

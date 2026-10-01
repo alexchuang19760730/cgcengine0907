@@ -1,0 +1,43 @@
+# 跑前立項卡（charter）—— M MTP on 加速線復盤
+# 同樣由 2026-09-27 復盤補建，拿歷史真實實驗當範例驗證 experiment_sync。
+
+id: exp-mtp-retro
+owner: line-M（MTP／speculative）
+created: 2026-09-27
+axis: M   # 掛在 mindmap「M MTP on 加速」軸
+
+question: >
+  MTP on（draft 一次提 k 個 token、verify 批量驗證）能否在交付口徑下，靠
+  「每步多 token 攤薄固定成本」穩定提升 decode t/s？
+
+baseline:
+  metric: decode t/s 與 mean_len（E = 1 + k·a）
+  cell:   prod-new、MTP off 為對照
+  value:  MTP off 12.57 t/s；合成／診斷環境 accept 0.93–0.99
+  source: docs/MTP_CTX_REPRODUCIBLE_2026-09-26.md
+
+hypothesis:
+  mechanism: >
+    若 verify 近乎免費且 accept 高，每步 mean_len 上升、固定成本被攤薄 ⇒ t/s 提升。
+  expected: 交付口徑 mean_len 與 t/s 同步提升 ≥ 3%
+  basis:    docs/mindmap/briefs/mtp-ksweep.md、MTP_AMORTIZATION_RECHECK_2026-09-25.md
+
+acceptance:
+  success: >
+    交付口徑 mean_len 提升 X% 且 t/s 提升 ≈ X%（≥3%），M1/M2/M3 過，
+    且不 revert 任何正確性修復。
+  falsify: >
+    verify 每多一 token 邊際成本高（實測斜率 42 ms/T），且交付 accept 腰斬
+    （0.465／長探針 0.233，mean_len 1.70）⇒ 攤薄淨帳非正。
+  on_fail: >
+    不以 revert ctx_other 正確性修復換速度；該方向判死，記錄根因（tier 4）。
+
+arms:
+  - "prod-new（MTP off）"
+  - "prod-new:CGC_SERVER_MTP=1（MTP on）"
+
+retro_verdict:
+  - "k-sweep：step ≈ 14.61 + 42.03·T ⇒ verify 隨 T 線性變貴，不是近乎免費，與攤薄假設矛盾。"
+  - "最佳 k 不可移植：合成 accept 0.93–0.99 vs 交付 0.465–0.58；長探針 server 實測 a=0.233、mean_len 1.70。"
+  - "ctx_other（KV 共享）是正確性修復（65c76b8c7）；共享後 draft 看到 target KV，本模型 mean_len 2.02→1.70，要 +19% 得 revert 護欄，不可行。"
+  - "其餘 MTP 槓桿全判死：RSL-MTP 0.70–0.97×（無 ≥1.0）、dynamic-k oracle 僅 1.035×、verify residency 彈性 0.10–0.17、mtp-2x a/m=1.445 不到 2×。"

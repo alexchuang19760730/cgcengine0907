@@ -27,6 +27,24 @@ EDGE WORTH KNOWING: `consumed_changed` is a count of PUBLISHES (i.e. of (step, l
 each served layer publishes once per step), not of steps. Divide by the layer count (39 on this
 model: 40 layers minus layer 0, which keeps its host leaf) to get steps. The tool prints both.
 
+EDGE THAT BITES (2026-09-28) -- the by-ntok split MIXES CONTEXTS
+----------------------------------------------------------------
+The `_by_ntok` counter maps are keyed by WIDTH ONLY and carry no `is_draft` guard
+(llama-context.cpp:5678-5687 add to them unconditionally), while the per-graph line's SEL-DRIFT
+loop DOES skip draft entries (`if (kv.first >= 100000) continue;`, :5604). The draft context and the
+main context publish into ONE shared cache, so on an MTP-on run the `ntok=1` row is the DRAFT
+context -- not the delivery decode step.
+
+Measured proof, from the 2026-09-20 logs (the only churn-instrumented ones on this tree):
+
+    ntok=1 denominator  612 / 306
+    `draft: calls`      612 / 306      <-- equal, exactly, in both runs
+    612 + 8160 + 4159 = 12931 ~= publishes=12971   <-- one cache, both contexts
+
+So `ntok=1 0/612 = 0.0%` is a draft measurement. Labelling that row "decode" is how a real number
+gets read as an answer to a question nobody measured. This tool now says which context each width
+came from, and `delivery_ntok1_measured` is False unless the run was MTP off.
+
 Usage:
     python3 scripts/check/premise_b_read.py Backup/cgc_logs/llama_server_*.log
     python3 scripts/check/premise_b_read.py --newest 3
@@ -46,8 +64,24 @@ TEARDOWN_OLD = re.compile(   # the pre-2026-09-15 shape, no selected-subset spli
     r"S1 slot-table: publishes=(\d+) clamped=(\d+) changed_entries=(\d+) unchanged_publishes=(\d+)")
 PERGRAPH = re.compile(r"CGC-S1: TABLE-CHURN graph=(\d+) ntok=(\d+) publishes=(\d+) changed_entries=(\d+)")
 PERGRAPH_OLD = re.compile(r"CGC-S1: TABLE-CHURN graph=(\d+) publishes=(\d+) changed_entries=(\d+)")
-BYNTOK = re.compile(r"S1 churn by ntok \(consumed subset\):(.*)$")
+# [CGC 2026-09-28] `(.*)$` only matched when the by-ntok line happened to be the LAST line of the
+# file (no re.M, and `.` will not cross a newline) -- which is true of the 2026-09-20 logs and is why
+# it went unnoticed, but false for any log that prints anything after it (the ENTRY-granularity line
+# is printed right after this one whenever it is populated). `[^\n]*` is the intended scope.
+BYNTOK = re.compile(r"S1 churn by ntok \(consumed subset\):([^\n]*)")
 TOKEN = re.compile(r"ntok=(\d+) (\d+)/(\d+)=([0-9.]+)%")
+# [CGC 2026-09-28] Which CONTEXT a width came from. `draft: calls` lives on the "MTP fast path"
+# line; its presence is what separates an MTP-on ntok=1 (draft) from an MTP-off ntok=1 (delivery).
+MTPFAST  = re.compile(r"MTP fast path: calls=(\d+)")
+MTPDRAFT = re.compile(r"draft: calls=(\d+)")
+KIND_LABEL = {
+    "draft":  "DRAFT context (MTP on) -- NOT the delivery decode step",
+    "mixed":  "MIXED draft + main -- quote as neither",
+    "main":   "main context, MTP off -- THIS is the delivery decode step",
+    "verify": "main context, MTP verify step",
+    "prefill": "cgc_pool_max_tokens(), chunked-prefill block",
+    "unknown": "unattributed",
+}
 DECPROF = re.compile(r"CGC-DECPROF: step=\d+ segs=\d+ layers=(\d+) total=[0-9.]+ ms \| "
                      r"wait=[0-9.]+ \([0-9.]+%\) cb=[0-9.]+ \([0-9.]+%\) submit=[0-9.]+ \([0-9.]+%\) "
                      r"ntok=(\d+)")
@@ -95,6 +129,32 @@ def read(path, min_publishes=100):
     if mb:
         for nt, ch, tot, pct in TOKEN.findall(mb.group(1)):
             out["by_ntok"][int(nt)] = dict(changed=int(ch), total=int(tot), pct=float(pct))
+    # [CGC 2026-09-28] Attribute each width to a context. `draft: calls` is the ONLY in-log evidence
+    # that separates an MTP-on ntok=1 (draft) from an MTP-off ntok=1 (delivery), and the counter maps
+    # themselves cannot: they are keyed by width, and both contexts feed them.
+    out["mtp_fast"] = bool(MTPFAST.search(txt))
+    md = MTPDRAFT.search(txt)
+    out["draft_calls"] = int(md.group(1)) if md else 0
+    out["by_ntok_kind"] = {}
+    for nt, d in out["by_ntok"].items():
+        if nt >= 8:
+            kind = "prefill"
+        elif nt == 1:
+            if not out["draft_calls"]:
+                # no draft calls at all -> this really is the main-context single-token decode
+                kind = "main"
+            elif d["total"] == out["draft_calls"]:
+                kind = "draft"
+            elif d["total"] > out["draft_calls"]:
+                kind = "mixed"
+            else:
+                kind = "unknown"
+        else:
+            kind = "verify"
+        out["by_ntok_kind"][nt] = kind
+    # The single boolean the S2/S3 gate actually needs: was the delivery decode step (MTP off, main
+    # context, one token per step) observed? Anything else is somebody else's measurement.
+    out["delivery_ntok1_measured"] = out["by_ntok_kind"].get(1) == "main"
     dec = [int(b) for a, b in DECPROF.findall(txt)]
     out["decprof_ntok"] = dict(sorted({n: dec.count(n) for n in set(dec)}.items())) if dec else {}
 
@@ -132,6 +192,14 @@ def fmt(r):
             f"  coverage {r['coverage']:>5.1%}")
     if r.get("by_ntok"):
         line += "  by-ntok " + " ".join(f"{nt}:{d['pct']:.0f}%" for nt, d in sorted(r["by_ntok"].items()))
+        # the default (non -v) line is the one people read, so the context warning has to be here too
+        k1 = r.get("by_ntok_kind", {}).get(1)
+        if k1 == "draft":
+            line += "  [ntok=1 is DRAFT, not the delivery step]"
+        elif k1 == "main":
+            line += "  [ntok=1 is the delivery decode step]"
+        elif k1:
+            line += f"  [ntok=1 is {k1}]"
     if r["decprof_ntok"]:
         line += f"  decprof ntok {r['decprof_ntok']}"
     return line
@@ -147,10 +215,25 @@ def full(r):
         print("      ★ churn BY ntok (this is the one to quote):")
         for nt in sorted(r["by_ntok"]):
             d = r["by_ntok"][nt]
-            what = "decode/MTP-verify step" if nt <= 4 else (
-                "cgc_pool_max_tokens(), chunked-prefill block" if nt >= 8 else "")
+            kind = r.get("by_ntok_kind", {}).get(nt, "unknown")
             print(f"          ntok={nt}: {d['pct']:>5.1f}%  ({d['changed']}/{d['total']} publishes)"
-                  f"   {what}")
+                  f"   {KIND_LABEL.get(kind, kind)}")
+        # [CGC 2026-09-28] The loud half of the fix. A reader who takes the ntok=1 row as "the
+        # delivery step" gets 0.0%, S3 looks free, and the number came from the draft context in an
+        # MTP-on run. Say so on the line itself, next to the number it invalidates.
+        k1 = r.get("by_ntok_kind", {}).get(1)
+        if k1 == "draft":
+            print(f"      ✗ the ntok=1 row above is the DRAFT context (its denominator "
+                  f"{r['by_ntok'][1]['total']} equals `draft: calls={r['draft_calls']}`), so this "
+                  f"run does NOT measure the delivery decode step. MTP off, main context, one "
+                  f"token per step -- that is the cell premise B needs, and it is absent here.")
+        elif k1 == "mixed":
+            print(f"      ✗ the ntok=1 row above mixes draft ({r['draft_calls']} calls) with main "
+                  f"({r['by_ntok'][1]['total'] - r['draft_calls']} publishes): it cannot be quoted "
+                  f"as either the draft or the delivery step.")
+        elif k1 == "main":
+            print("      ✓ ntok=1 is the main context with no draft calls in this log: this IS the "
+                  "delivery decode step premise B asks about.")
     else:
         print("      (no by-ntok split: binary is pre-2026-09-20, so the rate above is a MIXTURE "
               "of widths and cannot be attributed)")
@@ -251,6 +334,34 @@ def self_test():
     p2 = mk("llama_expert_cache: S1 slot-table: publishes=6595 clamped_selected=0 clamped_table=0"
             " changed_entries=1 consumed_changed=4810 consumed_unchanged_publishes=1745\n")
     expect("absent by-ntok is empty, not guessed", read(p2)["by_ntok"], {})
+
+    # 5d) [2026-09-28] the ntok=1 row is the DRAFT context on an MTP-on run. Fixture is the real
+    # 2026-09-20 shape: ntok=1 denominator == `draft: calls` (612), and the two contexts sum to
+    # publishes. Reading that 0.0% as "the delivery step is churn-free" is the bug this catches.
+    teardown = ("llama_expert_cache: S1 slot-table: publishes=12971 clamped_selected=0"
+                " clamped_table=0 changed_entries=48410 consumed_changed=7150"
+                " consumed_unchanged_publishes=5781\n")
+    bytok_mtpon = ("llama_expert_cache: S1 churn by ntok (consumed subset):  ntok=1 0/612=0.0%"
+                   "  ntok=4 3449/8160=42.3%  ntok=8 3701/4159=89.0%\n")
+    fastpath = ("llama_expert_cache: MTP fast path: calls=8672 union=158424 cold(ZERO)=0 (0.0%)"
+                "   verify: calls=8060 union=153528 cold=0 (0.0%)"
+                "   draft: calls=612 union=4896 cold=0 (0.0%)\n")
+    r = read(mk(teardown + bytok_mtpon + fastpath))
+    expect("MTP-on: ntok=1 is attributed to the draft", r["by_ntok_kind"][1], "draft")
+    expect("MTP-on: ntok=4 is the verify step", r["by_ntok_kind"][4], "verify")
+    expect("MTP-on: the delivery step is NOT claimed as measured",
+           r["delivery_ntok1_measured"], False)
+    expect("MTP-on: draft calls are read", r["draft_calls"], 612)
+    # the same counters with NO draft line = an MTP-off run, where ntok=1 really is the delivery step
+    r = read(mk(teardown + "llama_expert_cache: S1 churn by ntok (consumed subset):  ntok=1 "
+                    "37/306=12.1%  ntok=8 100/200=50.0%\n"))
+    expect("MTP-off: ntok=1 is the main-context delivery step", r["by_ntok_kind"][1], "main")
+    expect("MTP-off: the delivery step IS claimed as measured", r["delivery_ntok1_measured"], True)
+    # and a denomination larger than the draft calls is a mixture, not an attribution
+    r = read(mk(teardown + "llama_expert_cache: S1 churn by ntok (consumed subset):  ntok=1 "
+                    "5/700=0.7%\n" + fastpath))
+    expect("a bucket wider than the draft calls is flagged mixed", r["by_ntok_kind"][1], "mixed")
+    expect("mixed is not mistaken for the delivery step", r["delivery_ntok1_measured"], False)
 
     # 6) old binary shape -> refuse, and say which knob
     p = mk("llama_expert_cache: S1 slot-table: publishes=1014 clamped=114582 changed_entries=1423"

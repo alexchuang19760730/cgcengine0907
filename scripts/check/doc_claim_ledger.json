@@ -1,0 +1,41 @@
+{
+ "rule": "交付文件與 commit 訊息裡的 t/s 必須對得上一個通過 quote_gate 的產物（`scripts/check/doc_claim_gate.py`）。本帳只凍結**上線前既存**者；未登記的一律紅。每一筆都寫明「為什麼它可以先留著」——沒寫理由的不准進帳。",
+ "seeded": "2026-09-30（首次上線）",
+ "entries": [
+  {
+   "kind": "doc",
+   "key": "docs/FILL_TERM_DELIVERY_2026-09-30.md|11.5|2c0ecaa1",
+   "why": "同一個 A 臂的**逐 rep 展幅**（9.5→11.5 t/s），不是第二個讀數；來源 `Backup/fill_term_delivery_2026-09-30/ab.json`。本節記的是「步時散得比 avg_ts 開」這件事，那個 arm 的交付讀數另在 §… 的成對表裡。"
+  },
+  {
+   "kind": "doc",
+   "key": "docs/IO_AXIS_VERDICT_2026-09-25.md|11.793|9b55243e",
+   "why": "09-25 dated 判決自己的 decode 讀數（sd 0.217），那一段的表格沒有把產物路徑寫在同一段。dated 產物不回改 ⇒ 登記；下一次改版時補出處。"
+  },
+  {
+   "kind": "doc",
+   "key": "docs/K3_PAIR_CERT_V2_EXECUTABILITY_2026-09-28.md|11.02|83df87d9",
+   "why": "`tg 11.02 ± 1.62 t/s` 是那支臂的**首發讀數**（MTP 開著時崩潰那一次）；該檔自陳 `Backup/` 未新增（產物在 `/tmp`）⇒ repo 內沒有可查的產物可綁。"
+  },
+  {
+   "kind": "doc",
+   "key": "docs/K3_PAIR_CERT_VERDICT_2026-09-28.md|0.54|fe9c1d98",
+   "why": "配對差 **+0.54 t/s**（n=12、sd 1.96）是這份判決的**主結論**；出處是 k-pair 的 driver log（`Backup/k3_pair_cert_2026-09-28/logs/`），不是 bench 產物 ⇒ `quote_gate` 看不到它。"
+  },
+  {
+   "kind": "doc",
+   "key": "docs/K3_PAIR_CERT_VERDICT_2026-09-28.md|0.54|31eca5e2",
+   "why": "同一份判決裡那張逐 rep 差表（r1…r12）的摘要值；逐 rep 差是**配對量**，不是任何單一產物的 `avg_ts`。"
+  },
+  {
+   "kind": "doc",
+   "key": "docs/K3_PAIR_CERT_VERDICT_2026-09-28.md|17.67|8f7d7361",
+   "why": "本檔正在**解釋**的那個異常（`rounds` 抽到極端的分布尾端）。已由 09-29 仲裁降級為「分布尾端的一次抽樣」，並在 `SINGLESUBMIT_CORRECT_DESIGN` §75 結清；dated 產物不改寫 ⇒ 登記。"
+  },
+  {
+   "kind": "doc",
+   "key": "docs/K3_PAIR_CERT_VERDICT_2026-09-28.md|17.6694|2e70e980",
+   "why": "同一支臂 `r4_b_k2` 的第一次啟動（`-r 1` ⇒ `stddev 0` 是結構性必然）。同上：那是被解釋的異常本體，不是主張的讀數。"
+  }
+ ]
+}

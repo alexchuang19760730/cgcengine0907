@@ -26,13 +26,27 @@
    ⇒ **S1 就算修好，也可能在这台盒子上跑不完**（那会是"盒子判死"，不是"机制判死"）。
    ⇒ 建议 S1 的第一趟先带足迹闸（同 `l255_close.py --check` 的做法），不要直接跑大 k。
 
-## 待贴：看板 L25-1 那一行的新文本（看板 YAML 目前在他线工作树，等它释放再贴）
+## ✅ 已贴（2026-09-30 19:2x，由 `flashkv-devserver` worktree 的持有者代贴）
+
+- 看板 YAML 在 `~/Documents/flashkv-devserver`（他线工作树）⇒ 那条“待贴”由该线收尾：
+  `scripts/check/decode_board_2026-09-29.yaml` 的 L25-1 已改成 `state: 結案（排除）·不可測…`
+  ＋ `runnable`／`badge{tone: dead}`／`settled: true`，并按本文补了 `evidence_b` 的一行。
+- ⚠ **一处机器可读的调整（語意不動）**：排除類結案必须让 `D7_EXCLUDED_CLOSURES` 命中，而那是
+  `startswith("結案（排除）")` ⇒ 把原稿的 `結案（排除·不可測）` 写成 **`結案（排除）·不可測（…）`**
+  （同样的字，只把括号位置往前挪一格）。否则 `closed_real=True`，D7 会要求一个**速度引用** ——
+  那正是这种“排除·不可测”格拿不出来的东西。
+- 验证：`decode_board_build.py` build **PASS**、`--check` **0 个问题**、`--selftest` **86/86**；
+  结案数 **10 → 11**（L25-1 入列）、决策队列 **6 → 4 格**。
+
+<details><summary>原稿（保留，供比对）</summary>
 
 ```yaml
         runnable: "⛔ 不用再跑 — operator 2026-09-30 裁定<b>不換盒子、不降模型</b> ⇒ B 臂（mmap）在 pool 8 GiB 與 6 GiB <b>皆</b> Metal OOM（rc=−6），而再降 pool 會與 A 臂不同形（pool 本身改 miss ⇒ 混淆）⇒ <b>同形不可測</b>，出路已關閉。"
         badge: {text: "PRIMARY 否證；SECONDARY 不可測（出路關閉）", tone: dead}
         state: "結案（排除·不可測）（operator 2026-09-30：不換盒子／不降模型）——<b>PRIMARY 已否證</b>（ngram 的 E <b>0.984</b>）；SECONDARY＝<code>load_mode=mmap</code>：A 臂跑通（miss/step 中位 <b>6.0</b>、有 miss 層數中位 <b>6.0/39</b>、正規化 <b>1.92%</b>），B 臂在 pool <b>8 GiB 與 6 GiB 皆</b> <code>Insufficient Memory</code>、rc=<b>−6</b> ⇒ <b>同形不可測</b>。<br>⛔ <b>這不是否證</b> ⇒ 本格自己的否證句「SECONDARY 否證 ⇒ 25 定案判死」<b>不觸發</b>；25 的定案現在<b>只掛在 S1</b>（is_mem_shared 的 draft 輪級掉線），而 S1 也要過同一個盒子（MTP-on 存活 ≥7703 MB、budget_gate 現判 OVERBUDGET）。"
 ```
+
+</details>
 
 证据补记（`evidence_b` 加一行）：`Backup/l251_p6_2026-09-30/`（pool 6 GiB 的 OOM log）。
 

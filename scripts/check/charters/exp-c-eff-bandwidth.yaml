@@ -1,0 +1,57 @@
+id: exp-c-eff-bandwidth
+owner: shared
+created: 2026-09-28
+axis: C
+
+question: |
+  ⚠ 本節點與 `c-bandwidth`（tier 3a）**必須先對齊口徑**，否則會重複一次已完成的量測：
+  `c-bandwidth` 已測到 dense GEMV 該族實跑 **56–108 GB/s**（DRAM 峰值 108.8），
+  且「就算全部打滿 100% 峰值也只省 1.92 ms = **2.42% step** ⇒ 低於 3% 門檻」，該族已結案。
+
+  本節點問的不是 kernel 的 achieved bandwidth，而是 **§7 那個 13.65 GB/s 的分子與分母**：
+  它是 `1.171 GB ÷ 85.8 ms`（整 token 權重讀取 ÷ S0），而 E-A 已證其中僅 ~2% 落到磁碟。
+  ⇒ 因此第一步不是攻帶寬，是回答：**如果 kernel 已跑到 56–108 GB/s，那 85.8 ms 裡
+  「不是帶寬」的那部分是什麽？**（dequant／dispatch／scatter／metal 排程）
+  若那一部分是主項，本節點應該把結論回填 `c-bandwidth` 並結案，而不是自己開一條新路。
+
+baseline:
+  metric: "有效帶寬 13.65 GB/s（= 1.171 GB ÷ 85.8 ms，S0 口徑）＝ 規格 120 GB/s 的 11.4%"
+  cell: "prod25、無 MTP 單 token 成本 S0；DECODE25 §7 的物理帳"
+  source: "docs/DECODE25_CEILING_2026-09-20.md"
+
+hypothesis:
+  mechanism: |
+    DECODE25 §7 把 85.8 ms 歸給「20% 的位元組掉到 SSD」。2026-09-28 E-A 實測把這個歸因否掉：
+    OS pageins 6.22 GiB／引擎 9.02 GiB，對上 376 token 應讀的 410 GiB ⇒ f ≈ 1.5%，權重讀取的
+    ~98.5% 來自 RAM。把 f=1.5% 代回同一條恆等式只得 15.5 ms，是實測 85.8 ms 的 1/5。
+    ⇒ 失效項不是 f，是「實際達到的帶寬」本身（13.65 GB/s = 峰值 11.4%）。
+    命中通道：C（kernel＋頻寬）——不在 union/cb/gap/wait/submit 任何一格。
+    ⇒ C 軸不再是「受物理約束的天花板軸」，這正是 2026-09-25 版 taxonomy 的前提，已不成立。
+  expected: "有效帶寬 ≥23 GB/s ⇒ ≥16 t/s（本節點目標）；≥29 GB/s ⇒ 25 t/s（終極）"
+  basis: |
+    docs/DECODE25_CEILING_2026-09-20.md §3/§6/§7；docs/S2_OVERLAP_EXPERIMENT_2026-09-28.md §15（E-A 實測）
+    ⚠ 對照組（必須一起讀）：c-bandwidth 的 DENSE_GEMV_INSTRUMENT_2026-09-22.md §0
+    （56–108 GB/s、打滿也只省 2.42%）、io-shape 的 IO_AXIS_VERDICT_2026-09-25.md
+    （固定開銷 90%、收益 2.9% < 3%）。**這兩份是本節點的前置知識，不是可選讀物。**
+
+acceptance:
+  success: "同一 run 內量到有效帶寬 ≥23 GB/s（⇒ ≥16 t/s），且 zero_mapped / verify_refused / inv_viol 全為 0"
+  falsify: "把 85.8 ms 拆成（i）讀取發行、（ii）dequant、（iii）dispatch 三項後，若三者可動部分加總 <20%，則 C 軸判否，25 只能在 S/M 軸上求"
+  on_fail: "不調目標數字；把三項的實測上界寫進 NEXT_ACTIONS，並把 C 軸標為「已量、已否」"
+
+targets:
+  decode_tps: 16.0
+  prefill_tps: 250.0
+
+subgoals:
+  - id: sg-c-ram-eff
+    text: "RAM 路徑效率：峰值帶寬的 11.4% → ≥24%（13.65 → ≥29 GB/s）"
+    expect: "+2.1× 有效帶寬 ⇒ 25 t/s（此為終極格，中間格 23 GB/s ⇒ 16 t/s）"
+    how: "S0 反推 + t = bpt·[(1−f)/BW_ram + f/BW_ssd]，f 用實測值 1.5% 而非擬合值 20%"
+  - id: sg-c-no-ssd-assumption
+    text: "移除『SSD 是主項』這個假設：所有帶寬結論都必須附 E-A 式的 OS pageins 交叉檢查"
+    expect: "0（這是正確性要求，不是速度貢獻）"
+    how: "同一請求窗前後 vm_stat Pageins 差值 × 16384，對比引擎 read_mib"
+
+arms:
+  - prod25

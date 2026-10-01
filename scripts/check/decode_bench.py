@@ -150,7 +150,16 @@ def main():
             [r.get("thermal_before") for r in rows] + [r.get("thermal_after") for r in rows]),
         "thermal_hist": tp.histogram(
             [r.get("thermal_before") for r in rows] + [r.get("thermal_after") for r in rows]),
+        # [CGC 2026-09-30] 口徑（使用者裁定 2026-09-17：此工具**已退役**，`llama-bench` 才是兩半
+        # 唯一的紀錄儀器；見 prod_matrix.py 檔頭）。這裡報的是**輪級聚合**（自訂 rounds），
+        # 引用閘門 quote_gate 的 R8c 判 `REFUSE` ⇒ **不可入認證表**。要入表走權威 row：
+        # `python3 scripts/check/cell_contract.py --cell <name>` 印的就是那一條 `harness bench` 命令。
+        "quote_gate": "REFUSE",
+        "quote_gate_why": "R8c 輪級聚合：decode_bench 已退役（2026-09-17 裁定），輪級 median 不是權威 row ⇒ 不可入認證表；權威行見 cell_contract.py --cell <name>",
     }
+    print("NOTE[quote_gate R8c]: decode_bench 已退役（2026-09-17）—— 這裡的 median 是輪級觀測值，"
+          "不可入認證表；要入表用 `python3 scripts/check/cell_contract.py --cell <name>` 那條 harness bench",
+          file=sys.stderr, flush=True)
     print()
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if args.json:

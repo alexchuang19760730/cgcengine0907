@@ -30,10 +30,12 @@ subgoals:
   text: 依測試卡 §2.5 宣告孿生 cell（現有機制只開放 reps／rep_split ⇒ 新增一格並寫理由）
   expect: 測試卡新增一格且 cell_contract 放行（不是繞過閘門）
   how: 唯讀閱讀 cell_contract.py ＋ PROD_NEW_TEST_CARD §2.5
+  note: '2026-10-01 落地：孿生機制由 `rep_split` 擴到 `twin_of`（reps 孿生；只准差 `reps`、只能加大；`cell_contract` selftest 50/50）；測試卡 §2.5.4c 宣告 `delivery-reps7`／`delivery-ws192-reps7`（`reps` 3→7）並實跑（A UNUSABLE 1.1197／B QUOTABLE 1.0818；診斷級 Δ +1.14%）⇒ 2026-10-01 operator 明文**否證式結案（排除）**（判詞維持 `REFUSE`；A4／引用閘門的統計量改革另立前瞻案、不回填）—— 見 `docs/L2010_CLEAN_WS192_20261001.md` 的第二輪與結案段。'
 - id: sg-cell-b1
   text: B1（delivery 孿生、warm_skip 加大）的 tg level 與 reps 形狀
   expect: 收斂到 11.3–11.7 且 reps 由「上升」變「平」
   how: prod-new ＋ harness bench，同一窗口成對
+  note: '2026-09-30 更正（格換成可滿足的形狀）：原本的 `delivery-ws256`（`gen=128 / warm_skip=256`）**定義上不存在**——計時段 `gen−warm_skip=−128`（引擎語意：先跑 N 個不計時的 token，計時的段落是 `gen−N`），產物自報 `warm_skip_applied=false` 只是這條算式的結果 ⇒ 起點假設未被測。改用 §2.5.4b 的 `delivery-ws192`（`gen=256 / warm_skip=192`）：**計時段仍是 64**（與 delivery 逐字相同的權威 row），只有起點不同 ⇒ 唯一差異就是起點。判詞：`scripts/check/l2010_verdict.py`（v2，START_POINT／SAME_BAND／REFUSE）。'
 - id: sg-cell-b3
   text: B3（(default) 孿生、batch 512、保留 p2048）的 tg level
   expect: 若 batch 是主因 ⇒ ~9.7；若起點是主因 ⇒ ~11.5
@@ -47,5 +49,5 @@ options:
   profile: prod-new
   arms:
     - "prod-new"
-  no_knob: "本格沒有既有旋鈕可動：<code>batch</code>／<code>prompt</code>／<code>warm_skip</code> 都是測試卡 §2.5 的<b>嚴格維度</b>（改了 fail-closed 拒跑），現有孿生機制只開放 <code>reps</code>／<code>rep_split</code> ⇒ 這是一個 <b>cell 定義的決定</b>，不是一次跑得動的實驗。"
-  note: "判別句互斥：B1（起點）⇒ 加大 warm-skip 的 delivery 升到 ~11.5；B3（batch）⇒ (default) 的 batch-512 孿生掉到 ~9.7。"
+  no_knob: "孿生機制（<code>cell_contract</code>：<code>rep_split</code>／<code>twin_of</code>）只開放 <code>reps</code>／<code>rep_split</code> —— 而 <code>twin_of</code> 的 reps 孿生<b>已經宣告並跑過</b>（§2.5.4c，3→7）：它壓不了 A4 的 max/min、反而把效應抹平。⇒ 剩下的不是旋鈕／n：<b>2026-10-01 operator 已明文否證式結案（排除）</b>——判詞維持 <code>REFUSE</code>；A4／引用閘門的統計量改革<b>另立前瞻案</b>（配對 per-rep 比率／中位數差標準誤），不回填這一格。"
+  note: "判別句（§2.5.4b，未改）：B 落在 11.5±5% ⇒ 起點是主因；落 10.5±5% ⇒ falsify。n=7 的實測是<b>兩個都不成立但 A 不可引用</b>：A／B 都落在 11.5±5%（11.794／11.928）⇒ 起點在 n=7 下<b>不再可辨</b>；<b>2026-10-01 operator 明文：否證式結案（排除）</b>（判詞維持 <code>REFUSE</code>；A4 改革另立前瞻案）。"

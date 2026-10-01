@@ -1,0 +1,33 @@
+id: exp-mtp-onoff-standard
+owner: shared
+created: 2026-09-27
+
+question: |
+  以完整生產口徑（prod-new、warm-skip 64、fixed-fill-seed 1、prefill/decode 同測）測定
+  MTP off 與 MTP on 各自的 prefill/decode，並驗證同一設置在不同 swap/thermal 狀態下能否
+  把漂移控制在 ±5% 以內，作為所有開發者必須 follow、目標不得低於的最低標準。
+
+baseline:
+  metric: "MTP off ctrl 冷機 prefill 259.91 / decode 11.90 t/s（交付權威基線 12.57）"
+  cell: "prod-new, MTP off, -p 2048 -n 128 -d 512, warm-skip 64, fixed-fill-seed 1, reps 3"
+  source: "docs/PROD_NEW_TEST_CARD_2026-09-24.md"
+
+hypothesis:
+  mechanism: |
+    off 走純 decode；on 在同一模型上加 draft + verify。歷史整數計數器：verify union 撐破
+    per-layer 配額（worst layer 168-205 / 143、2-4 層越界）、長探針 accept a=0.233、
+    mean_len=1.70，輪內 S=0.89-0.91（淨負）。本次補上 on 缺失的「完整口徑 throughput」，
+    並量同狀態 rep 散度與跨 swap/thermal 漂移。
+  expected: "off decode ~11-12 t/s；on 待實測（歷史為 off 的 0.89-0.91×）；±5% 作為漂移驗收線"
+  basis: "docs/PROD_NEW_TEST_CARD_2026-09-24.md、MTP_CTX_REPRODUCIBLE_2026-09-26.md、MTP_AMORTIZATION_RECHECK_2026-09-25.md"
+
+acceptance:
+  success: "off/on 各得到完整口徑 prefill/decode；同狀態 rep 散度 ≤5%，並建立跨 swap/thermal 漂移 ≤5% 的驗證協議與首次數據"
+  falsify: "若跨狀態漂移 >5%，不寫固定值進標準；標準改為「帶 thermal/swap 狀態標注的同場口徑」並如實記錄漂移幅度"
+  on_fail: "不編造未達成的数字；把可復現口徑與限制寫進測試卡，NEXT_ACTIONS 登記，轉下一方向"
+
+arms:
+  - prod-new
+  - prod-new:CGC_SERVER_MTP=1
+  - prod-new:CGC_SERVER_MTP=1;CGC_DRAFT_CTX_ALIGN=1
+  - prod-new:CGC_SERVER_MTP=1;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1

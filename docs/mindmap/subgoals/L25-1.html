@@ -21,7 +21,9 @@
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
-  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
+  table.queue td.qnext { text-align: left; max-width: 46em; }
+table.queue td { vertical-align: top; }
+.layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
@@ -47,11 +49,12 @@
 <nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container">
 <h1>L25-1 ｜ 第六條軸：改「每 token 的 bytes 或 steps」</h1>
-<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（<b>PRIMARY 候選已量、否證</b>：ngram 的 E <b>0.984</b>（6/6 rep 一致；archive 的 map-k 0.992）⇒ steps/token 這條無 draft-head 的路<b>不攤薄</b>；下一步＝SECONDARY <code>CGC_SERVER_LOAD_MODE</code>）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
+<p class="subtitle">結案狀態：<span class="badge b-ok">結案（排除）·不可測（operator 2026-09-30：不換盒子／不降模型）——<b>PRIMARY 已否證</b>（ngram 的 E <b>0.984</b>）；SECONDARY＝<code>load_mode=mmap</code>：A 臂跑通（miss/step 中位 <b>6.0</b>、有 miss 層數中位 <b>6.0/39</b>、正規化 <b>1.92%</b>），B 臂在 pool <b>8 GiB 與 6 GiB 皆</b> <code>Insufficient Memory</code>、rc=<b>−6</b> ⇒ <b>同形不可測</b>。<br>⛔ <b>這不是否證</b> ⇒ 本格自己的否證句「SECONDARY 否證 ⇒ 25 定案判死」<b>不觸發</b>；25 的定案現在<b>只掛在 S1</b>（<code>is_mem_shared</code> 的 draft 輪級掉線），而 S1 也要過同一個盒子（MTP-on 存活 ≥7703 MB、<code>budget_gate</code> 現判 OVERBUDGET）。<br>（以下為結案前的舊註記，留檔）<b>PRIMARY 否證</b>；SECONDARY 09-30 首次實跑＝<b>A 跑通、B fail-stop</b>）：A 臂（<code>delivery</code>、<code>load_mode=none</code>）拿到 §8 兩量 —— ① miss 數/step 中位 <b>6.0</b>（IQR 4–12）② 有 miss 的層數/step 中位 <b>6.0</b>（min 1、<b>max 39</b>）、正規化 <b>1.92%</b>（與 <code>e-fillbudget-m-decomp</code> 的誠實臂 <b>1.97%</b> 獨立吻合；instrument ✅ BOUND：<code>mm_pub 39/39</code>、<code>missmask_step=386</code>、<code>missmask_row=64</code>）；B 臂（<code>delivery-mmap</code>）<b>跑不完</b>：<code>command buffer 8 failed status 5 / Insufficient Memory</code>、rc=<b>−6</b>、<code>recovered 0 completed instance</code> ⇒ <b>不是否證，是這台盒子量不到</b>。</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>缺口 45.45 ms ⇒ 需要一個能動 <b>bytes 或 steps</b> 的乘數</td></tr>
 <tr><th>預期（t/s）</th><td>≥25.0（在 ≤40.0 ms 下）</td></tr>
-<tr><th>現在能跑？</th><td><span class="runnable">⛔ 現在不能跑 — PRIMARY 已否證（E 0.984）；SECONDARY（load-mode）兩臂被拒（壓縮機閘＋cell contract）⇒ 前置＝測試卡 §2.5 新增一格（operator 決策）。SECONDARY 若否證 ⇒ 25 定案判死。</span></td></tr>
+<tr><th>現在能跑？</th><td><span class="runnable">⛔ 不用再跑 — operator 2026-09-30 裁定<b>不換盒子、不降模型</b> ⇒ B 臂（mmap）在 pool 8 GiB 與 6 GiB <b>皆</b> Metal OOM（rc=−6），而再降 pool 會與 A 臂不同形（pool 本身改變 miss ⇒ 混淆）⇒ <b>同形不可測</b>，出路已關閉。</span></td></tr>
+<tr><th>前置（判決存不存在）</th><td><div class="success"><b>duplicate</b>／<code>verdict_file</code> ⇒ 現判 <b>EXISTS</b><br>命中：docs/OPERATOR_RULING_L251_2026-09-30.md<br><span class="legend">宣告理由：A 臂已跑通（§8 兩量都有讀數）；B 臂在 8 GiB 與 6 GiB pool 上都 fail-stop ⇒ operator 已裁定不再換盒子／降模型，本格以「排除·不可測」結案。</span></div></td></tr>
 <tr><th>現況（已量）</th><td>現有軸（ms、段數、kernel、IO）<b>全量完</b>；缺口 <b>45.45 ms</b>（交付錨點 85.45 ms → 25 t/s 的 40.0 ms）。<b>§51 撤回 §50 的「未判定」</b>（B 半補丁的價目漏掉主項：備援重算 320 列 ＝ 8.09 ms；§52 用交付 cell 底座複核，仍差 7.5–11.6 ms）⇒ <b>decode ≥25 回到判死</b>，而<b>本格是全板唯一還沒被判死的一格</b>。<br><b>09-29 23:5x 唯讀盤點完成</b>（0 跑）：每 token <b>1.171 GB</b> 裡只有 <b>381 MB（33%）</b>的專家段會 miss，<b>790 MB（67%）</b>的 dense 段常駐 RAM ⇒ <b>bytes 類候選最多只能動那 33%</b>。<b>7 個候選盤完</b>：1 個 PRIMARY = <code>--spec-type ngram-*</code>（**不需要 draft head**，且 <code>need_n_rs_seq()</code> 對它回 <b>0</b> ⇒ 結構上不觸發 M2 的輸出函數改變 —— 那正是 MTP 被判「產品決策」的原因）、1 個 SECONDARY = <code>CGC_SERVER_LOAD_MODE=mmap</code>、5 個已判（bpw／top-k／砍 dense／MTP／池命中）。</td></tr>
 <tr><th>action</th><td>① ~~量 PRIMARY~~ <b>已做、否證</b>（E 0.984）；② 接著量 SECONDARY＝<code>CGC_SERVER_LOAD_MODE=mmap</code> （A/B 各一趟；比 <code>answer_md5</code> 同一性，主端點見下）—— <b>旋鈕已在 09-30 驗過真的到達</b>（<code>arm_env_dropped()</code> 回空；解析後 <code>none</code> → <code>mmap</code>），且本臂 <b>MTP off</b> ⇒ 不吃「可回收 ≥8 GB」那條線。⛔ <b>但 09-30 實跑兩臂都被拒</b>：A 被<b>壓縮機閘</b>擋（BUSY，rc=2）；B 過了壓縮機卻被 <b>cell contract</b> 擋（<code>load_mode: 實際 mmap ≠ 權威 none</code> ⇒ fail-closed）⇒ <b>load-mode 是 cell 級欄位，不能當 arm 級旋鈕 A/B</b>。⇒ 本格現在的卡點＝<b>測試卡 §2.5 要不要新增一格</b>（權威決策）。<br>★ <b>要量的是 §8 的兩項，不是 §7 的 f</b>：① miss 數 ÷ step（現況每 step 73.83 miss × 0.695 ms ＝ 51.3 ms）② <b>有 miss 的層數</b>（現況 27.96／40 —— barrier 是階躍，只要能少一層就有非線性收益）。〈若 Δ ≈ 0 也<b>不是白跑</b>：它把「動 dense 那 67%」這條路當場判掉（<code>dense-cut</code> 已因同一理由被判掉），<b>引擎側候選就窮盡了</b>。<br>★ <b>operator 裁定（09-30）：量化不做</b> —— §8.3／§8.4 那條「只壓專家 bpw」（2.5 ⇒ 工作集 8.6 GiB、miss ~7%、<b>24.5 t/s</b>；1.94 ⇒ ≤8 GiB、miss ~0、<b>~45 t/s</b>）<b>從槓桿清單移除</b>。⇒ 若 SECONDARY 否證 ⇒ <b>25 定案：判死</b>（引擎候選窮盡 ＋ 唯一有算術的模型側槓桿被禁止）⇒ 力氣回 <b>L20（20+，天花板 19.2–24.5）</b>與 L25-4 的口徑決策。〉</td></tr>
 <tr><th>驗收</th><td>需要一個新乘數：≤40.0 ms 且 M1 bit-identical。★ 對 ngram 展開成三條：① <code>need_n_rs_seq()==0</code>（✅ 源碼已得）② <code>E&gt;1</code>（<b>⛔ 0.984</b>）③ <code>answer_md5</code> 與對照臂相同（量不到，見 <code>docs/SIXTH_AXIS_NGRAM_2026-09-30.md</code> §4）</td></tr>
@@ -60,6 +63,7 @@
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
 <tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td><b>A 對照 vs B ngram-simple</b>：E ＝ 63 token／64 輪 ＝ <b>0.984</b>（6 rep 全同）；draft 寬度 {1:32, 3:32}、192 輪提交 0 個 ⇒ <b>不攤薄</b></td><td>tokens_per_round</td><td>❌</td></tr>
 </tbody></table>
+<div class="success"><b>排除依據（排除（不可測）——operator 2026-09-30 裁定不換盒子／不降模型；SECONDARY 在 8 GiB 與 6 GiB 同形不可測（rc=−6））</b>：Backup/ngram_simple_ab_2026-09-30/{A,B}.json ＋ {A,B}.stderr.log；裁定：docs/OPERATOR_RULING_L251_2026-09-30.md</div>
 <h3>臂（options）</h3>
 <ul><li><code>prod-new</code></li></ul>
 <p>⚠ 本格的 `knobs.name` 有兩種：`CGC_*`＝env；`--*`＝**CLI 旗標**（`--spec-type` 不是 env，寫成 env 會被 allowlist 靜默丟掉 —— 那正是 MTP 修復臂空轉一趟的原因）。三趟：A 對照＝裸 `prod-new`（不帶任何 spec 旗標）、B＝A ＋ 上面那串、C＝B 重跑（驗 ON 自身 identical）。驗收三條：**① `need_n_rs_seq()==0` ② `E>1` ③ `answer_md5` 與 A 相同**。⛔ 三趟的 t/s 一律先過引用閘門；本格的第一個產物是「有沒有乘數」，不是速度。</p>

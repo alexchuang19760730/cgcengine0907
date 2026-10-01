@@ -1,0 +1,123 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— e-rho-delivery-flag：把 ρ 的交付開關從量具裡切出來
+#   讓「權威 row 上的 ρ 價格」有機會變成可引用（operator 2026-09-30）
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼要立這一張（docs/RHO_PRICE_AUTHROW_2026-09-30.md §1）：今天「臂上無探針」＝機制不在跑 ——
+#   影子節點（qwen35moe.cpp:218-220）、capture／prefetch 的呼叫（llama-context.cpp:4800-4813）
+#   全部掛在 `CGC_RHO_PROBE` 底下；`llama-context.h:288-289` 自述依賴。
+#   ⇒ 照字面跑「A：prod-new vs B：prod-new:CGC_RHO_FILL=1」而不帶 probe 會得到 Δ＝0 的
+#   **安靜的 null**，而那個 0 會被誤讀成「ρ 免費 ⇒ R5 可解除」。
+# 判詞與命令：scripts/check/rho_price_authrow.py（--check／--plan／--judge，selftest 13/13）。
+id: e-rho-delivery-flag
+owner: freebuff（S 線 / ρ）
+created: '2026-09-30'
+axis: S
+
+# ── 【目標】── 一個可判定的問題，且兩個答案都有意義 ────────────────────────────
+question: |
+  把 ρ 的交付面從量具裡切出來（新 `CGC_RHO`＝影子節點＋capture＋fill；`CGC_RHO_PROBE` 退回純記帳）
+  之後，權威 row（預設格、`harness bench`、吻合的 A/B、兩臂都不帶 probe）上的 Δ 能不能被量成
+  **可引用**的價格（兩臂 decode 行皆 QUOTABLE、效應大於兩臂散布、兩趟反序同向），
+  還是切開後 Δ 落回兩臂散布之內（⇒ ρ 的價格在此設計下不可辨識，而不是「免費」）？
+
+# ── 【現狀】權威基線：數字 + 口徑 + 出處 ────────────────────────────────────
+baseline:
+  metric: "今天量不到：ρ 的執行者全部掛在 `CGC_RHO_PROBE` 底下 ⇒ 「無探針」＝機制不在跑、Δ 是假的 0；最近一次價格嘗試（`rounds=3`＋`warmup=1`、n≈98 的輪級聚合）判 `REFUSE`，且該族 0/4 可引用"
+  cell:   "權威 row：預設格（`(default)`：`-b/-ub 5632`、`prompt 2048`、`gen 128`、`depths 512`、`reps 3`、`warm-skip 64`、`ctx_size 0`、`load_mode none`）—— 兩臂同一格"
+  source: "docs/RHO_PRICE_AUTHROW_2026-09-30.md"
+  source_note: "阻塞的四個座標（原始碼行號）與 `--check` 的 BLOCKED 判詞都在該文 §1；價格的歷史（4.76 ms/step 估計、判詞 REFUSE）在 docs/S3B_RHO_COST_2026-09-30.md §7.6／§7.8。"
+  known: |
+    - 影子節點、capture、prefetch 呼叫三者同閘：`qwen35moe.cpp:218-220`、
+      `llama-context.cpp:4800-4813`、`llama-context.h:288-289`。
+    - `CGC_RHO_FILL` **不是**切分：它自己的作業就在 probe 區塊裡（`rho_price_authrow.py --check`
+      把它列為 `dependent_flags`）。
+    - 引用面：`quote_gate` 的 R5 對 `CGC_RHO_PROBE` 臂判 `DIRTY`、R8c 對輪級聚合判 `REFUSE`
+      ⇒ 今天所有 ρ 讀數都不可入認證表（docs/S3B_RHO_COST_2026-09-30.md §8）。
+    - ⛔ 不可動：prefill 端的相位閘（`llama-context.cpp:4801-4818` 的 PHASE-SKIP）與影子節點位置
+      （`inpSA = inpL`，必須早真實 `ffn_moe_topk` 一個 submodule）。
+
+# ── 【假設】機制 + 預期（給區間、須有依據）────────────────────────────────
+hypothesis:
+  mechanism: |
+    ρ 的價值鏈是「影子 router 的 logits → top-k 聯集 → 提前發 IO」。今天這條鏈的三個執行者
+    都綁在**量具旗標**上，所以「機制開著但量具關著」這個狀態不存在。把交付面拆成獨立旗標後，
+    B 臂才真的在跑 ρ，而它的 t/s（與 Δ）才可能在權威 row 上被引用 —— 引用面仍然只有一份判準
+    （`quote_gate`）：乾淨窗、逐 rep 離散 ≤1.10、臂上無 never-quote 量具。
+  expected: "B−A 的 decode Δ 落在 **0 到 −15%**（既有估計：每步付 ~4.76 ms 的插入；對 11.7 t/s 的步長約 −5~−10%）；可辨識的判準是 |Δ| > 兩臂散布且兩趟反序同向"
+  basis: |
+    `llama-context.h:288-289`（依賴自述）；`docs/S3B_RHO_COST_2026-09-30.md` §7.6（價格 `REFUSE`
+    與 4.76 ms/step 的估計）與 §7.8（每層同步讀回是成本上界）；`docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md`
+    §4.5-4.6（S2-c：capture 搬出被跳過的 hook、每步一次讀回的形狀）。
+
+# ── 【驗收】跑前寫死 ──────────────────────────────────────────────────────
+acceptance:
+  success: "三條都成立：(1) 配對 oracle M1 9/9；(2) `CGC_RHO_PROBE=1` 時 `CGC-RHO-SUM` 照舊印、而只有 `CGC_RHO=1` 時 stderr 無任何 `CGC-RHO-*`；(3) `rho_price_authrow.py --judge` 對兩趟反序判 `PRICE`（兩臂皆 QUOTABLE、|Δ|>散布、同向）⇒ 價格以 Δ 中位寫進看板"
+  falsify: "切分完成且 oracle 9/9，但兩趟都判 `NO_EFFECT`（Δ 落回兩臂散布內）⇒ ρ 的價格在此設計下不可辨識；**不得**把它寫成「ρ 免費」"
+  on_fail: "切分失敗／M1 掉（<8/9）⇒ 回報 S2-c 與 R6 修法線，價格題凍結；`rho_price_authrow.py --check` 在切分落地前一律 `BLOCKED`（不發車）"
+
+# ── 【技術子目標】可量化、可驗收、貢獻可分 ────────────────────────────────
+targets:
+  decode_tps: 20.0          # 政策目標；本卡不主張任何 t/s 成績，只主張「價格可不可引用」
+  m1_success_min: 9         # 切分的 oracle 驗收
+  m1_falsify_max: 2
+  rho_delivery_flags: 1     # 新交付旗標數（`CGC_RHO`）；出現 0 個 ⇒ 還沒切
+  rho_probe_lines_when_delivery_only: 0   # 沒有 probe 時不得印任何 CGC-RHO-*（量具與機制分家）
+
+subgoals:
+  - id: sg-rho-flag-split
+    text:   "把影子節點／capture／prefetch 的閘從 `CGC_RHO_PROBE` 切到新的交付旗標（`CGC_RHO`）"
+    expect: "`CGC_RHO=1` 且 probe 不在 ⇒ 機制照跑（池計數器離開 prefetch-off 常數）；probe 不在 ⇒ stderr 無 `CGC-RHO-*`"
+    how:    "qwen35moe.cpp:218-220 與 llama-context.cpp:4800-4813 的閘改讀交付旗標；記帳仍只由 probe 印"
+    delivered: "2026-09-30 補丁已備、**未套用**：`Backup/rho_split_2026-09-30/rho_delivery_split.patch`（md5 `37188900…`、4 檔 11 hunks，含 `run_server.sh` 的轉送）；套用清單 `rho_price_authrow.py --checklist`。`src/` 仍在別線（117 檔未提交）⇒ 沒動它。**未建置**（`--checklist` 的 `build_state()`：16 顆 `libllama*.dylib` 內精確 `CGC_RHO` 命中 0）；落地狀態逐條存 `Backup/rho_split_2026-09-30/delivery.json` 的 `state_at_delivery`。"
+  - id: sg-rho-step-readback
+    text:   "capture 的形狀改成**每步一次**讀回（不是每層一次）"
+    expect: "`CGC-RHO-SUM` 的 layers/step = n_layer 不變、但同步次數 = 1/步（成本上界見 §7.8）"
+    how:    "把 shadow logits 的讀回集中到一次 device→host（與 S2-c 的形狀一致）"
+  - id: sg-rho-quotable-price
+    text:   "權威 row 上的價格判詞（`PRICE`／`NO_EFFECT`／`REFUSE`）"
+    expect: "`rho_price_authrow.py --judge` 兩趟反序 ⇒ PRICE 且兩臂 QUOTABLE"
+    how:    "`--plan` 的四條命令；判詞在 `judge()`（預註冊）"
+
+# ── 【臂】────────────────────────────────────────────────────────────────
+arms:
+  # A（對照）：交付基線，機制關
+  - prod-new
+  # B（處理）：ρ 的交付旗標開 —— 切分後才有意義（今天它只是被忽略的旗標）
+  - prod-new:CGC_RHO=1
+
+# ── 【交付】補丁（未套用、可即刻 `git apply`）────────────────────────────────
+delivery:
+  patch: "Backup/rho_split_2026-09-30/rho_delivery_split.patch（md5 37188900d3ba71369ea80478d1a60273、11975 B；4 檔 11 hunks：llama-context.cpp（`cgc_rho_meter` ＋機制閘＋四處列印）／llama-context.h（旗標語意）／qwen35moe.cpp（兩個影子節點閘）／run_server.sh（轉送 `CGC_RHO`））"
+  base: "llama-context.cpp @ bc65fbb4…（10287 行）＋ llama-context.h @ 87bd9bfb…（700）＋ qwen35moe.cpp @ d8b1fa90…（822）＋ run_server.sh @ 17e3d16f…（2849）；四份逐字相同時 `git apply` 直上，別人先改任一檔則用 `--3way`（`--checklist` 會點名哪一份漂了）"
+  evidence: "Backup/rho_split_2026-09-30/delivery.json（逐項結果）＋ `rho_price_authrow.py --checklist`（清單；補丁 md5 鉗住，改過就紅）"
+  verified:
+    - "`git apply --check -p1 …` 對**未修改的實檔** ⇒ PASS"
+    - "`patch -p1` 進 scratch 樹後 4/4 與交付內容 `cmp` 位元相同"
+    - "`-fsyntax-only`（專案 `compile_commands` 原命令）⇒ 兩檔 rc=0、**新增行內 0 warning**"
+    - "`rho_price_authrow.py --check --root <套用後的樹>` ⇒ RUNNABLE、旗標表出現 `CGC_RHO`、交付路徑 **4/4** 列印由 `cgc_rho_meter()` 守著、launcher 轉送命中 `run_server.sh:1799`"
+    - "`rho_price_authrow.py --selftest` **21/21**（含拿掉量具閘 ⇒ `SPLIT_LEAKY` 的否證）；`instrument_binding --self-test` ALL PASS（`CGC_RHO_FILL` 前提改 OR：`CGC_RHO` 或 `CGC_RHO_PROBE`）"
+    - "**影子驗（零 GPU，S1/S2 先變綠）**：補丁套進 `src/` 的複本（`Backup/rho_split_2026-09-30/shadow/`）⇒ `--check` 轉 `RUNNABLE`；`cmake` 真的編完 `llama-bench`＋`llama-server`（targets 兩個都在）⇒ `libllama*.dylib` 命中**精確** `CGC_RHO` 3/8；二進位跑得起來（只印 help）。推導出的重現指令：Mac configure 必須帶 `-DCMAKE_CXX_FLAGS=-DMTP_SUPPORT`（`scripts/build_fork_llama.sh:215`），少了它 `llama-bench.cpp` 編不過"
+    - "窗口：`window_runner.py --selftest` **23/23**（流程本體，一個玩具宣告走完整條路）＋ `rho_window.py --selftest` **41/41**（ρ 的 receipts ＋ 整段彩排）；兩支已進 `harness.py REGISTRY`"
+  apply_and_run: |
+    **窗口腳本（一條命令把下面做完）**：
+        python3 scripts/check/rho_window.py            # 先看計畫（預設不執行任何東西；rc=2 ⇒ 還有 pending）
+        python3 scripts/check/rho_window.py --go       # 真的跑：S1→S6，任一步失敗就停並印「下一個該看的東西」
+    S1 套用 → S2 建置 → S3 oracle 對照臂 → S4 oracle 交付臂 → S5 四條權威 row 命令 → S6 判詞。
+    跑前先掃產物（已在就 skip）、每一步跑後當場驗 receipt（fail-fast）、每動 append 進
+    `Backup/rho_split_2026-09-30/window.jsonl`（中斷後重跑從沒完成的那一步接續）；
+    預設不發車（`--status`），`--go` 只在補丁 md5＋base 與「盒子閒不閒」都過時才動手。
+
+    手動版（腳本內用的就是這幾條；全文見 docs/RHO_PRICE_AUTHROW_2026-09-30.md §6）：
+    0) python3 scripts/check/rho_price_authrow.py --checklist      # 清單＋補丁 md5／base 驗證
+    1) git apply --3way Backup/rho_split_2026-09-30/rho_delivery_split.patch    # 在擁有 src/ 的那棵樹
+    2) cmake --build src/llama.cpp/build --target llama-server llama-bench -j 8
+    3) 對照臂（可重用同 build 的錨）：
+       python3 scripts/check/m123_oracle_gate.py --profile prefill250 --tag rho-split-ctl-<日期>
+    4) 交付臂：
+       python3 scripts/check/m123_oracle_gate.py --profile prefill250 --tag rho-split-deliver-<日期> --env CGC_RHO=1
+       # 期望 M1 9/9（exit 0）；這條送得進去靠補丁在 run_server.sh 加的轉送
+    5) 收貨：`--check` 轉 RUNNABLE；交付臂 summary 的 `extra_env['CGC_RHO']=='1'`（旗標真的進了子行程）；
+       交付臂**伺服器 log**（banner 的 `[log] <path>` 指名那一份）`grep -c 'CGC-RHO-'` ＝ 0。
+       ⚠ 不要 grep `launch_<tag>.log`：那只是 banner，永遠是 0（一個假的綠）。
+       池的 `prefetch=N/M` 在伺服器 log 上；ρ 的貢獻看 S3/S4 的**差分**（證據，不是價格）。
+    6) 四條權威 row 命令（`--plan`）＋ `--judge`（兩趟反序）⇒ 期望 PRICE（`NO_EFFECT` 也是合法結局）

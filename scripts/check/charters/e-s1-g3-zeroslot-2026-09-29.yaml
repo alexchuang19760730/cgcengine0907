@@ -155,8 +155,6 @@ options:
   subgoal: L20-2
   profile: prod-new
   arms:
-    - "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1"
-    - "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1"
   knobs:
     - {name: CGC_ZERO_SLOT, value: "1", role: subject, why: "被測：零槽位（主端點是計數器翻轉 zero_slot>0 且 placeholder=0）", source: "charters/e-s1-g3-zeroslot arms[]"}
     - {name: CGC_SEG_BATCH, value: "1", role: subject, why: "單段提交（G3 的載體）", source: "同上"}

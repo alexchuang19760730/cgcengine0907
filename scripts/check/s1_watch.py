@@ -44,8 +44,17 @@ def _logs(limit_dirs=None):
         for fn in filenames:
             if fn.endswith(".stderr.log") or fn.endswith(".log"):
                 out.append(os.path.join(dirpath, fn))
-    out.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    return out
+    # ⚠ 斷鏈的 symlink 會讓 getmtime 丟 FileNotFoundError（整支閘門崩潰、看起來像「沒數據」）。
+    #   實例 2026-10-01 15:41：launcher 先建 llama_server_latest.log 的連結、行程卻沒起來
+    #   ⇒ 連結指向不存在的檔 ⇒ 掃描直接炸。這裡改成「取不到 mtime 就跳過」，並印一行提示。
+    kept = []
+    for p in out:
+        try:
+            kept.append((os.path.getmtime(p), p))
+        except OSError:
+            print(f"  ⚠ 略過無法讀取的 log（斷鏈？）：{p}")
+    kept.sort(key=lambda x: x[0], reverse=True)
+    return [p for _m, p in kept]
 
 
 def scan(logs=None):

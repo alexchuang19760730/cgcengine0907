@@ -1,0 +1,47 @@
+# 立項卡（2026-09-30 §58 續）：27.338 是「臂的速度」還是「那三個旗標的產物」？
+#
+# 動機：quote_gate 的 R5 把 k_sweep_T4_K4（交付 cell、27.338、逐 rep 1.005、attribution=none）判成 DIRTY，
+#   理由是臂上掛著 CGC_MISS_MASK_DBG／_COST／CGC_SPAC_DBG（原始碼明文 never-quote）。
+#   但 R5 只擋了「引用」，沒有回答「那支臂到底跑多快」。若把三個診斷旗標拿掉後 level 仍 ~27，
+#   則 R5 的名單**不足以**守住那條路（同一支臂可以洗掉旗標再跑一次，而 27.3 同時 ≥20 與 ≥25）。
+id: e-quote-hygiene-k4
+owner: freebuff
+created: '2026-09-30'
+axis: S
+question: 把 CGC_MISS_MASK_DBG／_COST／CGC_SPAC_DBG 從 k_sweep_T4_K4 那支臂拿掉（保留 CGC_SEG_BATCH／
+  CGC_B_SCHEME／CGC_SLOT_TABLE_GPU／CGC_MISS_MASK／CGC_SPAC_K=4，同一個交付 cell）之後，level 是維持在
+  ~27 還是掉回誠實臂的 ~10？也就是：27.3 屬「這支臂的速度」還是「那三個旗標的產物」？
+baseline:
+  metric: 交付 cell：k_sweep_T4_K4 = 27.338（逐 rep 1.005、attribution=none，但 R5 判 DIRTY）；同格錨點
+    anchor_delivery = 9.702（swap）；delivery_fuse = 9.377（QUOTABLE）
+  cell: delivery（p0/n128/d512、reps 3、warm_skip 64、ctx 0、fixed_fill_seed 1、batch 512）
+  source: Backup/spac_sweep_2026-09-29/k_sweep_T4_K4.json
+hypothesis:
+  mechanism: 三個診斷旗標的成本（每步一次 synchronize ＋ 逐層列印）方向是**偏低** ⇒ 27.3 的真值只會更高；
+    若 level 維持 ~27，則那支臂（單次提交 ＋ K=4 預取）本身就在那一帶 ⇒ R5 只擋住了「引用」、沒擋住「重跑」，
+    下一個洞是**輸出正確性**（SEG_BATCH 跳過 per-layer hook；G3 未武裝時未駐留者走 e % ns）。
+  expected: 拿掉旗標後落在 26–28（維持）或 9–12（掉回誠實臂帶）；判別句是「哪一邊」，兩者互斥。
+  basis: 同族旁證 s1_1.json（只有 CGC_SEG_BATCH、沒有診斷旗標）在 (default) cell 是 27.526 ⇒ 傾向「維持」；
+    但它是 swap（窗口髒）⇒ 旁證不足以蓋過一次交付 cell 的量測。
+acceptance:
+  success: 產物 ＋ 引用閘門判詞；若判 QUOTABLE 且 ≥25 ⇒ R5 名單不足，必須再加「輸出見證」條件（本卡第二個交付物）
+  falsify: level 掉到 ≤12（與誠實臂同帶）⇒ 27.3 是那支臂路徑的產物，R5 已足夠
+  on_fail: 仍把 27.3 記為「單次提交家族的速度」，並在該家族標 no_throughput_claim
+targets:
+  decode_tps: 20.0
+  prefill_tps: 250.0
+subgoals:
+- id: sg-hygiene-arm
+  text: 拿掉三個診斷旗標的同一支臂、同一個交付 cell 的 level
+  expect: 26–28（維持）或 9–12（掉回）
+  how: prod-new ＋ harness bench（唯一認可入口）
+- id: sg-hygiene-verdict
+  text: 引用閘門對這一場的判詞（含 R5 是否還有話說）
+  expect: 若窗口乾淨 ⇒ QUOTABLE，即證明「洗掉旗標就能繞過 R5」
+  how: scripts/check/quote_gate.py check <artifact>
+- id: sg-output-witness
+  text: 這支臂的輸出正確性證據（llama-bench 不含答案比對）⇒ 若 sg-hygiene-verdict 是 QUOTABLE 就必須立
+  expect: 一個可判的布林（M1／answer hash），否則該讀數不得當成目標達成
+  how: 唯讀閱讀 §34／§50 與 PROD_NEW_DECODE20_G4MISS 的既有見證
+arms:
+- prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_SPAC_K=4

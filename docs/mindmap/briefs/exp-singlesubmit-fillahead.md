@@ -17,7 +17,7 @@
 
 ## 3. 結果
 
-尚無可引用讀數：1 個 run 全部非乾淨（attribution.verdict=both（thermal=HEAVY, swap_growth=3513.94 MiB）） **§52（09-29 22:06–22:08）：交付 cell（p0／b512）成對實測**——fillahead A 半 **26.45±0.51 t/s ＝ 37.81 ms/step**（`attribution=swap` ⇒ VOID）vs 同窗口控制 **10.28±0.34 t/s ＝ 97.28 ms**；**`instrument_gate=BOUND`**（`rb_feed=14000`、`prefetch=30301`、`spac=1564`、`mm_pub_n_leaf=39`）⇒「池活著」是**閘門判定**。計數器：`file_reads` **82932**（控制 26352，3.1×）、`fill_batch` 14.89 s（控制 6.01 s）⇒ 餵料代價看得見、**不出現在步時上**。⇒ 池活著時的 step 落在 **36.8 那一側**（不是 39.0）；`39.0` 是**預設 cell** 的讀數。⚠ 控制臂 swap +6511.8 MiB（臂的 4.7×）⇒ 成對 Δ 被控制臂的換頁放大。
+decode 27.26 t/s
 
 ## 4. 判定
 
@@ -35,7 +35,7 @@
 - **被測 option**：`CGC_SPAC_DBG=1`；`CGC_PREFETCH_SRC=hist`；`CGC_PREFETCH_WINDOW=4`
 - **結案狀態**：未結案（P0 成立、P1 未做）
 - **逐條處置**：整合進子目標　→ `L20-5`　—　單次提交臂上把 union 交給預取；P1 餵料的載體
-- **測試 log（實跑）**：[fed_default.json](../../../Backup/fillahead_2026-09-28/fed_default.json)　[exp-singlesubmit-fillahead_20260929_012703.json](../../../Backup/exp_runs/exp-singlesubmit-fillahead_20260929_012703.json)　[filla_run.json](../../../Backup/fillahead_delivery_2026-09-29/filla_run.json)
+- **測試 log（實跑）**：[fed_default.json](../../../Backup/fillahead_2026-09-28/fed_default.json)　[exp-singlesubmit-fillahead_20260929_012703.json](../../../Backup/exp_runs/exp-singlesubmit-fillahead_20260929_012703.json)　[filla_run.json](../../../Backup/fillahead_delivery_2026-09-29/filla_run.json)　[certified.json](../../../Backup/p1_rbfeed_2026-09-30/certified.json)
 - 驗收：不開 debug 仍要有 CGC-RB-FEED 且 prefetch > 0/0。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
@@ -71,6 +71,13 @@
 - Log／產物：[filla_run.json](../../../Backup/fillahead_delivery_2026-09-29/filla_run.json)
 - 結果：tg=26.45
 - 判定：swap：swap_growth=1379.3100000000013 MiB, max_swap=12239.69 MiB
+
+**Run 4** · 2026-09-30 14:40　·　thermal NOMINAL　·　swap 5080 MiB→5146 MiB
+- arm：`prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1`
+- 命令：`llama-bench（prod-new）-p 0 -n 64 --warm-skip 64（由產物參數重建）`
+- Log／產物：[certified.json](../../../Backup/p1_rbfeed_2026-09-30/certified.json)
+- 結果：tg=27.26
+- 判定：none：swap_growth=25.25 MiB, thermal=NOMINAL
 
 ## 8. 子目標分解（持續更新；2/8 完成）
 

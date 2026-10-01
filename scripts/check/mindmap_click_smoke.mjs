@@ -71,11 +71,16 @@ click(mChip.querySelector('.t'));
 const t3 = txt();
 ok('③ 點 M 標籤 → 面板換成 M 說明', t3.includes('M MTP on 加速') && t3.includes('MTP OFF'));
 for (const k of ['1 現狀', '2 推論', '3 量測', '4 目標']) ok('   M 面板含「' + k + '」', t3.includes(k));
-ok('   M 面板含原始報告連結', !!D('detail').querySelector('a[href*="mtp_amortization"]'));
+ok('   M 面板含複核報告連結（MTP_AMORTIZATION_RECHECK）',
+   !!D('detail').querySelector('a[href*="MTP_AMORTIZATION_RECHECK"]'));
+ok('   M 面板已不再連到作廢的 mtp_amortization.html',
+   !D('detail').querySelector('a[href*="mtp_amortization.html"]'));
 const nm = (t3.match(/拆解的子目標狀況（(\d+) 條目）/) || [])[1];
 ok('   M 面板含拆解狀況（' + nm + ' 條目）', !!nm);
 ok('   M chip 高亮、S chip 解除', mChip.classList.contains('active') && !sChip.classList.contains('active'));
-ok('   M 面板含攤薄公式 S=(1+a·k)/(1+m·k)', t3.includes('(1 + a·k) / (1 + m·k)'));
+ok('   M 面板含量綱恆等 S = E / cost', /S\s*=\s*E\s*\/\s*cost/.test(t3));
+ok('   M 面板不再出現外推公式 (1+a·k)/(1+m·k)', !t3.includes('(1 + a·k) / (1 + m·k)'));
+ok('   M 面板標注「m 不是常數」', t3.includes('m 不是常數') || t3.includes('m(k)'));
 
 // 3b 點「C kernel／頻寬效率」——第三軸（天花板軸）
 const cChip = chips.find(c => c.textContent.includes('C kernel'));

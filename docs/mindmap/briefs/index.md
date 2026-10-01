@@ -49,7 +49,7 @@
 | 3a | [口徑＋k=3 飄移認證（16.4% 噪聲底）](exp-caliber-calibration.html) | 不適用 | 0 | [exp-caliber-calibration.md](exp-caliber-calibration.md) | **未跑（有卡、無讀數）**：本節點的產出是**口徑校準**——記錄裡至少有四個不同的「步」（DECPROF work-row **167. |
 | 3a | [在**今天的交付口徑**上（`prod-new` profile、`…](exp-churn-delivery-630.html) | S 序列化消減 | 0 | [exp-churn-delivery-630.md](exp-churn-delivery-630.md) | 主 context ntok=1 的 churn 非 0（publish 級 3026/14976、entry 級 4014/119808， |
 | 3a | [在**認可入口**（`harness bench`、`prod-ne…](exp-prodnew-decode20-g4miss.html) | S 序列化消減 | 0 | [exp-prodnew-decode20-g4miss.md](exp-prodnew-decode20-g4miss.md) | **閘已過**（09-29 權威 cell）：重算工作清單中位 **6.09%**（19.0/step、IQR 3.85–8.65）、`mm |
-| 3a | [在單次提交臂上，**把每一步的 union 不經 hook 交給預取…](exp-singlesubmit-fillahead.html) | S 序列化消減 | 0 | [exp-singlesubmit-fillahead.md](exp-singlesubmit-fillahead.md) | 尚無可引用讀數：1 個 run 全部非乾淨（attribution.verdict=both（thermal=HEAVY, swap_gro |
+| 3a | [在單次提交臂上，**把每一步的 union 不經 hook 交給預取…](exp-singlesubmit-fillahead.html) | S 序列化消減 | 0 | [exp-singlesubmit-fillahead.md](exp-singlesubmit-fillahead.md) | decode 27.26 t/s |
 
 ## 已結案（廢棄／不適用）（18）
 

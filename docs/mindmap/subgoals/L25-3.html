@@ -21,7 +21,9 @@
   td { font-size:13px; }
   code { background:#f1f5f9; padding:1px 5px; border-radius:4px; font-family:'SF Mono',Monaco,monospace; font-size:12px; }
   .badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; white-space:nowrap; }
-  .layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
+  table.queue td.qnext { text-align: left; max-width: 46em; }
+table.queue td { vertical-align: top; }
+.layer-met { border-left:6px solid #059669; background:#ecfdf5; padding:6px 12px; border-radius:6px; }
   .b-ok { background:#d1fae5; color:#065f46; } .b-warn { background:#fef3c7; color:#92400e; }
   .b-info { background:#dbeafe; color:#1e40af; } .b-dead { background:#f3f4f6; color:#6b7280; }
   /* 09-30 operator：已了結的格（結案／判死）整列綠底；進行中不變色 */
@@ -47,24 +49,25 @@
 <nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
 <div class="container">
 <h1>L25-3 ｜ 乾淨窗口（C7）</h1>
-<p class="subtitle">結案狀態：<span class="badge b-warn">未結案（<b>§54 第一場 <code>none</code> 已達成</b>；<b>§55 建了判準</b>，而該場被判 <b>UNSTABLE</b>：逐 rep [10.45, 10.44, 3.88] ⇒ max/min <b>2.691</b>。缺的是<b>穩定</b>窗口，不是窗口本身）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
+<p class="subtitle">結案狀態：<span class="badge b-ok">結案（§63）：交付 cell <b>第一次出現可引用讀數</b> —— <b>10.923 t/s</b>（<code>Backup/l253_anchor_20260930/anchor_delivery_3.json</code>；逐 rep 1.097、kept 1.023、<code>attribution=none</code>、NOMINAL）。<br>⚠ 認證的是<b>窗口</b>（可引用且可重現），<b>不是能力</b>：<code>budget_gate</code> 對三場都判 <b>OVERBUDGET</b>（赤字 8317–8439 MiB、最大項＝模型側 Metal 駐留）⇒ 這個數字是<b>足跡類</b>讀數；L25 主節點因此仍<b>不變色</b>。</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>
 <div class="card"><table class="kv">
 <tr><th>預期（ms/step）</th><td>—（它保護的是任何新讀數）</td></tr>
-<tr><th>預期（t/s）</th><td>讓 <b>36.33 ms／27.53 t/s</b>（09-29 成對實測）在 <code>attribution=none</code> 重現</td></tr>
-<tr><th>現在能跑？</th><td><span class="runnable">⛔ 現在不能跑 — 前置＝一場 <code>attribution=none</code> ∧ NOMINAL ∧ reps≥3 且<b>穩定</b>的窗口（§55 那場被判 UNSTABLE：max/min 2.691）。</span></td></tr>
-<tr><th>現況（已量）</th><td>§33–§46 <b>全部 <code>attribution=swap</code></b>；09-29 <b>§53 四場錨點嘗試</b>：記憶體項已拿下（reclaimable <b>9736</b>、無 override 起跑），但 swap growth = <b>338／1394／2401／4830 MiB</b> ⇒ 沒有一場 <code>none</code>；門檻 500 MiB <b>低於這支臂自己的成長分布</b>（550–2984，原文自陳「拒或不拒有一半是抽籤」）。</td></tr>
-<tr><th>action</th><td>找一場 <code>attribution=none</code> ∧ NOMINAL ∧ reps≥3 的窗口，跑交付 cell 錨點（prod-new ＋ harness bench）</td></tr>
+<tr><th>預期（t/s）</th><td>在 <code>attribution=none</code> 的窗口跑出<b>可引用</b>的交付 cell 錨點（≥10.9）<br>⚠ 原寫的「重現 <b>36.33 ms／27.53 t/s</b>」已刪除（§63）：那個 27.53 的出處是 <code>CGC_SEG_BATCH</code> 單次提交臂＋<code>(default)</code> cell ⇒ R6＋cell 契約雙重不合格（§61），拿它當驗收等於<b>讓本格永遠不可能結案</b>；誠實臂在交付 cell 只有 9.6–11.2（§60）</td></tr>
+<tr><th>現在能跑？</th><td><span class="runnable">⛔ 不用再跑（§63 已經跑到）—— 09-30 02:1x 三場交付 cell 錨點（prod-new ＋ harness bench），第 3 場 <code>attribution=none</code> ∧ NOMINAL ∧ reps 3 且<b>穩定</b> ⇒ 判決已產生、本格已結案。<br>⚠ 若真要重跑：<b>盒子要安靜</b>（本輪 free ≈ 10.6 GB、壓縮機 0.00 MiB/s；三場裡有一場的第一個 rep 掉到 3.81 t/s）。</span></td></tr>
+<tr><th>前置（判決存不存在）</th><td><div class="success"><b>duplicate</b>／<code>quotable_reading</code> ⇒ 現判 <b>EXISTS</b><br>已可引用：Backup/l253_anchor_20260930/anchor_delivery_3.json（10.923 t/s、逐 rep [10.34, 11.34, 11.08]）<br><span class="legend">宣告理由：要的判決＝「交付 cell 有一列<b>可引用</b>的 ≥10.9」；§63 已產出（<b>10.923</b>、逐 rep 1.097）⇒ 再跑只會重印（而且三場裡有兩場的那一列會塌）。</span></div></td></tr>
+<tr><th>現況（已量）</th><td>§33–§46 <b>全部 <code>attribution=swap</code></b>；§53 四場錨點嘗試都沒拿到 <code>none</code>；§54 第一場 <code>none</code> 被判 UNSTABLE（逐 rep [10.45, 10.44, 3.88]）。<br><b>§63（09-30 02:1x）三場同形錨點</b>（交付 cell、prod-new、harness bench、起跑 free ≈10.6 GB、壓縮機 0.00 MiB/s、NOMINAL）：<br>① <code>anchor_delivery</code> 8.933 [3.81, 11.41, 11.57] ⇒ UNSTABLE（第 1 rep 冷，spread <b>3.036</b>）<br>② <code>anchor_delivery_2</code> 8.486 [10.16, 3.95, 11.35] ⇒ UNSTABLE（第 2 rep 塌，<b>2.877</b>）<br>③ <code>anchor_delivery_3</code> <b>10.923 [10.34, 11.34, 11.08] ⇒ QUOTABLE</b>（all <b>1.097</b>、kept 1.023、cold-rep +2.7%）<br>⇒ 窗口<b>可重現</b>，但一場只有約 <b>1/3</b> 的機率不塌；塌掉的那個 rep 掉到 3.8–3.9 t/s（platform 中位因此偏 ±29%）。</td></tr>
+<tr><th>action</th><td>（§63 已完成）找一場 <code>attribution=none</code> ∧ NOMINAL ∧ reps≥3 的窗口，跑交付 cell 錨點（prod-new ＋ harness bench）；下一次用同形態重跑前先確認 <b>起跑 free ≥10 GB</b>（塌掉的那兩場都是量測當下起跑 free 偏低／有殘留壓力）。</td></tr>
 <tr><th>驗收</th><td>一場<b>可引用的成對</b>錨點</td></tr>
 <tr><th>否證</th><td>拿不到乾淨窗口 ⇒ 所有新讀數維持 VOID</td></tr>
 </table></div>
 <h3>結案判準的現況</h3><table><thead><tr><th>profile</th><th>入口</th><th>實測值</th><th>metric</th><th>達標</th></tr></thead><tbody>
-<tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td><b>§54 22:40 交付 cell、8 GiB、無 override：<code>attribution=none</code></b>（swap +356.44 MiB、NOMINAL 126/126）——但 <b>8.26 ± 3.79 t/s</b>（離散 46%）≠ 錨點 11.703（85.45 ms）；本輪 5 場無一重現錨點</td><td>tps</td><td>❌</td></tr>
+<tr><td><code>prod-new</code></td><td><code>harness bench</code></td><td><b>10.923 t/s</b>（<b>MTP off</b>：<code>spec_type=null</code>／<code>spec_draft_n_max=null</code>＝91.55 ms/step；逐 rep [10.34, 11.34, 11.08]、spread <b>1.097</b>、kept 1.023、cold-rep +2.7%、<code>attribution=none</code>、thermal NOMINAL、misses 4251、有效讀取 13.0 MiB/s、hit 96.7%、wall 49.5 s）</td><td>tps</td><td>✅</td></tr>
 </tbody></table>
-<div class="warning"><b>引用閘門：UNSTABLE</b>（判準＝<code>scripts/check/quote_gate.py</code>，逐 rep 離散 ＋ 樣本數 ＋ 窗口 ＋ 參考帶）<br>產物 <a href="../../../Backup/pool_window_2026-09-29/anchor8g.json"><code>Backup/pool_window_2026-09-29/anchor8g.json</code></a><br>逐 rep [10.45, 10.44, 3.88]：第 3 個 rep 慢 2.7× ⇒ max/min 2.691；窗口 none 但量到的不是同一個東西</div>
+<div class="success"><b>引用閘門：QUOTABLE</b>（判準＝<code>scripts/check/quote_gate.py</code>，逐 rep 離散 ＋ 樣本數 ＋ 窗口 ＋ 參考帶）<br>產物 <a href="../../../Backup/l253_anchor_20260930/anchor_delivery_3.json"><code>Backup/l253_anchor_20260930/anchor_delivery_3.json</code></a><br>R1–R4 全過（reps 3、全 rep max/min <b>1.097</b>、kept 1.023、窗口 none）；R5／R6 乾淨（臂上無診斷旗標、無單次提交）⇒ 全語料<b>第一個可引用的交付 cell 讀數</b>（此前唯一 QUOTABLE 是 <code>(default)</code> cell 的 11.703，兩者依 §56 <b>不可互比</b>）</div>
 <h3>臂（options）</h3>
 <ul><li><code>prod-new</code></li></ul>
 <p>窗口條件不是旋鈕：attribution=none ∧ thermal NOMINAL ∧ reps≥3。CGC_WINDOW_OVERRIDE 是繞過閘門的開關，不能當本格的 option。</p>
-<p>產物＝一場可引用的成對錨點（交付 cell、prod-new、harness bench）。</p>
+<p>產物＝一場可引用的成對錨點（交付 cell、prod-new、harness bench）。<b>已取得</b>：<code>Backup/l253_anchor_20260930/anchor_delivery_3.json</code>（＋成對 stderr）。</p>
 <h3>立項（charter）</h3>
 <ul>
 <li><a href="../../../scripts/check/charters/e-clean-window-2026-09-29.yaml"><code>scripts/check/charters/e-clean-window-2026-09-29.yaml</code></a></li>
