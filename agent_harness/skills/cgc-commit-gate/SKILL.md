@@ -6,7 +6,7 @@ agent_created: true
 
 > **這是快照，不是權威副本。**
 > 權威位置：`~/.workbuddy/skills/cgc-commit-gate/SKILL.md`（由 host 持續寫入）。
-> 本檔於 2026-09-20 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
+> 本檔於 2026-09-27 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
 > 底下的內容能被 `agent_harness/scripts/auto_git_push.ps1` 定時推送；原檔改了這裡**不會**自動跟上。
 > 要改 skill 請改原檔，再重跑 `python3 agent_harness/scripts/import_harness_snapshot.py`。
 
@@ -23,7 +23,8 @@ agent_created: true
 
 1. 手動預演要自己帶 `BIN_DIR='src/llama.cpp/build/bin'`，否則閘門全 SKIP 卻印 `OK`（§1.1）。
 2. 提交要 `RUN_REPLAY_BENCH=0`——這是**依 D2**（基線 stale），不是腳本預設（§2.3）。
-3. 有動 `src/` ⇒ 跑 `m123_oracle_gate.py`，且**先看 `comparable` 再讀 M1/M2/M3**；
+3. 有動 `src/` ⇒ 跑 `m123_oracle_gate.py`。**FAIL 的判讀順序**：
+   ① `comparable` ② 哪個 `ctx_type` 的行動了 ③ 量級（ULP vs 語意級）——順序不能顛倒（§2.4c）；
    **D5 的白皮書那一半沒有豁免**（§2.4 §2.5）。
 4. 建置新鮮度看**建置輸出有沒有編譯行**，不是 exit code 或 mtime（§2.9）。
 5. 索引重生順序固定、**每一次**都要：先 `build_memory_index.py`、後 `index_assets.py`（§3.1）。
@@ -340,6 +341,31 @@ git diff --cached --name-status                # 驗：staged 清單就是你要
 the hook should invoke precommit_e2e_gate.sh … It needs an explicit decision」）。
 所以缺少 e2e 是**既定決定**，不是遺漏——commit message 要這樣寫。
 
+### 2.1b check 12（量測產物出處契約）會擋**新腳本** —— 連純 docs 的 commit 也一樣
+
+`scripts/check/provenance_gate.py` 掃 staged 的 `scripts/check/*`，凡**提到** `docs/*.html`
+卻沒登記在 `REPORT_PRODUCERS`／`REPORT_EXEMPT` 就 FAIL（實例 2026-09-25：
+`mindmap_build.py`(L177) 與 `void_number_check.py`(L55/56/66) 各被點名）。
+⇒ **新增任何會提到 `docs/*.html` 的 `scripts/check/*` 都要先登記**，否則閘門在你「只 commit 文件」時紅。
+
+判準是**被掃到的那一行是要讀的還是要寫的**：
+- 要**寫**報告 ⇒ `REPORT_PRODUCERS`（要給 `sidecar` 規則與 `evidence`）；
+- 只是**讀**（掃描 glob、selftest fixture 清單）⇒ `REPORT_EXEMPT` ＋ 一句理由。
+  把它們誤登記成 producer 會向一個**構造上不會存在的 sidecar** 索討證據 —— 那正是該檔註解點名的
+  缺陷類（向一份從未量測過的產物要證明）。
+改完跑 `python3 scripts/check/provenance_gate.py --selftest`（本次 72/74 → 74/74；
+那 2 個 FAIL 就是這兩支造成的，**不是既有欠帳**）。
+⚠ 守衛本身要先能通過：我寫 `assert '"' not in NEW_BLOCK` 結果 dict 的 key 自己就是雙引號字串
+⇒ 整批 abort。「先驗才寫」有效，但**守衛要對自己的輸入成立**。
+
+### 2.1c `Gates:` 的 id 是 **G0–G7**，不是 `targets.json` 裡的 `prefill-250`／`decode-25`
+
+`commit_gates.py --list` 印 `G0 … G7`（8 個），其 name 才是「decode-25 / …」的子項；
+而 `agent_harness/portal/targets.json` 的 `targets[].id` 是 `prefill-250`／`decode-25` —— **兩層不同**。
+寫 `Gates: prefill-250 conditional (...)` 會得到
+`[BAD_ENTRY] … Known gates: G0, G1, …, G7`（2026-09-25 實踩）。
+預演：`python3 scripts/check/commit_gates.py --message-file <草稿>`，commit 後再用 `--last` 驗一次。
+
 ### 2.2 預演與 SKIP 的報法
 
 預演指令見 §0(d)。判準是 **0 FAIL，且每一個 SKIP 都逐列有理由**；
@@ -432,6 +458,203 @@ git diff --cached --name-only | grep -c '^src/'     # 0 ⇒ 不適用（不是�
 `summary_s1-nodbg.json`（`true`、PASS）／`summary_s1-dbg-fixed2.json`（`false`，唯一 diff 就是那顆旋鈕）／
 `summary_s1-postfix.json`（`true`、PASS）。**兩個臂的 build 指紋必須逐位元相同**，
 把那三行貼進 message，否則你證明的是兩個 build。
+
+### 2.4b ★ D5 FAIL 時先問「它是不是早就紅了」——用 `Backup/m123_oracle_gate/summary_*.json` 歸屬
+
+`m123_oracle_gate.py` 每一次跑都會留一份 `summary_<tag>.json`。**所以「這次 FAIL 是我的改動造成的嗎」
+是一個可以被回答的問題，而且答案就在那個目錄裡**，不必靠推理（用 `__INNER__` 之類的外層定界符，
+不要用 `PY`：內文裡還有第二個 heredoc，同名的 `PY` 會提前結束外層那個）：
+
+```sh
+python3 - <<'__INNER__'
+import json, glob, os, datetime
+rows=[]
+for f in glob.glob('Backup/m123_oracle_gate/summary_*.json'):
+    d=json.load(open(f))
+    rows.append((os.path.getmtime(f), d.get('tag'), d.get('probe_prompt_md5'), d.get('coverage_pct'),
+                 d.get('m1_numeric_identity'), d.get('m2_decision_agreement'),
+                 d.get('comparable'), d.get('n_compared'), d.get('ref_md5')))
+for m,t,p,c,a,b,cp,n,rm in sorted(rows)[-12:]:
+    print(datetime.datetime.fromtimestamp(m).strftime('%m-%d %H:%M'), t, str(p)[:12], c, a, b, cp, n, str(rm)[:12])
+__INNER__
+```
+
+判準：**在你動手之前**那幾輪如果已經是同一組簽名（`coverage_pct`／M1／M2／`n_compared`／`ref_md5`／
+`probe_prompt_md5` 逐項相同），那這個 FAIL **早於你的 commit**，而你的 commit「重現它」本身
+就是「新碼在生產路徑上惰性」的證據 —— 對 env-gated 的診斷碼，這是唯一拿得到的那一種。
+實例（2026-09-26，commit `553424ec1`，純 env-gated 儀器重建）：本次 `step2-missmask` 得到
+`cov 60.0 / M1 2/3 / M2 3/3 / n=3 / ref_md5 72d82a33ad79`，與改動前 09-25 17:09、17:11 兩輪
+（`en-mindmap-250925`、`-b`）**逐項相同** ⇒ 寫「FAIL 早於本 commit、不歸本 commit；本輪重現它」。
+
+三條配套，否則這個論證會被讀成卸責：
+1. **要貼數字，不要只說「既有的」** —— 哪兩個 tag、什麼時間、哪些欄位相同。
+2. **要明寫「未追的是什麼」** —— 例如「為何 coverage 是 60% 而不是 100%」若不是本輪的變數，
+   就寫「未追，因為它不是本輪的變數」：不要沉默，也不要假裝解釋了。
+3. **`probe_prompt_md5` 要相同才算同一個比較。** 它若不同，那就是 gate 自己警告的
+   「DIFFERENT probe prompt」情形，簽名相同也沒有意義。
+
+### 2.4c ★★ D5 FAIL 的完整判讀順序（三問，順序不能顛倒）
+
+§2.4b 說「先看 comparable」，那是**第一問**。2026-09-26 把 `M1 6/9` 追到底之後，完整的順序是：
+
+**第一問：`comparable` 是 true 嗎？** `false` ⇒ **跨配置比較，本來就不是退步，直接丟棄**。
+`summary_*.json` 的 `config_diffs` 會寫出是哪個鍵（例如
+`["ENV.CGC_PREFIX_REUSE_CKPT: ref='<absent>' now='1'"]`）。
+⚠ **實例踩坑**：我一度把 09-23 11:32 `pfx-ckpt2` 的「9/9」當成「最後一個乾淨基準」，
+它的 `comparable=false` ⇒ **那個 9/9 根本不算數**，於是把區間算寬了兩天。**看 M1 之前先看這一行。**
+
+**第二問：哪一個 `ctx_type` 的行不同？** 9 行探針按 `ctx` 分桶
+（2026-09-26 的分配是 step 0,1 = `DEF`、step 2,3,4 = `MTP`、step 5×4 = `DEF`）。
+印出來的方式（`oraclecmp_<tag>.json` 的 `diff_examples` 帶 `key`）：
+
+```sh
+python3 - <<'__INNER__'
+import json
+d=json.load(open('Backup/m123_oracle_gate/oraclecmp_<tag>.json'))
+print('cross_tab:', d['cross_tab'])            # num_ne_dec_eq=3 ⇒ 3 行漂移但argmax相同
+for e in d.get('diff_examples',[]):
+    print(' ', e['key'], 'num_eq', e['numeric_equal'], 'dec_eq', e['decision_equal'])
+__INNER__
+```
+**這一問的分辨力極高**：若**只有 `MTP` 桶動、`DEF` 桶全同** ⇒ 變更**限定在 draft 路徑**
+（trunk 沒動）⇒ **參考檔沒有全域過期**，不要拿「參考檔過期」當藉口（全域漂移會讓 DEF 也動）。
+
+**第三問：量級 —— ULP 級還是語意級？** 看 `diff_examples` 裡的 `sum`／`mean`：
+- **ULP 級**（`sum` 只差 1e-4 相對量級）⇒ reduction order／tiling 之類，通常是 `nsg`／融合類旋鈕。
+- **語意級**（`sum` 差幾個 %）⇒ 是真的算了不同的東西，去找「哪一段碼改掉了行為」。
+  實例：`[2,0,MTP]` 的 `sum` −460189.56 → −421575.85（**差 8.4%**）、`[4,0,MTP]` 差 **12.5%**。
+
+**然後才做歸屬**：把 `oraclecmp` 的 `key` 對到 commit。決定性的一步是**看新 hash 是否跨多次執行穩定** ——
+`Backup/m123_oracle_gate/oraclecmp_<tag>.json` 逐 tag 比同一個 `key` 的 hash：
+
+```sh
+for t in <tag1> <tag2> <tag3>; do
+  python3 -c "
+import json; d=json.load(open('Backup/m123_oracle_gate/oraclecmp_$t.json'))
+h=[e['diffs'] for e in d.get('diff_examples',[]) if e['key']==[2,0,'MTP']]
+print('$t'.ljust(30), d['metrics']['numeric_identity']['equal'], '/9', h[0][0][2] if h else '(same)')"
+done
+```
+**跨多個 build 完全同一條 hash** ⇒ **確定性變更，不是雜訊**（實例：`181c373a72e4a81c`
+跨 5 次執行、3 個 build 一致）⇒ 可以放心往「是哪個 commit 改的行為」走，不必懷疑量測。
+
+**最後：二分。** `summary` 裡有 `tree.head` ＋ `engine_digest`（各 dylib 的 md5）⇒ **0 GPU 就能做
+時間二分**：找出「最後一個合法 9/9 的 `tree.head`」與「第一個合法 FAIL 的 `tree.head`」，
+再 `git log --oneline A..B -- src/llama.cpp/src src/llama.cpp/ggml`。
+
+⚠ **二分前必須先做的一步：把 `ref_md5` 當成分組鍵。** 上面那句「最後一個合法 9/9」有陷阱 ——
+verdict 是 **(engine, reference) 的二元函數**，不是 engine 的單一函數。若新舊段的 ref 不同，
+你會把「換了 ref」讀成「引擎回歸」，於是在一堆無關的 commit 上二分。2026-09-27 的實例
+（`Backup/m123_oracle_gate/summary_*.json`）：
+
+```sh
+python3 -c "
+import json,glob,collections
+rows=[json.load(open(f)) for f in glob.glob('Backup/m123_oracle_gate/summary_*.json')]
+g=collections.defaultdict(collections.Counter)
+for d in rows:
+    if d.get('ref_md5') and d.get('m1_numeric_identity'):
+        g[d['ref_md5']][str(d['m1_numeric_identity'])] += 1
+for rm,c in g.items(): print(rm[:8], dict(c))"
+```
+
+- **先找 controlled pair**：同 `tree.head`、同 `engine_digest`，只有 `ref_md5` 不同，verdict 卻翻轉 ⇒
+  **那次 FAIL 是 ref-side**，引擎無罪，`engine_digest` 那一側不必再查。
+  實例：`default-v7-20260926` vs `refbase-20260926`（都 head `591d7cfac`、都 `libllama.0.dylib=312ba56a`）；
+  `fn_on` vs `fn_off`（都 head `828f4d1c2`、都 `1dfd4394`）。
+- **再按 `ref_md5` 分組看 M1 分佈**：某個 ref 的 9/9 全集中在某個日期之前、FAIL 全在之後
+  ⇒ 斷裂時間被這個 ref 的適用性定義，而不是你改了什麼。
+  實例：`72d82a33`（v6_nbaware）57 筆 md5 恆定、09-15…09-25 全 9/9、09-26 後全 6/9。
+- **然後才縮窗口**：看斷裂前後的 head 落在哪些 commit 上（實例：09-26 01:25–01:42 之間只有
+  `85dd01ab2`／`553424ec1`／`58e0f4020`），再逐個查它自己聲明是否惰性。
+  **`553424ec1` 就是這類陷阱**：它重建了 dylib（+336 B）、也加了 `llama-graph.cpp` +52，
+  但 self-message 與 diff 都顯示行為改動全在 `if (cgc_miss_mask)` 之後 ⇒ 未設定時為中性。
+  **「dylib 的 md5 變了」不代表「行為變了」** —— 想知道後者，看 M1，不看 md5。
+- **指紋對照**：若不同 head、不同 ref 路徑的 FAIL 都落在**同一組 key**，那是**同一個事件**，
+  不是新回歸；先不要開新戰線。實例：6/9 一律是 `[2,0,'MTP'] [3,0,'MTP'] [4,0,'MTP']`，跨 6 個 head 全同。
+- ★★★ **「同一個 fingerprint ⇒ 有確定的狀態差」只能把你帶到「兩個狀態」，帶不到「哪個 commit
+  造成的」。要跨最後一步，問的是「**這兩個狀態在數值上差在哪幾行探針**」—— 直接逐行比對
+  兩份 ref 檔本身**（純 json，零 GPU、零重建）：
+
+  ```python
+  a=[json.loads(l) for l in open('…_v6_nbaware.jsonl')]; b=[json.loads(l) for l in open('…_v7….jsonl')]
+  for ra,rb in zip(a,b):
+      d=abs(ra['sum']-rb['sum'])
+      print((ra['step'],ra['token_idx'],ra['ctx_type']), ra['sum'], rb['sum'], 'IDENTICAL' if d<1e-9 else 'diff=%.3f'%d)
+  ```
+
+  2026-09-27 用这一手把「必须 GPU bisect」换成了九行比对：v6 与 v7 的九個
+  `(step,token_idx,ctx_type)` **同集合同順序**，**6 個 DEF 位 sum 逐字節相同、3 個 MTP 位全不同**
+  ⇒ 所謂回歸不存在，只是**參考檔記住了更早一次 MTP 數值**；指紋 `[2,3,4] MTP` 因此升級為
+  **機制級判據**（=「本次比較跨越了 MTP 數值的基線移動」），而不是「v6/v7 代溝」的模糊標記。
+  兩個附帶收穫：① `M2` 恆 9/9 的原因有了 —— argmax token 兩側相同（`17`/`248046`/`198`），
+  **不是沒差異而是貪心還沒跨過去**（日誌那句 `M1 diff & M2 same` 的警告由此落實）；
+  ② `M3` FAIL 的原因是 top-8 **集合本身**換了（尾部項不同），不只是順序。
+  **下一步只需在 `git log -- src/llama.cpp/src` 的候選裡找 MTP 相關者，仍然不用 GPU。**
+
+- ★★ **`65c76b8c7` 已定案（2026-09-27）：答案是唯一一個只作用在那條路徑上的 commit。**
+  它并入的 `llama-context.cpp` +11 是一段上游 MTP 修復，全文就一個 if：
+  ```c
+  if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP) { cparams.ctx_other = params.ctx_other; }
+  ```
+  修復前 `ctx_other` 只在 `GEMMA4_ASSISTANT`/`EAGLE3`/`DFLASTH` 三個 arch 下被保留（現況見
+  `llama-context.cpp:163-181`）⇒ 其他 arch 的 MTP context 拿不到 target context ⇒
+  `is_mem_shared=false` ⇒ draft 跑非共享 catch-up decode。修復後 MTP 一律保留。
+  **⇒ 這就是「6 位 DEF 逐字節不變、3 位 MTP 全變」的另一半解释，也是「v6 基準為何恆紅在
+  MTP 三位」的完整機制：v6（09-22 13:49）記的是修復前，v7（09-26 23:21）記的是修復後，
+  `65c76b8c7`（09-25 17:16）落在其間。這不是回歸，是一個上游性能修復（注釋自陳 accept
+  rate `0.98 → 0.44`，方向是變好）進了版控。**
+  miss-mask 三連（`553424ec1`／`8afb56af4`／`828f4d1c2`）全部排除 —— 三者新增的
+  `ggml_build_forward_expand(gf,vmask)`、`cgc_tensor_in_graph()` 及呼叫點**全在
+  `if (cgc_miss_mask)` 塊內**。
+
+  **⇒ 判讀規則可從此落地：任何以 v6 為基準、鍵名 = `[2,3,4] MTP` 的 M1 FAIL，
+  可直接判為基準遷移，不必再查引擎。** 反過來，鍵名若出現在 DEF 位，就不是這件事。
+
+  ⚠ 同時修正一條：**`828f4d1c2` 只修了 `ffn_moe_valid` 一處。** 它注釋自己說
+  「`ffn_moe_rn_mask` 與 slot table（`:3919`／`:3923`）用同一個 nodes-only 測試，
+  **至今仍被靜默強制為 nullptr**，且 nothing existing was switched over」——
+  這個缺陷**現在還活著**。凡由 `rm`（rn_mask）或 `tb`（slot table）推出的結論都要重跑。
+
+**⛔ 二分時最容易白忙的五個假嫌疑犯**（2026-09-26 逐一查過、全部無效，先檢查這幾種再往下挖）：
+1. **`.metal` 的 diff 只是加了尾端空行** —— `git diff --stat` 會把它算成 1 行。
+2. **`ggml_metal_nsg_env(t)` 這類「本來是常數、改成讀 env」的改動，在 env 缺席時回傳同一個常數**
+   ⇒ inert。**要打開函式確認 fallback**，不要只看呼叫點被改了。
+3. **新函式沒有呼叫點** ⇒ 死碼（`grep -rn` 要排除宣告與 `.o`／`.dylib` 的二進位命中）。
+4. **開關在 profile 裡不存在** ⇒ inert。**最省的確認方式是直接解析**：
+   `CGC_SERVER_PROFILE=<p> CGC_DUMP_ENV=1 bash scripts/run_server.sh | grep -E '^(CGCENV|ENV|ARG)'`
+   —— 它在 exec 前退出，**不吃 GPU、不載模型**。
+5. **`comparable=false` 的那些輪次**（回到第一問）。
+
+**★ 若結論是「基準的語意基準移動了」**：這**不是**你可以自己拍板重校準的事 ——
+`--write-ref` 會重新定義「bit-identical 是對什麼量的」。誠實做法：寫一份 dated 文件，
+列（a）引擎**今天**可重現的證據（兩次獨立 launch 逐位相同）、（b）歸屬用的三條獨立見證
+（blame／產物時間線／行序）、（c）**明確不宣稱什麼**；然後把「要不要重校準」留給 operator。
+先例：`docs/MTP_CTX_REPRODUCIBLE_2026-09-26.md`。
+
+**★ 替代路線（若你的改動只碰 trunk）**：pin 不用動，**改以「DEF 子集」認閘門**
+（`DEF 6/6 且與基準逐位相同` ＋ 另外證明 MTP 三行的 hash 與未改動的對照臂相同）。
+誠實邊界：只宣稱「非 MTP 路徑不變」。⚠ **若改動在 `ggml-backend.cpp` 的 graph_compute
+（例如 `CGC_SEG_BATCH` 單段提交）就不是 trunk-only** —— 它對「被算的那張圖」都生效，
+MTP 那 3 行要一起認 ⇒ 那時必須先重校準 pin。
+
+### 2.4d ★ 反過來用 D5：**證明一次 src 改動是惰性的**（2026-09-26）
+
+`src/` 一動就得跑 D5，這是規則。但 D5 的結果可以**反過來**當證據用：
+**若 `libllama.0.dylib` 的 md5 變了、而 M1/M2/M3 的簽名與既有基準一字不動**
+⇒ 你的改動在**該 profile 上根本沒進入**（惰性），不是「剛好沒抓到」。
+
+實例（2026-09-26，ρ 的 prefill 閘）：`--tag rho-prefill-gate` 得
+`M1 6/9 M2 9/9 M3 6/9`、`cross_tab={'num_eq_dec_eq':6,'num_ne_dec_eq':3}`、`ref_md5=72d82a33ad79`
+—— 與 09:23／09:34 兩輪（以及更早 02:03／02:06／04:57）**逐項相同**，而
+`build:` 那行印的 `libllama.0.dylib` 已從 `c80b2329252e1176` 變成 `1c0840e0ef19ceda`。
+⇒ 因為那道閘在 `if (getenv("CGC_RHO_PROBE"))` 裡面，而默認 profile 與 `prefill250` 都不設它
+⇒ **等價於零**。**這種「D5 簽名不變 ＋ 產物 md5 變」的組合比「D5 通過」更有資訊量：
+它同時證明了改動的惰性與引擎的確定性**，而且不花額外 GPU（D5 反正要跑）。
+
+⚠ 讀 `summary_*.json` 之前**先 `sorted(d)` 看實際鍵名**，不要照舊報告的寫法猜：
+M1＝`m1_numeric_identity`、M2＝`m2_decision_agreement`、**M3＝`m3_topk_set_agreement`**
+（**不是** `m3_topk_set` —— 照舊寫法讀會拿到 `None`，看起來像「M3 沒量到」）。
 
 ### 2.5 D5 的 oracle 旋鈕是「釘住的」——它會擋下一種你以為沒事的改動
 
@@ -636,6 +859,27 @@ stat -f "%Sm %N" -t "%Y-%m-%d %H:%M:%S" src/llama.cpp/build/bin/libllama.0.0.239
   只驗 rc 的話，一個「因為別的原因而崩」的實作也會通過 —— 而它與正確的守衛無法區分。
 - **同一輪要補一個成對的陰性斷言**：把守衛的訊息檢查拿掉後，測試應該要**變紅**。
   這一條見 lesson `eng-gate-0040`（比較器必須先被證明能給出「沒有差異」）。
+
+### 2.14 ★ 閘門驗的是**磁碟**，不是 staged 集合 ⇒ 純 docs commit 也會被別人未提交的產物擋下
+
+`check_build_tracked.sh` 的「洞 B」檢查 **symlink 目標有沒有被追蹤**，它讀的是工作樹上的
+symlink（`src/llama.cpp/build/bin/libllama.0.dylib -> libllama.0.0.578.dylib`），
+與你 stage 了什麼**無關**。實例（2026-09-23）：09-22 把版本號從 279 推到 578、產品建好了卻沒
+`git add`，於是我一個「只有 docs ＋ `scripts/check/`」的 commit 預演得到 **9 個 FAIL**，
+全部是同一個來源。把那三顆 `0.0.578` dylib ＋ 三條 symlink 一起 stage 才轉綠。
+
+⇒ **「我只 commit 文件，閘門應該不會管我」是錯的。** 遇到整批 FAIL 時先看它們是不是同一個來源，
+不要逐條去找內容問題。而修法有兩種，選哪一種看產物是誰的：
+
+| 產物是誰的 | 處置 |
+|---|---|
+| 我這條線建的（版本 bump、我改的 src） | **連原始碼一起 stage** —— 拆開會讓 check 8（原始碼↔產物同步）失去意義 |
+| 別條線建的 | 停下、回報、等他們提交；不要用 `--no-verify` 繞 |
+
+**歸屬判定（三條，都指向別人就不要碰）**：
+① `grep -l <檔名> .workbuddy/memory/*.md` —— 我線的記憶會指名自己產的文件；
+② 看檔頭 5 行有沒有「依 `docs/NEXT_ACTIONS_*.md` 任務 N（【執行 Agent】…）」這種他線標記；
+③ `git diff` 的 hunk 內容認特徵字串（例：shape knob 的 `#include "llama-shape-knob.h"`）。
 
 ---
 

@@ -1,0 +1,119 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— e-l201-accel：L20-1 可交付紅利（加速＋bit-identical）
+#   承接 e-l201-submit-path 的 next：在不開 CGC_SEG_BATCH 的可驗臂上減提交數，
+#   驗收＝Δstep > 兩臂散布 ∧ 配對 M1 9/9。本卡用「單提交預測＋回退兜底」實現。
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼立這一張（operator 2026-10-01 拍板 Y）：
+#   ① e-l201-submit-path 已判 MECHANISM（T_sub 中位 0.937ms、40×T_sub≈37.5–40.3ms 覆蓋 50.3 紅利的
+#      74–80%），但「可交付紅利」需另立卡在可驗臂上減提交數（其 next 字段）。
+#   ② P2（ggml-backend.cpp 刪 early-return）已讓 CGC_SEG_BATCH=1 比特一致 9/9，但走 41 段循環（慢
+#      ≈11.30 t/s）；快的那條「1 提交/步」整圖早退路徑仍是 R6-DIRTY（輸出錯）。
+#   ③ 用戶選 Y：整圖單提交＋預測/回退。預測源＝`cgc_prev_token_prefetch`/`cgc_layer_ahead`（樹已存在，
+#      用上一個 token 的逐層專家 id 預測當前 token，相鄰 token 路由重疊 ~87%，註解 8028 實測）。
+# 全文：docs/R6_PERLAYER_ENSURE_DESIGN_2026-10-01.md；e-l201-submit-path-2026-10-01.yaml；e-r6-engine-surgery-2026-10-01.yaml。
+id: e-l201-accel
+owner: ace（線 A / 加速交付）
+created: '2026-10-01'
+axis: A
+depends_on: e-l201-submit-path
+
+# ── 【目標】可判定問題，兩答案都有意義 ─────────────────────────────────────
+question: |
+  在單提交臂（CGC_SEG_BATCH_FAST=1）上，提交前用 prev-token 預測 ensure 本步專家、整圖一次提交，
+  提交後回讀逐層真實 id 與預測比對、失配層回退 41 段循環重跑——能不能讓單提交臂 M1/M2/M3 回到 9/9
+  （＝bit-identical）且 Δstep > 兩臂散布（＝紅利可交付）？還是預測失配率過高、回退吃掉紅利（≤兩臂散布）？
+
+# ── 【現狀】權威基線 ───────────────────────────────────────────────────────
+baseline:
+  metric: "Y 臂（CGC_SEG_BATCH_FAST=1）2026-10-02 見證：M1/M2/M3 222/222（n_compared=222、coverage 100%、comparable=true、config_diffs=[]）；engagement taken=195 / incomplete=5 / mismatch=0。"
+  cell:   "prod-new（MTP off）＋ m123 oracle（prefill250）＋ CGC_SERVER_MTP=0 ＋ 長生成 probe；decode 紅利量於 harness bench。"
+  source: "Backup/m123_oracle_gate/summary_y-fast-nonmtp-long.json"
+  # baseline.source 會被 charter gate 當**路徑**檢查（不存在即拒跑）⇒ 只能放單一路徑，其餘說明放 source_note。
+  source_note: "對照 reference＝Backup/knifeedge_matrix/ref_nonmtp_longgen_v1_20261002.jsonl（222 筆，本 caliber 自立）；控制臂 summary＝Backup/m123_oracle_gate/summary_ref-nonmtp-ctl.json。"
+  known: |
+    - ⚠ 2026-10-01 的「9/9」是空洞的：engagement 計數器 taken=0 —— 全程退回 proven 41 段，
+      只證明了兜底不破壞 bit-identity。原因：probe 太短（~6 步）且 MTP 仍 ON
+      （n_tokens 在 1/2/207 跳 ⇒ 預測長度對不上 remap）。
+    - ⇒ FAST 見證的必要條件：CGC_SERVER_MTP=0（**不是** CGC_SERVER_RUNTIME_PROFILE=non-mtp，
+      後者會被 run_server.sh:258 `[ -z "${CGC_SERVER_MTP+x}" ] && SERVER_MTP=1` 蓋回 1）
+      ＋ 長生成 probe（≥220 tokens，撐過 3 步 bootstrap）＋ 為該 caliber 自立的 reference。
+    - 預測源：prev_token_expert_ids（上一 token 逐層 id），相鄰 token 重疊 ~87%。
+    - 寫表塊 llama-context.cpp:3797-3831 在 submit 前寫 td[e]=st[e]（駐留）／e%ns（佔位）。
+    - 單提交前 ensure 預測專家 ⇒ st[e]>=0 ⇒ td[e]=st[e] 對預測駐留層正確；預測錯層仍佔位（錯）。
+    - 數據依賴硬約束（註解 8025-8027）：層 il 專家集由段 il 末 argsort 產生、被段 il+1 頭 mul_mat_id 消費
+      ⇒ 單提交前無法知本步路由，只能靠預測；預測錯須回退。
+
+# ── 【假設】機制＋預期 ─────────────────────────────────────────────────────
+hypothesis:
+  mechanism: |
+    快速路徑：CGC_SEG_BATCH_FAST=1 ⇒ (a) 提交前對 41 層逐一 ensure 預測專家（復用 CGC_PREV_TOKEN_PREFETCH_SYNC
+    的同步 ensure，保證駐留）；(b) 整圖一次 async 提交（1 提交/步，吃掉 R6 紅利的提交次數項）。
+    兜底：提交後回讀 cache_ids_cont_tensors（ffn_moe_ids_cont）逐層真實 id，與預測比對；若有失配層，
+    對本 token 回退到 proven 41 段循環重跑（輸出以 41 段為準）⇒ 結構保證 9/9。
+    預測全中（常態，~87%+）⇒ 走快速路徑 ⇒ Δstep 明顯下降 ⇒ 紅利可交付。
+  expected: "單提交臂 M1/M2/M3 9/9（經回退兜底）；且 decode Δstep > 兩臂散布（誠實臂 vs FAST 臂）⇒ 紅利交付。"
+  basis: |
+    P2 見證 9/9（proven 41 段循環）；e-l201-submit-path MECHANISM（提交數＝紅利主體）；
+    llama-context.cpp:6511-6548（prev_token 收集）、:6785-6843（SYNC ensure）、:8044-8056（layer_ahead 預取）；
+    ggml-backend.cpp:1770-1812（41 段循環，FAST 臂回退目標）。
+
+# ── 【預註冊判決規則】 ─────────────────────────────────────────────────────
+acceptance:
+  window_valid: |
+    (a) 兩臂 rc=0 跑完；(b) FAST 臂 stderr 至少 1 行 CGC-SEGBATCH-FAST（單提交發生）＋ CGC-FAST-FALLBACK（回退發生，證明兜底接線）
+       或 CGC-FAST-CLEAN（預測全中，無回退）；(c) oracle 配對 M1/M2/M3 9/9（FAST 臂須經回退兜底達成）。
+  success: |
+    FAST 臂 M1/M2/M3 9/9 且 decode Δstep（誠實臂－FAST 臂）> 兩臂散布（同場 max-min）⇒ 紅利可交付。
+  falsify: |
+    FAST 臂 M1 ≤ 2/9 ⇒ 單提交＋預測不足以保證比特一致（兜底失效或接線錯）⇒ 判死，回填本卡與 e-l201-submit-path。
+  undecidable: |
+    FAST 臂 CGC-SEGBATCH-FAST 0 行 ⇒ UNRESOLVED（快速路徑未觸發）；先解接線再重跑。
+  on_fail: |
+    判死 ⇒ 回填並轉方案 X（分組提交＋每組 ensure，見主線記憶加速岔路）或 pipeline 41 段隱藏 gap。
+
+# ── 【量化目標】 ───────────────────────────────────────────────────────────
+targets:
+  m1_success_min: 8
+  m1_falsify_max: 2
+  fast_lines_min: 1
+  fallback_lines_min: 1
+
+# ── 【技術子目標】 ─────────────────────────────────────────────────────────
+subgoals:
+  - id: sg-accel-fastpath
+    text:   "ggml-backend.cpp 加 CGC_SEG_BATCH_FAST 單提交路徑（flag-gated、default off＝byte-identical）"
+    expect: "default 行為完全不變（P2 見證 9/9 再過）；FAST 臂 1 提交/步"
+    how:    "在 oa_async else-if 分支頂部加 `if (cgc_seg_batch_fast) { ...graph_compute_async + sync... }`"
+  - id: sg-accel-ensure
+    text:   "llama-context.cpp 提交前對 41 層 ensure 預測專家（SYNC）"
+    expect: "寫表塊 :3822 對預測駐留層寫出 td[e]=st[e]（正確）"
+    how:    "復用 CGC_PREV_TOKEN_PREFETCH_SYNC 機制；CGC_SEG_BATCH_FAST 啟用時於寫表塊前呼叫"
+  - id: sg-accel-fallback
+    text:   "提交後回讀逐層真實 id 與預測比對，失配層回退 41 段循環重跑"
+    expect: "CGC-FAST-FALLBACK ≥1 行（兜底發生）；M1 9/9 由結構保證"
+    how:    "復用 cache_ids_cont_tensors；失配 ⇒ 標記本 token 重跑 41 段（輸出以 41 段為準）"
+
+# ── 【臂】 ────────────────────────────────────────────────────────────────
+arms:
+  - prod-new:CGC_DECODE_PROFILE=1;CGC_GPU_TIMING=1          # 誠實臂（計數器；≈41 提交/步）
+  - prod-new:CGC_SEG_BATCH_FAST=1;CGC_DECODE_PROFILE=1;CGC_GPU_TIMING=1   # FAST 臂（1 提交/步＋兜底）
+non_prod_reason: "端點是 Δstep 與 M1 9/9（計數器＋位元），非 t/s 結案；FAST 臂 t/s 僅作佐證。"
+
+# ── 【D5 oracle 閘】 ──────────────────────────────────────────────────────
+d5_gate:
+  required: true
+  oracle: "scripts/check/m123_oracle_gate.py --profile prefill250"
+  control_tag: "l201-accel-ctl-2026-10-01"
+  arm_tag: "l201-accel-fast-2026-10-01"
+  pass: "M1/M2/M3 9/9（FAST 臂經回退兜底）；config_diffs==[]（FAST 臂與 control 同可比鍵）"
+
+# ── 【交付】 ─────────────────────────────────────────────────────────────
+delivery:
+  patch: "src/llama.cpp/ggml/src/ggml-backend.cpp（CGC_SEG_BATCH_FAST 單提交）＋ src/llama.cpp/src/llama-context.cpp（預測 ensure＋失配回退）"
+  base:  "P2 後狀態（ggml-backend.cpp 41 段循環；llama-context.cpp 寫表塊＋prev_token 收集）"
+  apply_and_run: |
+    1) cmake --build src/llama.cpp/build --target llama-server llama-bench -j10
+    2) 控制臂：m123_oracle_gate.py --profile prefill250 --tag l201-accel-ctl-2026-10-01
+    3) FAST 臂：m123_oracle_gate.py --profile prefill250 --tag l201-accel-fast-2026-10-01 --env CGC_SEG_BATCH_FAST=1
+    4) 判詞：M1/M2/M3 9/9 ∧ grep CGC-SEGBATCH-FAST ∧ CGC-FAST-FALLBACK
+  caveat_r5: "FAST 臂若帶 R5 量具則 t/s 不可引用；本卡端點是位元＋計數器。"

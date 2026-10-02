@@ -12,6 +12,11 @@ BENCH = os.path.join(REPO, "src/llama.cpp/build/bin/llama-bench")
 MODEL = os.path.join(REPO, "models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf")
 STRIDE_MIB = 42.81
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import llama_bench_matrix as lbm   # noqa: E402  §3.4.1 的共用面（budget_gate.sh 的 Python 包裝）
+
 BASE_ENV = dict(
     CGC_L4_CAP_TOTALSTRIDE="1", CGC_SPAC="1", CGC_SERVER_DENSE_IQ4X="1",
     CGC_PREFILL_STREAM="1", CGC_MM_BITIDENT="1", CGC_OA_ASYNC="1",
@@ -56,6 +61,20 @@ def main():
     ap.add_argument("--json", default="/tmp/cap_oomsweep.json")
     a = ap.parse_args()
     points = [int(x) for x in a.points.split(",")]
+    # ── [CGC 2026-10-01, MEASUREMENT_CONTRACT §3.4.1] launch 前的超訂預檢 ──
+    # 每個點的 pool = cap×STRIDE_MIB，取最大那點當預檢值（從嚴）。本工具要量的就是 OOM 邊界，
+    # 超訂是題目本身 ⇒ 16 GB 這台在預設（strict）下拒跑；要硬跑請 BUDGET_GATE=warn，樣本會帶
+    # CGC_BUDGET_OVERSUBSCRIBED=1，不可當乾淨基線。
+    worst_pool = int(max(points) * STRIDE_MIB * 1024 * 1024)
+    gate_env = dict(os.environ, POOL_BYTES=str(worst_pool), MODEL=MODEL, LOAD_MODE="none")
+    rc, log = lbm.budget_gate_preflight(gate_env)
+    print(log.strip(), flush=True)
+    if rc != 0:
+        print(f"[budget-gate] 拒跑（rc={rc}）：{len(points)} 個點一個都不跑。要硬跑：BUDGET_GATE=warn。",
+              file=sys.stderr)
+        return rc
+    if gate_env.get("CGC_BUDGET_OVERSUBSCRIBED") == "1":
+        os.environ["CGC_BUDGET_OVERSUBSCRIBED"] = "1"   # run_point 從 os.environ 抄 ⇒ 子程序帶標記
     results, best = [], None
     for c in points:
         print(f"--- cap {c} ---", flush=True)
@@ -66,6 +85,7 @@ def main():
             best = r["real_cap"]; break   # 降序、第一個活點即上界下的最高已測點
     json.dump(dict(best=best, results=results), open(a.json,"w"), indent=1)
     print("BEST =", best)
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

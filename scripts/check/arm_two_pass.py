@@ -147,7 +147,9 @@ def build_pass_env(user_env: dict, which: str) -> dict:
 def _procs_matching(patterns: list[str]) -> list[str]:
     out: list[str] = []
     try:
-        run = subprocess.run(["pgrep", "-fl", "llama|auto_bench_watchdog"],
+        # [CGC 2026-10-01, MEASUREMENT_CONTRACT §3.4.2] 現行看門狗名字：watchdog_daemon /
+        # lane_watchdog。只查 auto_bench_watchdog 會**在殺手上膛時放行**（2026-09-25 10:21 的誤殺）。
+        run = subprocess.run(["pgrep", "-fl", "llama|auto_bench_watchdog|watchdog_daemon|lane_watchdog"],
                              capture_output=True, text=True, timeout=10)
     except Exception:
         return out
@@ -205,8 +207,9 @@ def gate_environment(max_swap_mb: float) -> dict:
     add("no_residual", len(residual) == 0,
         "none" if not residual else "; ".join(residual[:4]))
 
-    # watchdog
-    watchdog = _procs_matching(["auto_bench_watchdog"])
+    # watchdog —— 必須查**現行**名字（MEASUREMENT_CONTRACT §3.4.2）：只認舊名會在
+    # watchdog_daemon / lane_watchdog 上膛時放行，而 10:21 那次誤殺就是這樣發生的。
+    watchdog = _procs_matching(["auto_bench_watchdog", "watchdog_daemon", "lane_watchdog"])
     add("no_watchdog", len(watchdog) == 0,
         "none" if not watchdog else "; ".join(watchdog[:2]))
 
@@ -547,7 +550,9 @@ def main(argv=None) -> int:
     ap.add_argument("--prompt", type=int, default=2048)
     ap.add_argument("--gen", type=int, default=128)
     ap.add_argument("--depths", default="512")
-    ap.add_argument("--reps", type=int, default=1)
+    # [CGC 2026-10-01, MEASUREMENT_CONTRACT §3.1] `-r 3`，不得用 1：judge_artifact 的散度判據
+    # 需要 ≥2 個 samples（gate_consistency 的「reps 預設 = 3」項當場驗這一顆）。
+    ap.add_argument("--reps", type=int, default=3)
     ap.add_argument("--warm-skip", type=int, default=64)
     ap.add_argument("--ctx-size", type=int, default=0)
     ap.add_argument("--max-swap-mb", type=float, default=1024,

@@ -2937,9 +2937,19 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
     //   n_acc_drf = slot.n_draft_accepted     (committed drafts, with the replay discount -- the
     //                                          server's `if (spec_is_replay && n_accepted > 0)`)
     // The printed mean_len is the server's `1 + n_draft_accepted / n_draft_verif_steps`.
-    size_t n_rounds  = 0;
-    size_t n_drafted = 0;
-    size_t n_acc_drf = 0;
+        size_t n_rounds  = 0;
+        size_t n_drafted = 0;
+        size_t n_acc_drf = 0;
+        // [CGC 2026-10-01] A replay round (partial acceptance -> checkpoint restore -> `continue`,
+        // :3167) is a VERIFY decode that commits and emits NOTHING, and it does not call
+        // common_speculative_draft (`if (draft.empty())` at :3008 -- the carried `ids` are the next
+        // draft). Until this counter existed, the only two instruments disagreed by exactly the
+        // replay count and neither said so: `mean_len = 1 + acc/rounds` counts a replay round as if
+        // it emitted one token, and common/speculative.cpp's `emit_tok_per_round` divides by
+        // calls_draft, i.e. by the ORIGINAL rounds only (k=2, measured: 232 rounds vs 146 draft
+        // calls => 1.59x too high). `emit_per_round = n_done/rounds` below is the quantity that maps
+        // to machine cost: emitted tokens per verify decode.
+        size_t n_replay  = 0;
 
     // [CGC MTP path parity 2026-09-18] THE SIZE OF THIS VECTOR IS LOAD-BEARING. It used to be 0.
     //
@@ -3165,6 +3175,7 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
             // were counted as accepted on the round that first produced them (`ids` becomes the
             // next draft), so counting them again would inflate accept.
             n_acc_drf += ids.size() >= 2 ? ids.size() - 2 : 0;
+            n_replay  += 1;
 
             common_sampler_copy(smpl_save.get(), smpl);
 
@@ -3214,17 +3225,25 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
     {
         char s_mean_len[16];
         char s_ratio   [16];
+        char s_emit    [16];
         if (n_rounds == 0) {
             snprintf(s_mean_len, sizeof(s_mean_len), "NA");
             snprintf(s_ratio,    sizeof(s_ratio),    "NA");
+            snprintf(s_emit,     sizeof(s_emit),     "NA");
         } else {
+            // mean_len is retained bit-for-bit (historical series depend on it) but it is NOT
+            // emitted-per-round: a replay round adds 1 to the denominator and 0 to the numerator
+            // while also emitting nothing. emit_per_round is the honest ratio (also exact against
+            // n_done, which is measured, not derived).
             snprintf(s_mean_len, sizeof(s_mean_len), "%.4f", 1.0 + (double) n_acc_drf / (double) n_rounds);
             snprintf(s_ratio,    sizeof(s_ratio),    "%.5f", n_drafted ? (double) n_acc_drf / (double) n_drafted : 0.0);
+            snprintf(s_emit,     sizeof(s_emit),     "%.4f", (double) n_done / (double) n_rounds);
         }
         fprintf(stderr,
                 "CGC-BENCH-ACCEPT phase=%s rounds=%zu drafted=%zu acc_drafts=%zu mean_len=%s "
-                "draft_ratio=%s gen_tokens=%d n_gen=%d\n",
-                phase, n_rounds, n_drafted, n_acc_drf, s_mean_len, s_ratio, n_done, n_gen);
+                "draft_ratio=%s gen_tokens=%d n_gen=%d replay=%zu emit_per_round=%s\n",
+                phase, n_rounds, n_drafted, n_acc_drf, s_mean_len, s_ratio, n_done, n_gen,
+                n_replay, s_emit);
     }
 
     common_speculative_print_stats(spec);

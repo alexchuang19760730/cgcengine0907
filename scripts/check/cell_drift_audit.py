@@ -14,6 +14,8 @@ VERDICTS
   not_applied   warm-skip declared (>0) but tg n_gen was NOT reduced  -> CI RED
   unknown       old format without a recorded warm_skip, or ambiguous (needs the parent run)
   not_required  the arm did not request warm-skip
+  quarantined   arm 已帶 `_quarantine` 標記（lane_watchdog 的隔離慣例）⇒ 數字已作廢，不是「可引用」
+                也不該重複開單。整檔隔離者原路徑只留 `_quarantine_pointer`（無 rows ⇒ 不是 arm）。
 
 USAGE
     python3 scripts/check/cell_drift_audit.py --roots Backup
@@ -35,12 +37,32 @@ import cell_contract as cc  # noqa: E402
 # Artifacts larger than this are almost certainly full dumps, not bench summaries; skip them.
 _MAX_JSON_BYTES = 15_000_000
 
+# lane_watchdog 的隔離慣例（2026-09-25 起）：數字作廢的產物搬到 Backup/quarantine，原路徑留
+# `_quarantine_pointer`。那個目錄不是「待引用的語料」——它正是「已作廢」的堆置場，帳在
+# `Backup/quarantine/QUARANTINE_REGISTRY.json`。掃進來只會把它們重新開一次單（2026-10-01）。
+QUARANTINE_DIR = Path("Backup/quarantine")
+
+
+def _in_quarantine(p: Path) -> bool:
+    try:
+        p.resolve().relative_to(QUARANTINE_DIR.resolve())
+        return True
+    except (ValueError, OSError):    # 不存在／跨磁碟：退回按目錄名判斷
+        return "quarantine" in p.parts
+
 
 def classify_arm(arm, card_gen: int):
     """Return (verdict, tag, why) or None if this dict is not a matrix arm."""
     if not isinstance(arm, dict) or not isinstance(arm.get("rows"), list):
         return None
     tag = str(arm.get("tag") or arm.get("profile") or "?")
+    # 已隔離的 arm（lane_watchdog.quarantine_artifacts 的 `_quarantine`）：數字已作廢、證據移到
+    # Backup/quarantine ⇒ 不再是「待處理的紅」，也不該被當成可引用。整檔隔離的指針沒有 rows，
+    # 上面就回 None 了；這條是給「多臂混檔、只隔離了其中幾臂」的情況。
+    if arm.get("_quarantine"):
+        q = arm["_quarantine"] if isinstance(arm["_quarantine"], dict) else {}
+        return ("quarantined", tag,
+                "已隔離（Backup/quarantine）：%s" % (q.get("note") or "數字作廢"))
     tg = [r for r in arm["rows"]
           if int(r.get("n_prompt", 0)) == 0 and int(r.get("n_gen", 0)) > 0]
 
@@ -74,14 +96,18 @@ def classify_arm(arm, card_gen: int):
 def scan(roots: list[str]):
     contract = cc.load_contract()
     card_gen = int(contract["cell"]["gen"])
-    order = ["applied", "not_applied", "unknown", "not_required"]
+    order = ["applied", "not_applied", "unknown", "not_required", "quarantined"]
     counts = {k: 0 for k in order}
     details: list[dict] = []
+    skipped_q = 0
     for root in roots:
         base = Path(root)
         if not base.exists():
             continue
         for p in sorted(base.rglob("*.json")):
+            if _in_quarantine(p):
+                skipped_q += 1
+                continue
             try:
                 if p.stat().st_size > _MAX_JSON_BYTES:
                     continue
@@ -96,6 +122,7 @@ def scan(roots: list[str]):
                 verdict, tag, why = r
                 counts[verdict] += 1
                 details.append({"file": str(p), "tag": tag, "verdict": verdict, "why": why})
+    counts["quarantine_skipped"] = skipped_q
     return counts, details
 
 
@@ -112,6 +139,12 @@ def _selftest() -> int:
         ("mid not applied (run3)", {"rows": [{"n_prompt": 0, "n_gen": 128}],
                                     "warm_skip": 64}, "not_applied"),
         ("old unknown", {"rows": [{"n_prompt": 0, "n_gen": 128}]}, "unknown"),
+        # 隔離（lane_watchdog 慣例）：帶 _quarantine 的 arm 不再紅；整檔隔離的原路徑只留指針。
+        ("quarantined arm", {"rows": [{"n_prompt": 0, "n_gen": 128}], "warm_skip": 64,
+                             "tag": "prod25-stream",
+                             "_quarantine": {"note": "量具不可信、數字作廢"}}, "quarantined"),
+        ("quarantine pointer is not an arm",
+         {"_quarantine_pointer": True, "original_path": "x.json", "note": "數字作廢"}, None),
         ("not an arm", {"foo": 1}, None),
     ]
     fails = 0
@@ -121,10 +154,13 @@ def _selftest() -> int:
         ok = gv == want
         print(f"  [{'PASS' if ok else 'FAIL'}] {name}: {gv}")
         fails += not ok
+    q_ok = _in_quarantine(Path("Backup/quarantine/x.json")) and not _in_quarantine(Path("Backup/x.json"))
+    print(f"  [{'PASS' if q_ok else 'FAIL'}] the quarantine dir is skipped by the scan")
+    fails += not q_ok
     if fails:
         print(f"SELFTEST FAIL ({fails})")
         return 1
-    print("selftest 7/7 PASS")
+    print(f"selftest {len(cases) + 1}/{len(cases) + 1} PASS")
     return 0
 
 
@@ -141,8 +177,11 @@ def main(argv=None) -> int:
 
     counts, details = scan(args.roots)
     print("cell provenance drift audit:")
-    for k in ("applied", "not_applied", "unknown", "not_required"):
+    for k in ("applied", "not_applied", "unknown", "not_required", "quarantined"):
         print(f"  {k:<13} {counts[k]}")
+    if counts.get("quarantine_skipped"):
+        print(f"  quarantine_skipped {counts['quarantine_skipped']}"
+              "  ← Backup/quarantine 的作廢產物（帳見 QUARANTINE_REGISTRY.json）")
     for d in details:
         if d["verdict"] == "not_applied" or (args.show_unknown and d["verdict"] == "unknown"):
             print(f"  [{d['verdict']}] {d['file']} :: {d['tag']} -- {d['why']}")

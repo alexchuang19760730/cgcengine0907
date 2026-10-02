@@ -67,6 +67,82 @@ figure」，產物只讀機制量、**不進 k 曲線、不當可引用 t/s**。
 **足跡閘（跑前必過）**：`python3 scripts/check/l255_close.py --check` 需 `VERDICT: OK`（存活線 ≥7703 MB）。
 2026-10-01 15:45 現況＝**SHORT**（可回收 5170 MB／短 2533 MB，其餘四項綠）⇒ **未發車**。
 
+## S1 第一趟：結果（2026-10-01 16:05，兩趟重現）
+
+發車：`harness bench --charter scripts/check/charters/e-l254-s1-kv-2026-10-01.yaml`（兩臂同場、交付 cell、
+`--spec-type draft-mtp --spec-draft-n-max 7`、caps `40-40:140` ⇒ 兩趟都印 `cap=8 routable=139 slots -> width=8`、
+`LAYER_CAPS total 5860（min 140/層）`）。產物：`Backup/l254_s1_20261001/{k7_paired.json,k7_paired.stderr.log,k7_paired_clean.json,k7_paired_clean.stderr.log}`。
+
+| 端點 | **A（`shared_kv=1` 對照）** | **B（`shared_kv=0`，＋`CGC_MTP_NO_CTX_OTHER`）** | 預註冊門檻 |
+|---|---|---|---|
+| `k_eff`（`gen_tok_per_round`） | 1.75–1.97（兩趟各 6 行） | **7.000**（每一行、兩趟） | ≥7 ✅ |
+| `draft=0` 輪次 | 48% / 48%（172/356、143/300） | **0% / 0%**（0/113、0/94） | ≤10% ✅ |
+| 每輪 draft 加權平均 | 2.52 / 2.64 | 4.87 / 5.10 | — |
+| `draft=7` 輪次 | 98/356、89/300 | 65/113、57/94 | — |
+| M-RoPE 拒收行 | 180 / 153 | **2 / 2** | 回 ~0 ✅ |
+| 引擎 `draft-init` 失敗 | 6 / 6 | **0 / 0** | — |
+| `MTP fast path` draft:verify | 1:41 / 1:32 | **1:12.6 / 1:11.9** | — |
+| `acc_rate` | 0.34–0.50 | **0.52–0.61** | — |
+
+⇒ **機制端點成立：`is_mem_shared` 就是 `k_eff` 卡在 1.6 的原因。** 關掉 `ctx_other` 後 draft 回到自帶 KV：
+`k_eff = k = 7.000` 逐輪、`draft=0` 消失、M-RoPE 拒收 180→2、`acc_rate` 反升（0.43-0.50 → 0.52-0.61）。
+09-30「width 只解跑不跑得完、不解 k 有多深」的結論被證實並被解掉。
+
+⇒ **但速度一律 VOID**：兩趟四臂的 `attribution` 都是 **thermal（worst HEAVY）**，第二趟 B 更是 HEAVY 起跑
+（A hist＝NOMINAL 79/MODERATE 22/HEAVY 5、B hist＝HEAVY 119）。依本檔預註冊的 `on_fail` ⇒ **t/s 判讀 REFUSE**。
+機制讀數是計數器（tokens/round 是結構量，不受節流影響），所以機制結論不受此限。
+
+⇒ **附帶發現（gated，需涼窗口才可讀）**：B 的每輪成本 72 ms（emit 4.0 tok）vs A 15 ms（emit 1.77 tok）
+⇒ 每 emit token 8.5 → **18.2 ms（2.1×）**；t/s 10.65 → 9.64 但 B 起跑已 HEAVY。`gen_tok_per_round` 追平 k 之後
+**每輪代價也追了上去** ⇒ 問題從「量不到」變成「量得到但不划算」，這正是 k 軸經濟學要判的那個問題。
+
+⇒ **收貨狀態**：S1 的**機制端點**（`k_eff ≥ 7`、pos-err 回 ~0、`draft=0` 0%）**已達標且兩趟重現**；
+**k=8 續不續做**、以及「k_eff=k 之後 t/s 沒變好」要不要走卡上 falsify，留待冷窗口的一趟（B 先跑）再拍。
+
+⇒ **工具發現（不影響本結論）**：per-arm live log 檔名被 200 字元上限截斷 ⇒ 兩臂寫到**同一個檔名**
+（本趟兩臂的 `live log :` 印的是同一條路徑）；能被追認的是成對 log `k7_paired*.stderr.log`（可用
+`shared_kv=` 分段）。另：交付 cell 的 `fixed_fill_seed: null` 經 harness 調成 1（列為「可運行調整」），嚴格維度 14 項一致。
+
+## S1 第二趟：k 軸經濟學（發車前預註冊，2026-10-01 16:26）
+
+**問題**：`k_eff` 已經 = k = 7 了，decode 有變快嗎？（第一趟的線索：每 emit token 8.5 → 18.2 ms，但四臂 thermal ⇒ t/s VOID）
+
+**端點**：
+
+- **主**：decode **t/s**（交付 cell、`p0_n128_d512_r3`、成對、兩臂 `attribution=none`、全 rep max/min ≤1.10）。
+- **副**：**每 emit token 成本** = `ms_per_round ÷ emit_tok_per_round`（`CGC-MTP-PERF` 最後一行；純計數器，不受節流影響）。
+
+**判準（跑前寫死）**：
+
+- `B_tps ≥ A_tps`（同窗、乾淨）⇒ **k 軸有增益** ⇒ 續往 k 軸投入（25 的天花板按 `E = 1 + a·k_eff` 重算）。
+- `B_tps < A_tps` **但**每 emit token 成本 `B < A` ⇒ **半開**：k 軸本身有效，但當前實作（verify 寬度 8／池席位）把它吃掉了 ⇒ 指名吃它的那一項。
+- `B_tps < A_tps` **且**成本 `B ≥ A` ⇒ **DEAD**：`k_eff=k` 不划算 ⇒ 25 在 MTP 軸判死（附機制），L25-4 收格。
+
+**發車紀律**：**B 先跑**（第一趟的教訓：先跑的那臂拿 NOMINAL，後跑的那臂起跑即 HEAVY），兩臂各自等 NOMINAL（harness 的 `--cool-max-s 420`；若後跑那臂仍 HEAVY ⇒ 冷卻後重跑該臂）。
+
+**產物**：`Backup/l254_s1_20261001/k7_econ{B,A}.json`（＋對應 stderr）；讀值回填本節。
+
+## S1 第二趟：結果（2026-10-01 16:3x）—— DEAD
+
+發車：`harness bench --charter scripts/check/charters/e-l254-s1-kv-2026-10-01.yaml`，**B 先跑**（照上節的紀律；各臂 `--cool-max-s 420`），
+兩臂**只差** `CGC_MTP_NO_CTX_OTHER`。產物：`Backup/l254_s1_20261001/{k7_econA,k7_econB,k7_econB2}.json`。
+
+| 端點 | A（`shared_kv=1`） | B（`shared_kv=0`） | 性質 |
+|---|---|---|---|
+| `k_eff` | 1.789 | **7.000** | 計數器 ✅ |
+| `emit_tok_per_round` | 1.744 | **3.949**（2.26×） | 計數器 ✅ |
+| `ms_per_round`（draft 相） | 16.07 | **55.22**（3.44×） | draft 相計時 |
+| **draft 成本 / emit token** | **9.22 ms** | **13.98 ms（+52%）** | ← 副端點 |
+| `acc_rate` | 0.416–0.444 | 0.416–0.444 | 計數器 ✅ |
+| wall **t/s** | 8.60 | 7.48（−13%） | ⛔ **VOID**（`all_spread` 1.19 > 1.10；第三趟 B2 更直接 `attribution=swap`） |
+
+⇒ **判詞：`DEAD`**（主端點 t/s 因窗口不乾淨判 REFUSE，但預註冊的副端點——「`k_eff` 追平 k 之後每 emit token 不變便宜」——
+已量實：+52%，且 emit 只多 2.26× 而 draft 相時間多 3.44× ⇒ **邊際超線性**）。⇒ **25 在 MTP 軸判死**、L25-4 收格。
+判決文與 reopen 條件：`docs/L254_K_AXIS_ECON_2026-10-01.md`。
+
+**沒否證的**：S1 的機制修法本身（`k_eff` 1.8 → **7.000** 是真的有效）；要交付 MTP-on 時那個 KV 佈局仍是必要條件。
+**這一趟也確認**：`E = 1 + a·k_eff` 的「每輪成本固定」前提在本實作／本 caps 下不成立（25.20 的預測失效）。
+
 ## 出處
 
 - operator 原話：本線對話 2026-10-01（「MTP on 沒問題」）。

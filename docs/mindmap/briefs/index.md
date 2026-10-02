@@ -21,7 +21,7 @@
 | 3b | [cb 口徑定讞（42 vs 74）](cache-cb.html) | S 序列化消減 | 0 | [cache-cb.md](cache-cb.md) | 定讞 42~51 ms；74.18 撤回 |
 | 3b | [K3 邊際單價（dispatch 成本）](k3-price.html) | C kernel／頻寬效率 | 5 | [k3-price.md](k3-price.md) | 45.6（平均）作廢 → 邊際 0.0195%/dispatch/步（17.9 µs）⇒ 所有舊「融合能省 X%」的算術全部作廢 |
 | 3b | [shape／knob 世界模型（14–15 個旋鈕的邊界）](shape-knobs.html) | C kernel／頻寬效率 | 16 | [shape-knobs.md](shape-knobs.md) | SHAPE_KNOB_LANDED 證實落地；SHAPE_ROOFLINE 抓到「down 是 IQ3_S 不是 IQ3_XXS」等量測事實 |
-| 3b | [swap 結構修復（L0–L4 + P0/P1/P2）](sys-swap.html) | 不適用 | 2 | [sys-swap.md](sys-swap.md) | launch swap 0、decode 11.49、thermal NOMINAL（commit efba7c1d5） |
+| 3b | [swap 結構修復（L0–L4 + P0/P1/P2）](sys-swap.html) | 不適用 | 3 | [sys-swap.md](sys-swap.md) | launch swap 0、decode 11.49、thermal NOMINAL（commit efba7c1d5） |
 | 3b | [server 窗口／box 准入（單一來源閘門）](sys-window.html) | 不適用 | 2 | [sys-window.md](sys-window.md) | BOX_ADMISSION_SINGLE_SOURCE 定為單一來源；SERVER_WINDOW_LEDGER 記錄逐次窗口。**09-29 |
 | 3b | [expert cache 血統設計（09-05~09-09 期）](na-design.html) | S 序列化消減 | 8 | [na-design.md](na-design.md) | HYBRID_DESIGN／INVARIANTS／INTEGRATION_DIFF／COMMIT_DIGEST：血統進了生產的 expert |
 
@@ -35,9 +35,9 @@
 | 3a | [單段提交（41 段 → 1 段）](s1-segbatch.html) | S 序列化消減 | 7 | [s1-segbatch.md](s1-segbatch.md) | 判詞：41 段→1 段的 A/B **作廢**（兩端都不可引用）。本節點不主張吞吐。**補（09-29）**：它的**可交付上界**＝序列化 |
 | 3a | [異步 gather 流水線（單段＋miss 後台補＋局部重算）](s1-asyncgather.html) | S 序列化消減 | 2 | [s1-asyncgather.md](s1-asyncgather.md) | E0 已給出決定性答案：前提成立——S1（暖池 8 GiB）輸出 文摘文摘… 且 logits 全非有限（引擎自蓋 INVALID），同一輪 |
 | 3a | [MTP k-sweep（verify batch T 成本曲線）](mtp-ksweep.html) | M MTP on 加速 | 5 | [mtp-ksweep.md](mtp-ksweep.md) | step ≈ 14.61 + 42.03·T（max resid 11.5）；最佳 k=2 但那格不可移植（合成 accept 0.93~0 |
-| 3a | [ρ 路線（按層批次化 prefetch）](cache-rho.html) | S 序列化消減 | 5 | [cache-rho.md](cache-rho.md) | 判活，但本節點**不主張吞吐**：覆蓋 0.849、視窗 1.30~1.59 ms、每步付 4.76 ms GPU 插入 ⇒ 有前置條件。 |
+| 3a | [ρ 路線（按層批次化 prefetch）](cache-rho.html) | S 序列化消減 | 6 | [cache-rho.md](cache-rho.md) | 判活，但本節點**不主張吞吐**：覆蓋 0.849、視窗 1.30~1.59 ms、每步付 4.76 ms GPU 插入 ⇒ 有前置條件。 |
 | 3a | [prebind／方案 A（預指派 slot）](cache-prebind.html) | S 序列化消減 | 7 | [cache-prebind.md](cache-prebind.md) | 判活，但本節點**不主張吞吐**：qu2/qu3 全過、qu1 邊緣（預指派 slot，提前一整步發起 ⇒ 視窗 ≈ 一步）。 |
-| 3a | [k=3 的 1.43× 飄移定位 ＋ 配對認證](k3-swing.html) | 不適用 | 3 | [k3-swing.md](k3-swing.md) | 飄移已定位；配對認證 n=5 時 t=2.08 未達 df=4 的 2.776 ⇒ 16.4% 仍未認證；上一輪「bench 配對 sd 更 |
+| 3a | [k=3 的 1.43× 飄移定位 ＋ 配對認證](k3-swing.html) | 不適用 | 5 | [k3-swing.md](k3-swing.md) | 飄移已定位；配對認證 n=5 時 t=2.08 未達 df=4 的 2.776 ⇒ 16.4% 仍未認證；上一輪「bench 配對 sd 更 |
 | 3a | [device span 歸因（最大一塊時間）](c-device-span.html) | C kernel／頻寬效率 | 2 | [c-device-span.md](c-device-span.md) | 成立：57% 住在 MoE 區（層內節點 0–39）、42% 住在 attention／GDN 區（40–89）；邊際 verify tok |
 | 3a | [頻寬屋頂／dense GEMV 上界](c-bandwidth.html) | C kernel／頻寬效率 | 2 | [c-bandwidth.md](c-bandwidth.md) | dense GEMV 每步 13.39 ms（13.7–16.8%），實測已跑 56–108 GB/s（DRAM 峰值 108.8）；就算全 |
 | 3a | [G1：可達上界 / G1-G7 sweep](g1.html) | C kernel／頻寬效率 | 10 | [g1.md](g1.md) | 串行且空轉 19.2% 是「可恢復」的形狀，但 G1 已判定不可達（下界 9.0% > 5%）⇒ 「多少」目前不可引用（44/45 份非零  |
@@ -73,7 +73,7 @@
 | 4 | [IOCACHE 約束承認 ＋ 段邊界 S2](io-constraint.html) | S 序列化消減 | 5 | [io-constraint.md](io-constraint.md) | IOCACHE：#6 沒做之前 #3 的 async 版本不可達（且不可並列相加）；S2：建議不做完（段邊界／drain） |
 | 4 | [M3／M4／M5 離開條件（09-17 期）](m3.html) | 不適用 | 1 | [m3.md](m3.md) | M3 未達（9.82 vs 門檻 15）；M4 靠一個本身壞掉的量測被否決、修好後才關閉 —— 而那個量測現已作廢 |
 | 4 | [舊口徑數據報告（Gemma4／MTP_BENCHMARK_WIN8GB／TPOT 路線圖）](na-olddata.html) | 不適用 | 11 | [na-olddata.md](na-olddata.md) | 作廢：09-17 起 decode 一律 llama-bench、warm-skip 口徑（`MEMORY_PERF.md` 裁定），且 M |
-| na | [入口／索引／決策頁（非實驗）](na-entry.html) | 不適用 | 11 | [na-entry.md](na-entry.md) | 不進四級：它們是入口與索引 |
+| na | [入口／索引／決策頁（非實驗）](na-entry.html) | 不適用 | 13 | [na-entry.md](na-entry.md) | 不進四級：它們是入口與索引 |
 | na | [跨線／其他產品（Wan2.2、HarmonyOS、Windows client、Colibri、Unified IR…）](na-crossline.html) | 不適用 | 0 | [na-crossline.md](na-crossline.md) | 本線無實測權或非本線主題 ⇒ 不塞進四級 |
 
 ---

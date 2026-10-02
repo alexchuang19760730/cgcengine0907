@@ -1,0 +1,130 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— §4.2 引擎手術：讓 SEG_BATCH=1 在數值上等同 no-SEG
+#                           （prev-token 預測 ＋ 逐層重算 mismatched layers）
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼要立這一張（S2-c 的判決，docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md §4.7）：
+#   ① S2-c（把 ρ capture 搬出被跳過的 hook）已落地成 build（2026-10-01 重建），但單段臂 M1 仍 0/9
+#      （與不加 RHO 旗標的對照 A 相同），且見證行 `CGC-RHO-S2C` ≥1 出現 ⇒ 依 §4.1 判別句
+#      「capture 送達而 M1 ≤2/9 ⇒ 分歧在單段提交圖本身」→ 確認轉 §4.2 引擎手術。
+#   ② 靜態根因（§一，三條全有源碼/量測依據）：單段提交把 41 層併入一張圖，提交前不知道本步要哪些
+#      專家；它改用「legal-but-wrong placeholder」（`e % slots`，llama-context.cpp:3747）⇒ 非駐留
+#      專家被讀成別的專家的權重 ⇒ logits 與 no-SEG 不一致 ⇒ M1 0/9。
+#   ③ §4.2 通用解（源碼註解 llama-context.cpp:3749-3750 原話）：「The deliverable version replaces
+#      the placeholder with prev-token prediction ＋ per-layer recompute of mismatched layers」。
+# 全文與兩條路優先序：docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md §四（S2-c 已否證，本卡＝主路）。
+id: e-r6-engine-surgery
+owner: ace（線 A / R6-DIRTY 解鈴人）
+created: '2026-10-01'
+axis: A
+depends_on: e-s2c-rho-capture   # S2-c 已判定 → 轉本卡
+
+# ── 【目標】一個可判定的問題，且兩個答案都有意義 ────────────────────────────
+question: |
+  在單段提交臂上，提交後偵測「哪些層碰到佔位（placeholder 被實際讀走）」，只對那幾層用正確的
+  本步 routed ids 重跑 FFN 並併回 activation，能不能讓單段臂的 M1/M2/M3 回到 **9/9**
+  （＝ SEG_BATCH=1 在數值上等同 no-SEG），還是即便重算也停在 <8/9（＝分歧在更深的圖語義，需別的解）？
+
+# ── 【現狀】權威基線 ───────────────────────────────────────────────────────
+baseline:
+  metric: "單段臂 M1 **0/9**（M2 2/9、M3 0/9）；S2-c build 見證行 `CGC-RHO-S2C` ≥1 已出現，證實
+           ρ 通路已接上但 M1 未動 ⇒ 分歧確在單段提交圖本身（占位讀錯）。"
+  cell:   "m123 oracle cell（`prefill250`：MTP on、pool 8 GiB、`LAYER_CAPS=40-40:256`）；對照臂＝同 build 不開 `CGC_SEG_BATCH`"
+  source: "docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md §4.7（2026-10-01 GPU 驗證表）"
+  known: |
+    - 占位寫入：llama-context.cpp:3741-3764（B_SCHEME preflight 或 SEG_BATCH+SLOT_TABLE_GPU 時寫
+      `slot_table[e]`（駐留）或 `e % slots`（非駐留，legal-but-wrong））。
+    - 讀錯發生點：MulMatID 以 remap 值索引 pool（~143 slots），非駐留專家讀到別人權重。
+    - 偵測基礎已存在：`cgc_publish_slot_table_counted`（:5782）已數 `sel_wrong`（被消費 id 讀到的
+      slot 不持有其專家）；`CGC-S1-CLAMP-SELECTED`（:5827）逐層印 `sel_wrong>0`。但它在 per-layer
+      hook 裡被呼叫，而 SEG_BATCH 跳過該 hook ⇒ 單段臂需另建 post-compute 偵測。
+    - post-compute readback 基礎：:4418 `CGC_REMAP_POST_DBG`、:4460 `CGC_S1_DBG` 已能在 graph 跑完後
+      讀回 remap / slot_table / ids 做差分 ⇒ 可複用其基礎做「本步哪些層 placeholder 被讀走」判定。
+    - 重算需要的 FFN 進入點：待本卡 §實作 確認（ffn_moe node / llama_expert_cache 的逐層 forward）。
+
+# ── 【假設】機制 + 預期 ─────────────────────────────────────────────────────
+hypothesis:
+  mechanism: |
+    單段提交只錯在「本步被選中而當時不在池裡」的幾層（§2.4：compulsory miss、layers_distinct≤143）。
+    偵測：graph 跑完後，對每層比較「實際被 mul_mat_id 消費的 slot」與「該 id 在池裡真正持有的 slot」
+    （即 `sel_wrong` 的 post-compute 版）。重算：對 mismatched 層，用正確 routed ids 重跑該層 FFN
+    （pool 權重已由 P1 預測 prefetch 就位，或退一步從 disk 取）並寫回 activation，才進 sampler。
+    預測（P1 `cgc_rb_feed` / `cgc_layer_ahead`）把 mismatched 集合壓到最小。
+  expected: "單段臂 M1 **≥8/9（目標 9/9）**、M2/M3 9/9；且 mismatched 層集合非空（證明偵測有抓到）。
+            若重算後仍 ≤2/9 ⇒ 分歧在更深的圖語義（如 prev-token 回饋本身位移），需重議。"
+  basis: |
+    docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md §一／§4.2／§4.7；llama-context.cpp:3741-3764（占位）、
+    :4418/:4460（post-compute readback）、:5782/:5827（sel_wrong 偵測基礎）；
+    Backup/m123_oracle_gate/summary_r6ctl-nosegbatch-2026-09-30.json（對照錨 9/9）。
+
+# ── 【預註冊判決規則】 ─────────────────────────────────────────────────────
+acceptance:
+  window_valid: |
+    三件事各自成立才算可裁判：
+      (a) 兩臂 rc=0 且跑完；
+      (b) `m123_oracle_gate` 兩份 summary 都 `comparable=True`、`config_diffs==[]`、同 `ref_md5`、
+          同 `probe_prompt_md5`、同 `engine_digest`；
+      (c) 見證臂 stderr 至少 1 行 `CGC-SEG-RECOMPUTE`（或等價的 post-compute 偵測見證）證明重算真的發生。
+    ⛔ 本卡不要求乾淨窗：主端點是位元（M1）與計數器，不是配對 t/s ⇒ 髒窗仍可裁判。
+  success: |
+    單段臂 **M1 ≥ 8/9**（目標 9/9）且 M2/M3 9/9，同時 (i) `CGC-SEG-RECOMPUTE` ≥1 行（重算發生）、
+    (ii) mismatched 層集合非空 ⇒ 佔位偵測＋重算成立，R6-DIRTY 解除。
+  falsify: |
+    重算見證行 ≥1 而 M1 仍 ≤ 2/9 ⇒ 分歧在更深的圖語義（非占位讀錯層級）⇒ 本卡判死，需開新卡重議
+    （可能指向 prev-token 回饋位移或圖結構差異，而非成員維護）。
+  undecidable: |
+    重算見證行 0 行 ⇒ UNRESOLVED（重算沒接上），先解接線再重跑；或 m123 exit 2 ⇒ 先解可比性。
+  on_fail: |
+    判死 ⇒ 回填 docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md §4.2 與本卡，不再為「補重算」投盒子。
+    ⛔ 任何情況不得放寬 M1/M2/M3 護欄或改參考。
+
+# ── 【量化目標】 ───────────────────────────────────────────────────────────
+targets:
+  decode_tps: 20.0          # 政策目標；本卡不主張 t/s 成績
+  prefill_tps: 250.0
+  m1_success_min: 8         # ≥8/9；目標 9/9
+  m1_falsify_max: 2
+  recompute_lines_min: 1    # 見證行；0 行 ⇒ UNRESOLVED
+
+# ── 【技術子目標】 ─────────────────────────────────────────────────────────
+subgoals:
+  - id: sg-eng-detect
+    text:   "在 SEG_BATCH 路徑 post-compute 偵測每層 placeholder 被實際讀走的集合"
+    expect: "新增 `CGC-SEG-RECOMPUTE` 見證行，列出 mismatched 層；與 no-SEG 的 `sel_wrong` 分佈一致"
+    how:    "複用 :4418/:4460 的 post-compute readback 基礎，對每層算 sel_wrong（消費 slot ≠ 持有 slot）"
+  - id: sg-eng-recompute
+    text:   "對 mismatched 層用正確 routed ids 重跑 FFN 並併回 activation"
+    expect: "重算後 logits 與 no-SEG 一致（M1 9/9）；重算層數 = mismatched 層數"
+    how:    "呼叫 ffn_moe 逐層 forward（待確認進入點），輸入為該層 activation、ids 為正確本步 routed ids"
+  - id: sg-eng-no-speed-claim
+    text:   "本卡不得產出任何 t/s 成績（重算是額外前向成本）"
+    expect: "報告只出現位元／計數器；新增前向成本當代價明列"
+    how:    "寫報告時自查；quote_gate 對本臂仍判 R6-DIRTY 直到 M1 9/9 解鈴"
+
+# ── 【臂】 ────────────────────────────────────────────────────────────────
+arms:
+  # 對照（錨）：no-SEG，預期 M1 9/9
+  - prefill250
+  # 見證（處理）：單段提交 ＋ 本卡重算開關
+  - prefill250:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_SEG_RECOMPUTE=1
+non_prod_reason: "M1 位元等同必須與 m123 參考同 profile（v7/v8/v9 皆 prefill250）；本卡端點是位元／計數器，不是速度口徑。"
+
+# ── 【D5 oracle 閘（repo 硬規則：引擎改動需自立項＋D5）】 ───────────────────
+d5_gate:
+  required: true
+  oracle: "scripts/check/m123_oracle_gate.py --profile prefill250"
+  control_tag: "r6ctl-nosegbatch-2026-09-30"
+  arm_tag: "r6-segbatch-eng-<日期>"
+  pass: "M1/M2/M3 9/9（≥8/9 即鬆綁 R6-DIRTY）；config_diffs==[]"
+
+# ── 【補丁與驗收】 ─────────────────────────────────────────────────────────
+delivery:
+  patch: "待本卡 §實作 產生（改 src/llama.cpp/src/llama-context.cpp 的 SEG_BATCH post-compute 區）"
+  base:  "src/llama.cpp/src/llama-context.cpp（當前 HEAD + S2-c patch + NaN#1/#2 修法，未提交）"
+  apply_and_run: |
+    1) cmake --build src/llama.cpp/build --target llama-server llama-bench -j 8
+    2) 對照臂：python3 scripts/check/m123_oracle_gate.py --profile prefill250 --tag r6ctl-nosegbatch-2026-09-30
+    3) 見證臂：python3 scripts/check/m123_oracle_gate.py --profile prefill250 --tag r6-segbatch-eng-<日期> \
+         --env CGC_SEG_BATCH=1 --env CGC_B_SCHEME=1 --env CGC_SLOT_TABLE_GPU=1 --env CGC_SEG_RECOMPUTE=1
+    4) 判詞：m123 summary 的 M1/M2/M3 ＋ grep 'CGC-SEG-RECOMPUTE' 見證行
+  caveat_r5: |
+    本臂若帶 R5 量具（CGC_RHO_PROBE 等）則 t/s 不可引用；本卡端點是位元，不受影響。

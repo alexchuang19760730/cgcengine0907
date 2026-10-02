@@ -60,7 +60,11 @@ engine_loop/
 │   ├── selftest.py            假 prime-agent，驗 prompt 的手遞與 --accept 路徑
 │   ├── closed_loop.py         四臂閉環對照（A/B = D6 欠帳、C/D = E3）
 │   ├── closed_loop_selftest.py  離線自測（含「儀器必須說得出『沒有差異』」的陰性對照；項數自己印）
-│   └── closed_loop_questions.md  8 題 + 每題的承重點
+│   ├── closed_loop_questions.md  8 題 + 每題的承重點
+│   ├── action_replay.py       決策排序重放（把 traces 變成「真動作 vs 候選動作」；§10）
+│   ├── action_replay_selftest.py  離線自測（含錯長度/同分/長度殘差化三種必須失敗的對照）
+│   ├── expert_replay.py       ⛔ **已退役**：專家 id 預測重放（曾把 CGC-IDS 軌跡變成「歷史 -> 下一層的 id」；§11）
+│   └── expert_replay_selftest.py  ⛔ 同上（地板／殘差化自檢／洩漏哨兵／協定拒絕／**退役告示**，61 項）
 └── sft_common.py              兩份投影共用的載入／渲染／切分（**只有一份渲染器**）
 ```
 
@@ -250,6 +254,7 @@ python3 agent_harness/engine_loop/memory/build_memory_index.py --query mmid -n 8
 | `sft_prime/` | `build_sft_prime.py --check` | 同上；排除 refuted decision 與 superseded lesson |
 | `distill/` | `distill/selftest.py`（假 prime-agent） | 31 項檢查全過 |
 | `distill/closed_loop.py` | `closed_loop_selftest.py` ＋ `--dry-run`（不需模型） | 41 項全過；四臂的 prompt 大小／sha256／逐對 diff |
+| `distill/expert_replay.py` ⛔ | `expert_replay_selftest.py` | 61 項全過；地板／殘差化自檢／洩漏哨兵／協定拒絕／**退役告示每次都印** |
 
 **這一表原本每一列都帶一個計數（「106 檔」「141 筆」「14 條軌跡」），全部拿掉了。** 那些數字隨
 `traces/*.jsonl` 增長，寫死在這裡就會變成假話，而當時**沒有任何東西會發現**：`index_assets.py
@@ -289,3 +294,252 @@ id 取用就會撞號（`validate.py` 報 `duplicate lesson_id`）。修法是�
   ```
   然後**人工核對** `closed_loop_questions.md` 的承重點表格——字串相同只是自動部分。
 - **不得宣稱 D6 修訂已結清**（PLAN §9 的 E2 欄原文即如此要求）。
+
+---
+
+## 10. 任何排序器要對決策有投票權之前（`distill/action_replay.py`，2026-09-28）
+
+### 10.1 為什麼是「排序」而不是「生成」
+
+CLM（兩塔對比模型）**不會生成**。所以「讓 CLM 參與決策」不能做成「叫它寫下一個決策」——那是
+生成，它做不到，`closed_loop.py` 那一半（生成式 prime-agent）也不該被它取代。它能做、而且只有
+它能做的那件事是：**把已經寫出來的候選動作排序**。
+
+於是問題換成儀器問題：在既有的決策紀錄上，把真動作與一堆候選動作混在一起，一個純排序器能不能
+把真的排到第一？`action_replay.py` 把它變成可執行的——它**離線、不呼叫模型、不啟動引擎**
+（除非你顯式給 `--scorer command`），所以「要不要為 CLM 花掉這台 16 GB 機器的記憶體」可以先被
+回答一次，再決定要不要付那筆錢。順序反過來才是錯的。
+
+資料不必另外標：`decisions.jsonl` 每一筆本來就是一個三元組 —— `question` + `evidence[].reading`
+是狀態、`action` 是當時採納的動作、`ruled_out[].claim` 是**它自己明文否決過**的動作。
+
+```bash
+python3 agent_harness/engine_loop/distill/action_replay.py                     # 內建階梯
+python3 agent_harness/engine_loop/distill/action_replay.py --state-ruled-out strip
+python3 agent_harness/engine_loop/distill/action_replay_selftest.py            # 項數自己印
+```
+
+### 10.2 兩個池子，**不可平均**
+
+| 池 | 問的是什麼 | 2026-09-28 的讀數（`lexical` 基線，`--split all`） |
+|---|---|---|
+| **sibling**（真動作 vs 別的決策的動作） | 一般排序能力。池大、負例隨機性高 | AUC 0.927；拔掉長度 0.900 |
+| **rejected**（真動作 vs **這一題自己否決的動作**） | **唯一有資格當閘門的那一池** | keep 0.371 / strip 0.814；拔掉長度 0.546 → **0.711** |
+
+混在一起報一個平均，等於讓容易的那池替難的那池背書。
+
+### 10.3 這支量出來的三件事（都不是猜的）
+
+1. **長度混淆是結構性的。** `ruled_out[].claim` 是一句被否決的短句、`action` 是一段執行敘述，
+   **97/97 對都是正例較長**（中位 +367 字，最短 +20）。所以在原始分數上連 `len()` 都能在
+   rejected 池拿到 AUC = 1.000 ⇒ **raw 的 rejected 讀數單獨沒有資訊**。因此每個排序器同時報
+   `|len`（題內候選池上對長度做最小平方回歸取殘差）。`length` 對照的 `|len` 回到 **0.500** ——
+   那正好是這個調整器自己的自檢。
+2. **現行的狀態渲染會把排序器的判別力吃掉。** 同一個 `lexical`，rejected 池的 `|len` 由
+   keep 的 **0.546** 變成 strip 的 **0.711**：`render_state_for_decision()` 把
+   `ALREADY RULED OUT (do not re-walk these): claim / why false` 印在 prompt 裡，那對**生成式**
+   agent 是必要的指令，對相似度排序器則是把否決項的字詞灌進查詢。⇒ **CLM 要接的話，狀態編碼
+   不能直接吃現行那一段**；否決項應該當對比目標的負例，而不是查詢的一部份。
+3. **n 小到什麼程度。** 66 筆決策（68 扣掉 2 筆 `judgement=refuted`），top-1 的 95% 半寬 ≈
+   **±12 個百分點**。差不到 12 點不要說誰贏；被否決的配對有 97 對，比 top-1 有力。
+
+### 10.4 CLM 進來的地方，與還沒有排序器通過的那道門
+
+```bash
+python3 agent_harness/engine_loop/distill/action_replay.py --scorer command \
+    --scorer-command '<讀 stdin 寫 stdout 的 CLM 轉接器>' --split valid --report
+```
+
+協定在 `score_command()` 的 docstring（stdin `{query, candidates[]}`、stdout `{scores: [...]}`）。
+**錯長度的回覆一律 SystemExit**，不截斷也不補零——一個默默回錯長度的評分器會讓所有名次看起來
+合理，而那是這條線唯一不能接受的失敗模式。
+
+通過條件（**目前沒有任何一支排序器通過**）：`AUC_rej|len` 要比 `length` 對照高出 0.05 以上，
+**而且** top-1 的差距要大於它自己的 95% 半寬。
+
+兩個必須一起讀的欄位：
+
+- `--split valid` 是與 `sft_prime` 相同的切分（同一個 `sft_common.split`、同 seed）。
+  **任何在 traces 上訓練過的東西，用 `all` 報出來的數字都不是評估**（工具會在 `all` 時印警告）。
+- `--verify-against-sft`（預設開）把重建的 (狀態, 動作) 逐筆對回 `sft_prime/{train,valid}.jsonl`：
+  被排序的字串必須與被訓練的字串**同一個位元組**，否則「只有一份渲染器」只是聲明。
+
+`--report` 寫 `distill/action_replay_out/<ts>/{manifest.json,replay.json}`；manifest 記 traces 的
+sha256 與 scorer 命令的 sha256，**不記命令原文**（沿用 §2.2 的同一條規則：manifest 會被 commit，
+而命令列可能帶著 API key）。
+
+---
+
+## 11. ⛔ 退役：任何系統一模型要對專家預測有投票權之前（`distill/expert_replay.py`，2026-09-28）
+
+> **這一節讀作「追跡紀錄」，不是「待辦」。** 工具與指標都已在同一天退役：它量的是**排序準確度**，
+> 而 §12 在生產路徑上把那個量證明為**沒有消費者** —— 可避免的非駐留帳戶只有 1.00%、可支付的
+> 阻塞窗口 ≲0.5% 的 decode、79% 的缺口是 compulsory（原理上不可預測）。這條路徑的值函數是
+> **臨界路徑上的阻塞 µs**，那個量要用**成本端**模擬（`Backup/thrash_sim_20260919.py` 的
+> residency/miss 模型）來量，**不是**用 precision@k。
+>
+> **教訓：先指名這個數字的消費者是誰、他的值函數用什麼單位，再造尺。**
+> 這支腳本自己的 docstring 當初就寫著「順序反過來才是錯的：先落地模型、再想辦法證明它有用」——
+> 而作者在同一支腳本上、上一層重犯了那個錯誤：先造計分板，才去問那個分數有沒有價值。
+> 保留本節與本檔的唯一理由，是這裡的每個讀數要有可重現的出處。
+
+§10 量的是「**寫下一個決策**」那一側。這一節量的是另一側，而它是**已經在生產路徑上跑**的一側：
+引擎自己就有四個專家 id 預測器（prerouter／ρ-fill／draft-prefetch／SpAc），它們的成績是被自己的
+計數器量過的。所以 JEv、CLM-8B 或任何外部模型進場時，第一個要回答的不是「它聰明嗎」，是
+
+> 在**我們自己的**路由資料上，它的 precision@k 有沒有超過引擎既有的頻率／EMA 預測器？
+
+`expert_replay.py` 把 `CGC-IDS:` 路由軌跡變成那道題：每一題 = 某一層某一步，狀態 = **嚴格早於該步**
+的路由歷史，答案 = 該步實際被選中的集合（`ntok × top_k` 的聯集）。它離線、不呼叫模型、不啟動引擎。
+
+```bash
+python3 agent_harness/engine_loop/distill/expert_replay.py --report --per-layer
+python3 agent_harness/engine_loop/distill/expert_replay.py --scorer command \
+    --scorer-command 'python3 my_jev_adapter.py'          # 協定 = §10.4 的同一個，一個 adapter 兩邊都能接
+python3 agent_harness/engine_loop/distill/expert_replay_selftest.py   # 48 項
+```
+
+### 11.1 第一次跑就把一條死路翻過來（2026-09-19 軌跡，193 步 × 40 層，7680 題）
+
+| 排序器 | precision@8 | AUC_all | AUC_hard | AUC_hard\|freq |
+|---|---|---|---|---|
+| `random`（地板） | 0.073 | 0.501 | 0.501 | 0.501 |
+| `freq` ＝ **prerouter 複刻** | **0.705** | 0.905 | 0.810 | **0.500**（調整器自檢） |
+| `ema` ＝ SpAc 複刻 | 0.704 | 0.840 | 0.796 | 0.644 |
+| `lag` ＝ 前一步（draft/prev-token 家族） | 0.566 | 0.768 | 0.741 | 0.628 |
+| `static`（離線表，**用了未來**） | 0.724 | 0.923 | 0.847 | 0.614 |
+
+### 11.1b 第二條軌跡（2026-09-20，354 步 × 40 層，14120 題）—— **贏家會換人**
+
+| 排序器 | precision@8 | AUC_hard | AUC_hard\|freq | 對照 |
+|---|---|---|---|---|
+| `random` | 0.084（− chance 0.082） | 0.500 | 0.500 | 地板吻合 |
+| `freq` | **0.499** | 0.769 | 0.500 | 09-19 是 0.705 |
+| `ema` | **0.617** | 0.776 | 0.678 | 09-19 是 0.704 |
+| `lag` | 0.493 | 0.710 | 0.608 | — |
+| `static`（離線表） | 0.508 | 0.790 | 0.552 | **比 ema 還差** |
+
+兩條軌跡的標題結論一致（都是 0.5~0.7 量級，不是引擎計數器的 0.04），但**可部署的贏家不一樣**：
+09-19 是 `freq` 與 `ema` 打平（0.705 / 0.704），09-20 是 `ema` 贏 `freq` 一大截（0.617 / 0.499）。
+這是可解釋的 —— 軌跡越長，生成越會漂離前段累積的分布，累積計數表就越落後於近期性。
+**⇒ 「哪一支比較好」不是常數，是軌跡長度／漂移的函數；任何只在一條軌跡上做的比較都不能當結論。**
+副產品：09-20 上 `static`（一個離線擬合、部署時凍結的表）**比純近期性還差** ⇒
+「把排序結果預算成靜態表」不是自動有價值的設計，它得先在這種重放上證明它贏得過 `ema`。
+
+**引擎自己的 `CGC-PREROUTER` 在同一條規則上報的是 3.8%–4.2%**（`llama_server_20260917_*.log`）——
+**差 17 倍**，而差別只有一個：`freq` 表**由誰餵**。引擎只有兩個寫入點，
+`llama-context.cpp:6701`（**stock，在大型前綴分支裡**，`n_tokens > pmax`）與 `:~7019`
+（解碼/pool 路徑，**被 `LLAMA_EXPERT_CACHE_ROUTE_RECORD` opt-in，預設關**，它自己的註解就寫著
+「stock 那個只在前綴觸發 … 這就是 freq 空掉的原因」）。⇒ 那四個數字量的是「前綴餵的表用在解碼上」，
+**不是這條規則的能力**。判它死路所依據的那個讀數，在它自己那條路徑上不成立。
+
+### 11.2 兩個讀數修正（都是第一次跑就被自檢逼出來的）
+
+1. **chance floor 是 `mean(demand)/256`，不是 `k/256`。** 均勻隨機排序取 top-k 時
+   `E[hit] = k·P/N` ⇒ precision = P/N，**與 k 無關**。這條軌跡的平均 demand 是 18.6/256 ⇒ 地板是
+   **7.3%**，不是 3.1%。所以引擎那四個 3.8%/4.2% 連「明顯高於地板」都不成立。自檢斷言：
+   `random` 的 precision 必須等於 `mean(demand)/256`（實測 0.0732 vs 0.0727）。
+2. **`precision@k` 被 demand 封頂**：`|demand| < k` 的步最多只能拿 `|demand|/k`。
+   同一條軌跡的 demand union 中位是 18、**最大 32**（ntok=4 × top_k=8），所以這裡不封頂，
+   但換一份 ntok 較小的軌跡就會，而那個時候表會整排偏低而看起來像「大家都變差了」。
+
+### 11.3 不可預測的那一塊，是從軌跡算出來的，不是引用的
+
+compulsory（該層**首次**出現的 id）**4812/142965 = 3.37%** ⇒ 任何排序器的 recall 上限是 96.63%。
+這與 `portal/targets.json` 的 `one_step_lag_cost`（143 槽時 compulsory 3.79%）同一個家族，
+但**是這支自己算的**：換一條軌跡就換一個數，而它會直接限制 recall 的天花板。
+
+### 11.4 判讀規則，與還沒被證明的事
+
+- **`|freq` 才是那一欄。** hard 池（正例 vs 這一層被路由過、但這步沒選的 id）才有判別力；
+  all 池有一大塊「歷史上從未出現」的負例是白送的。而 hard 池的分數若來自頻率，那就是它自己的
+  共變數 ⇒ 一律報殘差化後的版本。`freq` 自己的 `AUC_hard|freq` **必須正好 0.500**（自檢），
+  而 oracle 殘差化後**必須仍然 1.000**（調整器不得削掉真訊號）。兩條都在自測裡。
+- 通過條件（暫定）：`AUC_hard|freq` 比 `freq` 基線高 **+0.05** 以上。**目前沒有任何外部模型跑過。**
+- **沒有證明的事**：這是一條軌跡**內部**的排序能力，案例高度自相關（相鄰步需求重疊 ~70%），
+  所以 `±` 那個區間是假設獨立算的、**低估變異**，不是「顯著與否」的開關。要泛化就換一份軌跡重跑，
+  並比較兩者的 compulsory 比例。另外 `ema` 只重建得出視窗內的近期性（狀態只帶最近幾步的原始集合），
+  比 `freq` 用的狀態弱 —— 兩者的差別混了「衰減」與「可見歷史長度」，要分開得 dump 引擎的 `u`。
+
+---
+
+## 12. 生產路徑實測：那個 4% 不是成績，是「沒有預測」（2026-09-28，build 630，**零重建**）
+
+§11 是離線重放。這一節是把它放回**生產啟動器**上驗：同一台機器、同一個 binary（`libllama.0.dylib
+→ 0.0.630`）、同一份 prompt（126 token）、同樣兩個 `max_tokens=192` 的請求，**只差一個環境變數**。
+
+```bash
+# arm A（今天的行為）
+CGC_PREROUTER=1 CGC_PREROUTER_TOP_K=8 CGC_IDS_MAX_LINES=20000 ./scripts/run_server.sh --detach
+# arm B（唯一的差別）
+LLAMA_EXPERT_CACHE_ROUTE_RECORD=1 CGC_PREROUTER=1 CGC_PREROUTER_TOP_K=8 \
+    CGC_IDS_MAX_LINES=20000 ./scripts/run_server.sh --detach
+```
+
+| | arm A（今天） | arm B（＋`ROUTE_RECORD`） |
+|---|---|---|
+| log | `Backup/cgc_logs/llama_server_20260928_121510.log` | `…_121709.log` |
+| `CGC-PREROUTER` | `calls=7480 queued=0 nodata=0 **scored=0 pred_total=0 hit=0 (precision 0.0%)**` | `calls=7480 queued=15 nodata=0 **scored=7405 pred_total=59240 hit=26929 (precision 45.5%)**` |
+| 同一條軌跡的離線 `freq` 重放 | 0.456 | 0.455 |
+| compulsory（該層首次出現） | 4.07% | 4.07% |
+| decode（**不可引用**，見下） | 11.9 / 14.1 t/s | 10.1 / 10.9 t/s |
+
+### 12.1 arm A 的 0.0% 是**除以零**，而且它長得跟「很爛」一模一樣
+
+`scored=0` ⇒ **預測一次都沒做過**。機制：`freq` 表全空 ⇒ `llama_expert_cache_prerouter_predict`
+的 `ranked` 是空的 ⇒ `pred` 空 ⇒ 下一層的 `prerouter_score` 在 `pred.empty()` 就早退。
+
+而唯一能示警的計數器 `n_prerouter_nodata` 印的是 **`nodata=0`**：它測的是
+`cache->freq[layer].empty()`，而那是「這個 vector 有沒有配到 256 格」，不是「有沒有被填過」——
+**一個沒有任何資料的 run 與一個預測很爛的 run，印出同一行。** 這是 `eng-mh-0009`
+（「算了卻沒被觀測」）家族在計數器層的第 N 例，而且是最貴的一種：它把「沒跑過」包裝成「跑了、很爛」。
+
+### 12.2 為什麼表會空，以及 09-17 那四個讀數的來歷
+
+`[arm] slab OFF (profile=off)`：生產 profile 下前綴走 **pool 路徑**，而 stock `record_routes`
+（`llama-context.cpp:6701`）座落在**標準/slab 前綴路徑**裡（那一段後面緊接著 `if (!cgc_prefill_stream) return;`）
+⇒ 這條路徑上**沒有任何東西會寫 `freq`**。程式碼位置與實測（arm A 的 `scored=0`）兩邊一致。
+所以 09-17 的 12.8% / 6.1% / 3.8% / 4.2% 是**另一個配置**下的數字，不是今天生產配置的數字——
+而它在今天的配置下根本不是「低」，是「不存在」。
+
+### 12.3 打開 `ROUTE_RECORD` ⇒ 45.5%，而離線工具對得上
+
+`LLAMA_EXPERT_CACHE_ROUTE_RECORD=1` 讓解碼/pool 路徑也寫同一份計數 ⇒ `scored=7405`、
+`precision 45.5%`。**同一條軌跡用 `expert_replay.py` 的 `freq` 重放是 0.455**（另一臂 0.456）：
+差 **0.05 個百分點** ⇒ 兩個儀器量的是同一件事（計數口徑已對齊成 `record_routes` 的逐出現次數，
+見 §11 的 `--count-mode`）。這也是為什麼 §11 的離線讀數可以拿來當這條路徑的預測值。
+
+### 12.4 精確度 ≠ 用處（45.5% 是真的，但幾乎沒有可下手的空間）
+
+`queued=15` 對 `pred_total=59240` ⇒ **99.97% 的預測「已經在池裡」**（179 槽/layer；`prewarm_hot`
+在第一步之前就用**同一份 ranking** 的 top-K 填過池，`llama-context.cpp:1928`）。
+預測器預測的是「已經在裡面的東西」。要讓它有用，得讓它去猜**prewarm 沒填到**的那一塊，
+或者換掉 prewarm 的 ranking —— **提高 precision 不會自動提高有用性**，這兩件事在這條路徑上是分開的。
+
+### 12.5 兩個順帶的量測
+
+- **`ema`（近期性）0.588 > `freq` 0.455**，`static`（離線凍結表）只有 0.468 ⇒ 與 §11.1b 同一結論。
+- **`CGC-IDS` 的日誌是兩個 writer 交錯的**：實測 3 行的尾段被 `CGC-RSS:` 插入同一行
+  （無緩衝 stderr）。解析器遇到第一個非整數就停（已修，自測 55/55）—— 對整行 `split()` 做 `int()`
+  會讓工具在真 log 上直接 traceback，而那是這個 bug 第一次出現時的樣子。
+
+### 12.6 這兩個 t/s **不可引用**
+
+`CGC_IDS_MAX_LINES=20000` 只在量測臂開，它付的代價是熱路徑上的無緩衝 stderr 寫入（設計註解自己
+寫著「decode runs with n_tokens=2 … 4000 unbuffered stderr writes per run」）。所以那些 t/s 混了
+儀器成本。**要 t/s 就在關掉 trace 的臂上量**，這裡只引用 precision 與計數器。
+另外：這不是 soak（2 個請求、~187 步/decode），prompt 也不是生產文件。
+
+### 12.7 處置：工具與指標一起退役（2026-09-28）
+
+不是「這條路優先度低」，是**它量的量沒有消費者**。所以：
+
+- `distill/expert_replay.py` 的 docstring 開頭是退役說明（為什麼、值函數是什麼、該用什麼代替），
+  而且**每次執行都會把那段印出來**——由 `expert_replay_selftest.py` 的 `test_retired_banner()`
+  檢查（61 項裡有 5 項是這件事）。一條靠人情記住的「不要用」等於沒有；所以它是一條斷言。
+- 檔案與 `distill/expert_replay_out/` 的報告**保留**，唯一理由是 §11/§12 的每個讀數要有可重現出處。
+- `--scorer command` 那條**JEv／CLM 的入口不再被推薦**：它的目的是在一個 0.5% 帳戶裡比排序。
+  外部決策模型要在我們這裡證明價值，該量的是**決策**（§10 那一側），不是專家 id。
+
+**這一輪真正的交付物與工具無關**：M5 prerouter 在生產配置下 `scored=0`（判它死路的依據是
+`0/0`）、一個環境變數讓它變成 45.5%、而速度上限 ≲0.5%（§12.1–12.4）。

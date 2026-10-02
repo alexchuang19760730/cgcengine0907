@@ -1,12 +1,12 @@
 ---
 name: cgc-prefill-thermal-delivery
-description: 在 flashkv-devserver（TurboFieldfare / llama.cpp CGC fork）上決定一個 prefill t/s 數字能不能被引用。核心是一條 11 ms、不需要 root 的讀數 notifyutil -g com.apple.system.thermalpressurelevel（0=Nominal）＋臂自帶的 COLD-STATE/HOT-STATE 標籤。★2026-09-17 更正：這兩個條件都只是**必要條件**，**不**保證 ≥250（實測 COLD-STATE 下量到 242/227/249）。當使用者問「prefill 250 交付了嗎」「這個 t/s 能不能引用」「prefill 為什麼忽快忽慢」「能不能 conditional 交付」「怎麼量散熱條件」、要跑 prefill 驗收、或要比較兩個 prefill 數字時使用。
+description: 在 flashkv-devserver（TurboFieldfare / llama.cpp CGC fork）上決定一個 prefill t/s 數字能不能被引用。核心是一條 11 ms、不需要 root 的讀數 notifyutil -g com.apple.system.thermalpressurelevel（0=Nominal）＋臂自帶的 COLD-STATE/HOT-STATE 標籤。★2026-09-17 更正：這兩個條件都只是**必要條件**，**不**保證 ≥250（實測 COLD-STATE 下量到 242/227/249）。當使用者問「prefill 250 交付了嗎」「這個 t/s 能不能引用」「prefill 為什麼忽快忽慢」「能不能 conditional 交付」「怎麼量散熱條件」「數字怪怪的／結果不可信／A/B 方向反直覺／窗口是不是壞了」、要跑 prefill 驗收、要在發射前認證量測窗口、或要比較兩個 prefill 數字時使用。
 agent_created: true
 ---
 
 > **這是快照，不是權威副本。**
 > 權威位置：`~/.workbuddy/skills/cgc-prefill-thermal-delivery/SKILL.md`（由 host 持續寫入）。
-> 本檔於 2026-09-20 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
+> 本檔於 2026-09-27 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
 > 底下的內容能被 `agent_harness/scripts/auto_git_push.ps1` 定時推送；原檔改了這裡**不會**自動跟上。
 > 要改 skill 請改原檔，再重跑 `python3 agent_harness/scripts/import_harness_snapshot.py`。
 
@@ -100,6 +100,41 @@ lesson `eng-mh-0054`。
 5. **排除一個候選要找「順序相反」的配對，不是找相關。** 相關會把同一個潛在變數的兩個果配在一起。
 6. **★ 等待逾時要「拒絕發射」，不是「照發」（2026-09-20 修掉的一個真缺陷）。** 一個「等 NOMINAL、逾時就往下跑」的 runner，等於把 MODERATE/HEAVY 發射的臂放進一張自稱 NOMINAL-gated 的表裡。`profile_duo.py` 的語意是對的（逾時即 `REFUSED` + `continue`）—— 抄它。同一次修正還帶出**預設值**：**連續多次發射的 runner，`--cooldown-timeout` 要用 420 s，不是 180 s**，因為第 2、3 次等待是從「上一次剛加熱的機器」開始的。
 7. **★ `wait_nominal` 可以立即回 0（`waited 0s`）而底盤仍然是熱的。** 實測（2026-09-20）：一條剛跑完的 prefill 臂之後，熱讀數立刻回 NOMINAL，下一次發射 `waited 0s`，而那一臂仍然 `worst=MODERATE`。⇒ **NOMINAL 是必要條件，不是充分條件**；重跑大臂時中間的空閒要按**分鐘**計，不能靠這個讀數自己回到 0。這也解釋了為什麼「發射時 NOMINAL」永遠不能單獨當成背書。
+8. **★★ 閘門有盲區：thermal 0 ＋ 記憶體夠，速度仍可能只剩 1/5 —— 而且降級幅度落在噪音帶裡
+   （2026-09-20 實測，這是本 skill 最重要的一次更新）。** 具體那一晚：閘門說
+   `PASS -- NOMINAL, no other session, usable 49.6%`，同一刻實測 **214.30 t/s（0.76× 中位數）**；
+   而 decode 的單臂噪音底是 **±27%** ⇒ **只慢 24% 的降級肉眼完全分不出來**，會被當成噪音吸收，
+   甚至被誤讀成 treatment 效應（18:1x 兩輪 A/B 就是這樣白燒的，還得出「關掉 fusion 快 14.1%」
+   這個假結論）。
+   ⇒ **解法：每次發射「之前」用一個 known-shape 讀數自證窗口**
+   （`scripts/check/window_sentinel.py`，59 s，`<0.85×` 中位數判 `DEGRADED`）。
+   `prod_profile.py` 更省：prefill 軸的形狀本身就近哨兵形狀 ⇒ 零 GPU 成本的交叉檢查，
+   產出會多一行 `window: HEALTHY/DEGRADED`。
+   ⇒ **順序是「先哨兵、後發射」**，不是「發射完看數字怪不怪」。哨兵 DEGRADED 時要**等盒子恢復**
+   （重試），不是直接放棄也不是照跑 —— 等 NOMINAL 是等不回來，因為它本來就 NOMINAL。
+9. **★★ 這份技能已經**四次**看到同一個模式：一個閘門被升級成「充分條件」，然後被否證。
+   下一條閘門加進來時，**先假設它也會重演**（2026-09-26 新增）。**
+
+   | # | 閘門 | 曾被當成 | 怎麼被否證 |
+   |---|---|---|---|
+   | 1 | `thermal = 0/NOMINAL`（發射時） | 「⇒ 一定 ≥250」 | 全 NOMINAL 卻量到 **242.42 / 227.27 / 249.06** ⇒ §1 與鐵律 7 |
+   | 2 | `COLD-STATE`（安靜 ≥1800 s） | 「⇒ 其 t/s 可以引用（＝達標）」 | lesson `eng-mh-0054`；反向也成立：`UNKNOWN-STATE` 得 278.56 |
+   | 3 | `swap_used < 2048 MiB` | 「⇒ 窗口乾淨」 | **連軸都錯** —— 存量是 stock，移動 t/s 的是壓縮器**流量**（見下） |
+   | 4 | `compressions < 1 MiB/s`（`compressor_pressure.py`） | ← **別讓它變成第 4 個** | 尚未被否證；但它**發射前**讀，而忙碌 regime 在**跑的時候**（同一支臂自產 ~150 MiB/s） |
+
+   ⇒ **寫述句時一律寫「它排除了什麼」，不要寫「它保證了什麼」。** 例：
+   `compressions < 1 MiB/s` 的誠實述句是「**沒有繼承上一臂的風暴**」，
+   **不是**「這個窗口是乾淨的」。同理 `NOMINAL` ＝「閘門開」，`COLD-STATE` ＝「這個讀數的來歷可引用」。
+   ⛔ **絕不寫「X 條件成立 ⇒ 一定能 ≥N t/s」。**
+
+   **★ 這一條有第二個實例（2026-09-26，同一天）**：`swap_used` 是 **stock**（幾小時前推出去、
+   躺著不動的頁），而移動 t/s 的是 macOS **記憶體壓縮器的流量**。同台機實測：
+   閒置盒 `swap 7993 MiB`（＝超舊門檻 3.9×）而 `compressions 0.00 MiB/s` ⇒ **那是乾淨的盒子**；
+   而跑一支 3-rep 生產臂 ⇒ **~150 MiB/s**。**四個數量級，存量完全看不出你在哪個 regime。**
+   閘門入口：`python3 scripts/check/compressor_pressure.py --require`（門檻 1 MiB/s，fail-closed，
+   `unknown` 是獨立判決；**存量只當 label 印，永不決定**）。
+   ⇒ **熱條件（散熱包絡 → GPU 有效時脈 → pp 吞吐）與壓縮器流量（記憶體階層 → 填充/IO）
+   是兩個獨立閘門，兩個都要過，而且任一個都不能由另一個推出來。**
 
 ---
 
@@ -112,6 +147,34 @@ lesson `eng-mh-0054`。
 - **時脈 → 吞吐**：`t(ms/token) = a + b/f_eff`，`a≈0.47、b≈4216`（合併 6 點）。
   250 t/s 對應有效時脈 **1154–1227 MHz**。1470 MHz → 约 291、928 → 227、618 → 135。
   看到 ~185 就是「兩階之間」。
+- **★★ 反過來用這個模型：用兩個 pp 讀數把差異「歸類」，不必再找第三個解釋（2026-09-26 新增）。**
+  當你手上是兩個同 cell 的 pp 讀數而差得很多（實測 225.29 vs 190.25 ＝ −15.6%），
+  **先把兩邊各自反推成 `f_eff = 4216/(1000/tps − 0.47)`**：
+
+  | 讀數 | ms/token | 反推 f_eff | 對照 |
+  |---|---:|---:|---|
+  | 225.29 | 4.439 | **1062 MHz** | −15.6% ↔ **−17.1%** |
+  | 190.25 | 5.256 | **881 MHz** | 兩者比值相符 ⇒ 包絡效應 |
+
+  **判準：若「t/s 的比值」與「反推時脈的比值」相符（±幾個百分點內）⇒ 這個差異是功耗／散熱包絡，
+  不是引擎、不是池、也不是量測噪音 ⇒ 直接作廢，不要再給它一個機制故事。**
+  同一招也適用於「這條 cell 的歷史散佈到底有多大」：把歷史值全反推，
+  `d10a6406d 177.36 → 816 MHz`、`efba7c1d5 301.47 → 1481 MHz` ⇒ **1.82× 的 pp 散佈 ＝ 1.82× 的時脈散佈**。
+  ⚠ 這是**反推**（模型是 6 點擬合，且 `f_eff` 不是 `powermetrics` 的實測時脈，後者要 root）——
+  它足以**排除**「引擎變了」，不足以宣稱「時脈就是 X MHz」。
+
+  **配套的三個現場檢查（成本 0，都在既有產物裡）：**
+  1. **臂內 rep 散佈 vs 臂間差**：cb1 `[222.5, 235.7, 217.7]`、cb2 `[185.4, 199.0, 186.4]`
+     ⇒ 臂內 ±4%、臂間 15.6% ⇒ **狀態偏移，不是噪音**。
+  2. **rep 形狀**：兩臂都是 rep2 最高 ⇒ 差的是**進場水位**（跑之前就已決定），不是跑起來才劣化。
+  3. **同兩臂的 decode 動多少**：實測只 **−3.85%** ⇒ **包絡對「吞吐綁定」的 pp 幾乎 1:1，
+     對「IO／延遲綁定」的 decode 小一個量級**。這就是「漂移必須分桶判」的物理原因
+     （同日另一支 sweep：pp −26.2% 而 tg 只有 −1.86%）。
+  ⛔ **要排除「是引擎退步」還有更便宜的一招（0 GPU）**：`git diff --stat <舊commit> HEAD -- src/…`
+  然後逐行問「這行在無條件路徑上嗎」。實測 `2457124bf..HEAD` 的 **413 行全是 env-gated
+  或 MTP-only** ⇒ 對 mtp=off 的 cell 等價於零，缺口就只能歸盒子。
+  反之**「第一次啟動溢價」這個候選要特別小心方向**：本文 §1 記載位置 1 **偏慢**（215.30 vs 287.80），
+  所以若你觀察到**位置 1 反而快**，那個候選就被排除掉，不要拿它解釋。
 - **2026-09-20 的三次 prefill-house 讀數（同一天、同一台、`-r 3` × 2048 token × `-b 5632`）**：`212.59`（worst=HEAVY）、`222.40`（worst=MODERATE）、`188.12`（worst=HEAVY）—— **全部 < 250、全部 `worst ≥ MODERATE` ⇒ 三次都不可引用**。這**不是**「prefill 退步」：它是「這台無風扇機器當天撐不住一整條 prefill 臂」。同一份記錄的判準仍是「Nominal 6/6 全部 ≥250；非 Nominal 0/21（最高 211.65）」—— 本日三次落在那一側。**「未驗證」要寫成未驗證。**
 - **可交付的述句（2026-09-17 修正）**：可引用的是「**讀到 0 的那一臂**，其 req1–req3 讀數是
   **X / Y / Z**」＋ 熱標籤。**❌ 舊述句「其 req1–req3 全部 ≥250」已被 lesson `eng-mh-0054` 否證**

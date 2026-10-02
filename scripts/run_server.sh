@@ -1532,13 +1532,51 @@ SERVER_ENV=(
 # knobs for "which part of the fill path costs": NO_RDADVISE drops the per-job F_RDADVISE hints
 # (caller-side fcntl), NO_MERGE drops the run-merge (per-segment jobs), BATCH_SPAWN reverts to
 # thread-per-expert. Forwarded so a decomposition arm cannot silently run on profile defaults.
+# [CGC 2026-10-02 Y-accel] CGC_SEG_BATCH / CGC_SEG_BATCH_FAST —— the same inert-knob trap: the engine
+# reads both (ggml-backend.cpp 41-segment loop / FAST single-submit branch, llama-context.cpp
+# predict-ensure), but with no entry here every `--arms` spec resolves to the profile default, so the
+# A/B silently measures the 41-segment loop and reads as "no difference".
+#   CGC_SEG_BATCH=1       proven 41-segment wait->hook->submit loop (the fallback target).
+#   CGC_SEG_BATCH_FAST=1  one async submit per decode step; correctness carried by prev-token
+#                         predict-ensure + post-submit readback. Witness 2026-10-02: M1/M2/M3
+#                         222/222, engagement taken=195 / mismatch=0 (MTP-off, long generation).
+#   CGC_FAST_PROBE=1      diagnostic-only mismatch probe (llama-context.cpp, default off): prints
+#                         pred/true/rd/slot for the first layers x positions of the first
+#                         CGC_FAST_PROBE_DETAIL engaged steps. It is the ONLY witness that can tell a
+#                         stale prediction (a) apart from a set-order difference (b) and from a
+#                         leaf-write/compare bug (c) -- all three print the same mismatch count.
+#                         Never quoted for throughput: it removes the production first-hit break and
+#                         reads back every layer of the graph.
+# [CGC 2026-10-02 S1 single-submit] CGC_S1_SINGLE_SUBMIT / CGC_S1_SS_VERIFY -- the arm that feeds
+# the S1 GPU slot table instead of a predicted host leaf (llama-context.cpp publish block,
+# ggml-backend.cpp single-submit branch). It needs THREE companions in the arm spec, and dropping
+# any one of them turns it into a different experiment rather than a weaker one:
+#   CGC_SLOT_TABLE_GPU=1   the graph must be the S1 one (get_rows(slot_table, ids)); without it
+#                          there is no table to publish and the arm prints `arm is a no-op`.
+#   CGC_S1_MIN_IL=0        layer 0 must also consume the table. With the default min_il=1 it keeps
+#                          a host leaf, which a prediction-free arm cannot write -> the arm prints a
+#                          VOID warning and its bit-identity claim is invalid.
+#   CGC_ZERO_SLOT=1        arms the reserved ZERO slot, so a NON-resident consumed expert reads a
+#                          zeroed region (dropped contribution) instead of a clamp to slot 0 (another
+#                          expert's weights). Both are wrong vs the reference; only the first is
+#                          bounded and interpretable, and only the first is what the cold witness
+#                          (CGC-S1-SS) counts. prod-new carries none of the three arming knobs by
+#                          default, so without this the placeholder is the unbounded one.
+#   CGC_S1_SS_VERIFY=1     the post-submit witness (one drain + n_layer readbacks): prints
+#                          CGC-S1-SS / CGC-S1-SS-LAYER -- the per-step count of consumed ids that had
+#                          no real slot at publish time. This is the ONLY number that decides the
+#                          arm's bit-identity; without it the arm is speed-only and a red oracle has no
+#                          attribution.
 for _v in LLAMA_EXPERT_CACHE_NOHOOK LLAMA_EXPERT_CACHE_NOGATHER LLAMA_EXPERT_CACHE_L3_NGL \
           LLAMA_EXPERT_CACHE_STEP_DBG CGC_PHASE_DBG CGC_SEQ_RM_TYPE CGC_PREFIX_REUSE_CKPT \
           CGC_S1_OUT_CAP CGC_S1_OUT_LAYERS CGC_S1_TABLE_CHURN CGC_S1_CLAMP_ABORT \
           CGC_LOGITS_ORACLE_TOPN CGC_LOGITS_ORACLE_FIRST_N CGC_DRAFT_CTX_ALIGN \
           CGC_DRAFT_SMALL_BATCH \
           LLAMA_EXPERT_CACHE_NO_MERGE LLAMA_EXPERT_CACHE_NO_RDADVISE LLAMA_EXPERT_CACHE_BATCH_SPAWN \
-          LLAMA_BENCH_SPEC_DBG CGC_MTP_PERF; do
+          LLAMA_BENCH_SPEC_DBG CGC_MTP_PERF CGC_SEG_BATCH CGC_SEG_BATCH_FAST CGC_FAST_COST \
+          CGC_FAST_PROBE CGC_FAST_PROBE_DETAIL \
+          CGC_S1_SINGLE_SUBMIT CGC_S1_SS_VERIFY CGC_S1_SS_DBG \
+          CGC_OVERLAP_FENCE CGC_SUBMIT_AHEAD; do
     if [ -n "${!_v:-}" ]; then
         SERVER_ENV+=("$_v=${!_v}")
     fi

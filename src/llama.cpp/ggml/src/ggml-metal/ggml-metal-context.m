@@ -104,6 +104,38 @@ struct ggml_metal {
     int64_t            cgc_watchdog_dump_us;  // watchdog queue only
     bool               cgc_probe_done;        // watchdog queue only (see cgc_watchdog_probe)
 
+    // [CGC 2026-10-02 overlap fence] Device-side wait so the sched can COMMIT segment i+1 before
+    // the host has finished writing segment i's remap leaf, without the racy read.
+    //
+    // This is option (B) of the CGC_GPU_TIMING note below, implemented instead of inferred: the
+    // measured decomposition (2026-10-02, build 054fb22f04a0, ab_interleave p25-gputime vs
+    // p25-submit-ahead) puts the WHOLE prize in `wait` -- total 73.54 -> 38.10 ms/step with
+    // `wait` 65.20 -> 25.67, while `cb` 2.86 -> 8.35 and `submit` 4.44 -> 4.06 barely move. So the
+    // window is the GPU->CPU->GPU round trip at the layer boundary, not GPU execution.
+    //
+    // Contract: `cgc_fence_arm_v > 0` means "the NEXT ggml_metal_graph_compute must wait for this
+    // event value on EVERY command buffer it commits". The host signals after the remap leaf is
+    // written. The value is consumed one-shot (reset to 0) so a second graph cannot inherit it.
+    //
+    // Why EVERY command buffer and not just the first one: a segment's nodes are spread over
+    // n_cb+1 command buffers (the main one plus n_cb worker ones), and Metal only guarantees they
+    // are *started* in commit order -- it does NOT make them mutually exclusive. The mul_mat_id
+    // nodes that consume the remap leaf routinely land in a WORKER buffer (the note on cgc_done
+    // below records the mirror-image bug: waiting only on the main buffer fired the hook while the
+    // argsort was still running). Fencing only the main buffer therefore left the real consumers
+    // unprotected. Measured 2026-10-02, first cut of this fence: CGC-MMID-ASSERT id_oob=1456
+    // first=955391402 (garbage ids) -- the exact submit_ahead symptom, and the output was all-NaN.
+    //
+    // `0` == no fence == upstream behaviour, byte for byte.
+    //
+    // Why an MTLSharedEvent rather than a spin: `encodeWaitForEvent:value:` parks the GPU without
+    // occupying it and without a host round trip, and the read-before-write hazard is removed by
+    // construction (the leaf write strictly precedes the signal).
+    id<MTLSharedEvent> cgc_fence_ev;
+    uint64_t           cgc_fence_arm_v;       // one-shot ARM: wait value for the NEXT graph_compute
+    uint64_t           cgc_fence_this_v;      // value in force for the graph_compute in progress
+    uint64_t           cgc_fence_sig_v;       // last value the host signalled (must be monotonic)
+
     // [CGC 2026-09-15 GPU-side timing] No state is kept here on purpose: MTLCommandBuffer
     // records GPUStartTime/GPUEndTime itself, and ggml_metal_cgc_gpu_take() reads them off
     // ctx->cmd_bufs[] at the segment boundary, so this instrument adds no fields, no
@@ -517,6 +549,43 @@ static void cgc_wait_cmd_buf(id<MTLCommandBuffer> cmd_buf) {
 
 int ggml_metal_cgc_done(ggml_metal_t ctx) {
     return atomic_load_explicit(&ctx->cgc_done, memory_order_relaxed);
+}
+
+// [CGC 2026-10-02 overlap fence] ARM: the NEXT ggml_metal_graph_compute's first command buffer
+// will `encodeWaitForEvent` for value `v`. One-shot (consumed by that graph_compute). v must be
+// strictly increasing across the process lifetime, because MTLSharedEvent::setSignaledValue:
+// requires monotonic values -- the caller uses a global counter.
+void ggml_metal_cgc_fence_arm(ggml_metal_t ctx, uint64_t v) {
+    ctx->cgc_fence_arm_v = v;
+}
+
+// SIGNAL: called by the sched AFTER the remap leaf for this boundary has been written (i.e. right
+// after the top-k hook returns). This is the whole point: the GPU cannot get past the fence until
+// the leaf is in memory, so the read-before-write hazard is removed by construction rather than by
+// prediction. Idempotent and monotonic: a value <= the last signalled one is ignored.
+void ggml_metal_cgc_fence_signal(ggml_metal_t ctx, uint64_t v) {
+    if (ctx->cgc_fence_ev == nil) {
+        id<MTLDevice> dev = ggml_metal_device_get_obj(ctx->dev);
+        if (dev == nil) {
+            return;
+        }
+        ctx->cgc_fence_ev = [dev newSharedEvent];
+    }
+    if (ctx->cgc_fence_ev == nil) {
+        return;
+    }
+    if (v > ctx->cgc_fence_sig_v) {
+        ctx->cgc_fence_sig_v = v;
+        [ctx->cgc_fence_ev setSignaledValue:v];
+    }
+}
+
+// [CGC 2026-10-02 overlap fence] probe: how many fences this ctx has armed / signalled, and whether
+// the event exists. Exposed so the sched can print a "the instrument is alive" line instead of
+// inferring it from a t/s difference (the same rule as the CGC_SUBMIT_AHEAD `answer_md5` guard).
+void ggml_metal_cgc_fence_stats(ggml_metal_t ctx, int64_t * out) {
+    out[0] = ctx->cgc_fence_ev != nil ? 1 : 0;
+    out[1] = (int64_t) ctx->cgc_fence_sig_v;
 }
 
 // [CGC 2026-09-15 GPU-side timing] Read the GPU start/end that Metal itself recorded for the
@@ -1179,6 +1248,21 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
     @autoreleasepool {
         ctx->gf = gf;
 
+        // [CGC 2026-10-02 overlap fence] Consume the one-shot ARM here, at the top, before ANY
+        // command buffer exists, and publish it for this whole graph_compute. Reading it at the top
+        // is what guarantees the value cannot leak into a later graph: by the time the second graph
+        // of the process runs, cgc_fence_arm_v is already 0 again. The value is then put on EACH
+        // command buffer in encode_async (see the struct note on why the main buffer alone is not
+        // enough). Event creation is lazy and one-time per context.
+        ctx->cgc_fence_this_v = ctx->cgc_fence_arm_v;
+        ctx->cgc_fence_arm_v  = 0;
+        if (ctx->cgc_fence_this_v > 0 && ctx->cgc_fence_ev == nil) {
+            id<MTLDevice> fence_dev = ggml_metal_device_get_obj(ctx->dev);
+            if (fence_dev != nil) {
+                ctx->cgc_fence_ev = [fence_dev newSharedEvent];
+            }
+        }
+
         // [CGC 2026-09-18 node-level GPU time] Snapshot the node names while gf is still the live
         // object -- see the struct comment on cgc_nm for why reading ctx->gf from the hook
         // segfaults instead. Taken BEFORE the thread pool is started, so no worker races this.
@@ -1248,6 +1332,10 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
             ctx->cmd_bufs[n_cb].obj = cmd_buf;
             ctx->cgc_cb_create_us[n_cb] = ggml_time_us(); // [CGC watchdog]
 
+            // [CGC 2026-10-02 overlap fence] The wait is NOT encoded here: this buffer is only ONE
+            // of the n_cb+1 that make up the segment, and fence-on-main-alone was measured WRONG
+            // (garbage ids -> all-NaN). It is encoded inside encode_async, which runs for every
+            // buffer including this one.
             // CGC: count this segment's completion so the sched can poll it (CGC_OA_ASYNC
             // pipelined dispatch) without blocking the Metal pipeline
             [cmd_buf addCompletedHandler:^(id<MTLCommandBuffer> cb) {
@@ -1480,6 +1568,15 @@ void ggml_metal_set_n_cb(ggml_metal_t ctx, int n_cb) {
         }
 
         id<MTLCommandBuffer> cmd_buf = ctx->cmd_bufs[cb_idx].obj;
+
+        // [CGC 2026-10-02 overlap fence] Encode the device wait at the HEAD of EVERY buffer of a
+        // fenced graph, before any node is encoded into it. Fencing only the main buffer left the
+        // mul_mat_id consumers (which live in arbitrary worker buffers) unprotected -- see the
+        // struct note. cgc_fence_this_v is written once per graph_compute before any thread runs and
+        // is read-only here, so the parallel dispatch_apply workers need no further synchronization.
+        if (ctx->cgc_fence_this_v > 0 && ctx->cgc_fence_ev != nil) {
+            [cmd_buf encodeWaitForEvent:ctx->cgc_fence_ev value:ctx->cgc_fence_this_v];
+        }
 
         ggml_metal_op_t ctx_op = ggml_metal_op_init(
             ctx->dev,

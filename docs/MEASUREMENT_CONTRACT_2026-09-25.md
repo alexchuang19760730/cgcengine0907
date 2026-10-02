@@ -76,7 +76,7 @@ build 指紋    記 libllama / libggml-base / libggml-metal / server-impl 的 md
   這正是 8 GiB / 3 GiB 兩套數字不能併排的根因。
 - ⇒ 16 GB 這台上 8 GiB 是**靜態超訂 4838 MiB**（物理事實，不是 bug）。
   合格做法只有兩種：
-  1. 用 `BUDGET_GATE=warn` 放行，並把 `CGC_BUDGET_OVERSUBSCRIPTED=1` **寫進產物**（顯式承認污染）；
+  1. 用 `BUDGET_GATE=warn` 放行，並把 `CGC_BUDGET_OVERSUBSCRIBED=1` **寫進產物**（顯式承認污染）；
   2. 或**整條線一起改 cell**（含所有對照臂），並在報告裡標明換過 cell。
   **不准只為通過閘門而縮 pool。**
 
@@ -120,6 +120,19 @@ steady 欄的取得方式：`--fixed-fill-seed`（09-19 §3.2）；cold 欄需�
 3. **看門狗必須認得自己人**：harness 起跑寫 PID 樹 marker，`lane_watchdog` 對
    **已宣告的診斷臂**只 `warn` 不 `kill`（診斷臂天生 swap 高）。
 4. **冷卻**：同一臂兩輪之間 `--cool-s 420`（實測最小冷卻）；跨臂配對間隔 ≤ 20 min。
+
+### 3.4.1 launcher 掃描（2026-10-01 起，取代「點名」）
+
+第 1 條不再靠人記：`scripts/check/gate_consistency.py` 掃 `scripts/**/*.sh|*.py` 找**直接啟動者**
+（binary 先綁成變數、再被拿去起子行程）—— 命中卻沒引用 `budget_gate.sh`（或它的 Python 封裝
+`budget_gate_preflight`）就**逐檔判紅**、gate 非零退出。只 delegate（叫 `llama_bench_matrix.py`）的
+不算，閘門在被叫的那支裡；已停用的一次性工具在 `LAUNCHER_EXEMPT` 附理由登錄，掃描仍會驗它檔案還在。
+
+現況（2026-10-01）：直接啟動者 9 支 —— 已接 6（`llama_bench_matrix.py`、`masscov_decode_shape.sh`、
+`route_overlap_3prompt.sh`、`cap_oomsweep.py`、`s1_ksweep.py`、`window_sentinel.py`），豁免 3
+（`pin_abba.sh`、`pool_sweet_spot.sh`、`sweet_abba.sh`：一次性、env 已凍結進現行驅動的註解）。
+16 GB 這台的後果：strict 下這些 runner 對 8 GiB pool 一律預設拒跑，要跑請 `BUDGET_GATE=warn`
+（樣本帶 `CGC_BUDGET_OVERSUBSCRIBED=1`）。
 
 ---
 

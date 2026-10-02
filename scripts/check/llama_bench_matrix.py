@@ -75,6 +75,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 RUN_SERVER = ROOT / "scripts" / "run_server.sh"
 LLAMA_BENCH = ROOT / "src" / "llama.cpp" / "build" / "bin" / "llama-bench"
+# [CGC 2026-10-01, MEASUREMENT_CONTRACT §3.4.1] 所有會起 llama-bench 的 runner 一律接這支閘門；
+# shell 側是 `. "${REPO}/scripts/check/budget_gate.sh"`，Python 側是 budget_gate_preflight()。
+BUDGET_GATE_SH = ROOT / "scripts" / "check" / "budget_gate.sh"
 
 # The thermal reading is a single implementation shared with the HTTP harnesses
 # (`decode_sweep.py` / `decode_bench.py` import it from this same directory). Growing a second
@@ -707,6 +710,33 @@ def _stream_child(cmd, env, live_path: Path, echo_filter: str | None = None,
             "last_progress_line": last_activity["line"],
             "n_stderr_lines": len(err_lines), "n_stdout_lines": len(out_lines),
             "live_log": str(live_path)}
+
+
+def budget_gate_preflight(env: dict, gate_path: Path | None = None) -> tuple[int, str]:
+    """[CGC 2026-10-01, MEASUREMENT_CONTRACT §3.4.1] 超訂預檢：source `budget_gate.sh`。
+
+    shell 側的接法是 `. "${REPO}/scripts/check/budget_gate.sh"` —— strict 超訂 ⇒ `exit 2`
+    （零樣本）、warn ⇒ 放行且 export `CGC_BUDGET_OVERSUBSCRIBED=1`、off ⇒ 跳過、檔案不在
+    ⇒ 不擋。Python 這邊用**同一支腳本、同一個 shell 語意**（`bash -c` source），免得閘門的
+    兩份實作漂移。回傳 `(rc, log)`；`rc != 0` ⇒ 呼叫方必須在第一支臂之前停下來（fail-closed）。
+    warn 時把 gate 自己 export 的標記讀回來，設進 `env`。
+    """
+    gate = Path(gate_path) if gate_path else BUDGET_GATE_SH
+    if not gate.exists():
+        return 0, f"[budget-gate] 找不到 {gate} —— 不擋，但這一趟沒有預檢。"
+    # 在同一個 subshell 裡 source，再把 gate 自己 export 的標記讀回來 —— 不能只靠解析 log 文字。
+    script = (". \"$1\"\n"
+              "printf \"\\n[budget-gate] CGC_BUDGET_OVERSUBSCRIBED=%s\\n\" "
+              "\"${CGC_BUDGET_OVERSUBSCRIBED:-0}\"\n")
+    try:
+        r = subprocess.run(["bash", "-c", script, "budget-gate", str(gate)],
+                           env=env, capture_output=True, text=True, timeout=120)
+    except Exception as e:  # noqa: BLE001  fail-closed：閘門跑不動就不開跑
+        return 3, f"[budget-gate] 預檢失敗：{e}"
+    log = (r.stdout or "") + (r.stderr or "")
+    if r.returncode == 0 and "[budget-gate] CGC_BUDGET_OVERSUBSCRIBED=1" in log:
+        env["CGC_BUDGET_OVERSUBSCRIBED"] = "1"
+    return r.returncode, log
 
 
 def run_arm(tag: str, profile: str, extra_env: dict[str, str], args, res: dict) -> dict:
@@ -1352,7 +1382,46 @@ def selftest() -> int:
     finally:
         shutil.rmtree(sd, ignore_errors=True)
     print(f"stream/brake selftest: {4 - sbad2}/4 cases passed")
-    return 0 if bad + ebad + sbad + abad + dbad + gbad + pbad + sbad2 == 0 else 1
+
+    # [CGC 2026-10-01] budget gate 接線（MEASUREMENT_CONTRACT §3.4.1）：四個分支都要能判，
+    # 而且必須是「真的 source 一支腳本」，不是只比對字串。
+    bgbad = 0
+    bd = tempfile.mkdtemp(prefix="mtx_budget_")
+    try:
+        fake = Path(bd) / "budget_gate.sh"
+        fake.write_text('echo "[budget-gate] 拒跑（exit 2）" >&2\nexit 2\n', encoding="utf-8")
+        rc, _ = budget_gate_preflight({"BUDGET_GATE": "strict"}, fake)
+        if rc != 2:
+            bgbad += 1
+            print(f"  FAIL [budget strict]: rc={rc}，want 2（超訂必須拒跑）")
+        else:
+            print("  ok   [budget strict]: 超訂 ⇒ rc=2（拒跑、零樣本）")
+        fake.write_text("export CGC_BUDGET_OVERSUBSCRIBED=1\n", encoding="utf-8")
+        genv = {"BUDGET_GATE": "warn"}
+        rc, _ = budget_gate_preflight(genv, fake)
+        if not (rc == 0 and genv.get("CGC_BUDGET_OVERSUBSCRIBED") == "1"):
+            bgbad += 1
+            print(f"  FAIL [budget warn]: rc={rc} env={genv}")
+        else:
+            print("  ok   [budget warn]: 放行且標記帶回 env")
+        fake.write_text(":\n", encoding="utf-8")
+        genv = {"BUDGET_GATE": "strict"}
+        rc, _ = budget_gate_preflight(genv, fake)
+        if not (rc == 0 and "CGC_BUDGET_OVERSUBSCRIBED" not in genv):
+            bgbad += 1
+            print(f"  FAIL [budget clean]: rc={rc} env={genv}")
+        else:
+            print("  ok   [budget clean]: 未超訂 ⇒ rc=0、無標記")
+        rc, log = budget_gate_preflight({"BUDGET_GATE": "strict"}, Path(bd) / "missing.sh")
+        if not (rc == 0 and "找不到" in log):
+            bgbad += 1
+            print(f"  FAIL [budget missing]: rc={rc} log={log!r}")
+        else:
+            print("  ok   [budget missing]: 找不到閘門 ⇒ 不擋（同 shell 版）")
+    finally:
+        shutil.rmtree(bd, ignore_errors=True)
+    print(f"budget-gate selftest: {4 - bgbad}/4 cases passed")
+    return 0 if bad + ebad + sbad + abad + dbad + gbad + pbad + sbad2 + bgbad == 0 else 1
 
 
 def main() -> int:
@@ -1478,6 +1547,25 @@ def main() -> int:
                 f"  LAYER_CAPS / PREFIX_REUSE_CKPT / NO_SEQ_RM_PROBE, not MTP. Add:\n"
                 f"      --spec-type draft-mtp [--spec-draft-n-max 3]")
         armed.append((spec, prof, extra, res))
+
+    # [CGC 2026-10-01, MEASUREMENT_CONTRACT §3.4.1] launch 前超訂預檢：strict 超訂 ⇒ 拒跑（rc=2、
+    # 零樣本）、warn ⇒ 放行且把 CGC_BUDGET_OVERSUBSCRIBED=1 帶進每一支臂的 env（下游產物帶著
+    # 污染標記）。直跑與 harness 都走同一條路；--dry-run 不產數字，不叫閘門。
+    if not args.dry_run and armed:
+        gate_env = dict(os.environ)
+        gate_env.update(armed[0][3].get("env") or {})
+        gate_rc, gate_log = budget_gate_preflight(gate_env)
+        if gate_log.strip():
+            sys.stderr.write(gate_log if gate_log.endswith("\n") else gate_log + "\n")
+        if gate_rc != 0:
+            print(f"⛔ budget gate 拒跑（rc={gate_rc}；MEASUREMENT_CONTRACT §3.4.1）—— 本趟沒有樣本。",
+                  file=sys.stderr)
+            print("   要硬跑：BUDGET_GATE=warn（樣本帶 CGC_BUDGET_OVERSUBSCRIBED=1 標記）或 BUDGET_GATE=off。",
+                  file=sys.stderr)
+            return 2
+        if gate_env.get("CGC_BUDGET_OVERSUBSCRIBED") == "1":
+            for _, _, _, _r in armed:
+                _r["env"]["CGC_BUDGET_OVERSUBSCRIBED"] = "1"
 
     results = [run_arm(tag, prof, extra, args, res) for tag, prof, extra, res in armed]
 

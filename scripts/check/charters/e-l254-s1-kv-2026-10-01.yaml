@@ -1,0 +1,103 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— e-l254-s1-kv：把 MTP 的 draft 放回「不共用 KV」的 regime
+#   L25-4 的機制側 S1（docs/CRITICAL_PATH_2026-09-30.md；裁定 docs/OPERATOR_RULING_L254_2026-10-01.md）
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼要立這一張：
+#   operator 2026-10-01 已拍「MTP on 沒問題」（25 走 MTP-on 獨立口徑）⇒ L25-4 只剩機制側 S1：
+#   `is_mem_shared=1` 讓 draft 把位置寫進共用 KV，target 從同一起點 verify 被 M-RoPE 的嚴格
+#   `X < Y` 拒掉 ⇒ 61% 輪次 `draft=0`、194 次 init 失敗（144 是 `X>Y`）⇒ `k_eff` 1.590 而要求是 7。
+#   樹上有 `CGC_MTP_NO_CTX_OTHER=1`（`llama-context.cpp:188`，env-gated、預設位元不動、已進 dylib）
+#   —— 它把 draft 放回 09-24 那條乾淨曲線（`k_eff == k`、0 pos-err）的 regime。這一趟量它。
+# ⚠ 歸因趟：B 臂按引擎自己的註記「never a throughput figure」⇒ 只讀 k_eff／acc_rate／`draft=` 直方圖／
+#   pos-err 密度，**不進 k 曲線、不當可引用 t/s**。
+id: e-l254-s1-kv
+owner: freebuff（S 線 / L25-4）
+created: '2026-10-01'
+axis: S
+
+# ── 【目標】──
+question: |
+  把 MTP 的 draft 放回「不共用 KV」的 regime（`CGC_MTP_NO_CTX_OTHER=1`）之後，交付 cell、k=7 的臂
+  `k_eff` 是否 ≥ 7（回到 k，而不是 1.590），且 position error 密度回到乾淨批（32/11075）等級？
+  ⇒ 是 ⇒ `is_mem_shared` 就是卡點、S1 成立 ⇒ 續做 k=8；
+  ⇒ 否（`k_eff` ≤2 或只比對照高 <0.5）⇒ `is_mem_shared` 單獨不是卡點 ⇒ 不再重跑同一 regime，
+     改走「把共用 KV 的 verify 佈局做對」或依卡 falsify（M 軸退出 25）。
+
+# ── 【現狀】──
+baseline:
+  metric: "width=8 現行臂：`k_eff`（`gen_tok_per_round`）= **1.590**（區間 1.59–1.72）、`acc_rate` 0.343–0.413、`draft=0` 約 **61%** 輪次、pos-err **194** 次（144 是 `X>Y`）、`MTP fast path` draft:verify ≈**1:52**（k=7）"
+  cell:   "交付 cell（`delivery`：`-b/-ub 512`、`prompt 0`、`gen 128`、`depths 512`、`reps 3`、`warm-skip 64`、`ctx_size 4096`；`--spec-type draft-mtp --spec-draft-n-max 7`；`CGC_SERVER_LAYER_CAPS=40-40:140`）—— 成對（A＝width8 現行／B＝＋`CGC_MTP_NO_CTX_OTHER`）"
+  source: "Backup/l254_kbracket_2026-09-30/k7_width8.json"
+  source_note: "指紋出處＝同目錄 `k7_width8.stderr.log`（六行 `CGC-MTP-PERF`、`SPECDBG` 直方圖、M1/M2 oracle）；width=8 的 caps 實驗見 `docs/MTP_KAXIS_RECOMPUTE_2026-09-30.md` §4.2b；卡點事實見 `scripts/check/decode_board_2026-09-29.yaml` L25-4 的 `state`。"
+  known: |
+    - 09-24 乾淨批（k=1..4，跑在 `65c76b8c7` 之前）：`k_eff` 恰等於 k、**0 pos-err** ⇒ 那是 draft 自帶 KV 的 regime。
+    - width 只解「跑不跑得完」：caps `40-40:140` ⇒ `routable=139 / width=8`、`attribution=none`、跑完，但 `k_eff` 仍 1.6。
+    - 一次 build ＝一個答案；本趟只回答這一個問題（不順手改交付口徑）。
+    - ⛔ 不得用本趟的 throughput 當交付讀數（歸因臂）；k=8 不在這趟（cap=8 放不下 9-token verify ⇒ k=7 是最寬）。
+
+# ── 【假設】──
+hypothesis:
+  mechanism: |
+    `65c76b8c7` 起 MTP context 接收 `ctx_other` ⇒ `is_mem_shared=true` ⇒ draft 鏈與 target 共用 KV：
+    draft 第二步解到 `X >= Y` 被 `llama-batch` 的 M-RoPE 檢查拒 ⇒ 迴圈 break ⇒ 該輪靜默只吐一個 token。
+    拿掉 `ctx_other`（`CGC_MTP_NO_CTX_OTHER=1`）⇒ draft 用自己的位置 ⇒ 輪級掉線消失 ⇒ `k_eff` 回到 k。
+  expected: "B 臂 `k_eff` ≥ **7**（A 臂重現 1.59–1.72）、pos-err 自 ~194 次回落到 ~0（≤ 32/11075 等級）、`draft=0` 輪次自 ~61% 回落"
+  basis: "`docs/KEFF_CAP_2026-09-26.md`（draft 位置碰撞）＋卡 L25-4 `state`（`X>Y` 144/194、61% `draft=0`、width8 指紋）＋`llama-context.cpp:188` 的臂註記（`is_mem_shared` 讀 false、draft 走非共享 catch-up decode）"
+
+# ── 【驗收】跑前寫死 ──
+acceptance:
+  success: "A 臂重現 09-30 指紋（`k_eff` ≈1.6、`draft=0` ≈60%、`MTP fast path` draft:verify ≈1:52）且兩臂 `attribution=none` ⇒ B 臂 `k_eff` **≥ 7** 且 pos-err 回到 ~0 ⇒ **S1 成立** ⇒ 續做 k=8（需 caps 再放大或 verify 佈局改對）"
+  falsify: "B 臂 `k_eff` ≤ 2、或只比 A 高 < 0.5 ⇒ **`is_mem_shared` 單獨不是卡點** ⇒ 不再重跑同一 regime，改走「把共用 KV 的 verify 佈局做對」或依 L25-4 卡 falsify（M 軸退出 25）"
+  on_fail: "A 臂不重現指紋（窗口不合格）／任一臂 `attribution≠none` ⇒ **REFUSE**：B 臂不判生不判死，本趟作廢重跑"
+targets:
+  k_eff_min: 7
+  k_requested: 7
+  draft_zero_pct_max: 10
+  poserr_density_max: 0.0029      # 32/11075（乾淨批）
+  cap_bytes: 8                    # 位址寬度上限；k=7 是唯一放得進 verify 的最寬值
+
+subgoals:
+  - id: sg-s1-paired
+    text:   "交付 cell 成對（A＝width8 對照／B＝＋`CGC_MTP_NO_CTX_OTHER`），同一窗口"
+    expect: "兩臂各出 `CGC-MTP-PERF` 與 `SPECDBG` 直方圖；**A 臂重現 09-30 指紋**（否則本趟作廢）"
+    how:    "`harness bench` 兩臂同場（`--arm` 兩次、`--cell delivery`）"
+  - id: sg-s1-verdict
+    text:   "四項端點（`k_eff`／`acc_rate`／`draft=` 直方圖／pos-err 密度）寫回 L25-4 與裁定文件"
+    expect: "`Backup/l254_s1_20261001/` 產物落地 ＋ 裁定文件記上讀值與 LEVER／否證"
+    how:    "README 式的讀值（本次預註冊在 `docs/OPERATOR_RULING_L254_2026-10-01.md` §S1 第一趟）"
+    delivered: "**已落地**：機制端點達標（兩趟）＋經濟端點判 **`DEAD`**（+52%／emit token）⇒ 讀值寫回裁定文件 §S1 第一趟：結果／§S1 第二趟：結果，判決文 `docs/L254_K_AXIS_ECON_2026-10-01.md`，看板 L25-4 結案（排除）。"
+
+# ── 【臂】──
+arms:
+  # A（對照）：09-30 width=8 那趟的完整複製（指紋必須重現）
+  - prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1;LLAMA_BENCH_SPEC_DBG=1
+  # B（處理）：同 A ＋ 把 draft 放回「不共用 KV」
+  - prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1;LLAMA_BENCH_SPEC_DBG=1;CGC_MTP_NO_CTX_OTHER=1
+
+# ── 【交付】──
+delivery:
+  patch: "（已在樹上、未提交）`CGC_MTP_NO_CTX_OTHER`：`src/llama.cpp/src/llama-context.cpp:188`（env-gated、預設位元不動、已進 `libllama.0.0.630.dylib`）＋ `scripts/run_server.sh` 的轉送（2026-10-01 本線補）"
+  receptor: "docs/OPERATOR_RULING_L254_2026-10-01.md §「S1 第一趟：發車前預註冊」（端點讀法、窗口合格條件、kill line）"
+  evidence: "Backup/l254_s1_20261001/k7_paired.json 與 k7_paired_clean.json（＋對應 `.stderr.log`；兩趟）"
+  result: |
+    2026-10-01 16:05 兩趟跑完（各 149 s / 146 s）⇒ **機制端點達標且重現**：A（`shared_kv=1`）`k_eff`
+    1.75–1.97、`draft=0` 48%、M-RoPE 拒收 153–180 行、`acc_rate` 0.34–0.50；B（`shared_kv=0`）`k_eff` **7.000**
+    逐輪、`draft=0` **0%**、M-RoPE 拒收 **2** 行、`acc_rate` 0.52–0.61、draft:verify 1:12。
+    ⛔ 但四臂 `attribution` 全為 thermal（worst HEAVY）⇒ 依本卡 `on_fail`，**t/s 判讀 REFUSE**（機制計數器不受限）。
+    **第二趟（k 軸經濟學，16:3x、涼窗口、B 先跑）**：draft 成本/emit token **9.22 → 13.98 ms（+52%）**、
+    `emit_tok_per_round` 1.744 → 3.949（2.26×）而 draft 相時間 16.07 → 55.22（3.44×⇒超線性）、`acc_rate` 兩臂同（0.416–0.444）、
+    wall t/s 8.60 vs 7.48（−13%，但四趟 spread 1.19/1.19/1.19/2.49 均 >1.10 ⇒ **VOID**）
+    ⇒ **判詞 `DEAD`**（預註冊的否證條件由計數器滿足）⇒ 25 在 MTP 軸判死、L25-4 結案（排除）。
+    判決文與 reopen 條件：`docs/L254_K_AXIS_ECON_2026-10-01.md`。
+    附帶：B 每 emit token 8.5 → 18.2 ms（2.1×）⇒ k 軸「量得到但不划算」的線索（需涼窗口 A/B 才能判）。
+  apply_and_run: |
+    0) python3 scripts/check/l255_close.py --check           # 足跡閘：需 VERDICT: PASS（存活線 ≥7703 MB；SHORT ⇒ 不發車、不得用 CGC_WINDOW_OVERRIDE 硬跑）
+    1) python3 scripts/check/harness.py bench \
+         --charter scripts/check/charters/e-l254-s1-kv-2026-10-01.yaml \
+         --arm "<A>" --arm "<B>" \
+         --cell delivery --batch 512 --prompt 0 --gen 128 --depths 512 --reps 3 --warm-skip 64 --ctx-size 4096 \
+         --spec-type draft-mtp --spec-draft-n-max 7 \
+         --arm-timeout 420 --stall-watch 90 \
+         --workdir Backup/l254_s1_20261001/k7 --json Backup/l254_s1_20261001/k7_paired.json
+    2) 讀值：`CGC-MTP-PERF` 最後一行的 `gen_tok_per_round`（＝`k_eff`）與 `acc_rate`；`SPECDBG round:` 的 `draft=` 直方圖；pos-err 行數 ÷ 該臂總行數
+    3) A 臂指紋不重現 ⇒ REFUSE；重現 ⇒ 依 success／falsify 判 S1（≥7 ⇒ 續 k=8；≤2 或 <A+0.5 ⇒ kill line）

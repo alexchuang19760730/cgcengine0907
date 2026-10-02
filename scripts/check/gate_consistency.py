@@ -12,6 +12,10 @@ WHY THIS EXISTS
 ⇒ 這支程式把「規格」變成「可機檢的期望」：
    **現在是紅的**（§3 尚未接線）正是它該有的樣子 —— 接線後自動轉綠。
 
+2026-10-01：§3.4.1「所有會起 llama-bench 的 runner 一律接 budget_gate.sh」不再靠點名
+（舊版只驗 llama_bench_matrix.py 一個名字）—— 改成掃描 launcher_evidence() 判定的**直接啟動者**，
+逐檔判紅；只 delegate（叫 llama_bench_matrix／harness.py bench）的不算，閘門在被叫的那支裡。
+
 它只讀檔、不改檔，所以可以安全地在任何時候跑。
 """
 from __future__ import annotations
@@ -39,13 +43,86 @@ CANON_POOL_BYTES = 8589934592
 # 只比對「旗標名」，不比對值 —— 各檔把它寫成 `"--prompt", prompt` 或 `--prompt 2048` 都算合格。
 CANON_FLAGS = ("--prompt", "--gen", "--depths", "--warm-skip", "--ctx-size")
 
+# ── §3.4.1 launcher 掃描（2026-10-01）──────────────────────────────────────────
+# 「會起 llama-bench 的 runner」= binary 路徑先被綁成常數/變數、之後被拿去起子行程；
+# 兩段都成立才算（保守、可解釋）：
+#   shell ：`NAME=…llama-bench`（值結尾就是 binary）＋ `"$NAME" -x` 這種執行；
+#   python：`NAME = …"llama-bench"`（大寫常數）＋ `[NAME`／`str(NAME)` 進指令列。
+# 這種檔案必須引用 `budget_gate.sh`（或它的 Python 封裝 budget_gate_preflight）⇒ 否則逐檔判紅。
+# 只 delegate（叫 llama_bench_matrix.py／harness.py bench）的不算 —— 閘門在被叫的那支裡。
+# 已停用／一次性者在這裡登錄（值＝理由）；掃描只驗「檔案還在」，免得豁免變成孤兒。
+LAUNCHER_EXEMPT: dict[str, str] = {
+    "scripts/check/pin_abba.sh":
+        "一次性 pin-profile A/B（2026-09-24）；形狀與 env 已凍結進 masscov_decode_shape.sh 的註解，"
+        "無現行呼叫者。要重跑請先接 budget_gate.sh。",
+    "scripts/check/pool_sweet_spot.sh":
+        "一次性 pool 甜點掃描（2026-09-23）；它的環境已固化進 route_overlap_3prompt.sh／"
+        "masscov_decode_shape.sh（兩者都已接閘），自己沒有現行呼叫者。",
+    "scripts/check/sweet_abba.sh":
+        "零引用的歷史 ABBA 工具（sweet-spot 一輪用完即棄）；要重跑請先接 budget_gate.sh。",
+}
+GATE_REF_RE = re.compile(r"budget_gate\.sh|budget_gate_preflight")
+BIND_SHELL_RE = re.compile(r"^\s*([A-Za-z_]\w*)=\s*[\"']?[^\"'\s]*llama-bench[\"']?\s*$")
+BIND_PY_RE = re.compile(r"^\s*([A-Z_]\w*)\s*=\s*[^#]*[\"'][^\"']*llama-bench[\"']\s*\)?\s*$")
+
+
+def launcher_evidence(path: Path, text: str) -> str:
+    """回傳「這個檔案會起 llama-bench」的證據（綁定行＋執行行）；空字串＝不是 launcher。"""
+    lines = text.splitlines()
+    if path.suffix == ".sh":
+        for i, ln in enumerate(lines, 1):
+            m = BIND_SHELL_RE.match(ln)
+            if not m:
+                continue
+            use = re.search(r"\"?\$\{?" + re.escape(m.group(1)) + r"\}?\"?\s+-", text)
+            if use:
+                j = text[:use.start()].count("\n")
+                return f"{ln.strip()}（L{i}）⇒ 執行 {lines[j].strip()[:70]}（L{j + 1}）"
+        return ""
+    if path.suffix == ".py":
+        for i, ln in enumerate(lines, 1):
+            m = BIND_PY_RE.match(ln)
+            if not m:
+                continue
+            use = re.search(r"(?:subprocess\.\w+\([^\n]*|\[\s*(?:str\(\s*)?)"
+                            + re.escape(m.group(1)) + r"\b", text)
+            if use:
+                j = text[:use.start()].count("\n")
+                return f"{ln.strip()}（L{i}）⇒ 指令列 {lines[j].strip()[:70]}（L{j + 1}）"
+        return ""
+    return ""
+
+
+def scan_launchers(root: Path) -> dict:
+    """掃 <root>/scripts/**/*.sh|*.py；回傳 gated／ungated／stale_exempt 三份清單。"""
+    out: dict = {"gated": [], "ungated": [], "stale_exempt": []}
+    for p in sorted((root / "scripts").rglob("*")):
+        if p.suffix not in (".sh", ".py") or "__pycache__" in str(p):
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        ev = launcher_evidence(p, text)
+        if not ev:
+            continue
+        rel = str(p.relative_to(root))
+        if rel in LAUNCHER_EXEMPT:
+            continue
+        if GATE_REF_RE.search(text):
+            out["gated"].append(rel)
+        else:
+            out["ungated"].append((rel, ev))
+    out["stale_exempt"] = [rel for rel in LAUNCHER_EXEMPT if not (root / rel).exists()]
+    return out
+
 
 def _search(text: str, pattern: str, cast=float):
     m = re.search(pattern, text)
     return cast(m.group(1)) if m else None
 
 
-def check_all(files: dict[str, str]) -> list[tuple[str, bool, str]]:
+def check_all(files: dict[str, str], launchers: dict | None = None) -> list[tuple[str, bool, str]]:
     out: list[tuple[str, bool, str]] = []
 
     def add(name: str, ok: bool, detail: str):
@@ -54,7 +131,6 @@ def check_all(files: dict[str, str]) -> list[tuple[str, bool, str]]:
     tp = files.get("two_pass", "")
     wd = files.get("watchdog", "")
     hs = files.get("harness", "")
-    mx = files.get("matrix", "")
 
     # 1) 起跑閘 = 壓縮機安靜度（2026-09-26 取代 swap 存量）。三支閘都必須走共享模組，而不是各自
     #    再寫一條門檻 —— 「三處 swap 門檻各不相同」就是漂移的成因，只是這次換成了 flow。
@@ -81,16 +157,28 @@ def check_all(files: dict[str, str]) -> list[tuple[str, bool, str]]:
         f"arm_two_pass={tp_reps} / harness={hs_reps}")
 
     # 3) G1 的看門狗偵測必須包含現行名字
-    pat = _search(tp, r'_procs_matching\(\[([^\]]*)\]\)', str) or ""
+    names = [n for n in ("auto_bench_watchdog", "watchdog_daemon", "lane_watchdog") if n in tp]
     has_daemon = "watchdog_daemon" in tp or "lane_watchdog" in tp
     add("G1 看門狗偵測含現行名字（watchdog_daemon / lane_watchdog）",
         has_daemon,
-        f"目前 G1 只查 {'auto_bench_watchdog' if 'auto_bench_watchdog' in tp else '?'}")
+        f"偵測名單＝{'、'.join(names) if names else '（空）'}")
 
-    # 4) budget_gate 必須接進 llama_bench_matrix
-    add("llama_bench_matrix.py 已接 budget_gate.sh",
-        "budget_gate.sh" in mx,
-        "找到 budget_gate.sh 引用" if "budget_gate.sh" in mx else "沒有 source budget_gate.sh")
+    # 4) §3.4.1：**掃描**所有會起 llama-bench 的 runner（不再只點名 llama_bench_matrix）
+    lz = launchers or {}
+    for rel, ev in lz.get("ungated", []):
+        add(f"launcher 已接 budget_gate.sh（{rel}）", False, f"未接；證據：{ev}")
+    for rel in lz.get("stale_exempt", []):
+        add(f"launcher 豁免仍有效（{rel}）", False, "檔案不存在 ⇒ 從 LAUNCHER_EXEMPT 移除")
+    gated = lz.get("gated", [])
+    if lz.get("ungated") or lz.get("stale_exempt"):
+        detail = f"未接 {len(lz.get('ungated', []))} 個（逐檔見上列）"
+    else:
+        detail = "已接 %d 個：%s" % (len(gated), "、".join(Path(g).name for g in gated) or "—")
+        if LAUNCHER_EXEMPT:
+            detail += "；豁免 %d 個：%s" % (len(LAUNCHER_EXEMPT),
+                                          "、".join(Path(g).name for g in LAUNCHER_EXEMPT))
+    add("launcher 掃描（§3.4.1：所有會起 llama-bench 的 runner）",
+        not lz.get("ungated") and not lz.get("stale_exempt"), detail)
 
     # 5) pool = 8 GiB（cell 的一部分，不得為通過閘門而縮）
     tp_pool = _search(tp, r'CGC_EXPERT_CACHE_BYTES"\s*:\s*"([0-9]+)"', int)
@@ -115,7 +203,7 @@ def run(root: Path) -> int:
     for key, rel in FILES.items():
         p = root / rel
         files[key] = p.read_text(encoding="utf-8") if p.exists() else ""
-    rows = check_all(files)
+    rows = check_all(files, scan_launchers(root))
     width = max(len(n) for n, _, _ in rows)
     for name, ok, detail in rows:
         print(f"  [{'PASS' if ok else 'FAIL'}] {name:<{width}}  {detail}")
@@ -124,6 +212,9 @@ def run(root: Path) -> int:
     if bad:
         print(f"§3 尚未接線：{len(bad)}/{len(rows)} 項未達標（這正是 2026-09-25 的現狀）")
         print("⇒ 接線後本檢查自動轉綠；規格見 docs/MEASUREMENT_CONTRACT_2026-09-25.md §3")
+        if any("launcher" in n for n in bad):
+            print("⇒ launcher 類：把該 runner 接上 budget_gate.sh（或改叫已接閘門的 runner）；"
+                  "已停用者請在 LAUNCHER_EXEMPT 附理由登錄（掃描仍會驗它沒被刪）。")
         return 1
     print(f"PASS — {len(rows)} 項全部與 §3 規格一致")
     return 0
@@ -184,10 +275,15 @@ def selftest() -> int:
     rows = check_all(bad)
     chk("缺 watchdog_daemon ⇒ 紅", any("看門狗偵測" in n and not o for n, o, _ in rows))
 
-    bad = dict(good)
-    bad["matrix"] = "# 沒有 budget gate\n"
-    rows = check_all(bad)
-    chk("matrix 沒接 budget_gate ⇒ 紅", any("budget_gate" in n and not o for n, o, _ in rows))
+    rows = check_all(good, {"gated": ["scripts/check/llama_bench_matrix.py"], "ungated": []})
+    chk("launcher 全數已接 ⇒ 綠（掃描）", all(o for n, o, _ in rows if "launcher" in n))
+
+    rows = check_all(good, {"gated": [], "ungated": [("scripts/check/new_tool.py", "BENCH=… ⇒ 執行")]})
+    chk("新 launcher 未接 budget_gate ⇒ 紅（掃描）",
+        any("launcher 已接" in n and not o for n, o, _ in rows))
+
+    rows = check_all(good, {"gated": [], "ungated": [], "stale_exempt": ["scripts/check/gone.sh"]})
+    chk("豁免指向已刪檔 ⇒ 紅", any("豁免" in n and not o for n, o, _ in rows))
 
     bad = dict(good)
     bad["two_pass"] = good_two_pass.replace("8589934592", "3221225472")

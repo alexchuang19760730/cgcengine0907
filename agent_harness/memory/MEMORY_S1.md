@@ -2,7 +2,7 @@
 
 > **這是快照，不是權威副本。**
 > 權威位置：`.workbuddy/memory/MEMORY_S1.md`（由 host 持續寫入）。
-> 本檔於 2026-09-20 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
+> 本檔於 2026-09-27 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
 > 底下的內容能被 `agent_harness/scripts/auto_git_push.ps1` 定時推送；原檔改了這裡**不會**自動跟上。
 > 索引與漂移檢查見 `agent_harness/engine_loop/memory/INDEX.jsonl`。
 
@@ -482,7 +482,7 @@ nothing asserts」—— 與觀測（token 0 對、token ≥1 錯、不 assert�
 的來源 —— 所有 prefill 與 batch verify 的 token>=1 都用了別的 token 的 experts。」**
 
 ⇒ **「token ≥1 拿到不同的專家」＝ 這個缺陷，而且它在 host 側就錯了（不是裝置的 mapping）。**
-修後（同一個 commit 的實測）：**M1/M2/M3 對 v6 全 9/9；decode 8.62 → 12.62 t/s；
+修後（同一個 commit 的實測）：**M1/M2/M3 對 v6 全 9/9；decode 8.62 → 12.62 t/s（⛔ `12.62` 已作廢，契約 §7）；
 prefill 命中率 57.1% → 72.0%；accept 73.81% → 58.25%（而吞吐上升）。**
 
 **⇒ 這一節之後，「前線」不再是 token≥1 的專家不同。** 本檔上面 09-18 11:1x 那一節寫的
@@ -612,3 +612,142 @@ at every layer boundary」**被實測否證**；③ **S1 的 table 仍然是每�
 **t/s 不可引用**（三臂 `thermal_hist` 不同：{NOM:5,MOD:2,HEA:1} vs {HEA:8} vs {HEA:4,MOD:4}）；
 `p25-s1-keepleaf` **永久不可報吞吐**（原始碼逐字：must never be quoted for throughput）。
 全文：`.workbuddy/memory/2026-09-18.md` §EN-150。
+
+## ★ 載體選擇：vmask／3a（CGC_ZERO_MISS）的實驗**不要用 llama-server**（2026-09-25 定讞）
+
+同一份 binary、同一個 prod-new 形狀（temp 0、seed 0）：
+
+| 載體 | `CGC-ZEROMISS` applied/skipped | 備註 |
+|---|---|---|
+| llama-server | **0 / 40**，skip 詳情 `vmask=0 n_tokens=1 weights_ne=[1,8,1] k=8` | 唯一失敗項＝ `cgc_vmask==nullptr` |
+| llama-bench | **39 / 1** | 不出文字 |
+
+⇒ server 的圖建構**沒進** `if (cgc_slot_table_gpu && il >= cgc_s1_min_il)`
+（`llama-graph.cpp:2246`），vmask 一直是 nullptr ⇒ **3a 在 server 上從未生效**。
+形狀條件（n_tokens=1、weights_ne=[1,8,1]、k=8）全對，別往形狀找；`CGC_S1_MIN_IL` 預設只是 1，
+也不是原因。⇒ vmask／3a／miss-mask 的正確性與成本實驗，載體選
+**llama-completion 或 llama-bench**（跟 bench 同一條圖建構路徑）。
+
+⚠ 連帶：server 上 B 臂（`CGC_SEG_BATCH`）只會生成 ~8 個 token 就撞 EOS，且
+「B0 ≠ B1」**不是** 3a 的證據（applied=0，mul 沒進圖；差異來自 `CGC_MISS_MASK` 多一個
+get_rows 節點 ⇒ Metal 時序變 ⇒ 未初始化池內容不同）。
+
+⚠ 另一個坑：`scripts/run_server.sh` 的 launch line 走 `env "${SERVER_ENV[@]}"`（**ALLOWLIST**），
+`CGC_SEG_BATCH`／`CGC_B_SCHEME`／`CGC_ZERO_MISS`／`CGC_MISS_MASK` **都不在白名單**
+（只有 `CGC_SLOT_TABLE_GPU` 在）⇒ 經 run_server.sh 帶這些開關會被**靜默丟掉**。
+要帶就繞過 run_server.sh 直接起 binary。
+
+> ⚠ **上面那一節的結論已撤回（2026-09-25 01:0x，見 `.workbuddy/memory/2026-09-25.md` §EN-1303）。**
+> `applied=0 skipped=40` 是**一次性 dump 印太早**的假象（`llama-graph.cpp:2775` 的
+> `!cgc_zm_dumped` gate），不是「3a 沒生效」。硬反證：log 裡
+> `CGC-MISSMASK-STEP: step=1 misses=248 layers=39`（20 行）⇒ vmask 的 get_rows **確實在 39 層跑**。
+> ⇒ server 仍是可用的載體；**3a 到底 apply 了沒，目前沒有可信計數**（要修那個一次性 dump）。
+> 另外 `llama-completion` 在標準配置下會 abort（pool 把 n_batch cap 到 8，
+> `GGML_ASSERT(n_tokens_all <= n_batch)`），除非改 `-b` —— **改形狀已被使用者禁止，不要用**。
+
+
+## MEMORY.md 瘦身移入（第六輪，2026-09-25）
+
+- ⚠ **它是診斷臂**（無 hook ⇒ 不 fill ⇒ ids 佔位 ⇒ 輸出 garbage）；**唯一缺口＝miss 處理**。
+- ⛔ **2026-09-25 11:3x：>20 t/s 的 S1 讀數判為不可信**（三重證據：本線自記 garbage／
+  該輪產物無 `answer_md5`、`idseq_A.txt` **0 字節**／server 上 B 臂**只生成 ~8 token 就撞 EOS**）。
+  ★ **撞名警告：兩個東西都叫「S1」** —— ①「探針臂」＝`CGC_SLOT_TABLE_GPU` 單獨，**bit-identical
+  576/576 通過**，但同節寫「**速度：無主張、結構上不可能有**」；②「單段提交」＝
+  `CGC_SEG_BATCH+CGC_B_SCHEME(+SLOT)`，**無 hook ⇒ garbage**。**兩者證據不通用，引用前先問是哪一支。**
+  ⇒ **1.83× 的主項是序列化不是 fill（見下）** 詳見 `docs/S1_LINE_VERDICT_2026-09-25.md` §2.2/2.2b。
+  ⚠ **但別把 1.83× 歸給 fill**（09-25 11:5x 更正）：消掉的 **40.3 ms/token** 裡，
+  **fill 只佔 3.955 ms（4.7%）**，**其餘 ~36 ms 是 41 段提交本身的同步開銷（≈45.5% of step）**。
+  ⇒ **這一臂是一支「上限探針」且目標達成**；它不可交付是因為順手拿掉了 fill（正確性前提）。
+  ⇒ 加上 fill 的估計 = `48.2+3.96 ≈ 52.2 ms/token` ⇒ **≈19.2 t/s（×1.70）**。
+  台帳（每臂的目標／判準／結果／判定）：`docs/DIAGNOSTIC_ARMS_LEDGER_2026-09-25.md`。
+  詳見 `docs/S1_LINE_VERDICT_2026-09-25.md` §2.2/§6。
+- ★★ **2026-09-25 判定單頁：`docs/S1_LINE_VERDICT_2026-09-25.md`**（權威，引用前必讀）。
+  同 build 同 cell 的**乾淨分解**：A 分段 **11.30** → B 單段 S1 **20.73**（**1.83×**，兩臂皆無 spec）
+  → spec k2 **22.45**（**+8.3%**）⇒ **那個 2× 是 S1 的，不是 MTP 的**。
+  ⛔ **「23.3 t/s」不可引用**：① 合成 prompt 的 `acc_rate 0.93~0.99`（交付 0.465~0.58）
+  ⇒ 可移植後只有 **~13–17**；② **輸出正確性未驗證**；③ S1 下 **池計數器塌縮**
+  （`requests` 5720 vs 128920）⇒「hit 100%」是口徑產物，只有 `file_reads=0` 是真的。
+  ⇒ **M-25 維持判死**（I/O 已移除的最佳情形仍 <25）。**缺的不是 k，是 miss 處理。**
+  ⚠ 執行線的 k-sweep 跑 **3 GiB pool**（budget gate 逼的，非選擇）⇒ **其絕對值不可與 8 GiB 的 11.5 併排**。
+  ⚠ **「錯層 ~8 層」是錯的**：實測穩態 **18.1 層/步**（min 9，0.00% 的步 ≤8）；「40/40」是第 1 步
+  冷啟動。⇒ **整層重算判死**，只有 **per-expert 重算**（MoE 輸出是線性疊加）值得做：**+13%~+18%**。
+- **第 2 步 miss mask 已完成**（`CGC_MISS_MASK=1`，與 host `BATCHDBG` 逐位相同：38 層／421 元素／0 差異）；
+  **第 3 步閘門已判 OPEN**：損益平衡點 66.1%~114.3% miss 率，實測 4.7%~43.0% 全在平衡點以下
+  ⇒ **per-expert 重算在 0~66% 任一 miss 率下都淨正**（落點 14.1~19.9 t/s）。
+  ⚠ **fill 是正確性前提不是速度前提**；⚠ `fill_wait_us` 不含 `ensure_batch→fill_segments_pool`。
+  09-24 全文見 `MEMORY_PERF.md` 末節「第五輪（2026-09-25）」。
+- ⚠ **它不需要預測**（ids 是 GPU 端 `get_rows(slot_table, argsort)`）⇒ **A/prebind 的 h=0.03
+  判死不適用於它**（h 實測見 `docs/H_MEASURED_A_VERDICT_2026-09-24.md`，commit `81aab385f`）。
+- ⚠ 開關兩半分在不同 build：`CGC_SEG_BATCH` 在 `libggml-base`(11:14)、其餘在 `libllama`(14:58)
+  ⇒ **驗 binary 要總掃 `*.dylib`**，只掃 `libllama` 會假陰性。
+- ★★ **G2 已量（2026-09-26 03:0x，`harness.py bench` + `prod-new`）**，全文
+  `docs/SPEED_ACCEPTANCE_GATE_2026-09-26.md` **§9**（引用前讀那一節）：
+  - 前置 FIX：revive 後的 `vmask` 缺 `ggml_build_forward_expand` ⇒ 首啟動
+    `ggml-alloc.c:623 GGML_ASSERT(buffer_id >= 0)`（rc=-6，零 token）。補在 `llama-graph.cpp:2446`。
+    ⚠「忠實重建」不可驗證，可驗證的只有「不 abort」。
+  - 讀數 **100%（每步每層 8/8 全佔位）**：15015 行／385 compute／39 層，micro=macro=1.0000，
+    drift Δ=0，重複臂位元級一致。
+  - 機制 = `slot_table` 初值 -1（`:3855`）＋正值只在真 fill 寫入（`:1107`/`:3441`/`:3493`）而
+    本 cell **零 pread**（`read_mib=0.0 pread_us=0 fill_wait_us=0 evict=0`）⇒ 零 publish ⇒ 走
+    `e % ns` 佔位（`llama-context.cpp:3631`，註解自述 garbage）。⇒ §EN-152「單調上升」改為
+    **第一次 compute 就 100% 且永遠不動**。
+  - 判決 **§3 的 >20% 分支**（本臂重算＝MoE 算兩遍 ⇒ 先做 async/後台 fill）。
+    ⛔ **不可拿 100% 定價交付 cell**：它是「單段＋hook 不跑」的性質（`union=64` ≤ 143 slots/layer）。
+  - 未封口：`llama-context.cpp:3681` 的 `continue` 若觸發 ⇒ publisher 沒寫 ⇒ 100% 可能為偽。
+    已加 `CGC-MM-PUB` 自證印；該臂被 `CGC-WATCHDOG: Metal stall`（stale=10020ms，compute #1）擋下，
+    歸因起跑 free 14%（前三次成功臂皆 85%）⇒ **下次跑 GPU 前先釋放記憶體**。
+  - ⛔ 今晚 pp 310.55/351.45、tg 22.65/27.04 **全部不可引用**（同 arm 隔 7 min 差 +19%，
+    attribution 非 clean）。可引用的只有結構性結論。
+  - **已交付 commit `8afb56af4`**（6 檔：docs §9 ＋ `miss_rate_summary.py` ＋ 兩個 src ＋ 兩顆 dylib）。
+    D5 `--tag g2-missmask-fix1`：`M1 6/9 M2 9/9 M3 6/9 cov 100 comparable=true config_diffs=[] n=9`
+    ⇒ **FAIL 但與 02:03／02:06 兩輪（改 src 之前）同簽名** ⇒ 既有 FAIL，不歸本 commit。
+    ⚠ 產物含他線未提交 bytes（`llama-model/ext.h/speculative.cpp`），已在 message 具名揭露；
+    **索引 resync 延後**（他線仍在寫）。**已 push**（09:00，FF，27 commit，8s，無 reject）。
+- ★★★ **09-26 09:0x 更正：G2 真值 42.93%，上面那個 100% 作廢**（全文
+  `docs/SPEED_ACCEPTANCE_GATE_2026-09-26.md` **§9.8**；§9.2–§9.6 依 dated 慣例保留不回改）：
+  - **洞封起來了，答案是「publisher 從來沒寫」**。`CGC-MM-PUB` v1 的 `n_wrote>0` 閘門讓「表是空的」
+    與「全被 skip」印出**同一個沉默** ⇒ 改成前 8 次呼叫無條件自報（v2）。run3 實測：
+    `n_leaf=39 wrote=0 skip_null=0 skip_not_in_graph=39`（decode 每一步都這樣）
+    ⇒ 39 張 leaf 全都有 data（真的在圖裡），卻全沒通過成員測試 ⇒ **零位元組寫入** ⇒ 100% 讀的是
+    競技場殘留。§9.4 的「>20%」判決因此**失去依據**（方向後來相同是運氣）。
+  - **根因**：`cgc_node_in_graph`（`:3405`）只走 `ggml_graph_n_nodes`（op 節點）；
+    `ggml_new_tensor_2d` 的 tensor 無 producer op ⇒ 落在 `cgraph->leafs`（`ggml-impl.h:337`），
+    **永遠不在 `nodes`**；ggml 當時無 leaf 公開訪問器。
+  - **修法**：補 `ggml_graph_leaf`/`ggml_graph_n_leafs`（`GGML_API`，ggml.h＋ggml.c）＋新增
+    `cgc_tensor_in_graph`（nodes＋leafs，`where` 回報）。**只 miss-mask publisher 改用**，
+    `:3901`/`:3919`/`:3923` 既有呼叫點一個都沒動（縮小爆炸半徑）。
+  - **真值**（run4 09:16）：`wrote=39 as_leaf=39 … resident 5577/9984`，first_leaf
+    `nn=256 nexp=256 slots=143 had_st=1 nres=143`；MISSMASK 14926 行／385 compute／39 層，
+    **micro=macro=0.4293**，drift 0.4300→0.4291（Δ=−0.0010）。14926 < 15015 是 89 個「層×步」真 0 miss
+    （0-miss 不印行 ⇒ 與「全 miss」互斥，反證修好）。
+  - 判決**仍是 §3 >20%**（8 選中約 3.4 個走 `e % ns`；與 §3 表裡當年 62% 同量級 ⇒ 補算不划算，
+    先做 async/後台 fill）。⛔ **42.93% 也不可直接定價交付 cell**（同為「單段＋hook 不跑」配置）。
+  - ⚠ **橫向缺陷（未修）**：同一測試讓 `:3919` 的 `rm`（rn_mask）與 `:3923` 的 `tb`（slot table）
+    **長期靜默為 nullptr** ⇒ 任何靠它們推出來的結論都要重跑。非本輪格子，等 owner。
+  - ⚠ **free% 口徑坑**：權威＝ `memory_pressure` 的 `System-wide memory free percentage`
+    （`harness._sys_snapshot()` 存這個）。**別用 `vm_stat` free+speculative 自算** —— 本輪算出 8% 而
+    權威值 84%（漏了 inactive/purgeable）。門檻：成功臂 78~86%，被 watchdog 擋下那次 14%。
+  - ⛔ 09-26 上午 pp 349.71/352.56/267.85、tg 25.82/26.02/21.38 **全部不可引用**
+    （三支都開 `CGC_MISS_MASK_DBG`，每步多一次 synchronize）。
+
+## ★ G1b / G3 實測（2026-09-26 14:0x，權威在 `Backup/phase_decomp/g1b_g3_smoke2/`）
+
+臂 ＝ `prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_ZERO_SLOT=1`（`rc=0`）。
+
+**G3 ＝ 已生效**：`CGC-G3-ZEROSLOT: il=9 ns=143 zero_slot=142 (reserved slot exists and is now zeroed)`
+＋ `CGC-G3-ZEROSLOT-TOTAL: zero_slot=3398260 placeholder=0`
+⇒ **武裝時 `e % ns` 完全不被走到**（非駐留 → 指向已清零的保留槽）。
+
+**G1b ＝ 已量到，超預算 2×，而成本不在排空**（390 步，`nsel0=8` ⇒ 純 decode ntok=1）：
+
+| 量 | 值 | 佔比 |
+|---|---:|---:|
+| `total_usec`（整段回讀） | **394.6 µs/step**（steady 422–513） | 100% |
+| `sync_usec`（`sched_synchronize`） | **3.8 µs** | 1.0% |
+| `read_usec`（78 次 `tensor_get`） | **390.8 µs** | **99.0%** |
+
+⇒ **預算 0.2 ms/step ⇒ 超 1.97 倍。** 成本 = **78 次跨後端小讀**（每次 ~5.0 µs、只搬 32 B ⇒ 呼叫開銷）。
+⇒ 修法（若要付更少）：39×2 併成 2 個大張量；**但該項只佔 step 的 0.25%**。
+⛔ smoke 的 t/s 不可引用（單段臂 garbage；pp 342.09 / tg 26.22）。
+⚠ 兩個印的**行數必須 1:1**（`MISSMASK`=15004 / `CGC-MISSMASK-STEP`=390 / `CGC-MISSMASK-COST`=390）
+⇒ 這也是「既有格式沒被改壞」的判據。

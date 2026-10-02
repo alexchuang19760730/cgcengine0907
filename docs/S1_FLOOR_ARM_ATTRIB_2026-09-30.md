@@ -105,3 +105,49 @@ python3 scripts/check/m123_oracle_gate.py --profile prefill250 \
 - hook 成本：`…/live/prod-new_CGC_HOOK_SPLIT_1.p2048_n128_d512_r3.stderr.log`（`CGC-HOOKSPLIT:` 行）
 - 立項卡：`scripts/check/charters/e-s1-flag-attrib-2026-09-30.yaml`
 - 前一輪（被打斷的兩場，同結論方向）：`…/harness.log`、`harness2.log`、`harness3.log`
+
+## 後續（2026-10-01 深夜，端點重定義落帳）
+
+operator 拍板走 **(b) 改端點**：(a) 既已三路判死（R1 探針不足／方案 C 全駐留 OOM／(i) post-submit 不可行），
+時間端點**明文判死**（`36.33／49.0 ms` 永不引用；天花板不再採 24.5 側），
+端點改 **機制／計數器**：每步提交數 `41 → 1` 與 `ms/submit`（`T_sub`）。
+
+- 立項：`scripts/check/charters/e-l201-submit-path-2026-10-01.yaml`（預註冊判據：`T_sub ∈ [0.63, 1.89] ms`
+  ⇒ `MECHANISM`（提交路徑＝紅利主體）；`T_sub < 0.31 ms` ⇒ `DEAD` ⇒ L20-1 以「排除」結案，天花板維持 19.2）。
+- 卡面：`scripts/check/decode_board_2026-09-29.yaml` 的 L20-1（blocked／mechanism／engine）；落地帳 16／16。
+
+### 量測結果（2026-10-01 深夜）：**MECHANISM** — 提交路徑＝紅利主體
+
+實作查證的結論是**不需要新碼**：既有 `CGC_DECODE_PROFILE`＋`CGC_GPU_TIMING`（已 commit、預設關、
+launcher 白名單已含）逐步印 `CGC-DECPROF: … wait/cb/submit … gap_sum` ⇒ 直接讀。
+配對 oracle（同一 build）先跑：對照臂 **M1/M2/M3 9/9**；儀器臂 **observed 9/9**、
+`INVALID COMPARISON`（跨組態不可比，先例：`CGC_B_SCHEME`）⇒ **儀器不擾動數值**。
+
+兩臂 `harness bench`（同一場；`--arm prod-new:CGC_DECODE_PROFILE=1;CGC_GPU_TIMING=1` 與
+`--arm prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1`）讀到的 `T_sub`：
+
+| 量 | n | 中位 | p25 | p75 | min | max |
+|---|---|---|---|---|---|---|
+| `T_sub`（decode 全部） | 48 | **0.937 ms** | 0.747 | 1.152 | 0.485 | 2.724 |
+| `T_sub`（`step≥64`，warm-skip 後） | 41 | **1.007 ms** | 0.790 | 1.195 | — | — |
+
+成分（每步中位）：`cb 6.755`＋`submit 10.020`＋`gap_sum 22.285` ms ÷ `segs=41` ⇒ 每次提交 ≈ 0.95 ms。
+**40 × T_sub ＝ 37.5／40.3 ms**，是 50.3 ms/step 的 **74–80%**（預註冊 ±50% 帶內）⇒ 判 **MECHANISM**：
+「50.3 ÷ 40」那個推論換成了量到的數；提交路徑就是紅利的主體。
+
+**Caveats（照預註冊寫死）**
+
+* 計數行是**每 8 步取樣**（`step=8…384`，n=48）；`T_sub` 是引擎內計時器，不隨窗口漂移。
+* 本場 `attribution=both`（thermal HEAVY／swap +1475 MiB、budget OVERSUBSCRIBED 4838 MiB）
+  ⇒ 本場**任何 t/s 不引用**；判詞不依賴時間。`step_total` 中位 95.1 ms 只標「診斷級」。
+* 50.3 是 09-30 五臂場的參考（該輪亦 DIRTY）⇒ 對比仍是跨場參考；本場 S1 臂 t/s 異常
+  （tg 9.49 vs 誠實臂 8.82；歷史同場 S1 20.39 vs control 10.07）⇒ **紅利未重現**，
+  判詞只依計數器（S1 臂 t/s 依 R6 永不引用）。
+* S1 臂 0 行 `DECPROF`（按設計未武裝儀器）；它的「1 提交/步」是 single-segment early-return 的**結構事實**，不是計數器所量。
+
+**下一動（待 operator 拍板）**：在不開 `CGC_SEG_BATCH` 的可驗臂上把提交數減量（紅利可交付化的前置）；
+驗收＝`Δstep > 兩臂散布` ∧ 配對 **M1 9/9**。
+
+產物：`Backup/l201_submitpath_2026-10-01/twoarm.json`（＋ `.logs/live/*.stderr.log`）、
+`Backup/m123_oracle_gate/summary_l201-submit-{ctl,on}-2026-10-01.json`；回填：
+`scripts/check/charters/e-l201-submit-path-2026-10-01.yaml`（`result`）＋看板 L20-1（`next` ⑩／`state`／`action`）。

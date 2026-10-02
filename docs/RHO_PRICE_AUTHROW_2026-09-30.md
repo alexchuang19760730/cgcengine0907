@@ -61,6 +61,42 @@ operator 2026-09-30：
 
 ---
 
+## operator 裁定（2026-10-01 深夜）：判詞以「實測這趟」為準
+
+> 「舊規則是『實測這趟很乖就放行』——這樣就可以了。」
+
+回應 10-01 才接上的 strict 預算閘與 C9／C10／C11 的衝突：
+
+1. **可否引用／認證＝實測窗口判**（`quote_gate` R1–R8）：窗口乾淨（`attribution=none`、逐 rep 離散合格）就放行。
+   靜態超訂（16 GB 機上 8 GiB pool ＝超訂 4838 MiB，物理事實）**是跑前警示與產物標記，
+   不是引用或認證的否決**。
+2. **合格做法照合約 §3.4 原文（已 commit）**：`BUDGET_GATE=warn` 放行＋把
+   `CGC_BUDGET_OVERSUBSCRIBED=1` 寫進產物（**顯式承認**），或整條線一起換 cell；
+   **不准只為通過閘門而縮 pool**。
+3. 因此 **C9 12.3767／C10 12.3027／C11 12.1265 維持**（棘輪 12.376702 不動）；
+   10-01 起的 strict 閘只影響「能不能不帶標記地跑」，不回溯改判。
+
+**同日重現嘗試（照裁定走 warn 路徑）**：以 C9 逐字設定重跑——`prod-new`＋`(default)` cell、
+無儀器、`--batch 5632 --prompt 2048 --gen 128 --depths 512 --reps 3 --warm-skip 64 --fixed-fill-seed 1`。
+產物：`Backup/c9_align_2026-10-01/c9_repro_warn.json`（＋ `.stderr.log`）。
+
+| | C9（09-30 12:29，order2_A） | 重現（10-01 23:14） |
+|---|---|---|
+| tg | **12.3767** | **7.08**（±0.08） |
+| pp | 281.1 | 103.9 |
+| 起跑 free | 7980 MiB | **90 MiB** |
+| swap（起→峰值） | 1134→1134（growth **−24** MiB） | 4802→10177（growth **+3553** MiB） |
+| thermal | NOMINAL→MODERATE | NOMINAL→**HEAVY** |
+| attribution | `none` ⇒ QUOTABLE | `both` ⇒ 不可引用 |
+
+**讀法**：兩趟**設定逐字相同**（env 25 鍵中 24 同，唯一差＝gate 標記 `CGC_BUDGET_OVERSUBSCRIBED=1`
+＝本趟的顯式承認；cell 逐欄相同、`engine_build` 同為 e5d1c0f14），
+差異全在盒子：起跑 free 90 MiB（別人的駐留）＋執行中 +3.5 GB swap、thermal HEAVY（兩趟的 metal 峰值
+同類超額：C9 超 9999.66 MiB／今回 10118 MiB，屬**結構性**）。
+⇒ **重現 12+ 的槓桿不在設定，在「起跑前把記憶體讓出來」**（C9 窗起跑 free 7980 MiB）。
+
+---
+
 ## 1. 先講結論：這一條**現在跑不了**，而且是硬矛盾
 
 > ⚠ **2026-10-01 更新**：本節是**切分前**的結論（當時 `--check` 判 `BLOCKED`）。切分已落地、

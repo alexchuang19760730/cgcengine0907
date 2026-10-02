@@ -701,6 +701,28 @@ static int ggml_backend_metal_get_cgc_done(ggml_backend_t backend) {
     return ggml_metal_cgc_done(ctx);
 }
 
+// [CGC 2026-10-02 overlap fence] The sched arms the NEXT graph_compute to wait on a device event and
+// signals it after the remap leaf is written, so segment i+1 can be COMMITTED before the host has
+// finished writing segment i's leaf without the racy read. See the struct comment in
+// ggml-metal-context.m for the measured decomposition that motivates it.
+static void ggml_backend_metal_cgc_fence_arm(ggml_backend_t backend, uint64_t v) {
+    GGML_ASSERT(ggml_backend_is_metal(backend));
+
+    ggml_metal_cgc_fence_arm((ggml_metal_t)backend->context, v);
+}
+
+static void ggml_backend_metal_cgc_fence_signal(ggml_backend_t backend, uint64_t v) {
+    GGML_ASSERT(ggml_backend_is_metal(backend));
+
+    ggml_metal_cgc_fence_signal((ggml_metal_t)backend->context, v);
+}
+
+static void ggml_backend_metal_cgc_fence_stats(ggml_backend_t backend, int64_t * out) {
+    GGML_ASSERT(ggml_backend_is_metal(backend));
+
+    ggml_metal_cgc_fence_stats((ggml_metal_t)backend->context, out);
+}
+
 // CGC: number of cmd-buffer completions per graph_compute (n_cb + 1); the sched multiplies its
 // per-segment wait target by this so the top-k hook only fires after the whole segment finished
 static int ggml_backend_metal_get_cgc_bufs(ggml_backend_t backend) {
@@ -1067,6 +1089,17 @@ static void * ggml_backend_metal_get_proc_address(ggml_backend_reg_t reg, const 
     }
     if (strcmp(name, "ggml_backend_set_n_cb") == 0) {
         return (void *)ggml_backend_metal_set_n_cb;
+    }
+    // [CGC 2026-10-02 overlap fence] arm/signal/stats, same cross-dylib mechanism as everything
+    // else here (libggml-metal is a separate dylib from libggml-base).
+    if (strcmp(name, "ggml_metal_cgc_fence_arm") == 0) {
+        return (void *)ggml_backend_metal_cgc_fence_arm;
+    }
+    if (strcmp(name, "ggml_metal_cgc_fence_signal") == 0) {
+        return (void *)ggml_backend_metal_cgc_fence_signal;
+    }
+    if (strcmp(name, "ggml_metal_cgc_fence_stats") == 0) {
+        return (void *)ggml_backend_metal_cgc_fence_stats;
     }
     if (strcmp(name, "ggml_metal_get_cgc_done") == 0) {
         return (void *)ggml_backend_metal_get_cgc_done;

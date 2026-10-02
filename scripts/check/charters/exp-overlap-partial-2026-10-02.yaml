@@ -1,0 +1,133 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— exp-overlap-partial：把段邊界的 drain 與 hook 重疊（部分重疊）
+#   承接 operator 2026-10-02 的裁定：L20-1 的判死依據（hook CPU 6.5 ms／submit 0.75 ms）
+#   已被證偽——紅利全在 DECPROF 的 `wait` 裡。
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼立這一張（三條，全部實測）：
+#   ① **紅利被命名了**：`CGC_SUBMIT_AHEAD=1` 的成對 A/B（今日 build 054fb22f04a0、`ab_interleave.py`，
+#      3 對）中位比 **×1.799**（範圍 1.461–2.036，兩臂分佈不重疊），而**全部差額在 `wait`**：
+#        term      base     ahead     差額
+#        total     73.54    38.10   −35.44 ms/步
+#        wait      65.20    25.67   **−39.53 ms/步**   ← 紅利就在這裡
+#        cb         2.86     8.35    +5.49（重疊不是免費的）
+#        submit     4.44     4.06    −0.38
+#      ⇒ 步時比 ×1.930。**當初判死用的 hook CPU(6.5 ms) 與 submit(0.75 ms) 都不是紅利所在。**
+#   ② **判詞本身的來源已失效**：擁有此軸的 F2／`exp-s2-overlap` 判 FAIL 是
+#      **treatment-application null**（兩個 B 臂都帶著旗標卻一個 prefetch 都沒排），
+#      該文件自己寫「**the question is still untested**」。後續在看板上被改寫成「殘項是 Metal 側延遲」。
+#   ③ **機制已知且明確**：`ggml-backend.cpp:2771` 的正確順序是
+#      `hook_seg(i)`（等 seg i 全部 n_cb+1 個 cb 完成 ＋ 跑 hook 寫 remap leaf）→ `submit_seg(i+1)`；
+#      而 racy 順序（`:2759`）是 `submit_seg(i+1)` → `hook_seg(i)`。**兩者工作量相同、只換順序**，
+#      差別是 GPU 在邊界有沒有下一個 cb 可跑。
+# 相關：docs/OVERLAP_PARTIAL_DESIGN_2026-10-02.md；Backup/phase_decomp/ab_submit_ahead.json（09-15）；
+#       Backup/l201_accel/ab_submit_ahead_20261002.json（今日）；docs/F2_F5_OVERLAP_AND_AUDIT_RESULT_2026-09-20.md。
+id: exp-overlap-partial
+owner: ace（線 A / 加速交付）
+created: '2026-10-02'
+axis: A
+depends_on: ~（L20-1 的判死依據被證偽，但本卡**不是**重開 L20-1；L20-1 的判死本身不推翻——它量的兩項確實很小）
+
+# ── 【目標】可判定問題，兩答案都有意義 ─────────────────────────────────────
+question: |
+  在**保持 M1/M2/M3 bit-identical** 的前提下，把每個段邊界的 drain（等 seg i 全完）與 hook
+  重疊掉一部分，能不能讓 decode **≥ 15 t/s**（＝ ×1.3，只取天花板的一半）？
+  還是那道 drain 無法在保駐留的前提下重疊（＋5.5 ms 的 cb 增量吃掉收益）⇒ 天花板不可達？
+
+# ── 【現狀】權威基線 ───────────────────────────────────────────────────────
+baseline:
+  metric: "decode 步分解（ntok=1 中位）：total 73.54 / wait 65.20 / cb 2.86 / submit 4.44 ms。"
+  cell:   "prod25 血統、HTTP 路徑（ab_interleave.py）、MTP off、build 054fb22f04a0。"
+  source: "Backup/l201_accel/ab_submit_ahead_20261002.json"
+  source_note: "對照臂 p25-submit-ahead 的同一分解：total 38.10 / wait 25.67 / cb 8.35 / submit 4.06（medians）。"
+  known: |
+    - **天花板 = ×1.799（中位，3 對）**；09-15 的認證步時比 ×1.702 ⇒ 一致。
+    - ⚠ **racy 臂輸出是垃圾且提前終止**（base 每次 108 tokens／答案穩定；ahead 44/16/8 tokens／不穩定）
+      ⇒ ×1.8 是**診斷價格**，不可當成績報。短窗不灌水（44→2.04、16→1.80、8→1.46，越短比值越低）。
+    - ⚠ **正解不是「換順序」**：race 的本質是 seg[i+1] 消費 remap leaf，而 host 還在寫它
+      （改動 in-flight cb 的 buffer 是 UB）。⇒ 必須用**裝置側柵欄**把「讀 leaf」推到寫完之後。
+    - 三次預測式嘗試（L20-1 的 predict+ensure、S3 的 40→1、B 線 S1SS）皆撞**駐留牆**，不走本卡路線。
+
+# ── 【假設】機制＋預期 ─────────────────────────────────────────────────────
+hypothesis:
+  mechanism: |
+    在 `ggml-backend.cpp` 的段迴圈裡把順序改成 racy 的（早提交），但把 seg[i+1] 的第一個
+    cb 對一個 **MTLSharedEvent** 編碼 `encodeWaitForEvent:value:`；host 跑完 hook（寫完 remap leaf）
+    後 `signalEvent:value:`。⇒ GPU 一等到 leaf 就續跑，**host 不再 drain**，且**讀 leaf 一定在寫之後**
+    ⇒ 結構上 bit-identical。分段與駐留機制**完全不動**（不是移除分段，是讓它不空轉）。
+  expected: "decode ≥ 15 t/s（×1.3）；M1/M2/M3 9/9；`wait` 中位由 65 → ≤30 ms/步；cb 增量 < 收益。"
+  basis: |
+    今日成對分解（wait −39.5 ms/步、total −35.4）；`ggml-backend.cpp:2759/2771`（兩個順序）、
+    `:2173`（`submit_ahead`）、`:2211-2225`（`hook_seg` 的等待；註解載「只等 main buffer 會 stale ids」）。
+
+# ── 【預註冊判決規則】 ─────────────────────────────────────────────────────
+acceptance:
+  window_valid: |
+    (a) 兩臂 rc=0；(b) 柵欄臂 stderr 有 `CGC-OVERLAP-FENCE` 行且 `fence_signals>0`（柵欄真的被用）；
+    (c) oracle 配對 **M1/M2/M3 9/9**、`config_diffs==[]`；
+    (d) **不得**只報 racy 臂的 t/s 當成績（本卡的端點是 bit-identity ＋ 正解臂的 t/s）。
+  success: "M1/M2/M3 9/9 ∧ 柵欄臂 decode ≥ 15.0 t/s（成對，Δ > 兩臂散布）。"
+  falsify: |
+    M1 ≤ 2/9 ⇒ 柵欄沒能把「讀 leaf」推到「寫 leaf」之後 ⇒ 判死本路線（回到「只能削 hook 本身」）。
+  undecidable: |
+    柵欄行 0 行（旗標沒到引擎／事件沒接上）⇒ 先修接線，**不得**記成 null。
+  on_fail: |
+    M1 9/9 但 < 15 t/s ⇒ 量出「部分重疊的天花板實際值」，把目標重定在該值，並評估「削 hook 本身」（sg-3）。
+
+# ── 【量化目標】 ───────────────────────────────────────────────────────────
+targets:
+  m1_success_min: 8
+  m1_falsify_max: 2
+  decode_tps_min: 15.0
+  fence_signals_min: 1
+
+# ── 【技術子目標】 ─────────────────────────────────────────────────────────
+subgoals:
+  - id: sg-fence-primitive
+    text:   "`ggml-metal`：把一個 `MTLSharedEvent` 接進 context，提供 set/get + 在指定 cb 開頭編碼 `encodeWaitForEvent`"
+    expect: "|兩點：事件被建立、`fence_signals>0`；未開旗標時 byte-identical（default 行為不變）"
+    how:    "`ggml-metal-context.m` 加欄位；新增 proc-address 形式（照 `ggml_backend_set_n_cb` 的做法，見 `llama-context.cpp:545-566`）"
+  - id: sg-fence-order
+    text:   "`ggml-backend.cpp`：`CGC_OVERLAP_FENCE=1` 時走「早提交＋首 cb 等事件」的順序"
+    expect: "default 順序完全不變；開旗標後 seg[i+1] 在 hook 之前提交"
+    how:    "改 `:2759/2771` 附近；沿用 `submit_ahead` 的骨架但把 race 換成柵欄"
+  - id: sg-fence-signal
+    text:   "`llama-context.cpp`：hook 寫完 remap leaf 後 signal 事件（值 = 該邊界的序號）"
+    expect: "`CGC-OVERLAP-FENCE: boundary=N signal=N` 每步 41 條"
+    how:    "在 `expert_cache_on_topk` 寫完 leaf 的那個位置（**必須在 `ggml_backend_sched_alloc_graph` 之後**）"
+  - id: sg-fence-partial
+    text:   "部分重疊：先只柵欄 k 個連續邊界（`CGC_OVERLAP_FENCE=k`），量收益 vs k"
+    expect: "收益隨 k 上升且 cb 增量可控；若全覆蓋反而變差，就停在最佳 k"
+    how:    "同一支旗標吃整數；k=41 即全覆蓋，k=0 即現況（＝天然控制臂）"
+
+# ── 【臂】 ────────────────────────────────────────────────────────────────
+arms:
+  - prod-new                                          # 控制（現況順序）
+  - prod-new:CGC_OVERLAP_FENCE=41                     # 全覆蓋
+  - prod-new:CGC_OVERLAP_FENCE=8                       # 部分覆蓋（k 掃描）
+  - prod-new:CGC_OVERLAP_FENCE=2
+non_prod_reason: "端點是 bit-identity ＋ 正解臂的 t/s；k 掃描臂只比 t/s，不各自宣稱 bit-identical。"
+
+# ── 【D5 oracle 閘】 ──────────────────────────────────────────────────────
+d5_gate:
+  required: true
+  oracle: "scripts/check/m123_oracle_gate.py --profile prefill250"
+  control_tag: "ovl-ctl-2026-10-02"
+  arm_tag: "ovl-fence-2026-10-02"
+  pass: "M1/M2/M3 9/9；`CGC_OVERLAP_FENCE` 須先登記進 `DIAGNOSTIC_KEYS`，聲明哪些位元組不變"
+
+# ── 【交付】 ─────────────────────────────────────────────────────────────
+delivery:
+  patch: "src/llama.cpp/ggml/src/ggml-metal/ggml-metal-context.m（事件）＋ src/llama.cpp/ggml/src/ggml-backend.cpp（順序）＋ src/llama.cpp/src/llama-context.cpp（signal）＋ scripts/run_server.sh（allowlist）＋ scripts/check/m123_oracle_gate.py（DIAGNOSTIC_KEYS）"
+  base:  "現況 41 段 drain→hook→submit 順序（`ggml-backend.cpp:2771`）"
+  apply_and_run: |
+    1) cmake --build src/llama.cpp/build --target llama-server llama-bench -j10
+    2) 控制臂：ab_interleave.py --arms p25-gputime,p25-gputime（0 重建，先確認 default 行為不變）
+    3) 見證：m123_oracle_gate.py --profile prefill250 --env CGC_OVERLAP_FENCE=41 --tag ovl-fence-2026-10-02
+    4) k 掃描：harness.py bench --arm prod-new:CGC_OVERLAP_FENCE=k（k=0,2,8,41）
+    5) 判詞：M1 9/9 ∧ ≥15 t/s ∧ fence_signals>0
+  caveat_r5: |
+    ⚠ 量測前**先重開機**（今日 swap 峰值 6.2 GB，本體 tg 已由 12.3 掉到 10.35）——
+    否則 k 掃描的步時差異會被足跡淹沒。開著 util／DECPROF 儀器的臂永不單獨引用 t/s。
+  caveat_collision: |
+    `ggml-backend.cpp`／`llama-context.cpp` 為共用碰撞面（線 B 亦動）。
+    動手前後跑 `git status --porcelain -uall`；非自己的 modified 就停手。

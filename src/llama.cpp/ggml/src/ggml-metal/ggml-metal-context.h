@@ -65,6 +65,14 @@ void ggml_metal_event_wait  (ggml_metal_t ctx, ggml_metal_event_t ev);
 ggml_metal_event_t ggml_metal_get_ev_cpy(ggml_metal_t ctx);
 
 void ggml_metal_set_n_cb            (ggml_metal_t ctx, int n_cb);
+
+// [CGC 2026-10-02 overlap fence] Arm the NEXT graph_compute's first command buffer to wait for
+// event value `v`; signal `v` from the host once the remap leaf for that boundary is written.
+// v must be strictly increasing process-wide (MTLSharedEvent contract). Arm(0) == no fence.
+void ggml_metal_cgc_fence_arm   (ggml_metal_t ctx, uint64_t v);
+void ggml_metal_cgc_fence_signal(ggml_metal_t ctx, uint64_t v);
+// out[0] = event exists (0/1), out[1] = highest value signalled. Instrument-liveness probe.
+void ggml_metal_cgc_fence_stats (ggml_metal_t ctx, int64_t * out);
 void ggml_metal_set_abort_callback  (ggml_metal_t ctx, ggml_abort_callback abort_callback, void * user_data);
 bool ggml_metal_supports_family     (ggml_metal_t ctx, int family);
 void ggml_metal_capture_next_compute(ggml_metal_t ctx);

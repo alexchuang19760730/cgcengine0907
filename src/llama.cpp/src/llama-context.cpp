@@ -731,6 +731,13 @@ static int cgc_slab_handoff_cap() {
 // Refusing (rather than aborting or silently raising the cap on the user's behalf) keeps the
 // in-process n_batch clamp on, so the run falls back to the pool path: slower, but the numbers
 // stay right. The caller sees a loud one-time explanation of the exact mismatch.
+// [CGC 2026-10-02 FAST state-machine probe] ONE counter shared by every part of the CGC_FAST_PROBE
+// witness (pre-submit / post-submit readback / the 41-seg hook's collect). Without it the three
+// traces cannot be aligned: a value that looks stale in the readback can also be read as "the hook
+// for the NEXT step already ran", and those two readings demand opposite repairs. Diagnostic-only;
+// the counter is incremented in exactly one place (the FAST pre-submit) and read everywhere else.
+static uint64_t & cgc_probe_step_seq() { static uint64_t v = 0; return v; }
+
 static bool cgc_prefill_stream_enabled(int64_t n_expert) {
     const char * e = getenv("CGC_PREFILL_STREAM");
     if (e == nullptr || e[0] == '0') {
@@ -3567,6 +3574,39 @@ static bool cgc_is_i32_n(const ggml_tensor * t, int64_t n) {
            ggml_nbytes(t) == (size_t) n * sizeof(int32_t);
 }
 
+// [CGC 2026-09-30 · S2-c] 影子 capture 的前置宣告。定義在檔案下方的 ρ 區（`:4738`），而 S2-c 的
+// 投遞點在 `graph_compute`（下面）⇒ 同一個 TU 內「先用就要先宣告」。
+static void cgc_rho_capture(ggml_tensor * t);
+
+// [CGC 2026-10-02 S1 single-submit] How many tokens does THIS graph carry? The S1 capture maps are
+// never cleared (see the §EN-307 note above), so an entry may be the previous DECODE build's tensor
+// whose address the arena has since reused, while in a PREFILL build the S1 branch does not run at
+// all -- so there is no table in the graph and the captured pointer must not be written. The graph
+// answers the question itself: `ffn_moe_topk-<il>` is set on the router's top-k view in every build
+// (llama-graph.cpp cb(selected_experts, "ffn_moe_topk", il), ABOVE the decode gate) and its ne[1] is
+// the token count. Read from the graph rather than from ubatch state because graph_compute has no
+// ubatch, and "the graph I am about to submit" is exactly the object the write must be valid for.
+static int64_t cgc_graph_n_tokens(ggml_cgraph * gf) {
+    if (gf == nullptr) {
+        return -1;
+    }
+    const int n = ggml_graph_n_nodes(gf);
+    for (int i = 0; i < n; ++i) {
+        ggml_tensor * t = ggml_graph_node(gf, i);
+        if (t != nullptr && t->name[0] != '\0' && strncmp(t->name, "ffn_moe_topk", 12) == 0) {
+            return t->ne[1];
+        }
+    }
+    const int nl = ggml_graph_n_leafs(gf);
+    for (int i = 0; i < nl; ++i) {
+        ggml_tensor * t = ggml_graph_leaf(gf, i);
+        if (t != nullptr && t->name[0] != '\0' && strncmp(t->name, "ffn_moe_topk", 12) == 0) {
+            return t->ne[1];
+        }
+    }
+    return -1;
+}
+
 ggml_status llama_context::graph_compute(
             ggml_cgraph * gf,
                    bool   batched) {
@@ -3992,14 +4032,34 @@ ggml_status llama_context::graph_compute(
                 sk_t->op == GGML_OP_TRANSPOSE || sk_t->op == GGML_OP_PERMUTE) {
                 continue;
             }
-            if (ggml_nelements(sk_t) > 8) {
+            const int64_t sk_nel = ggml_nelements(sk_t);
+            if (sk_nel > 8) {
+                continue;
+            }
+            // [CGC 2026-10-01 · route-neutralisation, measured] `elems == 0` 的節點是**沒有名字的
+            // `GET_ROWS`**（ggml.c:7192 給未命名節點 `node_%d`），2026-10-01 的診斷印出它們在圖的前段
+            // （`node_9`／`node_24`／`node_108`／…），而本引擎的 slot／expert 表正是靠 `get_rows` 取的
+            // （`llama-graph.cpp:2380` `slots = ggml_get_rows(ctx0, slot_table, ids_flat)`）⇒ 把它們的 op
+            // 抹成 NONE 就是讓下游讀到 stale 的 slot／expert 索引。首趟 A/B 的指紋正是這件事：
+            // `hit 96.9%→91.3%`、`misses 4056→11271`、`layers_distinct_over_slots 5→26`。
+            // 0 元素的節點本來也沒有 dispatch 可省（沒有輸出要算）⇒ 這一版把它們**排除**，
+            // 並單獨印出來留證（判詞要能指名「被排除的是誰」）。
+            if (sk_nel < 1) {
+                static int sk_zero_dbg = 0;
+                if (sk_zero_dbg < 8) {
+                    sk_zero_dbg += 1;
+                    fprintf(stderr, "CGC-SKIP-TINY-ZERO: %s op=%s elems=0 (left alone: route machinery)\n",
+                            sk_t->name, ggml_op_name(sk_t->op));
+                }
                 continue;
             }
             static int sk_dbg = 0;
-            if (sk_dbg < 16) {
+            if (sk_dbg < 24) {
                 sk_dbg += 1;
-                fprintf(stderr, "CGC-SKIP-TINY-NODE: %s op=%s elems=%lld\n",
-                        sk_t->name, ggml_op_name(sk_t->op), (long long) ggml_nelements(sk_t));
+                fprintf(stderr, "CGC-SKIP-TINY-NODE: %s op=%s elems=%lld shape=[%lld,%lld,%lld,%lld]\n",
+                        sk_t->name, ggml_op_name(sk_t->op), (long long) sk_nel,
+                        (long long) sk_t->ne[0], (long long) sk_t->ne[1],
+                        (long long) sk_t->ne[2], (long long) sk_t->ne[3]);
             }
             sk_t->op = GGML_OP_NONE;   // 形狀不動；值＝stale ⇒ VOID
             sk_n += 1;
@@ -4014,7 +4074,352 @@ ggml_status llama_context::graph_compute(
         }
     }
 
+    // [CGC 2026-10-01 Y-accel · (b) predict-ensure] BEFORE the single async submit, write each
+    // layer's remap leaf from the PREVIOUS token's predicted expert ids (prev_token_expert_ids[il])
+    // and sync-ensure those experts resident. This is the exact mapping the per-segment hook writes
+    // (llama-context.cpp:7941-7968) but driven by prediction instead of the current step's topk
+    // (which isn't known until the graph runs). On a prediction hit the 1-submit FAST path is
+    // bit-identical to the 41-seg loop; the post-submit fallback (below) catches misses and redoes
+    // via CGC_FORCE_41SEG. Multi-token (prefill) steps can't be predicted per-token, so they are
+    // routed straight to the 41-seg loop. cgc_fast_took_fast records whether FAST was actually
+    // attempted (gates the fallback's readback cost on forced-41seg steps).
+    bool cgc_fast_took_fast = false;
+    // [CGC 2026-10-02 FORCE-41SEG lifetime fix] Set when THIS step's prediction is unusable and
+    // the step is routed to the proven 41-seg loop; the flag must be cleared once that step's
+    // compute has returned. There was no clear before: only the mismatch-redo path unset it, and
+    // a step that never entered the fallback (incomplete prediction) left it set for the REST OF
+    // THE PROCESS. ggml-backend.cpp's single-submit branch tests `getenv("CGC_FORCE_41SEG") ==
+    // nullptr`, so the first bootstrap step (no prev-token prediction) silently disabled the
+    // single-submit path for every later step while CGC-SEGBATCH-FAST kept reporting taken=N.
+    // Measured (2026-10-02 01:19 cost split): the control arm and the FAST arm each ran 15520
+    // segments -- i.e. the FAST arm never submitted once; the 0.75 ms "submit saving" and the
+    // 8.05 ms "net loss" both belong to two arms running the SAME 41-seg loop.
+    bool cgc_forced_41seg = false;
+    // [CGC 2026-10-01 Y-accel] ENGAGEMENT COUNTERS. Without them a green M1 is ambiguous: a run that
+    // routed EVERY step to the proven 41-seg loop is trivially bit-identical and proves nothing about
+    // the single-submit arm. These three numbers are what make the witness say which arm actually ran.
+    static uint64_t cgc_fast_taken = 0, cgc_fast_incomplete = 0, cgc_fast_mismatch = 0;
+    static const bool cgc_seg_batch_fast_pred = getenv("CGC_SEG_BATCH_FAST") != nullptr;
+    // [CGC 2026-10-02 FAST cost split] Per-step timers for the three FIXED costs the single-submit
+    // arm adds, so the dividend can be attributed instead of guessed:
+    //   (a) predict-ensure -- 40 layers x top-k `ensure_slot` + remap-leaf write, BEFORE submit;
+    //   (b) the post-submit `ggml_backend_sched_synchronize` DRAIN;
+    //   (c) the 40 `ggml_backend_tensor_get` readbacks + the prediction-vs-truth comparison.
+    // The submit itself is timed too, so "41 segments" vs "1 submit" reads off the same line.
+    // Split on purpose (same reasoning as CGC_MISS_MASK_COST): one number would hide which part is
+    // actually paid, and the three have different fixes (drop the drain / read on device / cheaper
+    // prediction). ⛔ COST INSTRUMENT: an arm with this on must NEVER be quoted for throughput --
+    // like every never-quote gauge it attributes a cost, it does not measure speed.
+    static const bool cgc_fast_cost = getenv("CGC_FAST_COST") != nullptr;
+    static uint64_t cgc_fc_steps = 0, cgc_fc_ensure = 0, cgc_fc_submit = 0, cgc_fc_sync = 0,
+                    cgc_fc_read = 0, cgc_fc_verify = 0, cgc_fc_skip = 0;
+    // [CGC 2026-10-02 S1 single-submit] THE PREDICTION-FREE ARM. See the long note at the publish
+    // block below (right before the submit) for what it does and what it deliberately does not.
+    // Declared HERE because it must suppress the FAST predict-ensure block in the same step: the two
+    // arms write different things into the same graph inputs (leaf vs table), and an arm that runs
+    // both would report the sum of two mechanisms instead of either one.
+    static const bool cgc_s1_ss = getenv("CGC_S1_SINGLE_SUBMIT") != nullptr;
+    static const bool cgc_s1_ss_verify = getenv("CGC_S1_SS_VERIFY") != nullptr;
+    const int64_t fc_t_ensure0 = cgc_fast_cost ? ggml_time_us() : 0;
+    if (cgc_seg_batch_fast_pred && !cgc_s1_ss) {
+        llama_expert_cache * fast_ec = model.expert_cache;
+        bool fast_can_predict = (fast_ec != nullptr);
+        // why: 0=predict ok, 1=no cache, 2=remap null, 3=prev_pred invalid/missing,
+        //      4=pred empty, 5=multi-token (pred shorter than remap), 6=ensure failed (zero slot),
+        //      7=no remap leaves at all (host-leaf path not in use -> FAST must not run)
+        int fast_why = fast_can_predict ? 0 : 1;
+        if (fast_can_predict && cache_remap_tensors.empty()) { fast_can_predict = false; fast_why = 7; }
+        if (fast_can_predict) {
+            // [CGC 2026-10-02 FAST state-machine probe] the producer half of the witness: what the
+            // leaf is ABOUT to be written from, next to what the hook's swap would leave behind.
+            {
+                static const bool cgc_probe_pre = getenv("CGC_FAST_PROBE") != nullptr;
+                static uint64_t cgc_probe_pre_n = 0;
+                if (cgc_probe_pre && cgc_probe_pre_n < 12) {
+                    cgc_probe_pre_n += 1;
+                    cgc_probe_step_seq() += 1;   // this step's id, printed by all three witnesses
+                    const auto & pv = fast_ec->prev_token_expert_ids;
+                    const auto & cu = fast_ec->curr_token_expert_ids;
+                    fprintf(stderr, "CGC-FAST-PROBE-PRE: seq=%llu ev=%llu prev0=%d prev20=%d curr0=%d curr20=%d "
+                                    "prev_n=%zu curr_n=%zu prev_ok=%zu nremap=%zu\n",
+                            (unsigned long long) cgc_probe_step_seq(),
+                            (unsigned long long) cgc_probe_pre_n,
+                            pv.empty() || pv[0].empty()  ? -1 : (int) pv[0][0],
+                            pv.size() <= 20 || pv[20].empty() ? -1 : (int) pv[20][0],
+                            cu.empty() || cu[0].empty()  ? -1 : (int) cu[0][0],
+                            cu.size() <= 20 || cu[20].empty() ? -1 : (int) cu[20][0],
+                            pv.size(), cu.size(),
+                            (size_t) std::count(fast_ec->prev_token_valid.begin(), fast_ec->prev_token_valid.end(), true),
+                            cache_remap_tensors.size());
+                }
+            }
+            for (const auto & kv : cache_remap_tensors) {
+                const int il = kv.first;
+                ggml_tensor * remap = kv.second;
+                if (remap == nullptr || remap->data == nullptr) { fast_can_predict = false; fast_why = 2; break; }
+                if ((size_t) il >= fast_ec->prev_token_valid.size() ||
+                    (size_t) il >= fast_ec->prev_token_expert_ids.size() ||
+                    !fast_ec->prev_token_valid[il]) {
+                    fast_can_predict = false; fast_why = 3; break;
+                }
+                const std::vector<uint32_t> & pred = fast_ec->prev_token_expert_ids[il];
+                if (pred.empty()) { fast_can_predict = false; fast_why = 4; break; }
+                const int64_t ntot = (int64_t) remap->ne[0] * (int64_t) remap->ne[1];
+                // multi-token steps (prefill) can't be predicted per-token: prev_token holds only
+                // token 0's top-k, so the remap has more entries than the prediction. Route to 41-seg.
+                if (ntot > (int64_t) pred.size()) { fast_can_predict = false; fast_why = 5; break; }
+                // sync-ensure each predicted expert resident (blocks; eliminates the fill-race NaN)
+                for (uint32_t e : pred) {
+                    if (e >= (uint32_t) fast_ec->n_expert) continue;
+                    llama_expert_cache_ensure_slot(fast_ec, (uint32_t) il, e, /*count=*/false);
+                }
+                // ensure_slot can still fail (no free slot): a predicted expert that is NOT resident
+                // consumes the ZERO slot, and the fallback CANNOT see that divergence -- rd[i] and
+                // slot_table_safe(true_id) would both be the ZERO slot, so they'd compare equal --
+                // while the reference, which ensures the TRUE expert, would read a real slot.
+                // Detect it here and route the whole step to the proven 41-seg loop instead.
+                {
+                    const int32_t zs = llama_expert_cache_zero_slot(fast_ec, (uint32_t) il);
+                    if (zs >= 0) {
+                        for (uint32_t e : pred) {
+                            if (e >= (uint32_t) fast_ec->n_expert) continue;
+                            if (llama_expert_cache_slot_table_safe(fast_ec, (uint32_t) il, e) == zs) {
+                                fast_can_predict = false; fast_why = 6;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!fast_can_predict) break;
+                // [CGC 2026-10-02 NEGATIVE CONTROL] CGC_FAST_FAULT_INJECT=1 deliberately shifts every
+                // predicted expert id by +1 (mod n_expert) before the remap leaf is written, so the
+                // leaf points at the WRONG slot. The post-submit readback MUST then go red (mismatch)
+                // and the 41-seg fallback MUST restore bit-identity -- this is the control that tells
+                // "mismatch=0" apart from "nothing was ever compared". Diagnostic only (never a
+                // deliverable arm; incomparable by construction).
+                static const bool cgc_fast_fault = getenv("CGC_FAST_FAULT_INJECT") != nullptr;
+                // write the remap leaf: predicted expert e -> slot index (mirrors hook 7941-7968)
+                int32_t * rd = (int32_t *) remap->data;
+                for (int64_t i = 0; i < ntot; ++i) {
+                    uint32_t e = (i < (int64_t) pred.size()) ? pred[(size_t) i] : 0;
+                    if (cgc_fast_fault && e < (uint32_t) fast_ec->n_expert) {
+                        // ensure the injected expert first so the GPU reads a real row (no placeholder),
+                        // then point the leaf at it; the readback still compares against the TRUE id
+                        e = (e + 1u) % (uint32_t) fast_ec->n_expert;
+                        llama_expert_cache_ensure_slot(fast_ec, (uint32_t) il, e, /*count=*/false);
+                    }
+                    rd[i] = llama_expert_cache_slot_table_safe(fast_ec, (uint32_t) il, e);
+                }
+            }
+        }
+        if (fast_can_predict) {
+            cgc_fast_took_fast = true;  // FAST single-submit will be attempted below
+            cgc_fast_taken += 1;
+        } else {
+            // no usable prediction for this step -> proven 41-seg loop (hook rewrites td[e] per layer)
+            cgc_fast_incomplete += 1;
+            cgc_forced_41seg = true;
+            setenv("CGC_FORCE_41SEG", "1", 1);
+        }
+        const uint64_t cgc_fast_steps = cgc_fast_taken + cgc_fast_incomplete;
+        if (cgc_fast_steps <= 12 || cgc_fast_steps % 200 == 0) {
+            fprintf(stderr, "CGC-SEGBATCH-FAST: step=%llu taken=%llu incomplete=%llu mismatch=%llu why=%d nremap=%zu\n",
+                    (unsigned long long) cgc_fast_steps, (unsigned long long) cgc_fast_taken,
+                    (unsigned long long) cgc_fast_incomplete, (unsigned long long) cgc_fast_mismatch,
+                    fast_why, cache_remap_tensors.size());
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════════════════
+    // [CGC 2026-10-02 S1 single-submit arm · CGC_S1_SINGLE_SUBMIT=1] THE PREDICTION IS GONE.
+    //
+    // What the arm is: ONE submit per step with the S1 graph (CGC_SLOT_TABLE_GPU=1), whose ids
+    // mul_mat_id consumes are computed ON THE DEVICE --
+    //
+    //     slots = get_rows(slot_table, ids_flat)      (llama-graph.cpp, S1 branch)
+    //
+    // so the only host input the graph needs before dispatch is `slot_table`, and the table does not
+    // depend on THIS step's routing at all. The FAST arm could not do this: it consumes the
+    // host-written remap leaf, so it needs this step's per-layer ids BEFORE submit, which is why it
+    // had to predict them from the previous token -- and that prediction is unfixable. Its
+    // acceptance criterion is POSITION-level equality over n_layer x k positions (measured
+    // 2026-10-02: 0 exact steps in 200, xl=-1/xt=-1 on all 120 per-layer lines) while adjacent
+    // tokens overlap only per position (~87%), so whole-step hits round to zero no matter how the
+    // state machine is repaired. A routing-independent table is the way out of that trap: there is
+    // nothing to predict.
+    //
+    // What the arm does NOT fix -- and why the witness below is a COLD count, not a mismatch count:
+    // `publish_slot_table` maps a RESIDENT expert to its real slot, and a NON-resident one to the
+    // reserved ZERO slot (deterministic zero contribution) or, when no zero slot is armed, to a
+    // clamp (0 = another expert's weights). The 41-seg reference makes every selected expert
+    // resident in its hook before the consumer segment runs; a single submit CANNOT, because the
+    // selected ids do not exist until the graph itself computes them. So this arm's bit-identity is
+    // decided by one number -- how many of the consumed ids had NO real slot at publish time -- and
+    // that number is only readable AFTER the submit (CGC-S1-SS / CGC-S1-SS-LAYER, CGC_S1_SS_VERIFY).
+    // It is a real measurement, not a formality: cold == 0 on a step means that step's consumed
+    // experts all read their own weights (the step is the reference step); cold > 0 means the FFN
+    // contribution of that expert is missing. The pool's measured demand miss rate is ~3.8% over
+    // ~320 consumed positions per step, so if this arm cannot be bit-identical, the missing thing is
+    // RESIDENCY -- a fill-scheduling problem -- not the mapping.
+    //
+    // Deliberately NOT reused: `CGC_B_SCHEME=1`'s pre-dispatch publish. That block exists and does
+    // almost the same thing, but it writes `e % ns` (another expert's weights, an unbounded error)
+    // for a non-resident expert when no zero slot is armed, and it records no placeholder identity,
+    // so a cold count cannot be taken from it. The canonical publisher is used here instead, with
+    // the placeholder flags snapshotted from the SAME instant as the write, so a fill landing after
+    // this loop cannot move the count (the race documented at cgc_publish_slot_table_counted).
+    //
+    // PRECONDITION, enforced loudly rather than silently: every layer that CONSUMES a table must be
+    // in `cache_slot_table_tensors`, i.e. CGC_S1_MIN_IL must be 0. With the default min_il=1, layer 0
+    // keeps a host remap leaf -- and a host leaf must be written before submit, which is exactly the
+    // prediction this arm removes. A stale layer-0 leaf is a legal-but-wrong mapping (nothing
+    // asserts), so it is reported rather than assumed.
+    // ═══════════════════════════════════════════════════════════════════════════════════════════
+    int64_t s1_pub_us = 0, s1_sync_us = 0, s1_read_us = 0;
+    // Decode-step flag for THIS graph, taken from the same predicate the publish block uses. The
+    // cost line below must not re-derive it from a capture map: measured 2026-10-02 (bench
+    // s1ss_ab_20261002) the map-based derivation counted exactly ONE decode step out of ~380 while
+    // the publish itself ran on every one of them (pool counter publishes=15400/40), i.e. a gate
+    // that silently stops firing is indistinguishable from "the arm stopped running".
+    bool s1_step_decode = false;
+    static uint64_t cgc_s1_ss_steps = 0, cgc_s1_ss_pub_layers = 0, cgc_s1_ss_clamped_all = 0,
+                    cgc_s1_ss_sel = 0, cgc_s1_ss_cold = 0, cgc_s1_ss_skip = 0;
+    static std::map<int, std::vector<uint8_t>> cgc_s1_ss_placeholder;
+    // [CGC 2026-10-02 S1 single-submit · DELIVERY PROBE] What the publish WROTE, so that the
+    // post-submit readback below can tell "the mapping is wrong" (values differ) apart from "the
+    // buffer the kernel read is not the buffer we wrote" (values identical on the host, garbage in
+    // the gather). Those two have opposite repairs, and id_oob alone cannot separate them: the
+    // first S1 single-submit smoke (2026-10-02 08:28) printed float bit patterns from the gather
+    // (`id_oob first=-1082706210`) while the ids read back from `ffn_moe_ids_cont` were all in
+    // range -- so "the table was never delivered" had to be tested rather than assumed. The
+    // instrument costs one readback of n_expert int32 per layer and is gated on CGC_S1_SS_DBG.
+    struct cgc_s1_ss_snap_t {
+        std::vector<int32_t> pub;
+        const void *         ptr = nullptr;
+    };
+    static std::map<int, cgc_s1_ss_snap_t> cgc_s1_ss_dbg_snap;
+    static const bool cgc_s1_ss_dbg = getenv("CGC_S1_SS_DBG") != nullptr;
+    if (cgc_s1_ss_dbg) { cgc_s1_ss_dbg_snap.clear(); }
+    if (cgc_s1_ss) {
+        cgc_s1_ss_placeholder.clear();
+        llama_expert_cache * s1_ec = model.expert_cache;
+        // Guard 1, same shape as the FAST arm's why=5 refusal: a step whose graph carries no S1
+        // nodes leaves the map holding the PREVIOUS graph's tensors, and by now their `data` may be
+        // a recycled arena buffer -- writing them would corrupt whatever tensor occupies it. Prefill
+        // steps (wide graph) read raw ids against full-width weights, so they need no table at all.
+        // The predicate is read off THIS graph (cgc_graph_n_tokens), not off context state.
+        const bool s1_ss_decode = cgc_is_decode_graph(cgc_graph_n_tokens(gf), cgc_pool_max_tokens());
+        s1_step_decode = s1_ss_decode;
+        const bool s1_ss_can_pub = s1_ec != nullptr && !cache_slot_table_tensors.empty() && s1_ss_decode;
+        // [CGC 2026-10-02 S1 single-submit · NON-DECODE STEPS] The arm replaces the dispatch, but the
+        // dispatch is not only a mapping: the per-segment hook is ALSO where the pool/slab is
+        // maintained (fills, slab adoption, prefill-chunk catch-up). A single submit never calls it,
+        // so a WIDE graph submitted this way reads a slab nobody filled. Measured 2026-10-02 08:41:
+        // single-submitting the prefill built the KV cache out of NaN and every later step was NaN
+        // (`CGC-LOGITS-INVALID: non-finite values: 248320 of 248320`, answer `文摘文摘...`), while the
+        // same arm's table delivery and gather readback were intact (CGC-S1-SS-DLV table_diff=0/256,
+        // gather_diff=0) -- i.e. the defect was the un-run hook, not the mapping.
+        // So any step whose graph is not the S1 decode graph goes to the proven 41-seg loop, exactly
+        // like the FAST arm's why=5 refusal; the one-shot flag is cleared after the compute returns.
+        if (!s1_ss_decode) {
+            cgc_forced_41seg = true;
+            setenv("CGC_FORCE_41SEG", "1", 1);
+            static uint64_t cgc_s1_ss_wide = 0;
+            cgc_s1_ss_wide += 1;
+            if (cgc_s1_ss_wide <= 6) {
+                fprintf(stderr, "CGC-S1-SS: non-decode graph (ntok=%lld) -> 41-seg loop (hook must run: "
+                                "pool/slab maintenance)\n",
+                        (long long) cgc_graph_n_tokens(gf));
+            }
+        }
+        {
+            static bool s1_ss_diag_done = false;
+            if (!s1_ss_diag_done) {
+                s1_ss_diag_done = true;
+                if (s1_ec == nullptr) {
+                    fprintf(stderr, "CGC-S1-SS: no expert cache -> arm is a no-op\n");
+                } else if (cache_slot_table_tensors.empty()) {
+                    fprintf(stderr, "CGC-S1-SS: cache_slot_table_tensors EMPTY -> no S1 graph "
+                                    "(is CGC_SLOT_TABLE_GPU=1 set?) -> arm is a no-op\n");
+                }
+                if (!cache_remap_tensors.empty()) {
+                    fprintf(stderr, "CGC-S1-SS: WARNING host-leaf layer(s) present (CGC_S1_MIN_IL>0 "
+                                    "-> layer 0 keeps a host leaf): their remap is NOT written before "
+                                    "submit -> arm is VOID for bit-identity. Set CGC_S1_MIN_IL=0.\n");
+                }
+                fprintf(stderr, "CGC-S1-SS: arm on (publish=whole-table, verify=%s)\n",
+                        cgc_s1_ss_verify ? "on" : "off");
+            }
+        }
+        if (s1_ss_can_pub) {
+            const int64_t s1_t_pub0 = cgc_fast_cost ? ggml_time_us() : 0;
+            for (const auto & kv : cache_slot_table_tensors) {
+                const int il = kv.first;
+                ggml_tensor * tbl = kv.second;
+                if (tbl == nullptr || tbl->data == nullptr) { continue; }
+                if (il < 0 || (size_t) il >= s1_ec->slot_owner.size()) { continue; }
+                // Guard 2, per layer: the capture must BE a leaf of the graph about to be submitted,
+                // with the table's exact geometry. Membership alone is not freshness (§EN-307: the
+                // arena is reused, so a stale address is often a live node of the new build); the
+                // shape+type+nbytes triple is what makes "this is the table" checkable. A stale
+                // pointer that happens to land on a [1,n_expert] I32 leaf is the residual hole, and
+                // it is stated here rather than hidden.
+                if (!cgc_tensor_in_graph(gf, tbl)) { continue; }
+                if (tbl->type != GGML_TYPE_I32 || tbl->ne[0] != 1 ||
+                        tbl->ne[1] != (int64_t) s1_ec->n_expert || !cgc_is_i32_n(tbl, tbl->ne[1])) {
+                    continue;
+                }
+                const uint32_t uil = (uint32_t) il;
+                // The reserved ZERO slot must be zeroed before a placeholder can read it. The hook
+                // does this per step on its fast path; this arm never runs a hook.
+                llama_expert_cache_zero_reserved_slot(s1_ec, uil);
+                // Snapshot BEFORE the publish: `st[e] < 0` IS "no real slot in the table the GPU is
+                // about to read", and the flag travels next to the published table so a fill that
+                // lands after this loop cannot turn a placeholder into a false "resident".
+                const int32_t * st = llama_expert_cache_slot_table(s1_ec, uil);
+                std::vector<uint8_t> ph((size_t) s1_ec->n_expert, 0);
+                for (uint32_t e = 0; e < (uint32_t) s1_ec->n_expert; ++e) {
+                    if (st == nullptr || st[e] < 0) { ph[e] = 1; }
+                }
+                // Whole-table publish: the ids are NOT known before submit (that is the point of
+                // S1), so the selected-subset accounting of cgc_publish_slot_table_counted cannot be
+                // filled here -- `sel_clamped`/`sel_wrong` stay 0 by construction and the consumed
+                // subset is counted after the submit instead, against these placeholder flags.
+                int64_t sel_clamped = 0, sel_wrong = 0;
+                const int64_t clamped = llama_expert_cache_publish_slot_table(
+                        s1_ec, uil, (int32_t *) tbl->data, (uint32_t) s1_ec->n_expert,
+                        nullptr, 0, &sel_clamped, &sel_wrong);
+                s1_ec->n_slot_table_publishes++;
+                cgc_s1_ss_pub_layers += 1;
+                if (clamped > 0) {
+                    s1_ec->n_slot_table_clamped += (size_t) clamped;
+                    cgc_s1_ss_clamped_all += (uint64_t) clamped;
+                }
+                cgc_s1_ss_placeholder[il] = std::move(ph);
+                if (cgc_s1_ss_dbg) {
+                    cgc_s1_ss_snap_t & sn = cgc_s1_ss_dbg_snap[il];
+                    sn.pub.assign((const int32_t *) tbl->data,
+                                  (const int32_t *) tbl->data + s1_ec->n_expert);
+                    sn.ptr = tbl->data;
+                }
+            }
+            s1_pub_us = cgc_fast_cost ? ggml_time_us() - s1_t_pub0 : 0;
+        }
+    }
+
+    const int64_t fc_ensure_us = cgc_fast_cost ? ggml_time_us() - fc_t_ensure0 : 0;
+    const int64_t fc_t_submit0 = cgc_fast_cost ? ggml_time_us() : 0;
     auto status = ggml_backend_sched_graph_compute_async(sched.get(), gf);
+    const int64_t fc_submit_us = cgc_fast_cost ? ggml_time_us() - fc_t_submit0 : 0;
+    // [CGC 2026-10-02 FORCE-41SEG lifetime fix] One-shot signal consumed: this step's compute has
+    // returned (41-seg or FAST), so the next step must be free to try the single-submit path again.
+    // Only clear when THIS function set it, so an operator-level CGC_FORCE_41SEG=1 launch (a
+    // deliberate "always 41-seg" arm) keeps its meaning.
+    if (cgc_forced_41seg) {
+        unsetenv("CGC_FORCE_41SEG");
+    }
+    // per-step accumulators for the post-submit half (filled by the fallback block below)
+    int64_t fc_sync_us = 0, fc_read_us = 0, fc_verify_us = 0;
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: ggml_backend_sched_graph_compute_async failed with error %d\n", __func__, status);
     }
@@ -4305,6 +4710,666 @@ ggml_status llama_context::graph_compute(
                     (double) (s_cost_total - s_cost_sync) / (double) s_cost_steps,
                     (double) s_cost_gets  / (double) s_cost_steps,
                     (unsigned long long) s_cost_steps);
+        }
+    }
+
+    // [CGC 2026-10-01 Y-accel · (b) fallback] After the FAST single-submit (ggml-backend.cpp
+    // CGC_SEG_BATCH_FAST branch), read back THIS step's true routed expert ids (ffn_moe_ids_cont,
+    // captured in build_moe_ffn's host-leaf branch) and verify every routed expert is resident
+    // (slot_table[e] >= 0) at submit time. The write-table block (td[e]=st[e]) is correct only for
+    // resident experts; a non-resident routed expert means a placeholder slot index was consumed ->
+    // wrong output. On any miss, force the proven 41-segment loop (setenv CGC_FORCE_41SEG) and
+    // re-run the whole graph, which the per-segment hook corrects per layer. This makes FAST
+    // bit-identical by construction while keeping the 1-submit speed on prediction-hit steps.
+    static const bool cgc_seg_batch_fast_fb = getenv("CGC_SEG_BATCH_FAST") != nullptr;
+    // Only run the readback/verify when FAST was actually attempted this step; on forced-41seg
+    // steps (no prediction / multi-token) the 41-seg hook already managed the remap leaf + prev_token.
+    if (cgc_seg_batch_fast_fb && cgc_fast_took_fast) {
+        const int64_t fc_t_sync0 = cgc_fast_cost ? ggml_time_us() : 0;
+        ggml_backend_sched_synchronize(sched.get());
+        if (cgc_fast_cost) fc_sync_us = ggml_time_us() - fc_t_sync0;
+        bool fast_mismatch = false;
+        llama_expert_cache * fast_ec = model.expert_cache;
+        // [CGC 2026-10-02 FAST mismatch probe] DIAGNOSTIC ARM (CGC_FAST_PROBE=1), never a deliverable:
+        // it pays a full-graph readback (all layers, no early break) to answer the ONE question the
+        // aggregate counters cannot -- WHEN a step mismatches, is the prediction
+        //   (a) STALE  -- pred == the true ids of step-1 or step-2 (prediction source is fine, the
+        //                state machine that feeds it is not: the refresh below is gated on a clean
+        //                hit, and the 41-seg redo's `swap(prev, curr)` then installs an old vector);
+        //   (b) ORDER  -- pred is the right SET in the wrong ORDER (set-equal but not position-equal);
+        //   (c) LEAF BUG -- pred == true exactly, yet rd != slot(true) (the leaf the GPU consumed was
+        //                not built from the prediction the probe snapshotted);
+        //   (d) MISS   -- rd == slot(pred) != slot(true): an honest prediction failure.
+        // Per detail line: the first 4 layers x first 4 positions with pred / true / rd / slot_true /
+        // slot_pred side by side; per step: position-wise counts over ALL layers plus the layer-key
+        // sets of both maps (a shifted key set is hypothesis (c) with a different repair).
+        // It does NOT touch the prediction, the pool or the leaf: with the flag unset every counter
+        // below is dead and the code path is byte-identical to the arm that produced FIXED_20261002.
+        static const bool cgc_fast_probe = getenv("CGC_FAST_PROBE") != nullptr;
+        static int cgc_fast_probe_detail = -1;
+        if (cgc_fast_probe_detail < 0) {
+            const char * pe = getenv("CGC_FAST_PROBE_DETAIL");
+            cgc_fast_probe_detail = pe != nullptr ? atoi(pe) : 6;
+        }
+        static uint64_t cgc_fast_probe_steps = 0;
+        static bool cgc_fast_probe_keys_printed = false;
+        static bool cgc_fast_probe_ptrs_printed = false;
+        // true ids of the two preceding PROBED steps, per layer -- this is what "stale" means.
+        static std::map<int, std::vector<int32_t>> cgc_fast_probe_t1, cgc_fast_probe_t2,
+                                                  cgc_fast_probe_t3, cgc_fast_probe_t4;
+        const bool cgc_fast_probe_on = cgc_fast_probe && cgc_fast_probe_steps < (uint64_t) cgc_fast_probe_detail;
+        std::map<int, std::vector<int32_t>> cgc_fast_probe_now;
+        uint64_t cgc_fast_probe_nlayers = 0, cgc_fast_probe_npos = 0;
+        uint64_t cgc_fast_probe_hit = 0, cgc_fast_probe_bad = 0, cgc_fast_probe_leafbad = 0,
+                 cgc_fast_probe_cold = 0;
+        uint64_t cgc_fast_probe_seteq = 0, cgc_fast_probe_stale1 = 0, cgc_fast_probe_stale1eq = 0,
+                 cgc_fast_probe_stale2 = 0;
+        int     cgc_fast_probe_first_il = -1;
+        int64_t cgc_fast_probe_first_i  = -1;
+        int     cgc_fast_probe_det_il   = 0;   // layers printed in detail for THIS step (first 4)
+        auto cgc_probe_peq = [](const std::vector<int32_t> & a, const std::vector<int32_t> & b) {
+            return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
+        };
+        auto cgc_probe_seq = [](const std::vector<int32_t> & a, const std::vector<int32_t> & b) {
+            if (a.size() != b.size()) return false;
+            std::vector<int32_t> x = a, y = b;
+            std::sort(x.begin(), x.end());
+            std::sort(y.begin(), y.end());
+            return x == y;
+        };
+        // [CGC 2026-10-02 REALITY CHECK] "mismatch=0" is only meaningful if comparisons actually
+        // happened: every early `continue` below used to be SILENT, so a run whose id tensors were
+        // unreadable (null / not in graph / wrong dtype) printed the exact same mismatch=0 as a
+        // clean run. These counters make "checked" and "not checked" distinguishable:
+        //   cmp   = positions actually compared (rd[i] vs slot_table_safe(true_id))
+        //   lskip = layers skipped BEFORE comparing (id tensor unreadable / not in graph / bad dtype)
+        //   nskip = positions not compared (negative id, or no usable remap leaf)
+        static uint64_t cgc_fast_cmp = 0, cgc_fast_lskip = 0, cgc_fast_nskip = 0;
+        static const bool cgc_fast_fault = getenv("CGC_FAST_FAULT_INJECT") != nullptr;
+        if (fast_ec != nullptr && !cache_ids_cont_tensors.empty()) {
+            for (const auto & kv : cache_ids_cont_tensors) {
+                const int il = kv.first;
+                ggml_tensor * idc = kv.second;
+                if (idc == nullptr || idc->data == nullptr) { cgc_fast_lskip += 1; continue; }
+                if (!cgc_node_in_graph(gf, idc)) { cgc_fast_lskip += 1; continue; }
+                const int64_t ntot = (int64_t) idc->ne[0] * (int64_t) idc->ne[1];
+                if (ntot <= 0) { cgc_fast_lskip += 1; continue; }
+                if (!cgc_is_i32_n(idc, ntot)) { cgc_fast_lskip += 1; continue; }
+                std::vector<int32_t> ibuf((size_t) ntot);
+                const int64_t fc_t_r0 = cgc_fast_cost ? ggml_time_us() : 0;
+                ggml_backend_tensor_get(idc, ibuf.data(), 0, (size_t) ntot * sizeof(int32_t));
+                if (cgc_fast_cost) fc_read_us += ggml_time_us() - fc_t_r0;
+                // predicted remap leaf for this layer (what the GPU actually consumed)
+                ggml_tensor * remap = cache_remap_tensors.count(il) ? cache_remap_tensors[il] : nullptr;
+                const int32_t * rd = nullptr;
+                if (remap != nullptr && remap->data != nullptr) {
+                    const int64_t rntot = (int64_t) remap->ne[0] * (int64_t) remap->ne[1];
+                    if (rntot >= ntot) rd = (const int32_t *) remap->data;
+                }
+                // [CGC 2026-10-02 FAST mismatch probe] snapshot the vector the FAST pre-submit wrote
+                // the leaf FROM (prev_token_expert_ids[il]) -- BEFORE the refresh below can overwrite
+                // it, which is the whole point (hypothesis (a) is that the refresh never runs).
+                std::vector<int32_t> cgc_probe_pred;
+                if (cgc_fast_probe_on && (size_t) il < fast_ec->prev_token_expert_ids.size()) {
+                    const std::vector<uint32_t> & pp = fast_ec->prev_token_expert_ids[il];
+                    cgc_probe_pred.assign(pp.begin(), pp.end());
+                }
+                // Verify: for each true routed expert, the slot the GPU consumed (rd[i]) must equal
+                // the correct slot for that expert (slot_table_safe). Stronger than a residency check:
+                // after ensure_slot makes predictions resident, a WRONG prediction would pass a
+                // residency-only test but produce wrong output. A miss => redo via 41-seg loop.
+                const int64_t fc_t_v0 = cgc_fast_cost ? ggml_time_us() : 0;
+                for (int64_t i = 0; i < ntot; ++i) {
+                    const int32_t e = ibuf[(size_t) i];
+                    if (e < 0) { cgc_fast_nskip += 1; continue; } // out-of-range: handled elsewhere
+                    if (rd == nullptr) { cgc_fast_nskip += 1; continue; } // no remap leaf -> nothing to compare
+                    cgc_fast_cmp += 1;
+                    const int32_t e_slot = llama_expert_cache_slot_table_safe(fast_ec, (uint32_t) il, (uint32_t) e);
+                    if (rd[i] != e_slot) {
+                        fast_mismatch = true;
+                        // Probe arm: keep scanning the whole graph. The production break below is
+                        // what makes `cmp=+1 per step` ambiguous (first-hit only); the probe needs
+                        // the FULL picture to tell a one-position fluke from a systematic offset.
+                        if (cgc_fast_probe_on) {
+                            continue;
+                        }
+                        break;
+                    }
+                }
+                if (cgc_fast_cost) fc_verify_us += ggml_time_us() - fc_t_v0;
+        if (cgc_fast_probe_on) {
+            cgc_fast_probe_nlayers += 1;
+            std::vector<int32_t> cgc_probe_true(ibuf.begin(), ibuf.begin() + (size_t) ntot);
+            if (il == 0 && ntot >= 8) {
+                fprintf(stderr, "CGC-FAST-PROBE-READBACK: seq=%llu il=0 true=[%d %d %d %d %d %d %d %d]\n",
+                        (unsigned long long) cgc_probe_step_seq(),
+                        (int) ibuf[0], (int) ibuf[1], (int) ibuf[2], (int) ibuf[3],
+                        (int) ibuf[4], (int) ibuf[5], (int) ibuf[6], (int) ibuf[7]);
+            }
+                    cgc_fast_probe_now[il] = cgc_probe_true;
+                    const auto it1 = cgc_fast_probe_t1.find(il);
+                    const auto it2 = cgc_fast_probe_t2.find(il);
+                    const bool p_exact   = cgc_probe_peq(cgc_probe_pred, cgc_probe_true);
+                    const bool p_seteq   = cgc_probe_seq(cgc_probe_pred, cgc_probe_true);
+                    const bool p_stale1  = it1 != cgc_fast_probe_t1.end() && cgc_probe_peq(cgc_probe_pred, it1->second);
+                    const bool p_stale1s = it1 != cgc_fast_probe_t1.end() && cgc_probe_seq(cgc_probe_pred, it1->second);
+                    const bool p_stale2  = it2 != cgc_fast_probe_t2.end() && cgc_probe_peq(cgc_probe_pred, it2->second);
+                    // WHOSE ids is this layer's prediction, when it is not (stale versions of) its own?
+                    //   xl =  0..39 -> another layer's true ids, THIS step (already visited)
+                    //   xl = 1xx/2xx/3xx/4xx -> layer xx's true ids 1/2/3/4 steps back
+                    //   xl =   -1   -> no match: the prediction is not any layer's recent true ids
+                    // A layer shift (xl = 0xx / 1xx with xx != il) is a COLLECT-path bug; xl = -1 is a
+                    // buffer/timing bug. The two have different repairs, and `mismatch=1` looks the same.
+                    int cgc_probe_xl = -1;
+                    for (const auto & e : cgc_fast_probe_now) {
+                        if (e.first != il && cgc_probe_peq(cgc_probe_pred, e.second)) { cgc_probe_xl = e.first; break; }
+                    }
+                    if (cgc_probe_xl < 0) {
+                        const std::map<int, std::vector<int32_t>> * cgc_probe_hist[4] = {
+                                &cgc_fast_probe_t1, &cgc_fast_probe_t2, &cgc_fast_probe_t3, &cgc_fast_probe_t4 };
+                        for (int hh = 0; hh < 4 && cgc_probe_xl < 0; ++hh) {
+                            for (const auto & e : *cgc_probe_hist[hh]) {
+                                if (cgc_probe_peq(cgc_probe_pred, e.second)) {
+                                    cgc_probe_xl = (hh + 1) * 100 + e.first;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    // The SAME test for the TRUE readback (`xt`): if two layers' ffn_moe_ids_cont read
+                    // back identical ids, the witness itself is aliased (one buffer serving several
+                    // layers) and every conclusion drawn from `true` -- including this probe's -- is
+                    // about the wrong tensor. This is the failure mode the capture comments already
+                    // record for ggml_set_output, so it is checked, not assumed.
+                    int cgc_probe_xt = -1;
+                    for (const auto & e : cgc_fast_probe_now) {
+                        if (e.first != il && cgc_probe_peq(cgc_probe_true, e.second)) { cgc_probe_xt = e.first; break; }
+                    }
+                    if (cgc_probe_xt < 0) {
+                        const std::map<int, std::vector<int32_t>> * cgc_probe_hist[4] = {
+                                &cgc_fast_probe_t1, &cgc_fast_probe_t2, &cgc_fast_probe_t3, &cgc_fast_probe_t4 };
+                        for (int hh = 0; hh < 4 && cgc_probe_xt < 0; ++hh) {
+                            for (const auto & e : *cgc_probe_hist[hh]) {
+                                if (cgc_probe_peq(cgc_probe_true, e.second)) {
+                                    cgc_probe_xt = (hh + 1) * 100 + e.first;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    int64_t p_hit = 0, p_bad = 0, p_leafbad = 0, p_cold = 0;
+                    const int32_t cgc_probe_zs = llama_expert_cache_zero_slot(fast_ec, (uint32_t) il);
+                    for (int64_t i = 0; i < ntot; ++i) {
+                        const int32_t e = ibuf[(size_t) i];
+                        const bool pred_ok = (i < (int64_t) cgc_probe_pred.size()) &&
+                                             cgc_probe_pred[(size_t) i] == e;
+                        if (pred_ok) p_hit += 1;
+                        if (e < 0 || rd == nullptr) continue;   // same skip rule as the verify loop
+                        const int32_t e_slot = llama_expert_cache_slot_table_safe(fast_ec, (uint32_t) il, (uint32_t) e);
+                        // [CGC 2026-10-02 S1-single-submit verdict] COLD-TRUE: this step's true expert
+                        // is NOT resident at submit time, so a device-side gather
+                        // (slots = get_rows(slot_table, selected_experts), the S1 design) would read the
+                        // ZERO slot for it and its whole FFN contribution would be dropped. That is the
+                        // ONLY thing an S1 single-submit arm can get wrong -- the mapping is right by
+                        // construction for every resident expert -- so its bit-identity is decided by
+                        // THIS count, not by the leaf comparison above. Measured on the host leaf arm
+                        // it is the same quantity: the pre-submit ensure is driven by the same
+                        // prediction either way.
+                        if (cgc_probe_zs >= 0 && e_slot == cgc_probe_zs) p_cold += 1;
+                        if (rd[i] != e_slot) {
+                            p_bad += 1;
+                            if (cgc_fast_probe_first_il < 0) {
+                                cgc_fast_probe_first_il = il;
+                                cgc_fast_probe_first_i  = i;
+                            }
+                        }
+                        // leaf faithful = the GPU-consumed id is exactly slot_table_safe(pred[i])
+                        const bool leaf_ok = (i < (int64_t) cgc_probe_pred.size()) &&
+                                             cgc_probe_pred[(size_t) i] >= 0 &&
+                                             rd[i] == llama_expert_cache_slot_table_safe(fast_ec, (uint32_t) il,
+                                                        (uint32_t) cgc_probe_pred[(size_t) i]);
+                        if (!leaf_ok) p_leafbad += 1;
+                    }
+                    cgc_fast_probe_npos    += (uint64_t) ntot;
+                    cgc_fast_probe_hit     += (uint64_t) p_hit;
+                    cgc_fast_probe_bad     += (uint64_t) p_bad;
+                    cgc_fast_probe_leafbad += (uint64_t) p_leafbad;
+                    cgc_fast_probe_cold    += (uint64_t) p_cold;
+                    if (p_seteq)   cgc_fast_probe_seteq    += 1;
+                    if (p_stale1)  cgc_fast_probe_stale1   += 1;
+                    if (p_stale1s) cgc_fast_probe_stale1eq += 1;
+                    if (p_stale2)  cgc_fast_probe_stale2   += 1;
+                    // Per-LAYER one-liner for EVERY layer of the first few steps: the step aggregate is
+                    // bimodal (34 layers position-exact, a handful of layers nowhere near), and which
+                    // layers the bad ones are is the whole diagnosis (an off-by-N layer shift and a
+                    // layer-agnostic buffer bug look identical in a per-step sum).
+                    if (cgc_fast_probe_steps < 3) {
+                        fprintf(stderr, "CGC-FAST-PROBE-LAYER: pstep=%llu il=%d phit=%lld/%lld rdbad=%lld cold=%lld seteq=%d "
+                                        "exact=%d stale1=%d stale2=%d xl=%d xt=%d pred0=%d true0=%d\n",
+                                (unsigned long long) cgc_fast_probe_steps, il,
+                                (long long) p_hit, (long long) ntot, (long long) p_bad, (long long) p_cold,
+                                (int) p_seteq, (int) p_exact, (int) p_stale1, (int) p_stale2, cgc_probe_xl,
+                                cgc_probe_xt,
+                                cgc_probe_pred.empty() ? -1 : (int) cgc_probe_pred[0], (int) ibuf[0]);
+                    }
+                    if (cgc_fast_probe_det_il < 4) {
+                        cgc_fast_probe_det_il += 1;
+                        char pb[192], tb[192], rb[192], sb[192], ps[192];
+                        int  pbn = 0, tbn = 0, rbn = 0, sbn = 0, psn = 0;
+                        pb[0] = tb[0] = rb[0] = sb[0] = ps[0] = 0;
+                        const int64_t nshow = std::min<int64_t>(ntot, 4);
+                        for (int64_t i = 0; i < nshow; ++i) {
+                            const int32_t e = ibuf[(size_t) i];
+                            const bool    has_p = i < (int64_t) cgc_probe_pred.size();
+                            const int32_t p_i   = has_p ? cgc_probe_pred[(size_t) i] : -1;
+                            pbn += snprintf(pb + pbn, sizeof(pb) - (size_t) pbn, "%s%d", i ? " " : "", (int) p_i);
+                            tbn += snprintf(tb + tbn, sizeof(tb) - (size_t) tbn, "%s%d", i ? " " : "", (int) e);
+                            rbn += snprintf(rb + rbn, sizeof(rb) - (size_t) rbn, "%s%d", i ? " " : "", rd ? (int) rd[i] : -1);
+                            sbn += snprintf(sb + sbn, sizeof(sb) - (size_t) sbn, "%s%d", i ? " " : "",
+                                    e >= 0 ? (int) llama_expert_cache_slot_table_safe(fast_ec, (uint32_t) il, (uint32_t) e) : -2);
+                            psn += snprintf(ps + psn, sizeof(ps) - (size_t) psn, "%s%d", i ? " " : "",
+                                    p_i >= 0 ? (int) llama_expert_cache_slot_table_safe(fast_ec, (uint32_t) il, (uint32_t) p_i) : -2);
+                        }
+                        fprintf(stderr, "CGC-FAST-PROBE: pstep=%llu il=%d ntot=%lld pred_n=%zu remap=[%lld,%lld] "
+                                        "exact=%d seteq=%d stale1=%d stale1set=%d stale2=%d hit=%lld rd_bad=%lld leaf_bad=%lld\n"
+                                        "        pred=[%s] true=[%s] rd=[%s] slot_true=[%s] slot_pred=[%s]\n",
+                                (unsigned long long) cgc_fast_probe_steps, il, (long long) ntot, cgc_probe_pred.size(),
+                                remap ? (long long) remap->ne[0] : -1LL, remap ? (long long) remap->ne[1] : -1LL,
+                                (int) p_exact, (int) p_seteq, (int) p_stale1, (int) p_stale1s, (int) p_stale2,
+                                (long long) p_hit, (long long) p_bad, (long long) p_leafbad, pb, tb, rb, sb, ps);
+                    }
+                }
+                if (fast_mismatch && !cgc_fast_probe_on) break;
+                // Refresh prev-token prediction from THIS step's true ids so the NEXT decode step
+                // predicts from a fresh token (FAST skips the hook that collects curr_token_expert_ids).
+                // FAST is only attempted for single-token steps (multi-token routed to 41-seg above),
+                // so true ids fill the whole remap. Only on a clean hit (no mismatch) to stay consistent
+                // with the 41-seg hook, which owns prev_token on forced-41seg steps.
+                if (!fast_mismatch && (size_t) il < fast_ec->prev_token_expert_ids.size()) {
+                    std::vector<uint32_t> & dst = fast_ec->prev_token_expert_ids[il];
+                    dst.resize((size_t) ntot);
+                    for (int64_t i = 0; i < ntot; ++i) dst[(size_t) i] = (uint32_t) ibuf[(size_t) i];
+                    if ((size_t) il < fast_ec->prev_token_valid.size())
+                        fast_ec->prev_token_valid[il] = (ntot > 0);
+                    // Keep curr_token_expert_ids in step as well: a later 41-seg step swaps prev<->
+                    // curr at il==0, and feeding it the same fresh ids is what stops that swap from
+                    // re-installing a prediction that is several steps stale.
+                    if ((size_t) il < fast_ec->curr_token_expert_ids.size()) {
+                        fast_ec->curr_token_expert_ids[il] = dst;
+                    }
+                }
+            }
+        }
+        // [CGC 2026-10-02 FAST mismatch probe] STEP-level emission -- AFTER the layer loop, so
+        // every counter below covers the whole graph of THIS step exactly once, and the per-layer
+        // true-id history rotates once per step (t2 <- t1 <- now).
+        if (cgc_fast_probe_on) {
+            if (!cgc_fast_probe_keys_printed) {
+                cgc_fast_probe_keys_printed = true;
+                char rk[768], ik[768];
+                int  rkn = 0, ikn = 0;
+                rk[0] = ik[0] = 0;
+                for (const auto & e : cache_remap_tensors) {
+                    rkn += snprintf(rk + rkn, sizeof(rk) - (size_t) rkn, "%d,", e.first);
+                }
+                for (const auto & e : cache_ids_cont_tensors) {
+                    ikn += snprintf(ik + ikn, sizeof(ik) - (size_t) ikn, "%d,", e.first);
+                }
+                fprintf(stderr, "CGC-FAST-PROBE-KEYS: remap_n=%zu ids_n=%zu %s remap=[%s] ids=[%s]\n",
+                        cache_remap_tensors.size(), cache_ids_cont_tensors.size(),
+                        cache_remap_tensors.size() == cache_ids_cont_tensors.size() ? "same_count" : "COUNT-DIFFERS",
+                        rk, ik);
+            }
+            // BUFFER IDENTITY of the true-id witness: map each layer to an index into the list of
+            // DISTINCT `ffn_moe_ids_cont` data pointers. Two layers with the same index read the SAME
+            // buffer, i.e. the readback is aliased and `true` is not this layer's ids at all.
+            if (!cgc_fast_probe_ptrs_printed) {
+                cgc_fast_probe_ptrs_printed = true;
+                std::vector<const void *> uniq;
+                char pl[768];
+                int  pln = 0;
+                pl[0] = 0;
+                for (const auto & e : cache_ids_cont_tensors) {
+                    const void * p = e.second != nullptr ? e.second->data : nullptr;
+                    size_t k = 0;
+                    while (k < uniq.size() && uniq[k] != p) ++k;
+                    if (k == uniq.size()) uniq.push_back(p);
+                    pln += snprintf(pl + pln, sizeof(pl) - (size_t) pln, "%zu,", k);
+                }
+                fprintf(stderr, "CGC-FAST-PROBE-PTRS: layers=%zu n_unique_buffers=%zu map=[%s] "
+                                "(per layer 0..39; a REPEATED index = those two layers' readbacks share one buffer)\n",
+                        cache_ids_cont_tensors.size(), uniq.size(), pl);
+            }
+            fprintf(stderr, "CGC-FAST-PROBE-STEP: pstep=%llu layers=%llu pos=%llu lskip=%llu nskip=%llu "
+                            "pred_hit=%llu rd_bad=%llu leaf_bad=%llu true_cold=%llu seteq=%llu stale1=%llu stale1set=%llu stale2=%llu "
+                            "first_bad=il%d/i%lld mismatch=%d\n",
+                    (unsigned long long) cgc_fast_probe_steps, (unsigned long long) cgc_fast_probe_nlayers,
+                    (unsigned long long) cgc_fast_probe_npos,
+                    (unsigned long long) cgc_fast_lskip, (unsigned long long) cgc_fast_nskip,
+                    (unsigned long long) cgc_fast_probe_hit, (unsigned long long) cgc_fast_probe_bad,
+                    (unsigned long long) cgc_fast_probe_leafbad, (unsigned long long) cgc_fast_probe_cold,
+                    (unsigned long long) cgc_fast_probe_seteq,
+                    (unsigned long long) cgc_fast_probe_stale1, (unsigned long long) cgc_fast_probe_stale1eq,
+                    (unsigned long long) cgc_fast_probe_stale2,
+                    cgc_fast_probe_first_il, (long long) cgc_fast_probe_first_i, (int) fast_mismatch);
+            cgc_fast_probe_steps += 1;
+            // rotate the per-layer true-id history: t4 <- t3 <- t2 <- t1 <- this step
+            cgc_fast_probe_t4 = cgc_fast_probe_t3;
+            cgc_fast_probe_t3 = cgc_fast_probe_t2;
+            cgc_fast_probe_t2 = cgc_fast_probe_t1;
+            cgc_fast_probe_t1.swap(cgc_fast_probe_now);
+        }
+        if (fast_mismatch) {
+            // redo via the proven 41-segment loop (hook rewrites td[e] per segment)
+            cgc_fast_mismatch += 1;
+            setenv("CGC_FORCE_41SEG", "1", 1);
+            fprintf(stderr, "CGC-SEGBATCH-FAST-MISMATCH: redo via 41-seg loop (cmp=%llu fault=%d)\n",
+                    (unsigned long long) cgc_fast_cmp, (int) cgc_fast_fault);
+            auto status2 = ggml_backend_sched_graph_compute_async(sched.get(), gf);
+            (void) status2;
+            unsetenv("CGC_FORCE_41SEG");
+        }
+        // [CGC 2026-10-02 REALITY CHECK] witness line: proves the readback COMPARED something.
+        // Same cadence as CGC-SEGBATCH-FAST (first 12 engaged steps + every 200). cmp=0 with
+        // mismatch=0 means "nothing was checked", not "clean".
+        static uint64_t cgc_fast_vsteps = 0;
+        cgc_fast_vsteps += 1;
+        if (cgc_fast_vsteps <= 12 || cgc_fast_vsteps % 200 == 0) {
+            fprintf(stderr, "CGC-FAST-VERIFY: vsteps=%llu cmp=%llu nskip=%llu lskip=%llu mismatch=%llu fault=%d\n",
+                    (unsigned long long) cgc_fast_vsteps, (unsigned long long) cgc_fast_cmp,
+                    (unsigned long long) cgc_fast_nskip, (unsigned long long) cgc_fast_lskip,
+                    (unsigned long long) cgc_fast_mismatch, (int) cgc_fast_fault);
+        }
+    }
+
+    // [CGC 2026-10-02 S1 single-submit · WITNESS] Read THIS step's true routed ids back (the
+    // device-produced `ffn_moe_ids_cont`, i.e. the very index vector the S1 gather consumed) and
+    // count how many of them had NO real slot when the table was published. That count -- not a
+    // prediction mismatch -- is what decides whether a single-submit S1 step can be bit-identical:
+    //   cold == 0 -> every consumed expert read its own weights; the step is the reference step.
+    //   cold  > 0 -> the consumer read the reserved ZERO slot (or a clamp) there, so that expert's
+    //               contribution is missing from the output: deterministic, but NOT equal to the
+    //               41-seg reference, which FILLS the expert before the consumer segment runs.
+    // The flags come from the publish loop above (same instant as the write) and not from a later
+    // re-read of the live pool -- see cgc_publish_slot_table_counted for the race that avoids.
+    // Cost: one full-graph synchronize + n_layer x k*4 B of readback. Diagnostic-only by design, and
+    // gated on CGC_S1_SS_VERIFY precisely so the speed arm can run with the drain removed.
+    if (cgc_s1_ss && cgc_s1_ss_verify && !cgc_s1_ss_placeholder.empty() &&
+            model.expert_cache != nullptr && status == GGML_STATUS_SUCCESS) {
+        llama_expert_cache * s1_ec = model.expert_cache;
+        static uint64_t cgc_s1_ss_vsteps = 0;
+        const int64_t s1_t_sync0 = cgc_fast_cost ? ggml_time_us() : 0;
+        ggml_backend_sched_synchronize(sched.get());
+        if (cgc_fast_cost) s1_sync_us = ggml_time_us() - s1_t_sync0;
+        uint64_t s1_step_layers = 0, s1_step_sel = 0, s1_step_cold = 0;
+        for (const auto & kv : cgc_s1_ss_placeholder) {
+            const int il = kv.first;
+            const std::vector<uint8_t> & ph = kv.second;
+            auto it_ids = cache_ids_cont_tensors.find(il);
+            if (it_ids == cache_ids_cont_tensors.end() || it_ids->second == nullptr ||
+                    it_ids->second->data == nullptr) { continue; }
+            ggml_tensor * idc = it_ids->second;
+            // Same freshness discipline as the publish side: the index vector must be THIS build's
+            // tensor (name + membership + readable geometry), or the "true ids" being counted belong
+            // to another graph -- a number that describes the wrong tensor is worse than none.
+            if (strncmp(idc->name, "ffn_moe_ids_cont", 16) != 0 || !cgc_tensor_in_graph(gf, idc)) {
+                continue;
+            }
+            const int64_t ntot = (int64_t) idc->ne[0] * (int64_t) idc->ne[1];
+            if (ntot <= 0 || ntot > 4 * 1024 || !cgc_is_i32_n(idc, ntot)) { continue; }
+            std::vector<int32_t> ibuf((size_t) ntot);
+            const int64_t s1_t_r0 = cgc_fast_cost ? ggml_time_us() : 0;
+            ggml_backend_tensor_get(idc, ibuf.data(), 0, (size_t) ntot * sizeof(int32_t));
+            if (cgc_fast_cost) s1_read_us += ggml_time_us() - s1_t_r0;
+            int64_t nsel = 0, ncold = 0;
+            for (int64_t i = 0; i < ntot; ++i) {
+                const int32_t e = ibuf[(size_t) i];
+                if (e < 0 || (size_t) e >= ph.size()) { continue; }
+                nsel += 1;
+                if (ph[(size_t) e]) { ncold += 1; }
+            }
+            // [CGC 2026-10-02 S1 single-submit · DELIVERY PROBE] Three questions, three numbers:
+            //   table_diff  -- the table's buffer no longer holds what the publish wrote. The write
+            //                  went to a pointer the allocator had already moved, i.e. the mapping
+            //                  never reached the device (repair: publish where the hook publishes);
+            //   gather_diff -- the gather's result is not table_readback[id] for this step's ids,
+            //                  i.e. the GET_ROWS kernel read a different buffer for one operand
+            //                  (repair: find which operand the scheduler copied, and when);
+            //   tmin/tmax   -- the range the device sees. [0, slots) = the table is ours; float bit
+            //                  patterns = it is another tensor's storage.
+            if (cgc_s1_ss_dbg) {
+                auto it_t = cache_slot_table_tensors.find(il);
+                auto it_g = cache_slots_out_tensors.find(il);
+                auto it_s = cgc_s1_ss_dbg_snap.find(il);
+                ggml_tensor * tbt = it_t != cache_slot_table_tensors.end() ? it_t->second : nullptr;
+                ggml_tensor * gth = it_g != cache_slots_out_tensors.end() ? it_g->second : nullptr;
+                if (tbt != nullptr && tbt->data != nullptr && it_s != cgc_s1_ss_dbg_snap.end() &&
+                        !it_s->second.pub.empty() &&
+                        (int64_t) it_s->second.pub.size() == (int64_t) s1_ec->n_expert) {
+                    std::vector<int32_t> tbuf(it_s->second.pub.size());
+                    ggml_backend_tensor_get(tbt, tbuf.data(), 0, tbuf.size() * sizeof(int32_t));
+                    int64_t tdiff = 0;
+                    int32_t tmin = INT32_MAX, tmax = INT32_MIN;
+                    for (size_t e = 0; e < tbuf.size(); ++e) {
+                        if (tbuf[e] != it_s->second.pub[e]) { tdiff += 1; }
+                        if (tbuf[e] < tmin) { tmin = tbuf[e]; }
+                        if (tbuf[e] > tmax) { tmax = tbuf[e]; }
+                    }
+                    int64_t gdiff = -1;
+                    const char * gnote = "no-gather-tensor";
+                    if (gth != nullptr && gth->data != nullptr && cgc_is_i32_n(gth, ntot) &&
+                            gth->ne[0] == idc->ne[0] && gth->ne[1] == idc->ne[1]) {
+                        std::vector<int32_t> gbuf((size_t) ntot);
+                        ggml_backend_tensor_get(gth, gbuf.data(), 0, (size_t) ntot * sizeof(int32_t));
+                        gdiff = 0;
+                        for (int64_t i = 0; i < ntot; ++i) {
+                            const int32_t e = ibuf[(size_t) i];
+                            const int32_t want = (e >= 0 && (size_t) e < tbuf.size()) ? tbuf[(size_t) e] : -1;
+                            if (gbuf[(size_t) i] != want) { gdiff += 1; }
+                        }
+                        gnote = "gather-readback";
+                    }
+                    fprintf(stderr, "CGC-S1-SS-DLV: step=%llu il=%d ptr_moved=%d table_diff=%lld/%zu "
+                                    "tmin=%d tmax=%d gather_diff=%lld (%s)\n",
+                            (unsigned long long) cgc_s1_ss_vsteps, il,
+                            (int) (tbt->data != it_s->second.ptr), (long long) tdiff, tbuf.size(),
+                            (int) tmin, (int) tmax, (long long) gdiff, gnote);
+                }
+            }
+            s1_step_layers += 1;
+            s1_step_sel += (uint64_t) nsel;
+            s1_step_cold += (uint64_t) ncold;
+            if (cgc_s1_ss_vsteps < 3) {
+                fprintf(stderr, "CGC-S1-SS-LAYER: vstep=%llu il=%d nsel=%lld cold=%lld\n",
+                        (unsigned long long) cgc_s1_ss_vsteps, il,
+                        (long long) nsel, (long long) ncold);
+            }
+        }
+        if (s1_step_layers > 0) {
+            cgc_s1_ss_steps += 1;
+            cgc_s1_ss_sel   += s1_step_sel;
+            cgc_s1_ss_cold  += s1_step_cold;
+            if (cgc_s1_ss_vsteps < 12 || cgc_s1_ss_steps % 200 == 0) {
+                fprintf(stderr, "CGC-S1-SS: vstep=%llu layers=%llu nsel=%llu cold=%llu "
+                                "(cold = consumed ids with NO real slot at publish time; a cold "
+                                "position reads the ZERO slot -> its contribution is lost)\n",
+                        (unsigned long long) cgc_s1_ss_vsteps, (unsigned long long) s1_step_layers,
+                        (unsigned long long) s1_step_sel, (unsigned long long) s1_step_cold);
+            }
+        }
+        cgc_s1_ss_vsteps += 1;
+    }
+
+    // [CGC 2026-10-02 S1 single-submit · COST] Same decomposition as CGC-FAST-COST on purpose, but
+    // a SEPARATE line so no existing parser's field list moves. Decode-gated for the same reason the
+    // FAST line is (llama-bench's `-d` sweep pushes seconds-scale prefill steps through this
+    // function; mixing them in made `submit` useless as a per-decode-step number):
+    //   publish - the pre-submit whole-table sweep for every S1 layer (this arm's entire fixed cost
+    //             when the witness is off; the thing the 41-seg arm does NOT pay);
+    //   submit  - submit + drain (the 41 waits + hooks + submits of the segmented loop collapse into
+    //             this one span, so the two arms' same-named fields are the A/B);
+    //   sync    - the witness's drain;  read - the witness's n_layer x k int32 readbacks.
+    if (cgc_s1_ss && cgc_fast_cost) {
+        if (s1_step_decode) {
+            static uint64_t s1_c_steps = 0, s1_c_pub = 0, s1_c_submit = 0, s1_c_sync = 0,
+                            s1_c_read = 0;
+            s1_c_steps  += 1;
+            s1_c_pub    += (uint64_t) s1_pub_us;
+            s1_c_submit += (uint64_t) fc_submit_us;
+            s1_c_sync   += (uint64_t) s1_sync_us;
+            s1_c_read   += (uint64_t) s1_read_us;
+            if (s1_c_steps <= 12 || s1_c_steps % 200 == 0) {
+                const double n = (double) s1_c_steps;
+                // [CGC 2026-10-02 S1 single-submit · `cold=0/0` IS NOT "cold is zero"] The cold count
+                // accumulates ONLY inside the CGC_S1_SS_VERIFY block -- the only reader of the true
+                // ids, and the only place that pays a drain the speed arm must not pay. So a speed
+                // run prints the raw counters as `cold=0/0`, which reads as "no step ever needed a
+                // fill" while it actually means "the counter never ran": the same ambiguity that
+                // CGC_FAST_VERIFY's cmp= was added to kill (2026-10-02, cross-line review, read it
+                // exactly that way). Printed as `na(witness-off)` now. The measured value with the
+                // witness ON is 272 of 640 consumed ids on the FIRST decode step (42.5%, 08:39 run).
+                // clamped_all answers a DIFFERENT question (table entries that map to a non-resident
+                // expert at publish time: 4520 of 40 x 143 = 5720 per step here); it is not a cold
+                // count and a zero/absent cold beside it is not evidence that residency was fine.
+                char s1_cold_buf[64];
+                if (cgc_s1_ss_verify) {
+                    snprintf(s1_cold_buf, sizeof(s1_cold_buf), "%llu/%llu",
+                             (unsigned long long) cgc_s1_ss_cold,
+                             (unsigned long long) cgc_s1_ss_sel);
+                } else {
+                    snprintf(s1_cold_buf, sizeof(s1_cold_buf), "na(witness-off)");
+                }
+                fprintf(stderr, "CGC-S1-SS-COST: dstep=%llu avg_usec publish=%.1f submit=%.1f "
+                                "sync=%.1f read=%.1f | total=%.1f | pub_layers=%llu clamped_all=%llu "
+                                "cold=%s\n",
+                        (unsigned long long) s1_c_steps,
+                        (double) s1_c_pub / n, (double) s1_c_submit / n,
+                        (double) s1_c_sync / n, (double) s1_c_read / n,
+                        (double) (s1_c_pub + s1_c_submit + s1_c_sync + s1_c_read) / n,
+                        (unsigned long long) cgc_s1_ss_pub_layers,
+                        (unsigned long long) cgc_s1_ss_clamped_all,
+                        s1_cold_buf);
+            }
+        } else {
+            cgc_s1_ss_skip += 1;
+        }
+    }
+
+    // [CGC 2026-10-02 FAST cost split] Accumulate + print. Placed OUTSIDE the FAST-engaged block on
+    // purpose: the control (41-segment) arm must print too, or there is no baseline to subtract.
+    // Read it as: `submit` is what the arm does instead of 41 segment submits; `fixed` is what it
+    // pays for the privilege (ensure + drain + readback + compare). fixed > (41 x T_sub saved) is
+    // exactly the case where single-submit cannot pay.
+    // DECODE-ONLY GATE (2026-10-02): the remap leaf is [n_expert_used, n_tokens], so ne[1] == 1
+    // identifies a single-token decode step. llama-bench's `-d` depth sweep pushes seconds-scale
+    // prefill steps through this same function; mixing them in made `submit` useless as a
+    // per-decode-step number (it read 355 ms vs 287 ms -- pure prefill mass, not the arm). Only
+    // decode steps accumulate now, and `skipped` reports the excluded count so the gate is auditable
+    // rather than a silent filter.
+    if (cgc_fast_cost) {
+        bool fc_is_decode = false;
+        if (!cache_remap_tensors.empty()) {
+            ggml_tensor * fc_any = cache_remap_tensors.begin()->second;
+            if (fc_any != nullptr) fc_is_decode = (fc_any->ne[1] == 1);
+        }
+        if (!fc_is_decode) {
+            cgc_fc_skip += 1;
+        } else {
+            cgc_fc_steps  += 1;
+            cgc_fc_ensure += (uint64_t) fc_ensure_us;
+            cgc_fc_submit += (uint64_t) fc_submit_us;
+            cgc_fc_sync   += (uint64_t) fc_sync_us;
+            cgc_fc_read   += (uint64_t) fc_read_us;
+            cgc_fc_verify += (uint64_t) fc_verify_us;
+            if (cgc_fc_steps <= 12 || cgc_fc_steps % 200 == 0) {
+                const double n = (double) cgc_fc_steps;
+                fprintf(stderr, "CGC-FAST-COST: dstep=%llu avg_usec ensure=%.1f submit=%.1f sync=%.1f "
+                                "read=%.1f verify=%.1f | fixed=%.1f total=%.1f | taken=%llu skipped=%llu\n",
+                        (unsigned long long) cgc_fc_steps,
+                        (double) cgc_fc_ensure / n, (double) cgc_fc_submit / n,
+                        (double) cgc_fc_sync   / n, (double) cgc_fc_read / n,
+                        (double) cgc_fc_verify / n,
+                        (double) (cgc_fc_ensure + cgc_fc_sync + cgc_fc_read + cgc_fc_verify) / n,
+                        (double) (cgc_fc_ensure + cgc_fc_submit + cgc_fc_sync + cgc_fc_read + cgc_fc_verify) / n,
+                        (unsigned long long) cgc_fast_taken, (unsigned long long) cgc_fc_skip);
+            }
+        }
+    }
+
+    // [CGC 2026-09-30 · S2-c] ρ 的投遞通路（單段提交臂）。──────────────────────────────────
+    //
+    // 洞在哪（不是「猜不中」，是通路不存在）：`CGC_SEG_BATCH=1` 不跑 per-layer hook，也不跑
+    // `ggml-backend.cpp` 那次分段轉發 ⇒ `expert_cache_eval_cb`（`:4875`）從不被呼叫 ⇒
+    //   (1) `cgc_rho_capture(t)`（:4738）不跑 ⇒ `g_rho_logits` 全空；
+    //   (2) `cgc_rho_prefetch(il)`（:4782）不跑 ⇒ 預測永遠不變成 IO —— 它在 `g_rho_logits[ul].empty()`
+    //       守衛直接 return。
+    //
+    // 接在哪：本函式**已經**在上方非同步提交、並在 `CGC_RB_FEED` 區塊同步讀回一次本步的 ids ⇒
+    // 影子節點是同一份 graph 的節點，所以在這裡它的值就是**本步**的。提前量要講清楚：單段臂
+    // 沒有逐層 dispatch ⇒ 本步的 FFN 讀取早已過去 ⇒ 這裡發起的 fill 只能**預付下一步**的
+    // union。這正是「補投遞通路」的意思。
+    //
+    // 成本（不得算成免費）：每層 `n_expert × n_tokens × 4 B` 的 device→host 讀回；decode 形狀
+    // （ne=[256,1]）＝1 KiB/層。同步沿用上面的 drain —— 上面的 ids 讀回區塊本來就同步過一次；
+    // 只有在它沒跑（沒有 `CGC_MISS_MASK_DBG` 也沒有 `CGC_RB_FEED`）時，才由本區塊自己補一次
+    // （`s2c_synced`），因為讀裝置張量之前一定要有一次同步。
+    //
+    // ⛔ 語意逐條比照 cb，不另立門檻：相位閘用 `cgc_is_decode_graph`（本 repo 唯一的相位判據）、
+    //   capture 用 `cgc_rho_capture`（它的 stamp 記帳原封不動）、投遞用 `cgc_rho_prefetch`
+    //   （含它自己的 `CGC_RHO_FILL` 與層容量閘）。
+    // ⛔ 只在 `cgc_rb_seg_batch` 上生效 ⇒ 誠實臂（不設 `CGC_SEG_BATCH`）與所有既臂位元相同。
+    static const bool cgc_s2c_rho = getenv("CGC_RHO_PROBE") != nullptr;
+    if (cgc_rb_seg_batch && cgc_s2c_rho) {
+        const bool s2c_synced = (cgc_miss_mask_dbg || cgc_rb_feed);
+        if (!s2c_synced) {
+            ggml_backend_sched_synchronize(sched.get());
+        }
+        static uint64_t s2c_steps = 0, s2c_layers = 0, s2c_bytes = 0, s2c_preskip = 0;
+        s2c_steps += 1;
+        uint64_t s2c_layers_step = 0, s2c_bytes_step = 0;
+        const int s2c_n_nodes = ggml_graph_n_nodes(gf);
+        for (int s2c_i = 0; s2c_i < s2c_n_nodes; ++s2c_i) {
+            ggml_tensor * s2c_t = ggml_graph_node(gf, s2c_i);
+            // 名字前綴與 cb 的判據同一個：`cgc_rho_logits-<il>`（qwen35moe.cpp 的 `cb(...)` 命名）。
+            if (s2c_t == nullptr || s2c_t->data == nullptr ||
+                    strncmp(s2c_t->name, "cgc_rho_logits-", 15) != 0) {
+                continue;
+            }
+            if (!cgc_is_decode_graph((int64_t) s2c_t->ne[1], cgc_decode_max_tokens)) {
+                // 印一次就好，理由與 cb 的 PHASE-SKIP 相同：讓「閘真的擋了」可觀測，而不是靜默沒跑。
+                static bool s2c_skip_printed = false;
+                if (!s2c_skip_printed) {
+                    s2c_skip_printed = true;
+                    fprintf(stderr, "CGC-RHO-S2C-SKIP: ntok=%lld > decode_width=%u -- shadow capture "
+                                    "and rho fill are decode-only\n",
+                            (long long) s2c_t->ne[1], cgc_decode_max_tokens);
+                }
+                s2c_preskip += 1;
+                continue;
+            }
+            cgc_rho_capture(s2c_t);
+            s2c_layers_step += 1;
+            s2c_bytes_step += (uint64_t) ggml_nbytes(s2c_t);
+            const char * s2c_dash = strrchr(s2c_t->name, '-');
+            if (s2c_dash != nullptr) {
+                // [CGC 2026-10-01 · NaN#2 guard] under single-submit the ρ fill produced all-NaN
+                // dumps (alias / double-claim with the step's readback). Keep the capture above for
+                // accounting; skip the prefetch/fill here -- it is deferred to engine surgery (task #190).
+                if (!cgc_rb_seg_batch) {
+                    cgc_rho_prefetch(atoi(s2c_dash + 1));   // 含 CGC_RHO_FILL 與層容量閘
+                }
+            }
+        }
+        s2c_layers += s2c_layers_step;
+        s2c_bytes  += s2c_bytes_step;
+        // 見證行：單段臂需要自己的等價行，否則「沒送達」與「送達但沒記帳」在事後分不開。
+        // 有界：前 12 步 ＋ 每 200 步。
+        if (s2c_steps <= 12 || s2c_steps % 200 == 0) {
+            fprintf(stderr, "CGC-RHO-S2C: steps=%llu layers=%llu bytes=%llu preskip=%llu "
+                            "(single-submit delivery; layers/step=%.1f)\n",
+                    (unsigned long long) s2c_steps, (unsigned long long) s2c_layers,
+                    (unsigned long long) s2c_bytes, (unsigned long long) s2c_preskip,
+                    s2c_steps ? (double) s2c_layers / (double) s2c_steps : 0.0);
         }
     }
 
@@ -6421,9 +7486,52 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
     // empty prediction and "the flag is on" would be indistinguishable from "the flag is off".
     static const bool cgc_layer_ahead = getenv("CGC_LAYER_AHEAD_PREFETCH") != nullptr &&
                                         getenv("CGC_LAYER_AHEAD_PREFETCH")[0] == '1';
-    if ((cgc_prev_token_prefetch || cgc_layer_ahead) &&
+    // [CGC 2026-10-01 Y-accel] The FAST arm needs this prediction source too. The single-submit
+    // path skips this hook entirely, so prev_token_expert_ids can only be filled here (during the
+    // 41-seg bootstrap / forced steps) and refreshed from the true ids by the FAST post-submit
+    // fallback. This collection is INERT bookkeeping -- it records ids into a vector; no compute,
+    // no residency change -- so enabling it under CGC_SEG_BATCH_FAST leaves the 41-seg numbers
+    // alone. That is what keeps a FAST run comparable to the reference without needing
+    // CGC_PREV_TOKEN_PREFETCH (whose ensure/prefetch trigger DOES change residency, i.e. not
+    // numerics-neutral, and so is deliberately NOT registered in the gate's DIAGNOSTIC_KEYS).
+    static const bool cgc_seg_batch_fast_collect = getenv("CGC_SEG_BATCH_FAST") != nullptr;
+    if ((cgc_prev_token_prefetch || cgc_layer_ahead || cgc_seg_batch_fast_collect) &&
         cparams.ctx_type == LLAMA_CONTEXT_TYPE_DEFAULT && n_tokens >= 1 &&
         il >= 0 && (size_t) il < cache->curr_token_expert_ids.size()) {
+        // [CGC 2026-10-02 FAST state-machine probe] The FAST probe showed prev_token_expert_ids
+        // matching NO recent true ids (not t, not t-1, not t-2, no other layer: xl/xt = -1), i.e. the
+        // prediction is frozen, while the leaf write itself is faithful (leaf_bad=0). This line is the
+        // hook half of the witness: it prints the state JUST BEFORE the il==0 swap, so "the collect
+        // stopped running" and "the collect runs but swaps the same vector" are distinguishable.
+        // Diagnostic only, prints for the first 12 il==0 hook invocations, changes nothing.
+        {
+            static const bool cgc_probe_collect = getenv("CGC_FAST_PROBE") != nullptr;
+            static uint64_t cgc_probe_collect_n = 0;
+            // per-step layer counter: how many layers this hook pass actually collected. If a hook
+            // pass stops at layer N, `curr` is a MIX of two steps and the swapped `prev` is a mix too
+            // -- which is what "pred matches nothing, as a whole vector" looks like from outside.
+            static uint64_t cgc_probe_layers_prev_step = 0;
+            static uint64_t cgc_probe_layers_this_step = 0;
+            if (il == 0) {
+                cgc_probe_layers_prev_step = cgc_probe_layers_this_step;
+                cgc_probe_layers_this_step = 0;
+            }
+            cgc_probe_layers_this_step += 1;
+            if (cgc_probe_collect && il == 0 && cgc_probe_collect_n < 12) {
+                cgc_probe_collect_n += 1;
+                const auto & pv0 = cache->prev_token_expert_ids[0];
+                const auto & cu0 = cache->curr_token_expert_ids[0];
+                fprintf(stderr, "CGC-FAST-PROBE-COLLECT: seq=%llu ev=%llu ntok=%lld prev_layers=%llu "
+                                "ids=[%d %d %d %d] ids0=%d prev0=%d curr0=%d prev_n=%zu curr_n=%zu prev_ok=%zu\n",
+                        (unsigned long long) cgc_probe_step_seq(),
+                        (unsigned long long) cgc_probe_collect_n, (long long) n_tokens,
+                        (unsigned long long) cgc_probe_layers_prev_step,
+                        (int) ids[0], (int) ids[1], (int) ids[2], (int) ids[3], ids[0],
+                        pv0.empty() ? -1 : (int) pv0[0], cu0.empty() ? -1 : (int) cu0[0],
+                        cache->prev_token_expert_ids.size(), cache->curr_token_expert_ids.size(),
+                        (size_t) std::count(cache->prev_token_valid.begin(), cache->prev_token_valid.end(), true));
+            }
+        }
         // At il==0, swap prev<->curr: prev now holds the complete previous token's ids,
         // curr starts collecting the current token's ids.
         if (il == 0) {
@@ -6433,11 +7541,21 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
                 cache->prev_token_valid[l] = !cache->prev_token_expert_ids[l].empty();
             }
         }
-        // Collect current token's first-token expert ids (j=0 offset is 0)
+        // [CGC 2026-10-01 Y-accel] Collect the CURRENT step's expert ids for ALL tokens (token-major,
+        // ids[i + j*n_expert_used]), not just token 0's. The FAST arm needs a prediction covering
+        // every token in the step: on this box decode steps run with n_tokens == 2 (MTP verify,
+        // see CGC-HOOK "ntok=2"), so a token-0-only prediction leaves half the remap unpredicted and
+        // FAST would route every step to the 41-seg loop -- i.e. a green M1 that proves nothing.
+        // Capped at the decode width (8): prefill-scale steps (thousands of tokens) are not predicted
+        // at all (they route to 41-seg anyway) and buffering them would be pure waste. Leaving `dst`
+        // untouched above the cap also keeps the last decode-scale prediction available for the swap.
         std::vector<uint32_t> &dst = cache->curr_token_expert_ids[il];
-        dst.resize((size_t) n_expert_used);
-        for (int64_t i = 0; i < n_expert_used; ++i) {
-            dst[i] = (uint32_t) ids[i];  // j=0 offset is 0
+        if (n_tokens >= 1 && n_tokens <= 8) {
+            const size_t want = (size_t) n_expert_used * (size_t) n_tokens;
+            dst.resize(want);
+            for (size_t k = 0; k < want; ++k) {
+                dst[k] = (uint32_t) ids[k];
+            }
         }
         if (getenv("CGC_PREV_PF_DBG") != nullptr) {  // [CGC 2026-09-24] all layers (was il<=1) for B-scheme layer-accuracy measurement
             fprintf(stderr, "CGC-PREV-PF: collect il=%d ntok=%lld ids=[%u %u %u %u %u %u %u %u]\n",

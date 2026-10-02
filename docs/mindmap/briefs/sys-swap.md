@@ -50,8 +50,9 @@ launch swap 0、decode 11.49、thermal NOMINAL（commit efba7c1d5）
 | 依據 | `docs/SWAP_STRUCTURAL_FIX_2026-09-24.md／SWAP_P0P1P2_FIX_*` |
 | 備註 | ⚠ 執行線主張、本線未複核；另判「pool 納入 wired 級管理」不建議 |
 | 軸性質 | 非攻關軸：約束／帳本／上界算術／入口索引／跨線產品 |
-| 對應報告 | 2 份 |
+| 對應報告 | 3 份 |
 
+- [SWAP_GROWTH_GATE_2026-09-28.md](../../SWAP_GROWTH_GATE_2026-09-28.md)
 - [SWAP_P0P1P2_FIX_20260924_1400.html](../../SWAP_P0P1P2_FIX_20260924_1400.html)
 - [SWAP_STRUCTURAL_FIX_2026-09-24.md](../../SWAP_STRUCTURAL_FIX_2026-09-24.md)
 

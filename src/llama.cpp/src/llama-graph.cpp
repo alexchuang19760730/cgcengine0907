@@ -2172,6 +2172,10 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     // binaries in src/llama.cpp/build/bin finds zero hits. See
     // docs/STEP23_BLOCKER_AND_RECOVERY_2026-09-26.md §1. That is why it goes in WITH the commit.
     static const bool cgc_miss_mask = getenv("CGC_MISS_MASK") != nullptr;
+    // [CGC 2026-10-01 Y-accel · (b)] FAST single-submit flag. When set, build_moe_ffn's host-leaf
+    // branch captures ffn_moe_ids_cont (true routed expert ids) so the post-submit readback in
+    // llama-context.cpp can verify residency and redo via the 41-segment loop on a miss.
+    static const bool cgc_seg_batch_fast = getenv("CGC_SEG_BATCH_FAST") != nullptr;
     // [CGC 2026-09-15 S1 layer-0 gate] The GPU table must be used ONLY for layers whose MoE FFN is
     // actually offloaded to Metal. Layer 0 is not: in the prod25 profile its expert tensors keep
     // their full size (blk.0.ffn_gate_exps = 82M vs 45M for blk.1) and live in the BLAS buffer, so
@@ -2555,6 +2559,17 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         cb(remap, "ffn_moe_topk_remap", il);
         ggml_build_forward_expand(gf, remap);
         remap_ids = remap;
+        // [CGC 2026-10-01 Y-accel · (b)] Capture the true routed expert ids (selected_experts) into
+        // ffn_moe_ids_cont so the FAST single-submit path can read them back after submit and verify
+        // residency (fallback redo on miss). Gated by CGC_SEG_BATCH_FAST so the default graph is
+        // byte-identical to the reference (FAST is in the gate's DIAGNOSTIC_KEYS). The copy is
+        // numerics-neutral: consumed by nothing else, it cannot change any computed tensor.
+        if (cgc_seg_batch_fast) {
+            ggml_tensor * ids_cap = ggml_cont(ctx0, selected_experts);
+            ggml_set_output(ids_cap);
+            cb(ids_cap, "ffn_moe_ids_cont", il);
+            ggml_build_forward_expand(gf, ids_cap);
+        }
         }
     }
 

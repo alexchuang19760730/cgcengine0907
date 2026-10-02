@@ -24,7 +24,9 @@ WHAT IT CHECKS
 
 1. **有沒有吞吐主張**：`res` 裡的 `N t/s`、`best`（`metric`/`tg`/`pp`）、`target_gap.<axis>.current`。
    三者都沒有 ⇒ `N/A`（不是通過，是「這一節點不主張吞吐」）。
-2. **有沒有出處可查**：`best.log` 或 `runs[].log` 指向的產物 json（repo 相對路徑）。
+2. **有沒有出處可查**：有 `best` ⇒ 成績出處就是 `best.log`（寫入端只挑**乾淨**的 run 當 best；
+   `runs[]` 是其餘歷史，各自在 brief 上帶判定，不是這條數字的出處）。沒有 `best`、或 `res`
+   里的 t/s 與 best 的數字對不上 ⇒ 退回 `runs[].log` **全檢**（fail-closed）。
 3. **那個產物是不是乾淨的**：讀出對應臂的 `attribution.verdict`（與 `thermal_worst`）。
    乾淨的定義沿用 `memory_pressure.attribute()` 的唯一乾淨標籤 **`none`**
    （`swap` / `both` / `thermal` / `contention` 都不乾淨）。
@@ -217,8 +219,36 @@ def leaderboard_provenance(entry: dict) -> list:
     return out
 
 
+def _best_only(entry: dict) -> bool:
+    """成績面是不是「best 支撐」的形狀：有 `best.log`，且 `res` 里的 t/s（若有）與 best 的數字一致。
+
+    寫入端 `experiment_sync._recompute_result`（2026-09-28 起）只從**乾淨**的 run 挑 best，
+    再拿它重算 `res`／`target_gap` ⇒ 有 best 時，`runs[]` 是歷史、不是成績的出處。
+    數字對不上（人寫的判詞帶了別的 t/s、或有人手改）⇒ 不採 best-only，退回 runs 全檢。
+    """
+    best = entry.get("best")
+    if not (isinstance(best, dict) and best.get("log")):
+        return False
+    nums = [float(x) for x in TS_RE.findall(str(entry.get("res") or ""))]
+    if not nums:
+        return True
+    bnum = best.get(best.get("metric") or "tg")
+    if not isinstance(bnum, (int, float)):
+        return False
+    return all(abs(n - float(bnum)) <= 0.01 for n in nums)
+
+
 def provenance(entry: dict) -> list:
-    """回這個節點指向的產物（repo 相對路徑 ＋ 期望的臂 tag）。"""
+    """回這個節點的**成績出處**（repo 相對路徑 ＋ 期望的臂 tag）。
+
+    2026-10-01：有 best 且 res 對得上時，出處只有 `best.log`；`runs[]` 是歷史。舊語意把兩者
+    混為一談 → 「有一份乾淨認證、但歷史裡有髒 run」的節點（`exp-singlesubmit-fillahead`）
+    永遠判紅，而寫入端同一個節點已把 27.26 認成可引用讀數 —— 兩支工具互相矛盾。
+    沒有 best（或數字對不上）⇒ 退回 runs 全檢，維持原本的 fail-closed 行為。
+    """
+    if _best_only(entry):
+        best = entry["best"]
+        return [(str(best["log"]), best.get("arm"))]
     out = []
     best = entry.get("best")
     if isinstance(best, dict) and best.get("log"):
@@ -229,6 +259,13 @@ def provenance(entry: dict) -> list:
     if not out:
         out = leaderboard_provenance(entry)
     return out
+
+
+def history_runs(entry: dict) -> list:
+    """只為了「看得見」：best-only 路徑下被排除在出處之外、但仍在 runs[] 的歷史筆。"""
+    if not _best_only(entry):
+        return []
+    return [r for r in (entry.get("runs") or []) if isinstance(r, dict) and r.get("log")]
 
 
 def pick_arm(arms: list, tag) -> tuple:
@@ -374,6 +411,9 @@ def evaluate(entry: dict, root: str, allow: set) -> dict:
     if not errs and not seen_verdicts and not unbound and not unpaired and clean_ok:
         rec["verdict"] = V_CLEAN
         rec["why"] = "所有出處都乾淨：%s" % "；".join(clean_ok)
+        hist = history_runs(entry)
+        if hist:
+            rec["why"] += "；另有 %d 筆歷史 run 不列入出處（各自帶判定，見 runs）" % len(hist)
         rec["evidence"] = prov[0][0]
         return rec
 
@@ -526,6 +566,21 @@ def self_test() -> int:
         expect("... and picks the dirty one when the tag says so",
                evaluate(entry(res="", best=dict(metric="tg", tg=12.3, arm="armA", log=clean_tag)),
                         root, allow)["verdict"], V_VOID_RESULT)
+        # 11b) 2026-10-01：成績出處＝best；runs[] 是歷史（寫入端只把乾淨的 run 放上 best）
+        expect("a clean best wins over a dirty history run",
+               evaluate(entry(best=dict(metric="tg", tg=12.3, log=clean),
+                              runs=[dict(log=swp, arm="prod-new")]), root, allow)["verdict"], V_CLEAN)
+        expect("... but with no best the dirty run still refuses the claim",
+               evaluate(entry(runs=[dict(log=swp, arm="prod-new")]), root, allow)["verdict"],
+               V_VOID_RESULT)
+        expect("... and a res number that is not best's number falls back to the runs (fail-closed)",
+               evaluate(entry(res="decode 9.94 t/s", best=dict(metric="tg", tg=12.3, log=clean),
+                              runs=[dict(log=swp, arm="prod-new")]), root, allow)["verdict"],
+               V_VOID_RESULT)
+        expect("... and the why still shows the excluded history count",
+               "歷史" in evaluate(entry(best=dict(metric="tg", tg=12.3, log=clean),
+                                        runs=[dict(log=swp, arm="prod-new")]), root, allow)["why"], True)
+
         # 12) 沒有吞吐主張 -> N/A（不是通過）
         expect("a node with no throughput claim is N/A",
                evaluate({"id": "n", "res": "churn 3026/14976（不報吞吐）"}, root, allow)["verdict"], V_NA)

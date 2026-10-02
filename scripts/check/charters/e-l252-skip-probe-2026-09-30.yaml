@@ -65,14 +65,16 @@ subgoals:
     text:   "env-gated 的 skip-probe（`CGC_SKIP_TINY_DISPATCH=1`，預設關；跳過輸出元素數 ≤8 的 dispatch，並印 VOID 標記）"
     expect: "旗標不在 ⇒ 樹行為逐位元不變；旗標在 ⇒ 機制照跑、stderr 印 VOID 標記（輸出必然錯）"
     how:    "圖建構處（`llama-graph.cpp` 的 tiny op 站點）＋一個共用閘；形狀要保留（只換值），否則下游會炸"
-    delivered: "**未落地**：本卡的 receptor（`scripts/check/skip_probe.py`）已就位，但 patch 本身尚未寫 —— 依 §3 的規矩『立項與那支 gated patch 要同一批落地』，這一格在 patch 進樹前維持 `BLOCKED`。⛔ 不要在 probe 之前先寫融合 kernel。"
+    delivered: "**已落地**（2026-10-01）：`CGC_SKIP_TINY_DISPATCH`（env-gated、預設關）在 `src/llama.cpp/src/llama-context.cpp` 的 `graph_compute()`；launcher 已轉送；VOID 標記 `CGC-SKIP-TINY` 在 ⇒ `skip_probe.py --check` = `RUNNABLE`。本輪另加有界診斷 `CGC-SKIP-TINY-NODE`（前 24 個被跳節點名＋形狀）與 `CGC-SKIP-TINY-ZERO`（被排除的 `elems=0` 節點）。⛔ 仍然不要在 probe 之前先寫融合 kernel。"
   - id: sg-skp-paired-run
     text:   "交付 cell 成對重跑（probe-off／probe-on、同一窗口、乾淨）"
     expect: "`skip_probe.py --judge` 判 `LEVER`／`DEAD`（Δstep ≥／< 1.2 ms）"
     how:    "`skip_probe.py --plan` 印出的兩條 `harness bench` 命令"
+    delivered: "**已跑**（2026-10-01 16:22）：build `e5d1c0f14`、交付 cell、A=`orderA3.json`／B=`orderB2.json`；兩臂 `attribution=none`、全 rep max/min **1.086／1.058**（≤1.10）、reps 3、NOMINAL。⛔ 首趟（14:34／14:35）與第二趟（A2）不可用：A2 的 `all_spread 1.1586>1.10` ⇒ receptor 判 `REFUSE`；首趟的 B 被路由崩塌帶壞。"
   - id: sg-skp-verdict
     text:   "判詞寫回看板 L25-2（LEVER ⇒ 新工作項；DEAD ⇒ 判死附機制）"
     expect: "`Backup/l252_skipprobe_<日期>/verdict.json` 落地"
+    delivered: "**已落地**：`Backup/l252_skipprobe_20261001/verdict.json`（`verdict: DEAD`、`delta_step_ms: -39.63`）＋判決文 `docs/L252_SKIP_PROBE_2026-10-01.md`；看板 L25-2 已改 `結案（排除）`（`settled: true`）。"
 
 # ── 【臂】──
 arms:
@@ -83,9 +85,15 @@ arms:
 
 # ── 【交付】──
 delivery:
-  patch: "（待寫）env-gated skip-probe；落地時與本卡同批 ⇒ `skip_probe.py --check` 由 BLOCKED 轉 RUNNABLE"
+  patch: "已落地（未提交）：env-gated skip-probe（`llama-context.cpp` 的 `graph_compute()`；另加 `CGC-SKIP-TINY-NODE`／`CGC-SKIP-TINY-ZERO` 有界診斷）⇒ `skip_probe.py --check` = RUNNABLE"
   receptor: "scripts/check/skip_probe.py（--check／--plan／--judge／--selftest）"
-  evidence: "Backup/l252_skipprobe_<日期>/{verdict.json,order{A,B}.json}；判詞由 receptor 的 `--judge` 產生（預註冊）"
+  evidence: "Backup/l252_skipprobe_20261001/{orderA3.json,orderB2.json,verdict.json}（＋診斷 log `order{B,B2}.stderr.log`）；判詞由 receptor 的 `--judge` 產生（預註冊）"
+  result: |
+    **2026-10-01 16:20 判詞＝`DEAD`**（`Δstep = −39.63 ms`；A 86.00 ms/step vs B 125.63；兩臂乾淨、`spread_ms` 10.76）
+    ⇒ `sg-kernel-busy` 與 L25-2 一起判死（附機制）。機制：被跳的正是 MoE **值路徑**（每層 5 顆 ×40；`shared_expert_gate`／
+    `ffn_moe_weights`／`..._sum`／`..._norm`／`..._sigmoid`）⇒ VOID ⇒ 下一層路由換人（`misses 4136→10609`、
+    `hit 96.8%→91.8%`、`cap% 12.5→37.7`）。**中性化已試且失敗**：排除 `elems=0` 的未命名 `GET_ROWS`
+    （`node_*`；slot／expert 表就是它取的）後 260→200 顆/步，崩塌照樣存在 ⇒ 這是 VOID 臂的內生性質。
   apply_and_run: |
     0) python3 scripts/check/skip_probe.py --check      # 旗標在不在、閘是不是 env-gated、VOID 標記有沒有
     1) （patch 落地後）python3 scripts/check/skip_probe.py --plan

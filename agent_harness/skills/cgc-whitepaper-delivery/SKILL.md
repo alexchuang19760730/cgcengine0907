@@ -6,7 +6,7 @@ agent_created: true
 
 > **這是快照，不是權威副本。**
 > 權威位置：`~/.workbuddy/skills/cgc-whitepaper-delivery/SKILL.md`（由 host 持續寫入）。
-> 本檔於 2026-09-20 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
+> 本檔於 2026-09-27 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
 > 底下的內容能被 `agent_harness/scripts/auto_git_push.ps1` 定時推送；原檔改了這裡**不會**自動跟上。
 > 要改 skill 請改原檔，再重跑 `python3 agent_harness/scripts/import_harness_snapshot.py`。
 
@@ -16,6 +16,18 @@ agent_created: true
 （**是 git worktree**，`.git` 是一個檔案 → `.../flashkv0516/.git/worktrees/flashkv-devserver`）
 
 ## 30 秒版
+
+> **先問是哪一種白皮書**：
+> ① **單篇主題白皮書**（`docs/<NAME>.html`，手寫、要跑現場閘門）→ 照本 skill 做。
+> ② **250/25 攻關「逐條目」白皮書**（`目標→判準→結果→判定`）→ **不要手寫**，
+>    用 `python3 scripts/check/mindmap_brief_build.py` 從 `docs/mindmap/mindmap.json` 機械生成
+>    （**html ＋ md 成對**：每條目 `<id>.html` ＋ `<id>.md`，總目錄 `index.html`／`index.md`；
+>    改內容改 JSON 的 `goal`/`crit`/`res`/`evid`/`note` 再重跑，**缺 goal 會紅**）。
+>    樣式對齊 `docs/S1_ASYNC_GATHER_PIPELINE_2026-09-25.html|md`：標題＋一句話 → 三卡
+>    （目標·判準／結果【大字】／判定）→ 四段卡 ①→②→③→④ → 對照表 → 依據表 → 底部黃框結論
+>    → 對應報告 → 導航。條目可選加 `diff`（差異三欄表）／`risks`（風險→驗證表）／
+>    `detail_html`（原始方案書 ↗）。入口掛在 `docs/mindmap/index.html` 頁首與單條面板的
+>    「技術白皮書 ↗」「MD ↗」。
 
 ```sh
 cd /Users/alexchuang/Documents/flashkv-devserver
@@ -61,6 +73,61 @@ python3 agent_harness/engine_loop/index_assets.py --check      # 要濾 OK:/erro
 **不要**引入 JS（除必要）；不要引入外部字型；不要用 emoji。
 
 ---
+
+## 1.5 必備章節（2026-09-25 operator 下令：缺一即不合格）
+
+任何白皮書／交付報告**必須**含這三節，且每節都能追溯到產物路徑：
+
+| 必備節 | 內容要求 | 不合格的樣態 |
+|---|---|---|
+| **A. TPOT 分解** | 每一個給出的 t/s 都要有對應的 **ms/token 分解**：拆成「不可避免 / 可回收 / 必須還回去」三段，各段標出**出處**（儀器 ＋ 產物） | 只給 t/s |
+| **B. decode 分段拆解** | decode 的 step 要拆到**分段層級**（`wait` / `cb` / `gap` / submit / fill），並標明每段是**同步阻塞**還是**可 overlap** | 只給總 step 時間 |
+| **C. prefill + decode 同報** | 兩者必須**同一次 launch 一起報**，各帶 thermal / swap | 只報一個（若真的只要一側，必須**明寫**） |
+
+- 示範產物：`docs/S1_TPOT_DECOMPOSITION_2026-09-25.html`（A 節該長什麼樣）。
+- 權威規則：`docs/MEASUREMENT_CONTRACT_2026-09-25.md` §1 —— 本節是它的摘錄，**衝突時以它為準**。
+- ⚠ 實測缺口：`docs/CGC_ENGINE_WHITEPAPER_2026-09-24.md` **缺 A 與 B**
+  （它有 §3.3「verify 通道分解」，但那不是 TPOT 分解、也沒有 decode 分段拆解）
+  ⇒ **下一次修訂必須補**（dated 產物不回改）。
+- 附帶要求（同 §1）：數字旁邊必須有 ① 產物路徑 ② 量測時間 ③ 口徑（shape/warm-skip/thermal/swap），
+  與 `docs/ASSERTION_PROTOCOL_2026-09-25.md` 的【實測】標籤一致。
+
+### 1.6 每次實驗畢，必須出「分解報告」（契約 §8）
+
+**不是只有里程碑才要報告 —— 每一輪 arm／每一組配對完成後，都要出一份 HTML 分解報告。**
+格式照這兩份範本：
+
+| 範本 | 示範什麼 |
+|---|---|
+| `docs/S1_TPOT_DECOMPOSITION_2026-09-25.html` | **TPOT 分解**（不可避免 / 可回收 / 必須還回去 ＋ 各段出處） |
+| `docs/MTP_AMORTIZATION_2026-09-25.html` | **攤薄分解**（`step = c0 + m·T`、每產出 token 成本、draft/verify 佔比、「還差多少」的算術） |
+
+報告必含四塊：**① 算術 ② 量測（標明哪些是實測、哪些是擬合）③ 拆解的小目標 ④ 邊界（不可與什麼併排）**。
+
+⚠ **這條規則是有實證理由的**：`MTP_AMORTIZATION` 就是靠**算出「每產出 token 成本」**才發現
+**「MTP 加速比 2」不成立**（需 verify 邊際 −55%）。**只報 t/s 是看不出來的。**
+
+### 1.7 子目標 S / M（契約 §4）
+
+分級落在 **③（實驗目標達成）** 的成果，必須標明屬於哪個子目標：
+- **S — 序列化消減**（41 段提交的同步，≈ 36.3 ms；step 88.5 → 48.2）
+- **M — MTP on 加速**（攤薄係數 `m` 與 accept rate；**現況攤薄 ≈ 0**）
+- **兩者**（需 S 與 M 同時成立，例：M-25）／**不適用**
+機檢：`scripts/check/arm_ledger_check.py`（selftest 18/18）。
+
+### 1.8 數字前先查「作廢登記表」（契約 §7）
+
+寫進報告的**任何數字**，先確認它**不在** `docs/MEASUREMENT_CONTRACT_2026-09-25.md`
+**§7 作廢數字登記表**裡。表內數字**不得作為決策依據**；若必須提及（歷史敘述），
+**同一段內要帶 `作廢`／`⛔` 標記**。
+
+首批作廢：**`9.82`（MTP off）／`12.62`（MTP on）／`+28.5%`** —— 皆 **HTTP 舊口徑、無 warm-skip**，
+且**現行生產口徑 MTP off 已 11.03~12.20 ⇒ 分母失效**。
+⇒ 寫「MTP 增益」時只能寫 **UNRESOLVED（交付 cell 缺配對量測）**，不可引用任何比值。
+
+⚠ **這是典型陷阱**：這組數字在 repo 裡有 **170+ 處**歷史引用（含多份白皮書），
+**「別人都寫了」不代表可用**。機檢 `scripts/check/void_number_check.py`（selftest 8/8）。
+依 `cgc-commit-gate` 的規矩，**每支臂／每份報告都跑一次它**。
 
 ## 2. 取材清單（這是白皮書的「事實來源」，不是參考資料）
 

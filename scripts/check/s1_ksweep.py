@@ -62,6 +62,7 @@ import server_window as sw          # noqa: E402  the shared probe + window taxo
 import io_symmetry as ios           # noqa: E402  arms must also be I/O-symmetric to each other
 import thermal_pressure as tp       # noqa: E402  the OS thermal level, the tree's own instrument
 import memory_pressure as mp        # noqa: E402  swap/wired, and the attribution rule between them
+import llama_bench_matrix as lbm    # noqa: E402  §3.4.1 的共用面（budget_gate.sh 的 Python 包裝）
 
 BENCH = ROOT / "src/llama.cpp/build/bin/llama-bench"
 MODEL = ROOT / "models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf"
@@ -385,6 +386,20 @@ def main():
         for arm, k in ARMS:
             print(f"  {arm:7s} T={k+1 if k is not None else 1}  {' '.join(cmd_for(k))}")
         return 0
+
+    # ── [CGC 2026-10-01, MEASUREMENT_CONTRACT §3.4.1] launch 前的超訂預檢 ──
+    # pool 3072 MiB 是 budget_preflight 口徑下最大的一組（13030 + 3072 ≤ 16384）⇒ strict 正常
+    # 放行；它哪天紅了，就代表這條臂要的資源在這台盒子上不再合法，應在第一支樣本之前停下來。
+    gate_env = dict(os.environ, POOL_BYTES=str(POOL_BYTES), MODEL=str(MODEL), LOAD_MODE="none")
+    rc, log = lbm.budget_gate_preflight(gate_env)
+    print(log.strip())
+    if rc != 0:
+        print(f"[budget-gate] 拒跑（rc={rc}）：本臂的 pool 在這台盒子上不合法。要硬跑：BUDGET_GATE=warn。",
+              file=sys.stderr)
+        return rc
+    if gate_env.get("CGC_BUDGET_OVERSUBSCRIBED") == "1":
+        os.environ["CGC_BUDGET_OVERSUBSCRIBED"] = "1"   # env_for() 從 os.environ 抄 ⇒ 每支臂都帶標記
+
     if not win["admits"]:
         if not a.wait_minutes:
             print("refusing: the box is not ours. Nothing launched.")

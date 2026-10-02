@@ -1,0 +1,152 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— e-l201-groups：L20-1 紅利的「分組提交」階梯
+#   用戶 2026-10-02 00:1x 拍板：先做低風險的分組版——41 段收成 k 組提交＋每組 ensure，
+#   量 Δstep 對 k 的曲線，再決定要不要走 FAST 單提交（k=1）。
+#   ⚠ 本卡是 e-l201-accel（FAST／Y）的**一般化**：同一套 predict-ensure /
+#      readback-verify / fallback 機制，「一次提交」換成「k 次提交」：
+#        k=41 ⇒ proven 逐段迴圈（byte-identical、86.8 ms/step 級）
+#        k=1  ⇒ 現行 FAST 臂（oracle 9/9 已過，但 taken=0 ⇒ 尚未接戰、無 Δstep）
+#      設計與 hunk 級規格：docs/L201_GROUPED_SUBMIT_DESIGN_2026-10-02.md。
+#   ⚠ 執行歸屬（能量衝突）：ace 於 2026-10-02 00:00:51 仍在改
+#      src/llama.cpp/src/llama-context.cpp，00:01–00:04 仍在跑 y-fast oracle
+#      ⇒ 落地前先拍「誰做／誰停手」，避免兩線同檔互踩（見本卡 §routing）。
+# ═══════════════════════════════════════════════════════════════════════
+id: e-l201-groups
+owner: 加速線（線 A / L20-1 後續）
+created: '2026-10-02'
+axis: S
+depends_on: e-l201-submit-path
+
+# ── 【目標】一個可判定的問題，且兩個答案都有意義 ──────────────────────────
+question: |
+  把 41 段收成 k 組提交（每組 submit 前 ensure 本組的預測專家、組後回讀真值，
+  失配**只重跑本組**），Δstep 對 k 的曲線是什麼形狀？
+  ⇒ 有 k* < 41 使 Δstep > 兩臂散布 ⇒ 分組紅利可交付（並定位 k*）。
+  ⇒ 全部 k 都不升（或單調）⇒ 分組不划算 ⇒ FAST（k=1）不立項、L20-1 紅利以「排除」結案。
+
+# ── 【現狀】權威基線 ───────────────────────────────────────────────────────
+baseline:
+  metric: "T_sub 中位 0.937 ms/提交（step≥64：1.007）⇒ 41 提交/步 ≈ 37.5–40.3 ms；
+           proven 迴圈 = 86.8 ms/step（同 session 11.52 t/s，17:0x k 掃描場，attribution=none）"
+  cell:   "prod-new（MTP off；分組只對單 token 步接戰，multi-token 依設計走 41 段迴圈）＋ harness bench"
+  source: "scripts/check/charters/e-l201-submit-path-2026-10-01.yaml（result: MECHANISM）；
+           Backup/l254_kaxis_20261001/off1,off2.json（同場錨點 11.518／11.537）"
+  known: |
+    - 現行 FAST（k=1）已編譯在樹上、oracle 9/9（Backup/m123_oracle_gate/summary_y-fast-nm2.json）。
+    - **2026-10-02 00:15 新證據（ace，本卡撰寫後 10 分鐘）**：長見證 `y-fast-nonmtp-long`
+      ⇒ M1/M2/M3 **222/222**、comparable=true（summary_y-fast-nonmtp-long.json）；
+      同場 server log（Backup/cgc_logs/llama_server_20261002_001438.log）
+      `step=200 taken=195 incomplete=5 mismatch=0 why=0` ⇒ 快路徑**已接戰 195/200、逐層預測 0 失配**
+      ⇒ 本卡 §2 的前提「p 可能低到 0.87」被實測削弱（p ≈ 1 的證據）。
+      ⚠ 兩點保留：(i) mismatch=0 的比對是否真的執行過，目前只有間接證據（輸出 222/222）；
+      (ii) 該見證的可比性靠把 `CGC_SEG_BATCH_FAST` 放進 DIAGNOSTIC_KEYS（＝先假定數值中性），
+      最乾淨的形態是**同場成對**（FAST off vs on、其餘逐字相同）。
+      (iii) **Δstep（k=1 的紅利）仍未量** ⇒ 本卡 k=1 欄的判詞仍待成對。
+    - 分組的省法＝邊界數 (41−k) × T_sub；代價＝(41−k) 個邊界改用預測，
+      組內失配時重跑本組 g 段（每段 proven 成本 ≈ 86.8/41 ≈ 2.1 ms）。
+    - k=41（＝proven 迴圈）是 byte-identical 的對照底；k 由 env 值決定（見規格 §旋鈕）。
+
+# ── 【假設】機制＋預期（給區間、須有依據）──────────────────────────────
+hypothesis:
+  mechanism: |
+    41 段非同步迴圈的固定成本有三塊（L20-1 已量：cb 6.755＋submit 10.020＋gap_sum 22.285
+    ms/步 ⇒ 每次提交 ≈0.937 ms）。分組後同一個 GPU pass 內不再回 CPU 做 wait→hook→submit，
+    只在組界做一次 ⇒ 省 (41−k)×T_sub；但組內 g−1 個 remap 邊界必須用**預測**寫死
+    （組首層用上一組回讀的**真值**，故每組只有 g−1 個預測邊界），失配 ⇒ 重跑本組。
+    預期曲線先升（提交紅利）後降（失配吞紅利）：k* 由逐邊界命中率 p 決定。
+  expected: |
+    Δstep(k=41)=0。若 p ≥0.95：k=8（g≈5）級有 +8~25 ms/step 的紅利；若 p ≈0.87：
+    最佳只在 k≈16–20（g≈2）且紅利 ≈+8 ms/step 級。
+    ⚠ 00:15 新證據（p ≈ 1、0 失配）⇒ 事前預期改成「曲線單調偏向 k=1」：
+    此時階梯的價值只剩兩件事 —— (a) 量 k=1 的紅利（成對）；(b) 在 p 會掉的形狀
+    （MTP-on verify 批、冷啟動、首 token）留一條可降級的退路。
+    ⇒ **先做成對 Δstep（k=1 vs 誠實臂）**，再決定要不要真的蓋 k 階梯。
+  basis: |
+    e-l201-submit-path result（T_sub）；e-l201-accel（predict-ensure/readback/fallback 機制）；
+    docs/L201_GROUPED_SUBMIT_DESIGN_2026-10-02.md §2 的 break-even 表（每組 g：
+    省 (g−1)×0.94 ms vs 失配 (1−p^(g−1))×g×2.1 ms）。
+
+# ── 【預註冊判決規則】跑之前寫死 ────────────────────────────────────────
+acceptance:
+  window_valid: |
+    (a) 每臂 rc=0 跑完；(b) 每臂計數器見證 ≥1 行（`CGC-GROUPS` 或 FAST 既有行）
+    ＋ 每臂配對 oracle M1/M2/M3 9/9（經組級 fallback 達成）；(c) Δstep 只在**同一場**
+    多臂間比較、髒窗標「診斷級」；t/s 一律不引用（承 L20-1：tps_claims=0）。
+  success: |
+    存在 k* < 41：Δstep(41→k*) > 兩臂散布 ∧ M1 9/9 ⇒ 分組紅利可交付；
+    並以整條 Δstep(k) 曲線定位 k*（U 形谷底）。
+  falsify: |
+    所有 k < 41 的 Δstep ≤ 兩臂散布（或曲線單調不升）⇒ 分組不划算 ⇒ 判 DEAD：
+    L20-1 紅利以「只在單提交路徑可回收、但預測/回退成本吞掉」結案；FAST 不立項。
+  decision_rule: |
+    「要不要走 FAST 單提交」由曲線判：FAST 只在
+      Δstep(k=1) − Δstep(k*) > 一輪兩臂散布
+    時才值得另立交付卡；否則 k*（或判死）即為 L20-1 的產品答案。
+  undecidable: |
+    k=1 臂 taken=0（快路徑未接戰）⇒ 只判 k=41…2 的曲線；k=1 欄記 UNRESOLVED，
+    不得拿「9/9 但它其實走了 41 段」當 FAST 的證據。
+  on_fail: |
+    DEAD ⇒ 回填本卡、e-l201-submit-path 的 next、看板 L20-1 與 docs/S1_FLOOR_ARM_ATTRIB。
+
+# ── 【量化目標】機器可讀 ────────────────────────────────────────────────
+targets:
+  k_sweep: [41, 16, 8, 4, 2, 1]
+  delta_step_ms_min: 5.0        # 低消門檻（超出兩臂散布才算；不設上界）
+  submits_per_step: "= k"       # 計數器：每步提交數
+  tps_claims: 0                 # 本卡不得產出任何 t/s 主張
+
+# ── 【技術子目標】──────────────────────────────────────────────────────
+subgoals:
+  - id: sg-groups-knob
+    text:   "分組旋鈕（env-gated、default off＝樹行為逐位元不變）：CGC_SEG_BATCH_FAST=<k>，值＝組數"
+    expect: "缺席 ⇒ 與現行 default 相同；`1` ⇒ 現行 FAST；`41` ⇒ proven 迴圈；k>1 走新分組迴圈"
+  - id: sg-groups-ensure
+    text:   "每組邊界：組首層用上一組回讀真值寫 remap（不需 hook），組內層用 prev-token 預測 ensure＋寫 remap"
+    expect: "組界 hook 只為『下一組首層』；組內無 CPU wait"
+  - id: sg-groups-verify
+    text:   "組後回讀 ffn_moe_ids_cont 真值、按層比對 remap（沿既有 :4423-4493 逐層比對邏輯，粒度改按組）"
+    expect: "失配 ⇒ 只 setenv CGC_FORCE_41SEG 重跑**本組**（hook_seg＋submit_seg 逐段），重驗後續下一組"
+  - id: sg-groups-counters
+    text:   "計數器：每步 submits/step、組數、組級 mismatch 數、回退毫秒；m123 DIAGNOSTIC_KEYS 追加"
+    expect: "每臂 stderr 有見證行；k=41 臂 submits=41、k 臂 submits=k"
+
+# ── 【臂】──────────────────────────────────────────────────────────────
+arms:
+  - prod-new:CGC_DECODE_PROFILE=1;CGC_GPU_TIMING=1            # 誠實臂（計數器；對照）
+  - prod-new:CGC_SEG_BATCH_FAST=41
+  - prod-new:CGC_SEG_BATCH_FAST=16
+  - prod-new:CGC_SEG_BATCH_FAST=8
+  - prod-new:CGC_SEG_BATCH_FAST=4
+  - prod-new:CGC_SEG_BATCH_FAST=2
+  - prod-new:CGC_SEG_BATCH_FAST=1
+non_prod_reason: "端點是 Δstep 與位元＋計數器（不是 t/s）；k 曲線的 t/s 不引用。"
+
+# ── 【D5 oracle 閘】─────────────────────────────────────────────────────
+d5_gate:
+  required: true
+  oracle: "scripts/check/m123_oracle_gate.py --profile prefill250（命令模板見 e-l201-accel delivery；含 CGC_SERVER_RUNTIME_PROFILE=non-mtp）"
+  pass: "每臂 M1/M2/M3 9/9（k<41 經組級 fallback）；k=41 臂另證與 default 逐位元一致"
+
+# ── 【交付】──────────────────────────────────────────────────────────────
+delivery:
+  patch: |
+    src/llama.cpp/ggml/src/ggml-backend.cpp（分段迴圈一般化為分組迴圈＋組級等待）
+    ＋ src/llama.cpp/src/llama-context.cpp（predict/ensure 與 readback/verify 改為可按組呼叫；
+    組級 fallback）。base＝ace 的 Y-accel WIP（2026-10-02 00:00 版）。
+    介面二選一（實作前寫死）：在 sched 上加可選回呼 cgc_group_pre/post，或由 llama-context
+    經 proc-address 表呼叫 ggml 的 submit-range 原語。詳見設計文 §3。
+  apply_and_run: |
+    1) cmake --build src/llama.cpp/build -j10 --target llama-server llama-bench
+    2) 逐 k：m123_oracle_gate.py（模板同上，--env CGC_SEG_BATCH_FAST=<k>）
+    3) 曲線：BUDGET_GATE=warn python3 scripts/check/harness.py bench \
+         --arm 'prod-new:CGC_SEG_BATCH_FAST=<k>' …（同場多臂；--json Backup/l201_groups_2026-10-02/kcurve.json）
+    4) 判詞：Δstep(k) 曲線 ⇒ success／falsify／decision_rule，回填本卡與看板。
+  caveat_r5: "k<41 臂帶診斷旗標 ⇒ t/s 永不可引用；端點是 Δstep＋位元＋計數器。"
+
+# ── 【執行歸屬／能量衝突】────────────────────────────────────────────
+routing: |
+  ace 正佔 src/llama.cpp/ggml/src/ggml-backend.cpp 與 src/llama.cpp/src/llama-context.cpp
+  （00:00:51 仍在改；00:01–00:04 仍在跑 y-fast oracle）。落地路線二選一（operator 拍）：
+    (a) ace 落地（零碰撞；engagement 就是 ace 正在解的 why= bug，同一條路）
+    (b) B 線接手（ace 停手凍結；以現況 WIP 為 base，不丟棄 ace 的 hunk）
+  未拍板前本卡**不開工**（避免兩線同檔互踩）。

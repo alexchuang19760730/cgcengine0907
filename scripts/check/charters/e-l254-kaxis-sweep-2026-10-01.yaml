@@ -1,0 +1,133 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— e-l254-kaxis-sweep：k 軸經濟學的 dof 回填
+#   L25-4 的續篇（判決文 docs/L254_K_AXIS_ECON_2026-10-01.md；裁定 docs/OPERATOR_RULING_L254_2026-10-01.md）
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼要立這一張：
+#   L25-4 判 `DEAD` 的證據是**兩個點**（A: k_eff 1.98、B: k_eff 5.06）⇒ 帳上只有一條割線、
+#   0 dof：無法分離「每輪固定項 C」與「每顆 verify token 的邊際 c_tok」。而這兩個值的形狀
+#   決定「MTP 還有沒有可優化的槓桿」：
+#     C 大 ⇒ 每輪固定開銷（pool 崩塌／host）是死因 ⇒ 前饋／聯集駐留值得投；
+#     c_tok 大 ⇒ 攤薄本身失敗 ⇒ 只剩接受率（ε）一條路，且 k 越小越好（少塞死票）。
+#   09-22 的 K 掃描（docs/MTP_K_SWEEP_2026-09-22.md）在 **b=8 的 decode-spec cell** 做過這件事
+#   （C=28.4、c_tok=69.6、head 8.35＝kernel 地板、88% 邊際在 verify），但交付 cell（b=512）
+#   從未做過、且它是在 S1 修正（CGC_MTP_NO_CTX_OTHER）之前。這一趟補它。
+# ⚠ 機制趟：四臂只差 `--spec-draft-n-max`（1/2/3/5），臂字串與 L25-4 第二趟的 B 臂逐字相同
+#   ⇒ 與 k=7 的既有讀值同口徑、可直接落同一條曲線。t/s 仍受窗口限制，機制端點以
+#   `CGC-MTP-PERF`＋`CGC-BENCH-ACCEPT` 的計數器為準。
+id: e-l254-kaxis-sweep
+owner: freebuff（S 線 / L25-4）
+created: '2026-10-01'
+axis: S
+
+# ── 【目標】──
+question: |
+  在 S1 修正臂（draft 自帶 KV）上把 `--spec-draft-n-max` 掃 1/2/3/5（＋既有 k=7），求每輪成本律
+  `round_ms = C + c_tok·T`（T = 每輪 verify 的 token 數）的 C 與 c_tok：
+  ⇒ 若存在 k 使「每 emit token 成本」≤ 純解碼 91.5 ms ⇒ MTP 翻正、k 是最佳化槓桿；
+  ⇒ 若全部 k 都 > 91.5 ms ⇒ k 不是槓桿，MTP 在此 cell 結構性判死（把預算移出 MTP）。
+
+# ── 【現狀】──
+baseline:
+  metric: "k=7（同臂）：t/s **7.48**、emit/round **2.44**、draft 相 **55.2 ms/輪**、verify（減法）**271.0**、pool hit **54.6%**、misses **14233**；對照 MTP-off 錨點 **10.923 t/s**（91.5 ms/token、hit 96.7%、misses 4251）"
+  cell:   "交付 cell（`delivery`：`-b/-ub 512`、`prompt 0`、`gen 128`、`depths 512`、`reps 3`、`warm-skip 64`、`ctx_size 4096`、`--spec-type draft-mtp`）—— 四臂只差 `--spec-draft-n-max`"
+  source: "Backup/l254_s1_20261001/k7_econB.json"
+  source_note: "k=7 那對的兩臂讀值：Backup/l254_s1_20261001/k7_econA.json 與 k7_econB.json（＋對應 .stderr.log）；判決文 docs/L254_K_AXIS_ECON_2026-10-01.md"
+  known: |
+    - 兩點割線：verify 邊際 41.7 ms/顆（扣 draft ⇒ ~29 ms）≪ 純解碼 91.5 ⇒ **攤薄是真的**。
+    - 死票帳：k=7 每輪發 5.06 顆、活 1.44 顆 ⇒ 3.62 顆死票 × 55.6 ms ≈ 201 ms ＝ 該輪 61.7%。
+    - ε（draft_ratio）0.29–0.34，且 **k 越大沒有越準**（第 5 顆與第 1 顆一樣易被拒）。
+    - ⛔ 2 點＝0 dof，不得拿來當擬合；`docs/MTP_K_SWEEP_2026-09-22.md` 點名過這個錯誤。
+
+# ── 【假設】──
+hypothesis:
+  mechanism: |
+    每輪成本 ≈ C（固定：輪開啟、verify 首顆、pool 因 draft∪verify 聯集而崩塌的首次代價）
+    + c_tok·T（邊際 verify token，已被多 token 攤薄）+ draft head（~10.9 ms/顆，kernel 地板）。
+    k↑ ⇒ T↑ ⇒ c_tok 吃掉的越多、且死票越多（ε 不隨 k 上升）⇒ 曲線平或對小 k 略好。
+  expected: "曲線平坦（±10%）且全部 > 91.5 ms/emit-token；C 與 c_tok 首次有 dof 可讀"
+  basis: "L25-4 兩點割線＋09-22 b=8 掃描（C 28.4 / c_tok 69.6 / head 8.35＝地板）＋死票帳（201 ms/輪）"
+
+# ── 【驗收】跑前寫死 ──
+acceptance:
+  success: "四臂 `attribution=none`（或僅機制端點可讀）⇒ 得 C、c_tok（3+ dof）＋每 emit token 成本曲線 ⇒ 寫進判定；若有 k 使 ≤91.5 ms/emit ⇒ 開『MTP 翻正』新卡"
+  falsify: "所有 k 的每 emit token 成本 ≥ 91.5 ms ⇒ **k 不是槓桿**；L25-4 的 `DEAD` 由 2 點升級為 5 點、維持判死，預算移出 MTP 軸"
+  on_fail: "任一臂 `attribution≠none` ⇒ 該臂 t/s 不引用（機制計數器仍可讀）；超過兩臂不合格 ⇒ 本趟作廢重跑"
+  nmax_ab: |
+    【k=3 vs k=2 正式成對；在主線那批之後才加，**跑前寫死**】
+    主端點：`B(k=2) ≥ A(k=3) × 1.05` ⇒ 確認 +12% 的方向與量級（k=2 10.902 / k=3 9.336 ⇒ 預期 1.17×）。
+    窗口：兩臂皆 `attribution=none` 且**逐 rep max/min ≤ 1.10**（引用閘門）、thermal NOMINAL；否則該臂 t/s 標 VOID，
+    只讀機制計數器（`replay`／`emit_per_round`／`k_eff`／hit%／misses）並重跑一次。
+    交付動作（確認後才做）：`scripts/run_server.sh` 的 `SPEC_DRAFT_N_MAX` 預設 3 → 2（:511 的
+    `${CGC_SERVER_MTP_N_MAX:-3}` 與 prod25／prod-new 兩處覆寫），並在該行的註記寫上量測基礎
+    （交付 cell、k=3 9.336 vs k=2 10.902 ms/emit 141.9 vs 149.1…）與附帶條件：**這是交付 cell 的
+    最優，不是真流量最優**（真文字脈絡的接受率不同 ⇒ 改動要能被 `CGC_SERVER_MTP_N_MAX` 覆寫回去）。
+targets:
+  k_points: 4                  # 1/2/3/5（＋既有 7）
+  per_emit_ms_break_even: 91.5 # 純解碼 MTP-off 錨點
+  draft_head_floor_ms: 8.36    # 09-22：mul_mat_id 家族 GPU 時間
+
+subgoals:
+  - id: sg-kaxis-arms
+    text:   "四臂（k=1/2/3/5、S1 修正臂、同一窗口）跑完並落地"
+    expect: "每臂 `CGC-MTP-PERF` ＋ `CGC-BENCH-ACCEPT`（timed rep）＋ pool 統計"
+    how:    "四次 `harness bench`（每次一個 `--spec-draft-n-max`），k 順序 1→5→3→2（讓熱漂移偏誤對『小 k 較好』不利）"
+  - id: sg-nmax-ab
+    text:   "k=3 vs k=2 的正式成對（同一 launch、兩臂只差 `LLAMA_BENCH_SPEC_DRAFT_N_MAX`）"
+    expect: "B ≥ A × 1.05（兩臂 none、spread ≤1.10）；否則記 VOID 並保留舊預設"
+    how:    "一次 `harness bench` 兩臂同場：A=`…;LLAMA_BENCH_SPEC_DRAFT_N_MAX=3`、B=`…=2`（該 env 由 run_server.sh:1871 轉送、llama-bench.cpp:1353 讀取且會覆蓋 CLI ⇒ 不需要兩趟）"
+    delivered: "**未達標、依預註冊收束（VOID ×2；預設未動）**：2026-10-01 17:33（`nmax_ab`）與 17:38（`nmax_ab2`）同一 launch 各跑一次，四臂全部 `attribution≠none`（17:33：A(3) 9.818／B(2) 6.390，皆 `both`；17:38：A(3) 8.069 `swap`／B(2) 11.169 `both`）⇒ 主端點不可判；機制計數器（`replay`／`emit_per_round`／`mean_len`／`draft_ratio`）已進產物。依本卡的否則分支：`run_server.sh` 的 `SPEC_DRAFT_N_MAX` 預設**維持 3**（:511 與 prod25／prod-new 兩處覆寫未動）。重跑條件＝`l255_close.py --check` PASS ∧ swap 存量 <2 GB（今天的界：<2 GB ⇒ 8/8 趟乾淨、≥4 GB ⇒ 3/3 趟 VOID）。產物 `Backup/l254_kaxis_20261001/nmax_ab{,_2}.json`（＋ `.stderr.log`）。"
+  - id: sg-kaxis-verdict
+    text:   "C/c_tok 與每 emit token 成本曲線寫回判定（L254_K_AXIS_ECON 補節）"
+    expect: "具 dof 的成本律 ＋ 是否翻正的判詞"
+    how:    "離線迴歸（五點最小平方、dof 3，附殘差 ≤24 ms）"
+    delivered: "**已落地**：§k 掃描 ＋ §量具修復寫進 `docs/L254_K_AXIS_ECON_2026-10-01.md`；看板 L25-4 的 badge／state／now／action／falsify／evidence／charter 同步（結案維持、幅度與理由改寫）；產物 `Backup/l254_kaxis_20261001/`（含量具驗證趟 `k2c`）。量具修復：`llama-bench.cpp`（`replay=`／`emit_per_round=`）＋ `speculative.cpp` 註記，重建後恆等式閉合。"
+
+# ── 【臂】──
+arms:
+  # 單一臂字串（與 L25-4 第二趟的 B 臂逐字相同）；k 由 --spec-draft-n-max 掃
+  - prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1;LLAMA_BENCH_SPEC_DBG=1;CGC_MTP_NO_CTX_OTHER=1
+
+# ── 【交付】──
+delivery:
+  patch: "**【量具修復、非臂】**`tools/llama-bench/llama-bench.cpp`：加 `n_replay` 與 `emit_per_round = n_done/rounds`（行尾追加）；`common/speculative.cpp`：`emit_tok_per_round` 加「per draft call、非 per verify round」的語意註記。已重建、已驗（`rounds − calls_draft = Σreplay` 208−142=66；`emit_per_round` 對得上 `gen_tokens`）。修正了 ACCEPT 的 `mean_len`（replay 輪當有產出）與 MTP-PERF（分母漏 replay 輪）兩個口徑錯誤。"
+  receptor: "docs/L254_K_AXIS_ECON_2026-10-01.md（新增『k 掃描：成本律的 dof』節）"
+  evidence: "Backup/l254_kaxis_20261001/k{1,2,3,5}.json（＋ .stderr.log）"
+  result: |
+    2026-10-01 17:00–17:10 七趟（k=1／2×2／3／5／7 ＋ MTP-off×2）完成，**七臂全 attribution=none、NOMINAL、swap 0**：
+    off **11.524／11.535**；k=1 **10.489**；k=2 **10.902／10.099**；k=3 **9.336**；k=5 **9.373**；k=7 **5.606**。
+    ⇒ **k=2 是最佳點（−5~12%）**、k=1 −9%、k=3／5 −19%、**k=7 −51%**；「+52%／emit token」是
+    k=7（`k_eff` 5.06）那一點的產物 ⇒ 幅度修正、**k 是槓桿**（7→2 ＝ +86%、3→2 ＝ +12%）。
+    成本律（修正口徑、六臂、dof=4）：**round_ms ≈ 63.6 + 35.2·T̂**（T̂ = drafted/rounds + 1）
+    ⇒ 邊際 verify token 便宜（0.41 個純解碼步 ⇒ 攤薄真）但每輪固定項 ≈ 0.73 個步（低 k 也翻不正）。
+    ⚠ 舊口徑 `C=89.1 / c=33.4` 是**量具分母錯誤**的產物（`mean_len` 把 replay 輪當有產出；`emit_tok_per_round` 除以原始 draft 呼叫）
+    ⇒ 已修 `llama-bench.cpp`（`replay=`、`emit_per_round=`）＋ `speculative.cpp` 註記，重建且驗過恆等式
+    （`rounds − calls_draft = Σreplay`：208 − 142 = 66；timed `emit/round` 真值 1.79 而非 2.12）。
+    計數器：`k_eff = k` 逐臂、累計 `acc_rate` 1.000／0.839／0.732／0.588／0.381；hit% 64.2／60.6／58.8／56.1／53.5；
+    misses 6052／8741／8478／10924／14466（off 96.7%／4257）。⚠ 兩計數器矛盾（k=1：`MTP-PERF` 1.000 vs `ACCEPT` 0.75）
+    ⇒ 只用 `ACCEPT`。**判詞維持 `DEAD`（最低 −5%）但理由與幅度改寫**；翻正的門＝鏈內衰減（k=2 timed 0.60 vs warm 0.65）。
+    寫入：`docs/L254_K_AXIS_ECON_2026-10-01.md` §k 掃描、看板 L25-4、裁定文件。
+  apply_and_run: |
+    0) python3 scripts/check/l255_close.py --check           # 足跡閘：需 VERDICT: PASS
+    1) for K in 1 5 3 2; do
+         python3 scripts/check/harness.py bench \
+           --charter scripts/check/charters/e-l254-kaxis-sweep-2026-10-01.yaml \
+           --arm "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1;LLAMA_BENCH_SPEC_DBG=1;CGC_MTP_NO_CTX_OTHER=1" \
+           --cell delivery --batch 512 --prompt 0 --gen 128 --depths 512 --reps 3 --warm-skip 64 --ctx-size 4096 \
+           --spec-type draft-mtp --spec-draft-n-max $K \
+           --arm-timeout 420 --stall-watch 90 \
+           --workdir Backup/l254_kaxis_20261001/k$K --json Backup/l254_kaxis_20261001/k$K.json
+       done
+    1b) k=3 vs k=2 正式成對（預註冊見 acceptance.nmax_ab）：
+    1b-a) python3 scripts/check/l255_close.py --check
+    1b-b) python3 scripts/check/harness.py bench \
+         --charter scripts/check/charters/e-l254-kaxis-sweep-2026-10-01.yaml \
+         --arm "<上列臂字串>;LLAMA_BENCH_SPEC_DRAFT_N_MAX=3" \
+         --arm "<上列臂字串>;LLAMA_BENCH_SPEC_DRAFT_N_MAX=2" \
+         --cell delivery --batch 512 --prompt 0 --gen 128 --depths 512 --reps 3 --warm-skip 64 --ctx-size 4096 \
+         --spec-type draft-mtp --arm-timeout 420 --stall-watch 90 \
+         --workdir Backup/l254_kaxis_20261001/nmax_ab --json Backup/l254_kaxis_20261001/nmax_ab.json
+    1b-c) 判定：逐臂 avg_ts 與逐 rep 離散；並用新量具欄位核對兩臂的 replay／emit_per_round
+    2) 讀值：`CGC-MTP-PERF`（calls_draft／t_draft_ms／gen_tok_per_round／emit_tok_per_round）＋
+       `CGC-BENCH-ACCEPT` timed rep（rounds／drafted／acc／mean_len／draft_ratio）＋ pool cache 區塊
+    3) 每臂：round_ms = 1000/tps × mean_len；draft = t_draft_ms/calls_draft；verify = round_ms − draft
+       ⇒ 對 T = drafted/round + 1 做最小平方（四點、2 dof）得 C、c_tok 並附殘差

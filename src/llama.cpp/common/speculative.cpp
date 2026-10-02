@@ -3163,8 +3163,16 @@ void common_speculative_print_stats(const common_speculative * spec) {
         //   gen_tok_per_round    = gen_tokens / calls_draft     <- tokens DRAFTED per round
         //   acc_tok_per_round    = acc_tokens / calls_draft     <- tokens ACCEPTED per round
         //   emit_tok_per_round   = (acc_tokens + calls_draft) / calls_draft
-        //                                                       <- tokens EMITTED per round, i.e.
+        //                                                       <- tokens EMITTED per DRAFT CALL, i.e.
         //                                                          the one that maps to throughput
+        //   ⚠ [CGC 2026-10-01] The denominator is DRAFT CALLS, not verify rounds. A replay round
+        //     (partial acceptance -> checkpoint restore -> carry `ids` as the next draft,
+        //     llama-bench.cpp's spec loop) does NOT call the drafter (`if (draft.empty())`) but it
+        //     IS a verify decode -- so this ratio over-reports emitted-per-VERIFY-round by
+        //     rounds/calls_draft (measured 2026-10-01: k=2 => 232/146 = 1.59x; k=1 => 230/192 =
+        //     1.20x). For machine cost use llama-bench's `CGC-BENCH-ACCEPT ... emit_per_round`
+        //     (= n_done/rounds, exact against the emitted count). Field name kept for the
+        //     historical series; read it as per-draft-call.
         //   ms_per_round         = t_draft_ms / calls_draft     <- the head's cost per round
         // The last two are the pair to read together: throughput is emit_tok_per_round divided by
         // (ms_per_round + the target verify forward, which is NOT in this line -- take it from

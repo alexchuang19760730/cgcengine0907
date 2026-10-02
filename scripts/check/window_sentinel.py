@@ -269,11 +269,25 @@ def main():
                   "`(sudo purge)` / `--purge`, then re-run this gate.")
         return 0 if ok else 2
 
-    cmd, _ = full_command()
+    cmd, prof_env = full_command()
     print("sentinel shape: -p 2048 -n 0 -b 5632 (prefill cell of profile %s)" % PROFILE)
     print("argv:", " ".join(cmd))
     if args.dry_run:
         return 0
+
+    # ── [CGC 2026-10-01, MEASUREMENT_CONTRACT §3.4.1] launch 前的超訂預檢 ──
+    # pool 取自 profile env（prefill250 = prod-new 8 GiB）⇒ 16 GB 這台是靜態超訂，strict 預設拒跑。
+    # 這支是**窗口探針**（相對帶寬參考），不是交付量測；但要量照樣走同一個口徑：BUDGET_GATE=warn
+    # 放行，讀數帶 CGC_BUDGET_OVERSUBSCRIBED=1。
+    gate_env = dict(os.environ, POOL_BYTES=str(prof_env.get("CGC_EXPERT_CACHE_BYTES", "8589934592")),
+                    MODEL=MODEL, LOAD_MODE="none")
+    rc, log = lbm.budget_gate_preflight(gate_env)
+    print(log.strip())
+    if rc != 0:
+        print(f"[budget-gate] 拒跑（rc={rc}）：要量這個窗口請 BUDGET_GATE=warn。", file=sys.stderr)
+        return rc
+    if gate_env.get("CGC_BUDGET_OVERSUBSCRIBED") == "1":
+        os.environ["CGC_BUDGET_OVERSUBSCRIBED"] = "1"   # measure() 從 os.environ 抄 ⇒ 子程序帶標記
 
     ps = others()
     if ps:

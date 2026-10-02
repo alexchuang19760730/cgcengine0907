@@ -80,21 +80,39 @@ def refs_of(card: dict) -> list:
 
 
 def patch_state(root: str, rel: str) -> tuple:
-    """(ok, why)：這份補丁現在還套得上嗎？——plain 與 --3way 都問，把「備好了」的時效量出來。"""
+    """(ok, why)：這份補丁現在還套得上嗎？——plain 與 --3way 都問，把「備好了」的時效量出來。
+
+    [CGC 2026-10-01] 新增**反向**這一問（三態驗證）。舊版只問正向 ⇒ 在共用樹上會把
+    「已經被別人套上去」誤報成「補丁套不上」（實例：2026-10-01 17:25，L20-1 的補丁在樹上出現，
+    帳因此從 16/16 掉成 15/16，而入口其實生效中）。反向乾淨 ⇒ 補丁已在樹上，算 landed。
+    三向都不乾淨 ⇒ 樹上與補丁不一致（第三方正在編輯、或 base 漂到兩邊都不是）⇒ 才報 GAP，
+    而且訊息要把**兩邊各自的失敗點**都帶上（寫的失敗點／反向的失敗點不同點就是漂移的位置）。"""
     try:
-        p = subprocess.run(["git", "apply", "--check", "-p1", rel], cwd=root,
-                           capture_output=True, text=True, timeout=60)
+        def run(*extra):
+            return subprocess.run(["git", "apply", "--check", *extra, "-p1", rel], cwd=root,
+                                  capture_output=True, text=True, timeout=60)
+        p = run()
         plain = (p.returncode == 0, (p.stderr or "").strip()[:160])
-        p3 = subprocess.run(["git", "apply", "--check", "--3way", "-p1", rel], cwd=root,
-                            capture_output=True, text=True, timeout=60)
+        p3 = run("--3way")
         w = (p3.returncode == 0, (p3.stderr or "").strip()[:160])
+        r = run("--reverse")
+        rev = (r.returncode == 0, (r.stderr or "").strip()[:160])
     except Exception as exc:  # noqa: BLE001
         return False, "git apply 跑不動：%s" % exc
+    return _patch_verdict(plain, w, rev)
+
+
+def _patch_verdict(plain: tuple, w: tuple, rev: tuple) -> tuple:
+    """純函數：三個 (clean, stderr) 三元組 → (ok, why)。真值表可測，不必用 fixtures。"""
     if plain[0]:
         return True, "plain 可直上"
     if w[0]:
         return True, "plain 不行、--3way 可以（base 漂了，套用時要記在產物裡）"
-    return False, "plain／--3way 都不行：%s" % (plain[1] or w[1] or "衝突")
+    if rev[0]:
+        return True, "已在樹上（反向可直上 ⇒ 入口生效中；舊版會誤報成套不上）"
+    return False, ("plain／--3way／--reverse 三向都不行 ⇒ 樹上既非套用前也非套用後"
+                   "（第三方編輯中或 base 漂移）。正向：%s ｜ 反向：%s"
+                   % (plain[1] or w[1] or "衝突", rev[1] or "衝突"))
 
 
 def endpoints_of(card: dict) -> list:
@@ -296,7 +314,17 @@ def selftest() -> int:
                                          "assert": {"kind": "none", "why": "f"}}}}
         r6 = card_report(td, t6)
         case("補丁套不上 ⇒ GAP（不會拋）", r6["verdict"] == "GAP"
-             and any("補丁套不上" in g for g in r6["gaps"]), r6["gaps"])
+             and any("補丁套不上" in g for g in r6["gaps"]), r6["gaps"]),
+        case("三態補丁判定：正向 clean ⇒ 未套、landed",
+             _patch_verdict((True, ""), (False, ""), (False, ""))[0] is True,
+             _patch_verdict((True, ""), (False, ""), (False, ""))),
+        case("三態補丁判定：反向 clean ⇒ 已套（舊版會誤報 GAP）",
+             _patch_verdict((False, "x"), (False, "x"), (True, ""))[1].startswith("已在樹上"),
+             _patch_verdict((False, "x"), (False, "x"), (True, ""))),
+        case("三態補丁判定：三向都不 clean ⇒ GAP、訊息帶兩個失敗點",
+             (lambda v: v[0] is False and "fwd-err" in v[1] and "rev-err" in v[1])(
+                 _patch_verdict((False, "fwd-err"), (False, ""), (False, "rev-err"))),
+             _patch_verdict((False, "fwd-err"), (False, ""), (False, "rev-err")))
 
         # ⑥ 引用抽取：只抓看起來是入口的東西
         case("refs_of：只收「現在就該在」的入口（scripts／charter／patch／docs），不收 Backup 產物與 src/",

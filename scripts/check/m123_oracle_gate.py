@@ -263,6 +263,45 @@ DIAGNOSTIC_KEYS = {
     # non-resident selection falls back to `e % ns` and lands on a DIFFERENT real expert ⇒ a red M1
     # here is a live possibility, and it would be a finding about the arm, not a harness bug.
     "CGC_SEG_BATCH",
+    # [CGC 2026-10-01 Y-accel · (b)+Y predict-ensure] CGC_SEG_BATCH_FAST collapses each decode step
+    # into ONE async submit instead of the 41-segment wait->hook->submit loop. Three things make up
+    # the arm, and the claim is about their COMBINATION, not about any one of them:
+    #   (1) one extra capture node (ffn_moe_ids_cont, a contiguous copy of selected_experts) in the
+    #       host-leaf decode graph -- a pure copy consumed by nothing else, so it cannot move a value;
+    #   (2) before submit, each layer's remap leaf is written from the PREVIOUS token's predicted
+    #       expert ids and those experts are sync-ensured resident -- the same mapping the per-segment
+    #       hook writes (llama-context.cpp:7941-7968), just sourced from prediction;
+    #   (3) after submit, the true ids are read back and each position's consumed slot (rd[i]) is
+    #       compared against slot_table_safe(true_id): any difference means the prediction missed
+    #       (or an ensure failed), and the WHOLE step is redone via the proven 41-segment loop.
+    # The claim is therefore: a FAST step either reproduces the 41-seg step exactly, or it is thrown
+    # away and recomputed by the 41-seg loop -- so the emitted logits are the 41-seg logits either
+    # way. It is NOT a claim that prediction rarely misses: a high miss rate costs speed, never
+    # correctness.
+    # Registered (rather than left out) for the same reason as CGC_SEG_BATCH: without it, every FAST
+    # run reports INCOMPARABLE against the reference and the release condition could never be met by
+    # any measurement. Two holes would surface as a red LOGITS verdict, which is where they belong:
+    # a divergence the post-submit comparison cannot see (e.g. an expert whose ZERO-slot mapping is
+    # identical under both prediction and truth), or the id-collection this arm turns on
+    # (llama-context.cpp:6569) not being inert after all.
+    "CGC_SEG_BATCH_FAST",
+    # [CGC 2026-10-02 線A · overlap fence] exp-overlap-partial-2026-10-02. The claim is NARROW and
+    # stated per byte: CGC_OVERLAP_FENCE=k changes only the ORDER in which segments are committed
+    # (segment i+1 is committed before the host runs segment i's top-k hook) and inserts a device
+    # event wait at the head of that segment's first command buffer, released by the host only AFTER
+    # the remap leaf write returns. Therefore: (a) the remap leaf's BYTES are identical -- they are
+    # produced by the same host code from the same state, just earlier; (b) the WEIGHT BYTES the MoE
+    # reads are identical -- residency/eviction is untouched (no segment is removed, no ensure is
+    # skipped); (c) the logits are therefore expected to be unchanged. What DOES move is timing
+    # only. If the claim is false the gate fails on the LOGITS, which is where it should fail.
+    # NOT covered by this claim: k only fences the first k boundaries per graph, so a k that is too
+    # small is not a correctness question at all -- the unfenced boundaries keep the upstream order.
+    "CGC_OVERLAP_FENCE",
+    # CGC_SUBMIT_AHEAD is the RACY ceiling probe for the same axis (it mutates a remap buffer an
+    # in-flight command buffer references). It is registered here ONLY so that a diagnostic run can
+    # be compared on the same basis; an arm carrying it is expected to FAIL the identity check, and
+    # that failure is the point (it is the "the probe really moved something" control).
+    "CGC_SUBMIT_AHEAD",
     # [CGC 2026-09-30 線A · S2] The prefetch pair, registered for the same reason and with the same
     # caveat as CGC_SEG_BATCH: this is the mechanism the R6 witness is meant to TEST, and a knob that
     # makes a run "incomparable" cannot be tested by any measurement. The claim is narrow --
@@ -286,6 +325,25 @@ DIAGNOSTIC_KEYS = {
     # receipt (`rho_window.py` S4: 同 build、同一份參考、M1 9/9) could never be satisfied by any
     # measurement. If the claim is false the gate fails on the LOGITS, which is where it should.
     "CGC_RHO",
+    # [CGC 2026-10-02 S1 single-submit arm] Four keys, one claim between them, registered for the
+    # same reason as CGC_SLOT_TABLE_GPU above: without them every run of this arm reports
+    # INCOMPARABLE against the reference and the one proposition it exists to test could never be
+    # expressed by any measurement. The claim, split by key:
+    #   CGC_S1_MIN_IL=0     layer 0 joins the GPU-table path. Its host leaf and the table implement
+    #                       the SAME mapping (the S1 equivalence the 09-20 witness already measured
+    #                       layer-by-layer), so which of the two the consumer reads cannot change
+    #                       the answer -- unless the cross-backend copy this gate keeps layer 0 out
+    #                       of is broken, which is exactly a LOGITS failure.
+    #   CGC_S1_SINGLE_SUBMIT / CGC_S1_SS_VERIFY  one async submit per step plus the pre-submit table
+    #                       publish; the witness only reads ids back after the drain, so it cannot
+    #                       move a value. Whether the published table is CORRECT is not presumed
+    #                       here: it is published from the live pool, the same source the per-segment
+    #                       hook publishes from, and a wrong entry shows up as wrong logits.
+    #   CGC_FAST_COST       timers only (ggml_time_us around existing calls); it has been on in every
+    #                       A/B arm since 2026-10-01 and was never in this set, so a cost-split run
+    #                       could not be compared against a reference at all. Registering it moves
+    #                       no threshold: a timer that moved the numbers would fail on the LOGITS.
+    "CGC_S1_MIN_IL", "CGC_S1_SINGLE_SUBMIT", "CGC_S1_SS_VERIFY", "CGC_FAST_COST",
 }
 # CGCENV scalars that are comparability-irrelevant (paths/timing only).
 DIAGNOSTIC_CGCENV = {"LOG", "PORT"}

@@ -7059,3 +7059,27 @@ operator 的指令：趁窗口開著跑交付 cell 的三場錨點批次，看�
   「產物落後於 YAML」；重建後 **D4 恢復、`--check` rc=0**（這是 D4 的設計行為，不是壞掉）。
 * **不動閘門**：R2（全 rep 離散）要不要對「沒有 pp 列的 cell」改用 `kept`／`platform_ts`，
   是**政策決定**（與 §13 的窗口桿子同一個抽屜）；今天只把證據擺出來，不自行套用品味。
+
+### 82.5 補記（2026-10-01）：operator 決定修 R2 ⇒ 依 §3.3b 拆欄，C5 升進已認證
+
+§82.4 把「R2 對 pp-less cell 改用 kept／steady」記成待決的政策點；**operator 當日決定採用它**，
+規格寫在 `docs/MEASUREMENT_CONTRACT_2026-09-25.md` **§3.3b（regime 混合 ⇒ 拆欄，不是作廢）**，
+判準本體實作在 `scripts/check/quote_gate.py`（`regime_split`／`quoted_ts`／`cold_ts`；只有「第 1 顆
+低於 steady 中位 ∧ 宣告的 prompt 數＝0」才拆；讀不到宣告 ⇒ 不拆、fail-safe）。
+結果（09-30 那批六場，`Backup/delivery_anchor_rerun_2026-09-30/launch1..6.json`）：
+
+| 場 | 全 rep spread | steady spread | 引用值（steady） | cold rep（只當診斷） | 判詞 |
+|---|---:|---:|---:|---:|---|
+| launch1 | 1.113 | 1.004 | **11.143** | 10.03 | QUOTABLE（拆欄前 UNSTABLE） |
+| launch2 | 1.103 | 1.007 | **11.208** | 10.19 | QUOTABLE（拆欄前 UNSTABLE） |
+| launch3 | 1.074 | 1.049 | **10.923** | 10.41 | QUOTABLE（拆欄前已 QUOTABLE；引用值由平台均值 10.754 換成 steady 10.923） |
+| launch4 | 2.802 | 1.023 | **10.880** | 3.93 | QUOTABLE（拆欄前 UNSTABLE） |
+| launch6 | 1.160 | 1.057 | **10.821** | 9.59 | QUOTABLE（拆欄前 UNSTABLE） |
+| launch5 | 1.132 | **1.128** | —（不列入） | 9.42 | **UNSTABLE**（反例：steady 兩顆自己就離散） |
+
+⇒ 六場裡 **5 場**通過（門檻 ≥2）⇒ 看板 **C5** 由 `pending_promotion` 升進 `certified`：
+值＝合格場次的**中位 10.923**、區間 **10.821–11.208**；`quote` 指中位那一場
+（`Backup/delivery_anchor_rerun_2026-09-30/launch3.json`，steady 兩顆 10.6629／11.1834）。
+⚠ 兩個口徑一起記住：① 拆欄**只動引用與否、不動讀數本身**（cold 值留診斷）；
+② 交付 cell 是 `-p 0` ⇒ 這一格仍是**足跡類**（`budget_gate` 判 OVERBUDGET、赤字 8373 MiB），
+可引用不等於能力數。全語料掃帳（10-01）：1692 列裡 37 列可引用，其中交付 cell 81 列裡 20 列。

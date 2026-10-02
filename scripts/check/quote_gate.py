@@ -25,6 +25,13 @@
       —— 少於 3 就沒有中央趨勢可談（house bench 標準，已認證錨點即 3 reps）。
   R2 離散（全 rep，即 `avg_ts` 的那個向量）：`max/min <= SPREAD_LIMIT(=1.10)`
   R3 離散（kept rep，即 `platform_ts` 的那個向量）：同上
+     ⚠ **R2 的拆欄例外（2026-10-01，MEASUREMENT_CONTRACT §3.3b）**：**pp-less cell**（交付 cell，
+     `-p 0`）的**第 1 個 rep 天生冷**——沒有 prefill 那一列先把池餵飽（`--warm-skip` 蓋不掉），
+     實測 5/6 場的第 1 個 rep 低於後兩個。合約對這種混合的指示是「**拆欄**」（cold 留診斷、
+     steady 才是讀數），不是作廢 ⇒ 第 1 個 rep 標 `cold`，R2 只看 steady reps（＝ R3／kept），
+     引用的值是 `quoted_ts`（steady 平均，與產物自己的 `platform_ts` 同口徑）。
+     兩個限制：只有「第 1 個 rep **低於** steady 中位數」才拆（冷的是別顆 rep ⇒ 那不是格子的
+     結構，是真的不穩，維持原判）；格名要查得到契約才能斷定 pp-less，查不到 ⇒ 不拆（fail-safe）。
       —— **兩個向量都查**：報出來的是 `avg_ts`，但 rep 1 天生偏冷（`--warm-skip` 與
          `platform_ts` 就是為此存在）⇒ 任一向量有 rep 主宰就不可引用。
   R4 窗口：`attribution.verdict == none`（既有合約，**仍必要、只是不再充分**）
@@ -245,7 +252,44 @@ QUOTABLE_PROFILES = ("prod-new",)
 
 RC_OK, RC_NOT_QUOTABLE, RC_USAGE, RC_NOTHING = 0, 1, 2, 3
 
+# `cell_contract.load_contract()` 的結果快取（R2 拆欄需要「這一格是不是 pp-less」；
+# 逐 row 重讀測試卡會把掃整棵 Backup 變成 I/O 大戶）。
+_CONTRACT_CACHE = None
+
 VERDICTS = ("QUOTABLE", "UNSTABLE", "DIRTY", "THIN", "REFUSE")
+
+
+def _median(vals):
+    s = sorted(vals)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0
+
+
+def _declared_prompt(prod, cell_name):
+    """這一格宣告的 `-p`（`prompt`）：格 block 有就讀它，沒有的話查 `cell_contract` 的宣告表。
+
+    只在 R2 拆欄那一條用（§3.3b）：need "pp-less" 這個事實，而**格的定義只有一份**——
+    測試卡的 JSON block（`cell_contract.load_contract`）。讀不到 ⇒ None ⇒ 呼叫端不拆（fail-safe）。
+    """
+    cell = prod.get("cell")
+    if isinstance(cell, dict):
+        p = _as_int(cell.get("prompt"))
+        if p is not None:
+            return p
+    if not cell_name or cell_name == "?":
+        return None
+    global _CONTRACT_CACHE
+    if _CONTRACT_CACHE is None:
+        try:
+            import cell_contract as cc
+            _CONTRACT_CACHE = cc.load_contract()
+        except Exception:  # noqa: BLE001  閘門不因契約讀不到而改變判準方向
+            _CONTRACT_CACHE = {}
+    ctr = _CONTRACT_CACHE or {}
+    spec = ctr.get("cell") if cell_name == "(default)" else (ctr.get("cells") or {}).get(cell_name)
+    if isinstance(spec, dict):
+        return _as_int(spec.get("prompt"))
+    return None
 
 
 def _series_stats(vals):
@@ -453,6 +497,18 @@ def judge(prod, row, reference=None, band_pct=BAND_PCT):
         if avg:
             m["cold_penalty"] = (m["platform_ts"] - avg) / avg * 100.0
 
+    # ── R2 的拆欄例外（2026-10-01，§3.3b）：見檔頭 ──
+    split = bool(kept) and samples[0] < _median(kept) and _declared_prompt(prod, cell) == 0
+    m["regime_split"] = split
+    m["quoted_ts"] = avg
+    if split:
+        m["cold_ts"] = samples[0]
+        m["steady_ts"] = list(kept)
+        m["quoted_ts"] = m["platform_ts"]      # steady 平均（drop rep 1，與產物 platform_ts 同口徑）
+        if all_spread is not None and all_spread > SPREAD_LIMIT:
+            m["cold_split"] = ("全 rep max/min=%.3f 來自 cold rep（%.3f）⇒ 已拆欄，散度只看 steady"
+                               % (all_spread, samples[0]))
+
     if prod.get("refused_preflight") is True:
         return "REFUSE", ["refused_preflight=true（拒跑：這一輪沒有量到 t/s）"], m
     if avg is None:
@@ -471,7 +527,7 @@ def judge(prod, row, reference=None, band_pct=BAND_PCT):
                           % (rep_cv, all_cv)], m
 
     reasons = []
-    if all_spread > SPREAD_LIMIT:
+    if all_spread > SPREAD_LIMIT and not split:
         reasons.append("全 rep max/min=%.3f>%.2f" % (all_spread, SPREAD_LIMIT))
     if kept_spread > SPREAD_LIMIT:
         reasons.append("kept rep max/min=%.3f>%.2f" % (kept_spread, SPREAD_LIMIT))
@@ -610,12 +666,14 @@ def report(records, reference, band_pct):
     for r in records:
         m = r["metrics"] or {}
         if m.get("samples"):
-            print("  · %s %s 逐 rep %s  kept %s  platform_ts %s  cold-rep 影響 %s"
+            print("  · %s %s 逐 rep %s  kept %s  platform_ts %s  cold-rep 影響 %s%s"
                   % (os.path.basename(r["file"]), r["shape"],
                      [round(v, 2) for v in m["samples"]],
                      ([round(v, 2) for v in m["samples"][1:]] if m["samples"] else "—"),
                      ("%.3f" % m["platform_ts"]) if m.get("platform_ts") else "—",
-                     ("%+.1f%%" % m["cold_penalty"]) if m.get("cold_penalty") is not None else "—"))
+                     ("%+.1f%%" % m["cold_penalty"]) if m.get("cold_penalty") is not None else "—",
+                     ("  ← 已拆欄（§3.3b）：引用值 %.3f（steady；cold %.2f 留診斷）"
+                      % (m["quoted_ts"], m["cold_ts"])) if m.get("regime_split") else ""))
     return n_q, len(records)
 
 
@@ -667,10 +725,13 @@ def selftest():
         # 02:47：both/HEAVY 且離散大
         ("02:47 HEAVY 離散", _mk(5.821, 1.505, [7.40, 5.66, 4.40], attrib="both",
                                 thermal="HEAVY"), "UNSTABLE"),
-        # 今天的 anchor5：全 rep 1.11 剛好越線、kept 1.03
-        ("anchor5 全 rep 越線", _mk(10.692, 0.572, [10.05, 10.86, 11.16], attrib="swap"), "UNSTABLE"),
-        # 今天的 anchor4：全 rep 1.21、kept 1.09
-        ("anchor4 kept 過但全 rep 不過", _mk(10.644, 1.021, [9.62, 10.66, 11.65], attrib="swap"), "UNSTABLE"),
+        # 今天的 anchor5：全 rep 1.11 剛好越線、kept 1.03。
+        # ⚠ 2026-10-01（§3.3b 拆欄）：第 1 個 rep 低於 steady 中位數 ⇒ 已拆欄、散度只看 kept
+        #   ⇒ 只剩 attribution=swap 那條 ⇒ **DIRTY**（不再是 UNSTABLE）。兩個判詞都不可引用，
+        #   差的是「為什麼」：這個數字死在窗口，不是死在統計。
+        ("anchor5 全 rep 越線（已拆欄）", _mk(10.692, 0.572, [10.05, 10.86, 11.16], attrib="swap"), "DIRTY"),
+        # 今天的 anchor4：全 rep 1.21、kept 1.09 ⇒ 同上：拆欄後只剩窗口那條。
+        ("anchor4 kept 過但全 rep 不過（已拆欄）", _mk(10.644, 1.021, [9.62, 10.66, 11.65], attrib="swap"), "DIRTY"),
         ("reps=1（不是平台值）", _mk(17.669, 0.0, [17.669], attrib="none"), "THIN"),
         ("無 samples_ts", _mk(11.703, 0.348, [], attrib="none"), "REFUSE"),
         ("拒跑", _mk(0.0, 0.0, [], refused=True), "REFUSE"),
@@ -761,6 +822,26 @@ def selftest():
         ok += 1 if good else 0
         print("  %-26s → %-9s 期待 %-9s %s %s"
               % (name, v, want, "✓" if good else "✗", ("（%s）" % "；".join(why)) if why else ""))
+    # ── 2026-10-01（§3.3b）：pp-less 的 cold/steady 拆欄 ──────────────────────────────
+    # 真產物形狀：`Backup/delivery_anchor_rerun_2026-09-30/launch1.json`（逐 rep [10.0305, 11.1652,
+    # 11.1215]、全 rep 1.113、kept 1.004）—— 舊判 UNSTABLE，拆欄後可引用、cold 留診斷。
+    _p = _mk(10.77243, 0.642862, [10.0305, 11.1652, 11.1215], cell="delivery")
+    _v, _why, _m = judge(_p, _p["rows"][0])
+    _split_ok = (_v == "QUOTABLE" and _m.get("regime_split") is True
+                 and abs((_m.get("quoted_ts") or 0) - 11.14335) < 0.01
+                 and abs((_m.get("cold_ts") or 0) - 10.0305) < 0.001)
+    ok += 1 if _split_ok else 0
+    print("  %-26s → %-9s 期待 %-9s %s （cold=%.2f 留診斷、引用值 %.3f=steady）"
+          % ("launch1 拆欄", _v, "QUOTABLE", "✓" if _split_ok else "✗",
+             _m.get("cold_ts") or 0, _m.get("quoted_ts") or 0))
+    # 反向：冷的是**最後**一顆 rep（第 1 顆最高）⇒ 那不是格子的結構（是真的不穩）⇒ 不拆、照 R2 擋。
+    _p2 = _mk(8.257, 3.788, [10.45, 10.44, 3.88], cell="delivery")
+    _v2, _r2, _m2 = judge(_p2, _p2["rows"][0])
+    _anti_ok = (_v2 == "UNSTABLE" and not _m2.get("regime_split"))
+    ok += 1 if _anti_ok else 0
+    print("  %-26s → %-9s 期待 %-9s %s" % ("冷的是最後一顆 rep（不拆）", _v2, "UNSTABLE",
+                                            "✓" if _anti_ok else "✗"))
+
     # scan 這一層也要擋得住不是 llama-bench 的東西：整棵樹裡混著字串、空 row、缺欄位。
     # （實測 `--glob 'Backup/**/*.json'` 曾讓閘門自己 AttributeError 掛掉 ⇒ 這條是回歸釘子。）
     import tempfile
@@ -818,7 +899,7 @@ def selftest():
               % ("scan：三層包裝 records[].rows",
                  "/".join(r["verdict"] for r in wrecs) if wrecs else "—", "REFUSE/QUOTABLE",
                  "✓" if good2 else "✗"))
-    cases = cases + ["scan-junk", "scan-records-wrapper"]
+    cases = cases + ["scan-junk", "scan-records-wrapper", "split-launch1", "split-antipattern"]
     print("SELFTEST %s (%d/%d)" % ("PASS" if ok == len(cases) else "FAIL", ok, len(cases)))
     return RC_OK if ok == len(cases) else RC_NOT_QUOTABLE
 

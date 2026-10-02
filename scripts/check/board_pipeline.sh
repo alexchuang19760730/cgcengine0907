@@ -2,6 +2,8 @@
 # 看板產生鏈的單一入口（圖一出來就同步全部頁面）。
 #   ./scripts/check/board_pipeline.sh          重建：看板 ＋ 逐子目標頁 ＋ 總圖 ＋ 逐節點白皮書
 #   ./scripts/check/board_pipeline.sh --check   只驗（rc=1 ⇒ 有漂移／有頁面落後）
+# 重建模式會先跑 D15 的機器路徑（decode_board_build --promote：判準成立 ⇒ 自己升進 certified；
+# 寫完重建＋--check，沒過整檔回滾）。
 # 驗的八條閘門（判準各自只有一份定義）：void_check（成績面：主張了吞吐就得有產物、量具綁上、成對 log）、
 # doc_claim_gate（**交付文件與 commit 訊息裡的 t/s 要有主**：對得上一個通過閘門的產物，否則紅。
 # commit-msg／pre-push 兩支掛勾由 `--install-hook` 裝，裝了才會在 commit／push 當下攔；現況見 --hooks-status）、
@@ -45,6 +47,9 @@ $PY scripts/check/runnable_gate.py --selftest    # 前置閘門的 fixture（先
 $PY scripts/check/fill_term_ab.py --selftest     # 定價端點的 fixture（七條結構閘）
 $PY scripts/check/samecell_margin.py --selftest  # 同格邊際端點的 fixture（三態：POSITIVE／EXCLUDED／NOT_SEPARATED）
 $PY scripts/check/fill_split.py --selftest      # fill 路徑分解的 fixture（恆等式／陰性對照）
+# D15 的機器路徑：pending_promotion 的判準當場成立 ⇒ 自己升進 certified（沒成立＝一位元組不動；
+# 寫完重建＋--check，沒過整檔回滾）。跑在 build 之前 ⇒ 「下一次重建就自己升」，不必等人抄。
+$PY scripts/check/decode_board_build.py --promote
 $PY scripts/check/decode_board_build.py          # 看板 ＋ docs/mindmap/subgoals/*.html|md（含 D7 引用閘門、D12 前置閘門、D15 待升級）
 $PY scripts/check/mindmap_build.py               # docs/mindmap/index.html ＋ TAXONOMY
 $PY scripts/check/mindmap_brief_build.py         # docs/mindmap/briefs/*（逐節點白皮書）

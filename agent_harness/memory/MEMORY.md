@@ -1,8 +1,8 @@
-# flashkv-devserver — 專案長期筆記（索引入口）
+# flashkv-devserver — 專案長期筆記（索引入口，本檔要維持小）
 
 > **這是快照，不是權威副本。**
 > 權威位置：`.workbuddy/memory/MEMORY.md`（由 host 持續寫入）。
-> 本檔於 2026-09-20 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
+> 本檔於 2026-09-27 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
 > 底下的內容能被 `agent_harness/scripts/auto_git_push.ps1` 定時推送；原檔改了這裡**不會**自動跟上。
 > 索引與漂移檢查見 `agent_harness/engine_loop/memory/INDEX.jsonl`。
 
@@ -10,159 +10,125 @@ llama.cpp 的 CGC fork：Metal ＋ **expert cache pool**（專家權重常駐 SS
 `/Users/alexchuang/Documents/flashkv-devserver`（**git worktree**，`.git` 是檔案）。
 逐日經過在 `.workbuddy/memory/YYYY-MM-DD.md`（append-only，本線用 `§EN-` 前綴）。
 
-## 這個目錄怎麼讀（09-17 拆分；**本檔要維持小**）
-
-- ⚠️ **「~10KB」的單位是「字元」，不是 bytes**（2026-09-20 實測）。本檔 **7791 字元 / 11990 bytes**
-  （CJK 比例 1.54），而**它的尾巴在注入的記憶區塊裡是可見的** ⇒ 沒有被截斷。
-  **不要把 11990 bytes 當成超限而去瘦身** —— 那會白動一個 7.8k 字元的脊椎檔（本線 09-20 差點就做了）。
-  真正要維持小的理由是「它是每次動手前都要讀的那一份」。
-
-**1 索引（本檔）＋ 3 主題檔**，三者是同一份長期記憶（不是歷史存檔），與本檔同齡。
+## 讀法：1 索引（本檔）＋ 4 主題檔
 
 | 檔 | 什麼時候讀 |
 |---|---|
-| **`MEMORY.md`**（本檔） | 每次動手前 |
-| `MEMORY_PERF.md` | **要引用任何 t/s／profile／幾何／散熱數字之前** |
-| `MEMORY_S1.md` | **要碰 S1／分歧定位／`CGC_TENSOR_CAPTURE`／池查表之前** |
+| **`MEMORY.md`**（本檔） | 每次動手前（只給導航與一句話） |
+| `MEMORY_PERF.md` | **要引用任何 t/s／profile／幾何／散熱數字之前**；末節＝ K0–K5 結案總表＋歷次瘦身移入（**第八輪＝本檔 09-26 瘦身的全文**） |
+| `MEMORY_S1.md` | 要碰 S1／分歧定位／`CGC_TENSOR_CAPTURE`／池查表之前 |
 | `MEMORY_FACTS.md` | 動 build／載入／預算／`-ub`／mmap、要碰 `agent_harness/`、或**要提交**之前 |
+| `MEMORY_HYGIENE.md` | 動量測／起 server／要引用環境坑、儀器口徑坑或入口指令之前 |
 
 - 舊報告寫的「`MEMORY.md` 的 S1 節」＝ `MEMORY_S1.md`（dated 產物，不回改）。
-- **新增／刪除這底下任何 `.md` 都要重生索引**（`build_memory_index.py:66` 掃本目錄）。
-- ⚠️ `index_assets.py` 範圍＝`scripts/check/*`＋本目錄＋`docs/*` 的**顯式註冊表** ⇒ **新增 `docs/`
-  檔案不會自動進 MANIFEST，也不會報漂移**；本線 09-17／09-18 那批 docs 都不在管轄內。
+- **新增／刪除這底下任何 `.md` 都要重生索引**（`build_memory_index.py:66`）。
+- ⚠ `index_assets.py` 範圍＝`scripts/check/*`＋本目錄＋`docs/*` 的**顯式註冊表** ⇒ 新增 `docs/`
+  檔案不會自動進 MANIFEST，也不會報漂移。
+- ⚠ **截斷判準**：「~10KB」單位是**字元**。只有本檔被截＝該瘦身（09-21/22/23/24/26 各瘦一次，
+  內容一律移入 `MEMORY_PERF.md` 末節）；本檔與雲端 `<memory>` 一起被截＝總量預算，別動本檔。
 
-## 現在的一句話狀態（09-18 快照；**主題檔為權威**）
+## 現在的一句話狀態（**主題檔為權威**）
 
-- **decode 可引用＝ 全程 NOMINAL 那兩臂 10.80（舊引擎）／7.74（新引擎）** ⇒ 範圍 **7.7–10.8**，不是一個點。
-  ⚠️ 「9.12 vs 10.78」**不能說成退步**。HTTP 的 12.36/12.95 是另一台儀器，統一 llama-bench 後不再引用。
+- ★★ **主線目標（operator 09-26 09:5x 權威表述）＝ 目標函數 ＋ 硬約束**：
+  **把除 compute time 以外的時間（gap／wait／cb／fill）最大程度消除，同時 M1/M2/M3 保持
+  bit-identical。** M1/M2/M3 是**護欄不是獎勵**（不能拿它換速度）。任何槓桿先問兩題：
+  (a) 它砍的是不是這四個桶之一（砍 compute 的不算業績）；(b) 砍完 M1/M2/M3 還 identical 嗎。
+- ★ **靶的帳**（`STEP_SERIALIZATION_2026-09-23.md` §1 ＋ `GAP_ELIMINATION_PLAN_2026-09-24.md`；
+  verify step、`segs=41`、n=221）：total(CPU) **161.0** ＝ wait 123.2(78.1%，CPU 自旋等 GPU，
+  **不是浪費**)＋ cb 23.8 ＋ submit 10.8；GPU 側 **union 113.4（真忙）＋ gap 44.4（空窗）**。
+  ⇒ 唯一能動的桶 = **gap 44.4**；能消它的機制只有一個：段數 41→1。⛔「把 IO 藏進空檔」必敗
+  （**空檔本身就是 CPU 造成的**，r=0.957／slope=1.05）；fill 同步僅 3.955 ms＝4.7%。
+- ★★ **09-26 `CGC_CB_N_MAIN`（Metal 編碼切分；預設地板 64）＝ 目前最高價值候選**：ABBA
+  `32` vs `64` ⇒ `total −11.4%`／**`tg +12.8%`**（處理臂散佈 0.17%）；**D5 長探針 PASS
+  `1045/1045`（含 447 MTP 行、`only_A=0`）⇒ 同樣 logits、更少時間 ＝ 數值免費**。
+  桶（`CGC-GPUTIME`）：`64` ＝ **union 73.1 ＋ gap 15.7**（gap ≈ 步長 19%）；⛔ **`union` 不是不變量**
+  （`nm16` 用同一組節點把它打到 64.5）⇒ **拆分必須逐臂量**。★ **掃描更正**：`16` 是陷阱（比 64 差 26%）、
+  `128` 中性（但 `cb` −38%）、`32` 值得追、**預設 64 中庸不是最差**。⛔ **`32` 的 union/gap 仍未量**。
+  ⇒ `MEMORY_PERF.md` 第九輪（＋補二）＋ `docs/CB_N_MAIN_BUCKETS_2026-09-26.md`。
+- ✅ **D5 紅燈已定案（P0，09-26 10:2x）＝「基準的語意基準移動了」**，不是儀器故障也不是 bug；
+  護欄 M1/M2/M3 本身有效。判讀一個 D5 FAIL 的**三問順序**、以及閘門該用 **(c) 同 build 對照臂**
+  （不是 (a) 重校準 pin、也不是 (b) DEF 子集 —— (b) 已作廢：draft 也走同一套池／hook）
+  ⇒ **全文 `MEMORY_PERF.md` 末節第八輪 §A ＋ `2026-09-26.md` §EN-10:1x/10:2x ＋ skill
+  `cgc-commit-gate` §2.4c**。
+- ★★ **09-26 結案：本線表上一格不剩。** 判「**gap ≡ 44.4 ms 是 fill 的窗口，不可分離**」＝終局；
+  三條獨立機制級證據（① 每層 hook 的 `drain_layer` 清掉未開始的 prefetch；② 預測性預填實測判死：
+  `h = 0.022~0.032`、門檻 0.65、top-16 結構上界只 18~27%；③ 三個預測機制**共用同一來源**
+  （`:5890`「Same prediction source」），而其「相鄰 token 重合 70~90%」與交付形狀（ntok=4）實測的
+  51~56% 直接衝突）⇒ `docs/S1_CORRECTNESS_SPEC_2026-09-26.md` §8 ＋ `2026-09-26.md` §EN-10:4x。
+  ⚠ 唯一還活著的是「保留分段、把 hook 做便宜」—— **常數優化，barrier 12.9/158 ≈ 8%**。
+  ⚠ **教訓：「排在待辦最前」≠「還沒做」** —— 引用任何牌前先看它有無量測欄與判定。
+- ★ **期望值最高的軸 ⇒ `E`（accept／mean len）**：**全專案第一次可量**（`MTP_CTX_REPRODUCIBLE`
+  證明它是配置的函數、非抽樣；五次 launch 同一字串）。上界 **+19%**，**不碰 kernel／leaf／預測**。
+  現值 **1.70**（切換前那支報 2.02 ⇒ 不同軌跡不可直接比）。⇒ `docs/OPPORTUNITY_MAP_2026-09-26.md` §3。
+- ★ **交付 decode（唯一對外門，`harness.py bench --arm "prod-new"`）＝ `10.84 t/s`**
+  （09-27 09:45，`contract.ok`＋`base_check.pass`，`engine_build=825ec07d5`、build 627、
+  MTP off）。`pp 230.35`。單臂噪音底 ≈ ±27%，**3% 門檻**。⚠ `10.84` 附帶
+  `attribution.verdict="swap"`（`swap growth +2406`、max 8382）⇒ **是上界不是中位**。
+  ⛔ 28.15／池 wired 歸屬／wired_probe SIGABRT ⇒ `MEMORY_PERF.md` 第七輪 §A。
+  ⚠ **新的對角**：本線常被引用的「交付口徑 11.03~12.20」是 **09-24 兩趟污染讀數的並集**
+  （`12.20` 被本線判「不可引用」、`11.03` 是 `swap=6043` 承壓），且被錯掛在「契約 §7」名下
+  （§7 是「使用入口」，判據是 `decode >= 10`）。⇒ **本線無乾淨的 MTP off 歷史基線可比**
+  ⇒「t/s 有無進步」**方法論上不可判定**。⚠ **`12.57` 不是 OFF 參考**：含 MTP ON＋老 cell
+  （`-b 512 / -p 0 / --ctx-size 4096`）。
+- ★ **16GB 上唯一實測存活的組合＝ `--load-mode none` ＋ ngl 99 ＋ pool 8 GiB**（mmap 0/2 載入即死、
+  none 2/2 存活）⇒ 可說「跑得動」，**不可說「最快」**。**prefill 250+ ＝ 已達標**（峰值 296.24、
+  乾淨視窗 283.01），未達的是**可重現的地板**；白皮書的 `162.5 → 209.5（+29%）` **作廢**。
+  ⚠ none 臂 6 個 prefill 讀數 228.94–258.25（3/6 ≥250）⇒「每次都 ≥250」不成立。
+- **天花板** L0 12.57／L1 1.33%／L2 0／**L3 = 0**／L4 ~75（不可及）→ `CEILING_STACK_2026-09-21.md`。
+  ⚠ **09-27 註**：`L0 12.57` 的錨本身不可作 OFF 參考（含 MTP ON＋老 cell）；天花板應以
+  **對外門 prod-new `10.84`** 當下界起算。
+  ⚠ **原值（L1 +5.6%／L2 +30~38%／L3 18.59）與 09-25 複核值（1.33%／0／0）不一致**，複核為準；
+  三者**判 0 的依據性質不同**（L1 量測／**L2 儀器判定**／L3 機制＋量測）⇒ `OPPORTUNITY_MAP_2026-09-26.md` §5。
+- **★ 里程碑**：`MILESTONE_MAP_RECHECK_2026-09-25.md` **取代** 09-21 原表判決。本線：M-L1 不做／
+  M-W ≈+1.7%／M-L3、M-PF 判 0／M-S2 不可達／**M-K5 不做**／**M-25 判死**（fill 同步僅 4.7%）。
+  ⚠ M-F5／M-CB 是**線 I** 的格子，本線無實測權，「表一格不剩」只在**本線範圍內**成立。
+- **K0–K5 全部結案**；**MTP／spec**、**G4／S2** 已結案 ⇒ `MEMORY_PERF.md`。
+  ⛔ 交付 cell 的 MTP 增益 **UNRESOLVED**、C1 矛盾（ASL 3.117 vs E 1.62）未裁定。
+- ★ **ρ 落地面（09-26）**：`+14.2%` 是**模型上界**、`+4.7%` 是 **MAXQ 內部調參差** ⇒
+  **ρ 在交付 cell 的淨增益從來沒量過**；且 capture 的同步回讀是「**第五個桶**」（96.9% 浪費）。
+  **已修一個真實缺陷**：`cgc_rho_prefetch` 缺 prefill 閘（實測 `per_layer=255`，≈ 整層）⇒
+  改用 `cgc_is_decode_graph` ＋ 加容量防線 ⇒ `2026-09-26.md` §EN-11:3x。
+  全文 `Backup/RHO_LANDING_PLAN_2026-09-26.md`。
 
-- **★ 2026-09-20 更正（原文未刪，就在上面那一條）**：上面那個 **7.7–10.8** 是 `profile_duo`／`prod_matrix` 的
-  **`decode` cell** 的讀數，而**那個 cell 不是交付形狀**（沒有 `--spec-type` ⇒ MTP off、沒有 `--warm-skip`
-  ⇒ 冷的時鐘、沒有 `--ctx-size` ⇒ llama-bench 自行推導 ~704）。**交付 decode＝ `12.57 t/s`**
-  （2026-09-20、`NOMINAL` **全程**、±2.26；`Backup/prod_profile/prod_profile_20260920_1230.json`），
-  落在 10.78–13.10 的既有帶裡。⇒ **要引用交付 decode，用 `scripts/check/prod_profile.py`，不要用 `profile_duo`。**
-  同一命令的**單臂噪音底 ≈ ±27%**（9.90 vs 12.57，更低的那次 `worst=MODERATE`）⇒ 小於 ~27% 的效應單臂證明不出來。
-  prefill 的 250 bar **在 09-20 未驗證**（三次 188.12／212.59／222.40，全部 `worst ≥ MODERATE`）。
-  → `MEMORY_PERF.md` 的 profile 節；`docs/PRODUCTION_PROFILE_2026-09-20.md`。
-- **「疑似 −15% decode 退步」未獲證實也未排除** ⇒ 見下方「量測衛生」。→ `MEMORY_PERF.md`
-- **S1**＝第一個被 GPU table 服務的層的 MoE gather（層號由 `CGC_S1_MIN_IL` 定）→ `MEMORY_S1.md`
-- **MTP／spec 的三份 dated 結論（m、RSL、residency thrash）已全部移到 `MEMORY_PERF.md` 的
-  「## MTP／speculative」節** —— 每次要動 MTP 之前**先讀那一節**（含「別練 draft head」「別做
-  dynamic-k」與一條被更正的舊結論）。本檔只留指標道德的結論：今天是虧的，但不虧在 accept。
-- **里程碑**：M1 做一半卡住（數值閘門 117/117，但 decode 退步 0.72×）、M2 核心落地、M3/M4 未開始。
-  ⚠️ 「M1/M2/M3」另有 **D5 判決指標**的意思，先確認問的是哪一個。
+## ★ S1（單段提交）—— 已結案，細節在 `MEMORY_S1.md`
+
+★★ **權威單頁 `docs/S1_LINE_VERDICT_2026-09-25.md`（引用前必讀）**：同 build 同 cell 乾淨分解
+A 分段 **11.30** → B 單段 **20.73**（**×1.83**，兩臂皆無 spec）→ spec k2 22.45（+8.3%）
+⇒ **那個 2× 是 S1 的，不是 MTP 的**。⛔ **>20 t/s 的 S1 讀數判不可信**（garbage／無 `answer_md5`）；
+**「23.3 t/s」不可引用**。★ **撞名**：探針臂（`CGC_SLOT_TABLE_GPU`，576/576 通過但**無速度主張**）
+vs 單段提交（`CGC_SEG_BATCH+CGC_B_SCHEME`，無 hook ⇒ garbage）—— 引用前先問是哪一支。
+
+- **主項是序列化不是 fill**（消掉 40.3 ms 裡 fill 只 3.96 ms／4.7%）。
+- ★ **G2（單段下的 miss 率）＝ 42.93%**（`SPEED_ACCEPTANCE_GATE_2026-09-26.md` §9.8）。⛔ 09-26 03:0x
+  的「100%」**已作廢**：publisher 因 `cgc_node_in_graph` 只查 op 節點、不查 `leafs` ⇒ **一個位元組
+  都沒寫**。兩個數字**都不可拿去定價交付 cell**（本臂＝「單段＋hook 不跑」，fill 不會發生）。
+- ★ **G1b／G3 已實跑（09-26 14:0x）**：**G3 生效**（`zero_slot=142=ns-1`、`placeholder=0`）但
+  **是 G1 的前置不是解**；**G1b＝0.395 ms/step（超其 0.2 ms 預算 1.97×），99% 在 78 次小讀、`sync` 只 3.8 µs**。
+  ⚠ 全文 `MEMORY_S1.md` 末節（含 `g1b_g3_smoke2/` 路徑與 `e % ns` 已不可達的證據）。
+- ⚠ **`cgc_node_in_graph` 對 leaf 一律 false** ⇒ `llama-context.cpp:3919` 的 `rm`（rn_mask）、
+  `:3923` 的 `tb`（slot table）**長期靜默為 nullptr** ⇒ 靠它們推出來的結論要重跑。
+- ⚠ **fill 是正確性前提不是速度前提**；開關兩半分在 `libggml-base`／`libllama` ⇒ **驗 binary 要總掃 `*.dylib`**。
+- **全文（1.72×→1.83× 修訂、池計數器塌縮、k-sweep…）⇒ `MEMORY_S1.md` 末節第六輪移入。**
+
+**其餘所有線（ρ／prebind／方案 A／k=3 飄移／cb 42vs74）是 09-23 的 dated 判決**，全文在
+`MEMORY_PERF.md` 末節第四輪移入。一句話：ρ 與 prebind 各自判活、同 regime 同價
+（+14.0%~+14.5%，12.57 → ~14.3~14.4），`cb` 定讞 42~51 ms（74.18 撤回）；**但 S1 出現後都降為第二順位**。
 
 ## 分工
 
 **`agent_harness/` 歸另一條 session；引擎層（`src/`、`scripts/check/`、decode／prefill 量測）歸本線。**
 動手前後各跑 `git status --porcelain -uall`；看到不是自己的 modified／staged 檔就停手、只 stage 自己的檔案。
 
-- ⚠️ **09-20 起引擎層有兩條 session。命名已由 operator 裁定（11:5x）：本線 ＝ `線A (ace)`**
-  （舊標籤「本線（line I）」與另一條的文件署名撞了）。**另一條請沿用 `線 I`** ——
-  它的擁有物是 `cb`／快取命中儀器（`cb_miss_regression.py`、`docs/F1_CB_MISS_REGRESSION_RESULT_*`），
-  正是「`線 I` ＝ 儀器／快取幾何線」的字面意思。
-  **`線A (ace)` 的定義按擁有物**：S1／段邊界（`wait`／`gap`／S2）＋ 逐層 KIND×OP 儀器
-  （`4fdfaa8de` 在本線祖先鏈上）。命名表與五個碰撞面在
-  **`docs/ENGINE_LINE_ASSIGNMENT_AND_G1_LADDERS_2026-09-20.md`**，那份同時把 **G1 的 `to` 拆成兩條
-  階梯**（`cb`→0 owner `線 I`；`wait`/段邊界→0 owner `線A`）⇒ 兩份 ceiling 不再互相否證。
-- ⚠️ **共用碰撞面（09-20 實測）**：① `llama-context.cpp`（F2 在 hook `:5381`；本線在 `graph_compute`
-  `:3348`）；② `ggml-backend.cpp`（F5 的每層 barrier 與本線 S2 切點、G4 儀器同在 `hook_seg`／submit 迴圈）；
-  ③ `libggml-base` 與 8080／GPU 窗口；④ **`cb` 的口徑**（他們 60.22／74.18 ms 高 swap ＋ `CGC_HOOK_SPLIT`；
-  本線 21.23 ms E2b 暖；差 3 倍但**兩個都可能對**）；⑤ `.workbuddy/memory/*.md` 的併發寫入
-  （09-20 11:45–11:46 實測本線 `§EN-308` 標題被拆兩行；`.workbuddy/` gitignored ⇒ 無版控安全網）。
-- **意圖不衝突**：F2 打 `cb`、S2 打 `wait`，兩者可加，且雙方天花板都自寫「單獨不足 25」。
-  ⚠️ 但 `gap ⊆ cb+submit` 的內建交叉檢查以 10.09 ms 失敗 ⇒ **分量相加在該 regime 不閉合，別直接加總。**
-  且雙方的天花板都自己寫明「單獨不足 25」。
+- **本線 ＝ `線A (ace)`**（09-20 operator 裁定），定義按擁有物：S1／段邊界（`wait`／`gap`／`S2`）
+  ＋ 逐層 KIND×OP 儀器。**另一條沿用 `線 I`**：`cb`（＝ expert cache 填池 IO，**不是** command buffer）
+  ／快取命中儀器。命名表與五個碰撞面在 `docs/ENGINE_LINE_ASSIGNMENT_AND_G1_LADDERS_2026-09-20.md`。
+- **09-23 起另有 `docs/NEXT_ACTIONS_2026-09-23.md` 的分工**：【WorkBuddy】＝靜態分析／長報告、
+  【執行 Agent（freebuff）】＝跑 GPU 實驗／改量測工具。**照表做自己那一區，不要做別人的事。**
+- ⚠️ **共用碰撞面（09-20 實測）**：① `llama-context.cpp`；② `ggml-backend.cpp`；
+  ③ `libggml-base` 與 8080／GPU 窗口；④ **`cb` 的口徑**（兩個都可能對）；
+  ⑤ `.workbuddy/memory/*.md` 併發寫入（gitignored ⇒ 無版控安全網）。
+- **意圖不衝突但別相加**：F2 打 `cb`、S2 打 `wait`；分量相加在該 regime 不閉合。
 
-## ★★ 並行 session 安全（2026-09-18 血的教訓，動手前必讀）
+## 量測衛生／入口／環境坑 → `MEMORY_HYGIENE.md`
 
-同一台 Mac 上有多條線同時量測。**任何用「binary 名字」當範圍的清理，都是在殺別人的受試對象。**
-
-- **`run_server.sh` 的 preflight 曾是全機 cross-kill**（`'pattern + pgrep -f'` 不看 port、不看 session，
-  且**排在 memory guard 之前** ⇒ 自己被 guard 擋下、別人卻已經死了）。09-18 已改：
-  **`CGC_PREFLIGHT_KILL=1`（預設）只列出 pid+etime、不送任何訊號**；要清場得明確說
-  `CGC_PREFLIGHT_KILL=all`。第二欄 etime 是用來分辨「自己的殘留」vs「別人剛發的量測」。
-- **`stop()` 不得用 `pkill -9 -f llama-server`**（`http_duo.py` 就是這麼踩的）：清理要按**自己的 pid／port**。
-- **「查 env」不能有副作用**：`CGC_DUMP_ENV=1` 會跳過 preflight 與所有閘門（STALE 硬檢查、memory guard）
-  ⇒ 別人在跑時你仍然取得到解析結果。`llama_bench_matrix.resolve()` / `prod_matrix` / `m123_oracle_gate` /
-  `phase_split_ab` 都靠它，**這是唯一的真相來源，不要在工具裡重打一份 env**。
-- **工具自選 port**：`http_duo.py --port auto`（8080 起第一個空的）＋ `start_new_session=True`
-  ⇒ 兩條線可以各跑一台 server 而不互害。
-- **server 死於 SIGTERM 要當無效樣本**：日誌 `[CGC] Received SIGTERM` ＝ 外部獵殺（watchdog 走 `GGML_ABORT`、
-  OOM 是另一回事）。`http_duo.py` 每 rep 重查存活＋掃該標記，中了就印診斷、**exit 1**。
-
-## 入口（照抄）
-
-```sh
-cmake --build src/llama.cpp/build --target llama-server -j 8   # 產物 src/llama.cpp/build/bin
-RUN_REPLAY_BENCH=0 python3 scripts/check/decode_sweep.py --profile prod25 \
-  --arms p25-gputime,<臂> --rounds 3 --warmup 0 --n-predict 24 \
-  --json Backup/phase_decomp/<名>.json --force
-python3 scripts/check/m123_oracle_gate.py --tag <標籤>          # D5，自己起 server（先確認 8080 空）
-python3 scripts/check/http_duo.py --profile prod25              # 服務路徑兩軸；prefill 依 ctx 自動縮
-python3 scripts/check/profile_duo.py --profile prefill250       # llama-bench 兩軸（**交付口徑**）
-
-# 索引重生（順序固定；有動 .workbuddy/memory/*.md、scripts/check/*、docs/*、agent_harness/engine_loop/* 就跑）
-python3 agent_harness/engine_loop/memory/build_memory_index.py     # 先：寫 INDEX.jsonl
-cd agent_harness/engine_loop && python3 index_assets.py && cd -    # 後：MANIFEST 記 INDEX 的 bytes/mtime
-```
-
-- **`run_server.sh` 有 env allowlist**：未列出的 `CGC_*` **靜默丟棄** ⇒「沒效果」與「沒設到」同形。
-  現成的坑：`CGC_PREFETCH_SRC=hist` 在 C++ 有（`llama-context.cpp:2002`）但已被 allowlist 刪除（2026-09-13）⇒ 今天從任一條路設都不生效；可用的替代是 `CGC_SERVER_NO_PREFETCH=0`（`run_server.sh:2029`，bench 側用 `--extra CGC_SERVER_NO_PREFETCH=0`）。
-- 索引重生**順序固定**：先 `build_memory_index.py` 再 `index_assets.py`（顛倒或只重生 manifest 都不會修）；
-  **memory 寫完要在索引重生之前**；`index_assets.py` 不要加 `--out`；範圍不含 `agent_harness/memory/`
-  與 `skills/`（另一條線手動 `import_harness_snapshot.py`，要跑就**先快照、後索引**）。
-
-## 量測衛生
-
-- **【使用者約定，2026-09-18 起】速度數字一律用 llama-bench，不用 HTTP**，且 **prefill ＋ decode 兩軸並列**、
-  禁止單軸引用。工具 `profile_duo.py`；`http_duo.py` 只用來研究「儀器間差異」。
-- **★ 單臂噪音 ≈ ±1.9 t/s（6 臂 7.03–10.80），比 15% 的效應還大。**「發射時 NOMINAL」「臂內 worst」
-  「引擎版本」「記憶體水位」**四個已記錄變數都排不出順序**：
-  decode 單 cell n=8 的 `|r|` 全在 0.18–0.32 ≪ 臨界 0.705（**「噪音源＝記憶體」已收回**；
-  不限 cell 的 r=+0.63/−0.51 是把 prefill 行與 decode 行混在同一條軸上假造的 ⇒ **後設相關一定要限定同一
-  cell**：`caliber_env.py --memory --cell-filter`）。
-  ⇒ **走配對設計抵銷未知慢漂，而不是繼續找解釋變數。**
-- **配對設計（`scripts/check/paired_ab.py`）**：逐 rep 證明 **arm 內** rep2/rep3 差 0.6–2%、**arm 間**散 1.54×
-  ⇒ 噪音在臂開始前就定了。用 **AB／BA 交替 ＋ `median(A/B)`**；熱閘門**預設關**（`--thermal-gate` 開：
-  等 NOMINAL 要 35 s–10 min，會把一對的兩半隔開幾分鐘，正好放大要消除的漂移）。
-  **必跑第一步是 `--null`（兩槽同 binary）＝ 儀器噪音底**；若自身就散 ±10%，正解是「不可測」不是「沒測到」。
-  附帶 `corr(|Δswapin|, |ratio-1|)`：近 0＝配對成功，近 +1＝配對失效。
-- **記憶體壓力別想著「釋放」**（`purge` 要 root、沒 swapoff）。替代＝把「進入每一臂的記憶體狀態」設成
-  enforced 條件（`--min-headroom-mb`），等不到就 abort。**「確認沒別的 session」不能用 `pgrep llama`**
-  （09-18 的競爭者 argv 裡沒有 llama 字串）⇒ 用 `paired_ab.py preflight()`，每一對之前都重查。
-- **★★ cell 型工具 ≠ run_server.sh：batch 差 11 倍**（`caliber_env.py --equiv`）—— ⚠ **只對 `prod_matrix`／`profile_duo` 的 cell 成立**：`prod_matrix.cell_command()` ~line 319 `b = ub = spec["batch"]` 蓋掉 profile（prefill250 = 5632）⇒ `-b 512`；**`spec_cost_curve.py` 走 `lbm.default_batch()`（優先用 profile）⇒ 它是 `-b/-ub 5632`，與 server 相同**（09-18 那 18 支 run 的 JSON 有記）。其餘旋鈕同源轉發。
-  ⇒ **「服務路徑 vs bench 的差距是環境造成的」尚未被證明**（實測差 +13~30%，**且非常數**）。
-- **`CGC_SERVER_MTP=0` 是一整組旋鈕，不是一個旗標**：它讓 **8 個 engine env 整塊消失**
-  （`CGC_DRAFT_DECODE`、`CGC_MM_BITIDENT`、`CGC_MTP_NO_WARMUP`、`CGC_NO_PREFETCH`、`CGC_NO_SEQ_RM_PROBE`、
-  `CGC_VERIFY_DECODE`、`CGC_WARM_NPAST`、`LLAMA_EXPERT_CACHE_LAYER_CAPS`）。⚠️ 但它**換的那份模型與預設
-  逐視窗全同 bytes**（不同 inode）⇒ **模型檔不是混淆變數**（此句取代「MTP=0 ⇒ 不是同一受試對象」的舊述句）。
-- **prefill 只比較同 prompt 長度**（bench 2048、舊 HTTP 臂 2873/4500 是三個不同的量，不是退步）。
-  現在 `http_duo` 依 profile ctx 自動縮到 ~2048（prod25 ctx=4096 ⇒ 2025；4500 會 400）。
-- **`prod25` 在 llama-bench 兩軸上都量不到**（零 GPU 可見）：`n_batch` 被池路徑 `cgc_pool_max_tokens()`
-  夾在 8、`compat()` 拒 `-p 2048`，連 `-b 512` 的 decode 都不合法 ⇒ 高速候選只剩 prefill250 血統。
-- **★ bisect 不必重建**：產物在版控裡 ⇒ `git archive <commit> src/llama.cpp/build/bin` 取舊 engine，再用
-  `install_name_tool -rpath <真build/bin> <tmp/bin> <f>` ＋ `codesign -f -s -`（**`LC_RPATH` 是絕對路徑，
-  不改就載到當前 dylib，bisect 等於沒做**）。`profile_duo.py --bin-dir`。**不要為 bisect 重建。**
-- **md5 只在同 build 指紋 ＋ 同 `predicted_n` 下可比**；交錯 A/B ×3 ＋配對中位。
-- **`CGC-MMID-ASSERT` 的 `id_oob` 不是「消費者讀到什麼」的證據**（encode 期由主機讀 `op->src[2]->data`）
-  ⇒ 只能用內核側讀數。
-- **建置新鮮度的判準是「輸出有沒有編譯行」**，不是 exit code／產物存在／mtime（`.metal` 另驗
-  `autogenerated/ggml-metal-embed.s.o` 的 mtime）。
-- **D5**：`ORACLE_PINNED_ENV` 釘在 `BATCH/UBATCH=6144`；重新基線＝`--write-ref` ＋ `--no-pin-oracle-env`；
-  **先看 `comparable` 再讀 M1/M2/M3**。現行參考檔＝ `ref_iq3_pool8gb_M2_6144_bitident_v6_nbaware.jsonl`
-  （md5 `72d82a33ad79e0e69bc935acd24228f2`；09-17 13:45 起取代 `v5_spac`）。
-  ⚠ 該檔在 `Backup/`（**未受版控**），而每個判決都量它 ⇒ 09-19 起 **md5 釘在程式的 `REF_PINS`**
-  （不符就 exit 4，要覆寫需 `--allow-ref-drift`），判定档同時記 `ref_md5` 與 `ref_pinned`。
-  **重新基線後要在同一顆 commit 更新 `REF_PINS`**（`--write-ref` 不會自動改它）。
-- lesson schema：`superseded_by` 必填（可 null）、`applies_to` 每項是**檔案路徑**。
-- **環境坑**：BSD `grep` 不支援 `\|`（一律 `-E`）；**本 sandbox 的 bash `grep` 會靜默失效 ⇒ 用內建 Grep 工具**；
-  zsh `*.log` 無匹配會不執行整條指令；**沒有 `timeout`**；`ps` 被擋、`pgrep` 可用；
-  **`notifyutil -g com.apple.system.thermalpressurelevel` 連 key 一起印，要 `awk '{print $NF}'`**。
-- **heredoc 陷阱**：工具呼叫裡的 shell heredoc 會把 `$VAR` 吃掉（寫 patch 腳本要先用 Write 落檔再執行）。
-
-## Skill（動手前先讀）
-
-`~/.workbuddy/skills/`：`cgc-commit-gate/`（閘門鏈、`BIN_DIR`、`RUN_REPLAY_BENCH=0`、索引順序、多段式收尾、
-lesson 欄位陷阱）、`cgc-decode-attribution/`（decode 歸因與輸出擷取規則）、
-`cgc-prefill-thermal-delivery/`（prefill t/s 的條件式交付）、`cgc-whitepaper-delivery/`（`docs/*.html` 版式）。
+★★ **量測契約九條／分級 17 列／作廢數字 292 處** 全文 ⇒ `MEMORY_HYGIENE.md` 末節（第六＋七輪移入）。入口 `docs/MEASUREMENT_CONTRACT_2026-09-25.md`；機檢 `formula_audit.py`／`void_number_check.py`；總圖 `docs/mindmap/`（44 條目）。⛔ commit `65c76b8c7` D5 未過（coverage 60%）⇒ owner 重新基線前勿引用。

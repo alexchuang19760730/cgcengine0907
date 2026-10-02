@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | `MEMORY.md` | `.workbuddy/memory/MEMORY.md` | 索引入口：專案長期筆記的分類與入口 |
 | `MEMORY_FACTS.md` | `.workbuddy/memory/MEMORY_FACTS.md` | 長期事實／陷阱／周邊介面 |
+| `MEMORY_HYGIENE.md` | `.workbuddy/memory/MEMORY_HYGIENE.md` | 量測衛生／環境坑／入口（09-21 從 `MEMORY.md` 移出） |
 | `MEMORY_PERF.md` | `.workbuddy/memory/MEMORY_PERF.md` | profile／模型／幾何／速度／散熱 |
 | `MEMORY_S1.md` | `.workbuddy/memory/MEMORY_S1.md` | S1／分歧定位（S1＝把 slot table 放 GPU 的探針臂） |
 | `2026-09-15.md` | `.workbuddy/memory/2026-09-15.md` | 當日工作誌（append-only） |
@@ -14,6 +15,13 @@
 | `2026-09-18.md` | `.workbuddy/memory/2026-09-18.md` | 當日工作誌（append-only） |
 | `2026-09-19.md` | `.workbuddy/memory/2026-09-19.md` | 當日工作誌（append-only） |
 | `2026-09-20.md` | `.workbuddy/memory/2026-09-20.md` | 當日工作誌（append-only） |
+| `2026-09-21.md` | `.workbuddy/memory/2026-09-21.md` | 當日工作誌（append-only） |
+| `2026-09-22.md` | `.workbuddy/memory/2026-09-22.md` | 當日工作誌（append-only） |
+| `2026-09-23.md` | `.workbuddy/memory/2026-09-23.md` | 當日工作誌（append-only；含 `§EN-475` oracle replay，與 09-27 的 §EN-475 同號不同節） |
+| `2026-09-24.md` | `.workbuddy/memory/2026-09-24.md` | 當日工作誌（append-only） |
+| `2026-09-25.md` | `.workbuddy/memory/2026-09-25.md` | 當日工作誌（append-only） |
+| `2026-09-26.md` | `.workbuddy/memory/2026-09-26.md` | 當日工作誌（append-only） |
+| `2026-09-27.md` | `.workbuddy/memory/2026-09-27.md` | 當日工作誌（append-only；含 `§EN-475` MTP-on 存活翻案，落地摘要見 `docs/MTP_ON_LIVENESS_AND_BENCH_SCHED_2026-09-27.md`） |
 
 每個快照檔開頭都有 banner 標明這件事（插在 YAML frontmatter **之後**，避免弄壞 frontmatter）。
 

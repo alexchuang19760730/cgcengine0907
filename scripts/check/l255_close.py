@@ -71,6 +71,30 @@ def thermal_level() -> int | None:
     return None
 
 
+# [CGC 2026-10-01] swap 存量的**警告**界線（不是閘）。
+#   gate_consistency 的裁定「swap 存量不得再當起跑閘（stock ≠ flow）」不動 —— 存量高不證明這一趟
+#   會 thrash。但今天同一條命令、同一個 cell 的實測是：存量 ~0.9 GB ⇒ 8 趟全 attribution=none；
+#   存量 4.2–6.3 GB（別的 thread 的 llama 灌満之後）⇒ 3/3 趟全 VOID（swap／HEAVY）。
+#   所以它是一則警告：不是「不能跑」，是「可回收過了也不代表跑得乾淨，先看它一眼」。
+SWAP_ADVISE_MB = 2048.0
+
+
+def _swap_parse(text: str) -> float | None:
+    """`total = 7168.00M used = 6127.69M free = ... (encrypted)` → used MB（純函數，可測）。"""
+    m = re.search(r"used\s*=\s*([0-9.]+)M", text)
+    return float(m.group(1)) if m else None
+
+
+def swap_used_mb() -> float | None:
+    """`sysctl -n vm.swapusage` 的 used，單位 MB；讀不到回 None（不影響裁決）。"""
+    try:
+        out = subprocess.run(["sysctl", "-n", "vm.swapusage"],
+                             capture_output=True, text=True, timeout=10).stdout
+        return _swap_parse(out)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def box_reading(need_mb: float = NEED_MB) -> dict:
     """一個 dict 裝齊四個判據；來源是既有儀器（server_window.decision ＋ notifyutil）。"""
     sys.path.insert(0, str(HERE))
@@ -89,6 +113,7 @@ def box_reading(need_mb: float = NEED_MB) -> dict:
         "launcher_free_pct": d.get("launcher_free_pct"),
         "binding": d.get("binding"),
         "agree": d.get("agree"),
+        "swap_used_mb": swap_used_mb(),
     }
 
 
@@ -108,6 +133,14 @@ def verdict(reading: dict) -> tuple[bool, list[str], list[str]]:
          "無" if not reading["foreign_llama"] else "有 foreign llama 行程"),
     ]
     lines = [f"  {'✅' if ok else '⛔'} {name:10s} {note}" for name, ok, note in terms]
+    # 警告（非閘）：存量高 ⇒ 今天的實測是 3/3 趟 VOID。不進 terms ⇒ 永遠不擋，只是要多看一眼。
+    sw = reading.get("swap_used_mb")
+    if sw is not None:
+        if sw >= SWAP_ADVISE_MB:
+            lines.append(f"  ⚠ swap 存量    {sw:.0f} MB used（≥ {SWAP_ADVISE_MB:.0f} ⇒ 今天 3/3 趟帶 swap／HEAVY；"
+                         "可回收過了也不代表乾淨 ⇒ 先讓它降回 <2 GB 或關 App；存量本身仍不是閘）")
+        else:
+            lines.append(f"  ℹ swap 存量    {sw:.0f} MB used（今天 <2 GB 的 8 趟全部 attribution=none）")
     blocked = [name for name, ok, _ in terms if not ok]
     return (not blocked), lines, blocked
 
@@ -153,11 +186,12 @@ def cmd_go() -> int:
 
 
 # ── selftest：餵合成讀數，驗閘門真的會紅 ──────────────────────────────────────
-def _reading(mb=8000.0, thermal=0, comp=True, port=False, foreign=False) -> dict:
+def _reading(mb=8000.0, thermal=0, comp=True, port=False, foreign=False, swap=600.0) -> dict:
     return {"reclaimable_mb": mb, "need_mb": NEED_MB, "memory_ok": mb >= NEED_MB,
             "port_held": port, "foreign_llama": foreign, "compressor_ok": comp,
             "compressor_reason": "", "thermal": thermal, "launcher_class": "green",
-            "launcher_free_pct": 70, "binding": "harness", "agree": True}
+            "launcher_free_pct": 70, "binding": "harness", "agree": True,
+            "swap_used_mb": swap}
 
 
 def cmd_selftest() -> int:
@@ -184,6 +218,15 @@ def cmd_selftest() -> int:
     chk("熱解析：NOMINAL 行", thermal_line_ok("com.apple.system.thermalpressure 0"))
     chk("熱解析：壞行 ⇒ None", thermal_line_ok("garbage", want=None))
     chk("門檻＝實測存活線不是 8000", NEED_MB == SURVIVAL_MB and NEED_MB < 8000)
+    # [2026-10-01] swap 存量：警告、不擋（存量 ≠ 流量，但今天存量高的 3 趟全 VOID）
+    chk("swap 存量高 ⇒ 仍是 PASS（不當閘）", verdict(_reading(swap=6200.0))[0])
+    chk("swap 存量高 ⇒ 出警告行", any("⚠ swap 存量" in ln for ln in verdict(_reading(swap=6200.0))[1]))
+    chk("swap 存量低 ⇒ 只有 ℹ、無警告",
+        not any("⚠ swap 存量" in ln for ln in verdict(_reading(swap=600.0))[1])
+        and any("ℹ swap 存量" in ln for ln in verdict(_reading(swap=600.0))[1]))
+    chk("swap 存量擋不住 SHORT 的成立", not verdict(_reading(mb=6000.0, swap=6200.0))[0])
+    chk("swap 解析：sysctl 格式", _swap_parse("total = 7168.00M  used = 6127.69M  free = 1040.31M (encrypted)") == 6127.69)
+    chk("swap 解析：壞行 ⇒ None", _swap_parse("garbage") is None)
     print("\nSELFTEST " + ("OK" if bad == 0 else f"FAILED（{bad}）"))
     return 1 if bad else 0
 

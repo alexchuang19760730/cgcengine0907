@@ -1770,15 +1770,43 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
         } else if (cgc_oa_async_enabled() &&
                    getenv("CGC_VERIFY_OP_TIMING") == nullptr &&
                    strcmp(ggml_backend_name(split_backend), "CPU") != 0) {
-            // [CGC 2026-09-24 B-scheme diagnostic] CGC_SEG_BATCH=1: submit the WHOLE graph as
-            // one async compute, skipping the 41-segment serial loop (wait->hook->submit).
-            // No hook is fired, so no fill happens and ids stay stale -> output is WRONG
-            // (diagnostic only, never a deliverable arm). It prices the serialized-overhead
-            // term: step 79.2ms = wait 66.3 + cb 6.1 + submit 4.2 + ~8.3 unattr (41 segs x
-            // ~0.2ms command-buffer launch). One async submit + synchronize shows what
-            // survives when the segmentation is gone -- the union floor plus a single sync.
-            static const bool cgc_seg_batch = getenv("CGC_SEG_BATCH") != nullptr;
-            if (cgc_seg_batch) {
+            // [CGC 2026-10-01 Y-accel · (b)] CGC_SEG_BATCH_FAST: single async submit of the whole
+            // graph (1 submit/step). Before submit, llama-context.cpp writes each layer's remap leaf
+            // from the PREVIOUS token's predicted expert ids (prev_token_expert_ids[il]) and sync-
+            // ensures those experts resident (eliminating the fill-race NaN). After submit it reads
+            // back ffn_moe_ids_cont (true routed ids) and compares the slot the GPU consumed
+            // (remap leaf) against slot_table_safe(true_id): a mismatch means the prediction missed,
+            // so it forces the proven 41-segment loop via CGC_FORCE_41SEG and re-runs the step
+            // (bit-identical by construction). Prediction-ensure makes most decode steps hit the fast
+            // path; the fallback covers the rest. Multi-token steps (no per-token prediction) and the
+            // first decode token (no prev prediction) route straight to the 41-seg loop.
+            static const bool cgc_seg_batch_fast = getenv("CGC_SEG_BATCH_FAST") != nullptr;
+            // [CGC 2026-10-02 S1 single-submit arm] Same single-submit branch, different thing fed
+            // to the graph. CGC_SEG_BATCH_FAST consumes the host-written remap leaf, so it must
+            // predict this step's ids before submit; CGC_S1_SINGLE_SUBMIT leaves the mapping to the
+            // device (get_rows(slot_table, ids)) and publishes the routing-INDEPENDENT table
+            // instead -- see the publish block in llama-context.cpp. The graph has to actually be
+            // the S1 one for that table to exist, so the arm requires CGC_SLOT_TABLE_GPU=1 and
+            // refuses (rather than silently single-submitting a host-leaf graph whose leaves nobody
+            // wrote, which is a garbage-output configuration, not a measurement).
+            static const bool cgc_s1_ss = getenv("CGC_S1_SINGLE_SUBMIT") != nullptr &&
+                                          getenv("CGC_SLOT_TABLE_GPU") != nullptr;
+            if ((cgc_seg_batch_fast || cgc_s1_ss) && getenv("CGC_FORCE_41SEG") == nullptr) {
+                // [CGC 2026-10-02 S1 single-submit] This branch submits ONE split and returns from
+                // ggml_backend_sched_compute_splits, so any LATER split of the same graph is never
+                // submitted by this path. That is only indistinguishable from a correct single
+                // submit when the graph has nothing after this split -- so the split count and the
+                // name of the backend actually submitted are printed (first few times) instead of
+                // being assumed. A silent variant of this is exactly how "one submit per step"
+                // could leave half a graph uncomputed and still report a plausible step time.
+                static int cgc_ss_split_diag_n = 0;
+                if (cgc_ss_split_diag_n < 6) {
+                    cgc_ss_split_diag_n += 1;
+                    fprintf(stderr, "CGC-SINGLE-SUBMIT: submitting split=%d/%d backend=%s nodes=%d "
+                                    "(later splits are NOT submitted by this branch)\n",
+                            split_id, sched->n_splits, ggml_backend_name(split_backend),
+                            split->graph.n_nodes);
+                }
                 enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);
                 if (ec != GGML_STATUS_SUCCESS) {
                     return ec;
@@ -1786,6 +1814,13 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 ggml_backend_synchronize(split_backend);
                 return GGML_STATUS_SUCCESS;
             }
+            // [CGC 2026-10-01 P2 engine-surgery] CGC_SEG_BATCH=1 now deliberately falls through
+            // into the DEFAULT 41-segment wait->callback_eval->submit loop below (the proven
+            // correct async path). The old shortcut that submitted the whole graph in one async
+            // compute with no hook (stale ids -> wrong output) has been removed so SEG_BATCH is a
+            // deliverable arm. R6 root cause: td[e] was materialized before the per-layer ensure
+            // hook ran; only submit-time ensure (this loop) closes it. See
+            // docs/R6_PERLAYER_ENSURE_DESIGN_2026-10-01.md.
             // CGC: dispatch the Metal split in segments. Segments end at the ARGSORT op (which
             // actually produces the expert ids); the top-k VIEW is a dependency-free alias that
             // ggml may place before its producer, so using it as the boundary would fire the hook
@@ -2155,6 +2190,18 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     p_n++;
                     return GGML_STATUS_SUCCESS;
                 };
+                // [CGC 2026-10-02 overlap fence] Token count of the graph currently being computed,
+                // read off the top-k tensor by the hook below. The fence is only valid for DECODE
+                // steps: the prefill runs the CGC_PREFILL_STREAM slab path, whose fill is
+                // ASYNCHRONOUS (double-buffered), so "the hook returned" does NOT mean "the data is
+                // ready" and gating on it is simply wrong. Measured 2026-10-02: fencing the prefill
+                // graph produced CGC-MMID-ASSERT id_oob=1456 first=955391402 (garbage routed ids)
+                // and all-NaN logits -- the prefill, not the fence mechanism, was the victim.
+                // `-1` == "not observed yet", so the FIRST block of any graph never fences: that
+                // both protects the prefill and stops a stale value from a previous graph being
+                // applied to a new one. Everything from block 1 on sees the current graph's own
+                // value, because block 0's hook has already run by then.
+                static int64_t cgc_ovl_ntok = -1;
                 auto hook_seg = [&](int i) -> bool {
                     static int64_t w_us = 0, c_us = 0, n = 0;
                     const int64_t st0 = ggml_time_us();
@@ -2610,6 +2657,13 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     if (ttopk == nullptr) {
                         ttopk = split->graph.nodes[as_idx[i]];
                     }
+                    // [CGC 2026-10-02 overlap fence] Record this graph's token count for the loop
+                    // above. `ne[1]` of the top-k tensor IS the number of tokens (see the note that
+                    // introduces dp_ntok). Cheap (one field read per layer) and unconditional, so the
+                    // fence decision never depends on the DECPROF instrument being enabled.
+                    if (ttopk != nullptr) {
+                        cgc_ovl_ntok = ttopk->ne[1];
+                    }
                     if (!sched->callback_eval(ttopk, false, sched->callback_eval_user_data)) {
                         return false;
                     }
@@ -2720,20 +2774,83 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     }
                     return true;
                 };
+                // [CGC 2026-10-02 overlap fence] see charters/exp-overlap-partial-2026-10-02.yaml.
+                //
+                // Measured motivation (build 054fb22f04a0, ab_interleave p25-gputime vs
+                // p25-submit-ahead, ntok=1 medians): the WHOLE prize of early submission is in
+                // `wait` -- total 73.54 -> 38.10 ms/step, of which `wait` 65.20 -> 25.67, while
+                // `cb` 2.86 -> 8.35 and `submit` 4.44 -> 4.06 barely move. So the boundary is a
+                // GPU->CPU->GPU round trip, not GPU execution.
+                //
+                // CGC_SUBMIT_AHEAD=1 captures that prize by racing the remap leaf (UB: it mutates a
+                // buffer an in-flight command buffer references). CGC_OVERLAP_FENCE=k captures it
+                // SAFELY: commit segment i+1 early with its first command buffer waiting on a device
+                // event, and signal that event only after the hook (i.e. the leaf write) returned.
+                // Read-after-write ordering is then structural, so output stays bit-identical.
+                //
+                // k = number of BOUNDARIES per graph (0/unset == upstream behaviour, byte for byte).
+                // Partial coverage is the point: the racy arm's `cb` grows by 5.5 ms/step, so full
+                // coverage may not be optimal and k has to be scanned.
+                static const int cgc_ovl_k = []() {
+                    const char * e = getenv("CGC_OVERLAP_FENCE");
+                    return e != nullptr ? atoi(e) : 0;
+                }();
+                typedef void (*cgc_fence_arm_fn)(ggml_backend_t, uint64_t);
+                typedef void (*cgc_fence_sig_fn)(ggml_backend_t, uint64_t);
+                typedef void (*cgc_fence_st_fn)(ggml_backend_t, int64_t *);
+                static cgc_fence_arm_fn cgc_fence_arm    = nullptr;
+                static cgc_fence_sig_fn cgc_fence_signal = nullptr;
+                static cgc_fence_st_fn  cgc_fence_stats  = nullptr;
+                static bool cgc_ovl_resolved = false;
+                if (cgc_ovl_k > 0 && !cgc_ovl_resolved) {
+                    cgc_ovl_resolved = true;
+                    cgc_fence_arm    = (cgc_fence_arm_fn) ggml_backend_reg_get_proc_address(reg, "ggml_metal_cgc_fence_arm");
+                    cgc_fence_signal = (cgc_fence_sig_fn) ggml_backend_reg_get_proc_address(reg, "ggml_metal_cgc_fence_signal");
+                    cgc_fence_stats  = (cgc_fence_st_fn)  ggml_backend_reg_get_proc_address(reg, "ggml_metal_cgc_fence_stats");
+                    if (cgc_fence_arm == nullptr || cgc_fence_signal == nullptr) {
+                        fprintf(stderr, "CGC-OVERLAP-FENCE: proc-address lookup FAILED (metal lib too old?) "
+                                        "-> running UNFENCED (upstream order)\n");
+                    }
+                }
+                static uint64_t cgc_ovl_seq = 0;    // process-wide + monotonic: MTLSharedEvent contract
+                static int64_t  cgc_ovl_armed_n = 0, cgc_ovl_sig_n = 0;
+                const bool cgc_ovl_on = cgc_ovl_k > 0 && cgc_fence_arm != nullptr && cgc_fence_signal != nullptr;
+                int cgc_ovl_here_n = 0;             // boundaries fenced in THIS graph
+
                 for (int i = 0; i < n_segs; i++) {
-                    if (submit_ahead && i + 1 < n_segs) {
+                    // [CGC 2026-10-02 overlap fence] i >= 1: block 0 runs before its own hook, so the
+                    // token count read from the CURRENT graph is not known yet -- skipping it keeps
+                    // the previous graph's count from leaking in (see cgc_ovl_ntok).
+                    // cgc_ovl_ntok == 1: decode only. The prefill's slab fill is asynchronous, so a
+                    // fence released "right after the hook returns" releases it too early.
+                    const bool ovl_here = cgc_ovl_on && cgc_ovl_here_n < cgc_ovl_k && i >= 1 &&
+                                          cgc_ovl_ntok == 1 &&
+                                          i < n_as_found && i + 1 < n_segs;
+                    uint64_t ovl_v = 0;
+                    if (ovl_here) {
+                        ovl_v = ++cgc_ovl_seq;
+                        cgc_fence_arm(split_backend, ovl_v);
+                    }
+                    if ((ovl_here || submit_ahead) && i + 1 < n_segs) {
                         ec = submit_seg(i + 1);
                         if (ec != GGML_STATUS_SUCCESS) {
                             return ec;
                         }
+                        if (ovl_here) { cgc_ovl_armed_n++; cgc_ovl_here_n++; }
                     }
                     if (i < n_as_found) {
-                        if (!hook_seg(i)) {
+                        const bool hooked = hook_seg(i);
+                        if (ovl_here) {
+                            // the remap leaf is written by now (hook_seg ran it) -> release the GPU
+                            cgc_fence_signal(split_backend, ovl_v);
+                            cgc_ovl_sig_n++;
+                        }
+                        if (!hooked) {
                             break;
                         }
                     }
                     const int64_t bd_t0 = ggml_time_us();   // [CGC §37] hook returned
-                    if (!submit_ahead && i + 1 < n_segs) {
+                    if (!ovl_here && !submit_ahead && i + 1 < n_segs) {
                         ec = submit_seg(i + 1);
                         if (ec != GGML_STATUS_SUCCESS) {
                             return ec;
@@ -2746,6 +2863,25 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                         gt_bdcpu += bd_t1 - gt_st1;
                         gt_bdhook += bd_t0 - gt_st1;
                         gt_bdsub  += bd_t1 - bd_t0;
+                    }
+                }
+                if (cgc_ovl_on) {
+                    static int cgc_ovl_dbg_n = 0;
+                    if (cgc_ovl_dbg_n < 8) {
+                        cgc_ovl_dbg_n++;
+                        int64_t fst[2] = { -1, -1 };
+                        if (cgc_fence_stats != nullptr) {
+                            cgc_fence_stats(split_backend, fst);
+                        }
+                        // instrument-liveness line: a fence arm with no signal would HANG the GPU,
+                        // so `armed == signalled` is not decoration -- it is the proof that every
+                        // armed wait was released (and `ev` proves the event was actually created).
+                        fprintf(stderr, "CGC-OVERLAP-FENCE: graph#%d k=%d ntok=%lld armed_here=%d total_armed=%lld "
+                                        "total_signalled=%lld seq=%llu ev=%lld ev_val=%lld\n",
+                                cgc_ovl_dbg_n, cgc_ovl_k, (long long) cgc_ovl_ntok, cgc_ovl_here_n,
+                                (long long) cgc_ovl_armed_n, (long long) cgc_ovl_sig_n,
+                                (unsigned long long) cgc_ovl_seq,
+                                (long long) fst[0], (long long) fst[1]);
                     }
                 }
 

@@ -6,7 +6,7 @@ agent_created: true
 
 > **這是快照，不是權威副本。**
 > 權威位置：`~/.workbuddy/skills/cgc-decode-attribution/SKILL.md`（由 host 持續寫入）。
-> 本檔於 2026-09-20 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
+> 本檔於 2026-09-27 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
 > 底下的內容能被 `agent_harness/scripts/auto_git_push.ps1` 定時推送；原檔改了這裡**不會**自動跟上。
 > 要改 skill 請改原檔，再重跑 `python3 agent_harness/scripts/import_harness_snapshot.py`。
 
@@ -221,6 +221,49 @@ agent_created: true
      TimeMachine、GUI 負載 ⇒ **「等安靜窗口」不會消除它**）。可行的只剩**單臂內、逐層、看中位數**。
 
 10. **★★ 2026-09-19 晚：per-node 儀器本來就在樹裡 —— 別重造。**
+
+11. **★★ 2026-09-22：動了 `src/` 裡的引擎原始碼之後，所有走 `decode_window_harness` 的探針
+   會「拒絕量測」，而不是給你錯數字 —— 這是設計，不是 bug。**
+
+   那道閘門是 `decode_window_harness.py:ANCHOR`：它比對目前 binary 的 md5 與「上次 **M1/M2/M3 oracle
+   gate** 通過的那顆 binary」。加一個檔案（哪怕是只加一行 log）就讓 libllama 換 md5 ⇒ 所有經手的
+   探針（`gdn_split.py`、`window_sentinel` 家族、任何 import `decode_window_harness` 的工具）在
+   開場就印
+
+   ```
+   anchor: engine differs from the M1/M2/M3 anchor: {...} -> nothing may be concluded; refusing to measure
+   ```
+
+   而且**退出碼正常、看起來像「跑完了」**。遇到它就這樣處理，**不要用 `PROBE_ANCHOR=none` 繞過去**
+   （那個開關是給「明知道自己在跑新 build 對照組」用的，開了就是自己放棄可比性）：
+
+   1. `python3 scripts/check/m123_oracle_gate.py --tag <你的題目> --dump /tmp/<tag>.jsonl`
+      （約 30 s warm，會自己 server + probe 48 token + 比對 logits）；
+   2. 看三行：**M1 逐位元、M2 argmax、M3 top-k** 必須都 PASS，summary 會寫進
+      `Backup/m123_oracle_gate/summary_<tag>.json`；
+   3. 通過後才把 `decode_window_harness.ANCHOR` 的四個 md5（用同一支 md5、`[:16]`）更新成目前 binary，
+      並在註解裡寫「哪個 summary 證明它是對的、tree hash 多少」，一行都別省：
+      少了證明是哪個 summary 那一句，下一輪就沒有人敢信這個 anchor。
+
+   附帶兩句定則：
+   - **先改完再 build 再 gate。** 順序反了（gate 了舊 binary）等於白跑，而且看起來像有證據。
+   - **`build/bin/` 裡躺著很多 `libllama.0.0.<n>.dylib`**（SOVERSION 是算出來的，會隨 tree 變），
+     但是 `libllama.0.dylib` 這種**不帶版本號的 symlink 永遠指向最近一次 build**。anchor 走的就是它
+     ⇒ 別把 build dir 當成自己的：同在一台機器上的另一條 session 重建一次，你的 anchor 就紅了
+     （這正是它存在的理由）。
+
+12. **★★ 2026-09-22：GDN（Gated Delta Net）已經是 Metal 上的 fused op，別再去「發明 chunked scan」。**
+
+   `ggml_gated_delta_net` 在 Metal 上有專屬 pipeline `kernel_gated_delta_net_<type>_<nsg>`
+   （`ggml-metal-device.cpp:638`），三個常數 `ne20/ne30/K` 走 **function constant**；K 是「狀態
+   快照數」，所以 T=1 的 AR 與 T>1 捲起來的 recurrence **同一顆 kernel 就吃掉**（K=1 只留最終狀態）。
+   樹裡三種實作都在：`build_delta_net_fused`（op）/ `build_delta_net_autoregressive`（T=1 手寫）/
+   `build_delta_net_chunking`（T>1 手寫），派工在 `models/delta-net-base.cpp:430-451`，由
+   `cparams.fused_gdn_ar` / `fused_gdn_ch` 決定。這個模型（qwen35moe，30 層 GDN + 10 層 full attention）
+   今天印的就是 `fused_ar=1 fused_ch=1`。
+   ⇒ 所以 axis D 能做的是 **ablation（把 fused 關掉換手寫圖），不是加速**，而且那種 run **不在
+   bit-identity anchor 的保護範圍內** —— 它的 t/s 不能拿來跟任何錨定過的數字比。
+
    引擎側既有（全在 `run_server.sh` allowlist）：`CGC_DECODE_PROFILE=1`（**前置**）、
    `CGC_DECODE_PROFILE_ALL=1`、`CGC_GPU_TIMING=1`、**`CGC_GPU_NODES=1`（per-KIND 表）**、
    `CGC_GPU_OPS=1`（按 ggml OP 的第二張表）、`CGC_GPU_NODES_TRACE=1`、
@@ -568,7 +611,7 @@ async submit，三個成分都不可分。
 
 **證明是 D5 的 M1 逐位元 9/9**（`--tag <你的>`）：M1 不過 ⇒ 你不只是改了名字。
 
-### ⚠️ 三個會讓人算出離譜數字的東西
+### ⚠️ 十個會讓人算出離譜數字的東西
 
 - **`ne` 只印前兩維**（`ne=[ne0,ne1]`），而 MoE 的 token 數在 **`ne[2]`** ⇒ 用 `ne0*ne1*4`
   當「搬了幾 bytes」在 `n_tokens>1` 時**系統性低估**（decode 的 `ne[1]` 剛好等於 token 數，
@@ -580,6 +623,322 @@ async submit，三個成分都不可分。
   裝的是 `ffn_moe_swiglu`／`weights`／`weighted` ＋ **它自己的 8 個 VIEW**——**逐元素運算**，
   與同名的專家 GEMV（`ffn_moe_gate`／`up`／`down`，op 是 `MUL_MAT_ID`）**是兩回事**。
   照字面把「`ffn_moe_*` 那群」當成 MoE 矩陣乘，結論會**相反**。
+- **★ 圖裡有這個節點 ≠ GPU 上發了這個 dispatch**（2026-09-21 坐實）：
+  `ggml_is_empty()`（任一 `ne[i]==0`）為 true 的節點，在
+  `ggml-metal-ops.cpp:68-74` 就被 `if (!ggml_op_is_empty(op) && !ggml_is_empty(node)) idxs.push_back(i)`
+  **濾掉、不進 encode 名單**（第二道閘門 `ggml-metal-ops.cpp:238`；encode 循環只跑
+  `n_nodes()==idxs.size()`，`ggml-metal-context.m:1476-1482`）⇒ **成本 0**。
+  注意 `ggml_op_is_empty(GGML_OP_CPY)==false`（`ggml-impl.h:90` 只列 NONE/RESHAPE/TRANSPOSE/VIEW/PERMUTE）
+  ⇒ 過濾靠的是**形狀那一半**。
+  - 直接後果：**`CGC-GPUOPS` 的 `nd` 是圖節點計數，不是 dispatch 數**
+    （`ggml-backend.cpp:2372-2379` 逐圖節點取 `cgc_node_op()`；`work`/`NOOP` 欄只看 op 類型不看形狀）。
+    真 dispatch 數 = 圖節點數 − empty 數。
+  - 通則：**任何以節點數為分母的歸因，先問「有沒有被 `ggml_is_empty` 濾掉」。**
+  - 實例：K2 審計一度把 60 個 `ne=[X,0]` 的 CPY 算成 60 × 0.0736% = 4.4%，純讀碼即證偽為 0。
+- **★ `CGC-DISPATCH` 有兩種同名前綴的行，regex 會雙算；而且它的「graph」是 segment 不是一步**
+  （2026-09-21 複審發現）：
+  - 每張圖印 `graph=N dispatches=T nodes=Tn`（匯總行）＋ 最多 14 行 `  OP dispatches=x nodes=y`。
+    `re.match(r"CGC-DISPATCH:\s+(\S+)\s+dispatches=(\d+)\s+nodes=(\d+)")` **兩種都匹配**
+    （實測 `group(1)` = `graph=1` / `ADD`）⇒ 若以 `group(1)` 為 key 再 `sum()`，`disp_total ≈ 2 × 真實量`
+    （`Backup/metal_fusion_dispatch_cost_ab.py:140` 就是這樣，Δ115 其實 ≈58）。
+  - `idx == 0` 在 `ggml-metal-context.m:1471-1482` 是**每顆 command buffer 的局部索引**
+    ⇒ flush 每顆 cb 觸發一次 ⇒ 普查的「graph=N」＝ **segment**（原文自己標 `graph=2 ← ARGSORT（top-k 段）`）
+    ⇒ **「1098 dispatch/步」是 48 段的合計，不是一步**。
+  - 通則：**任何「每步」的 dispatch 數字都要先問「分母是段還是步、有沒有被匯總行雙算」。**
+- **★ 單位錯配：拿「每窗口」的單價去乘「每步」的數量**（2026-09-21 實測後才發現，是最貴的一種錯）：
+  - 承上一條：census 的 48 個 cmd_buf **只有一步的 23.9%**（`CGC-GPUTIME` 按步印 `bufs≈353`、
+    `segs=40`；一步真有 ~3056 dispatch ⇒ 真值比「1098/步」還大 3×）。
+  - 所以 `Δ%/Δdispatch` 得到的單價是**「每 dispatch、每窗口」**，要乘的對象必須也是**同一窗口內**
+    的數量。**最穩的做法是用同一窗口內的比值**（外推因子自動抵掉），或先把數量換算成每步。
+  - 實例：v1 的 `0.0736%/dispatch × 72 = 5.3%` ⇒ 實測正確答案是 **2.3%**（單價被放大 4.176×，
+    而 72 其實是 117，兩個錯方向相反、沒抵掉）。
+  - **外推因子用 `nodes_step / nodes_窗口`（=4.176），不要用 `bufs_per_step / 48`（=7.354）**
+    —— 前 48 個 cmd_buf 比平均大（15.25 vs 8.7 dispatch/buffer），後者高估 1.76×。
+  - 另兩個 census 坑：① per-op 行由**多執行緒 encode 交錯寫出**，`graph=` 編號**不順序**
+    （實測 1,2,3,5,6,7,4,8…）⇒ **逐圖歸因不可用**，只有全域求和有效；
+    ② **top-14 截斷**，per-op 表只解釋 44–47% 的 dispatch（cluster-1 捕獲率僅 68%）⇒ 絕對量要先修正。
+  - 要「每步」的 op 數量，改用 **`CGC_GPU_NODES=1 + CGC_GPU_OPS=1 + CGC_GPU_TIMING=1`**
+    （`ns_total > 0` 是印表條件，缺 `CGC_GPU_TIMING` 就 0 行）。⚠ **按步的 op 表混了異構步**：
+    實測 37 步裡 20 步是 45-node 的 **MTP draft 圖**、17 步是 3800-node 的真 decode 步
+    ⇒ **混著取中位數全錯**，必須先用 `nodes_all` 篩。
+- **★「計數指標沒有噪音、所以一定能重複」是錯的**（2026-09-21 L1 復審實測）：
+  - 同一配置連跑兩次 `CGC_FUSE_MAX=8`，ADD 的 `dispatch/nodes` 比值是 **0.351 vs 0.373**（差 6%），
+    而 `nodes` 是 67 vs 97 —— census 只覆蓋前 48–50 個 cmd_buf（**一步的 13.6%**），
+    **覆蓋到哪些 cmd_buf 有隨機性**。
+  - 反直覺：**同一配置的 t/s 反而更穩**（9.917 vs 9.803，1.2%）。
+  - ⇒ 計數指標**只穩在量級**（「沒熔 1.000」vs「熔了 0.36」是鴻溝，可放心用），
+    **不穩在小數點第二位**。別拿 census 絕對數外推，也別指望它重複到 1%。
+  - 通則：**先問「這個計數是抽樣還是全量」**。census／GPUTIME 是抽樣，圖 dump 與 `GPUOPS` 是全量。
+
+### 融合（fusion）的既有事實，不要再重推一遍
+
+- **現成旋鈕（都在 shipped binary，0 重建可用）**：`CGC_FUSE_OFF=bin|norm|snake|all`（逗號分隔）、
+  `CGC_FUSE_MAX=<n>`（bin 鏈深度，`ggml-metal-ops.cpp:5688-5703`）。另有 `GGML_METAL_FUSION_DISABLE=1`
+  （三條全關，**太鈍**）。確認有沒有編進去：`strings libggml-metal.dylib | grep CGC_FUSE`。
+- **bin 融合只認 ADD**：`:5770-5778` 把 `fops[0..7]` **全寫死 `GGML_OP_ADD`**
+  ⇒ MUL／SUB／DIV 從不進 `can_fuse`（實測 ratio 恆 **1.000**）。
+  但 **kernel 早就支援 mul/div**（`ggml-metal.metal:1279` `kernel_bin_fuse_impl` 的
+  `FC_OP` 0=add 1=sub 2=mul 3=div）⇒ 要讓 MUL 鏈熔，**只改 host 端 fops 填充，不用動 shader**。
+  ⚠ `FC_OP` 是單一值 ⇒ 只支援**同類型**連續鏈，混合 ADD+MUL 不行。
+- 兩道上限疊加：`n_fuse <= 6`（硬編碼）＋ `n_fuse < cgc_fuse_max()-1`（env 預設 8）⇒ **現狀實熔 7**。
+- **判「還能熔多少」的正確方法**：拿圖 dump（`CGC_GRPH_DBG`）把節點序列切成
+  **極大同類型連續段**，用 `ceil(len/cap)` 算 dispatch。實測 ADD = 351 孤立 + **201 條長 9**
+  ⇒ 模型預測 cap=7 時 ratio 0.349，與實測 **0.351 吻合**。
+  ⚠ **不要用「平均鏈長」**：3.91 是**被 351 個孤立節點拉低的假象**，會讓你以為沒有長鏈。
+- **結論（已結案，別再重做）**：L1（融合擴展）只剩 **1.33%**，低於 3% 門檻
+  ⇒ 9-ADD cap7→9 值 0.76%、MUL 納入 0.57%、**DIV 0（全孤立）**。
+  真 decode 步裡不成鏈的孤立小 op ≈ **324 個/步**，融合救不了 ⇒ 那是 K5（45.6 µs 常數）的地盤。
+  ⚠ **但 45.6 µs 已在 09-21 §EN-406 被判為分攤恆等式**（見下節）⇒ 別再拿它算收益。
+
+### ⚠️ 第 8 條（最新、最容易騙人）：`wcntw` 是**分攤**，不是測量
+
+`CGC-GPUOPS` 的 `wcntw` 欄 = `ggml-backend.cpp:2421` 的 `dur * ocnt[q] / owork`
+⇒ **把每個 command buffer 的時長按節點數線性分攤給裡面的 op**。
+
+- **「所有 op 的 µs/node 都一樣」是代數恆等式，不是發現**：Σ_q wcntw[q] = Σ_b dur_b = 總時長
+  （精確劃分），而 op 在 buffer 間分佈均勻（實測 `ub` 每種 op 都 75–86%，即幾乎每個 buffer
+  含幾乎所有 op）⇒ 每種 op 必然回歸到 **總時長 ÷ 總節點數**。
+- **判「這是不是分攤假象」的三個指紋**：
+  ① `uni` 欄**全 `-1`**（從無單一 op 的 buffer ⇒ 沒有精確除法可校準）；
+  ② Σ`wcntw` 只蓋 **87–93%**（殘差隨 buffer 數增長）；
+  ③ **不同 op 的 nd 差好幾倍、µs/node 卻小數點後兩位相同**（實測 CLAMP/DIV/GLU/SUM_ROWS/
+     MUL_MAT_ID 全是 52.05）⇒ 只能是同一批 buffer 的同一個 `dur/n`。
+- ⇒ **落在常數上的 op 資訊量為零；偏離常數的才有資訊**（GATED_DELTA_NET 188／
+  FLASH_ATTN_EXT 120／SOFT_MAX 29，因為它們集中在少數 buffer）。
+- **要真的 per-op 成本，用 `CGC_GPU_NODES_MATRIX=1`**（0 重建，已在 shipped binary）：
+  逐 range 印 `dur_ns` ＋ 每 kind 節點數，離線擬 `dur_i = Σ_k cnt_ik·t_k`。
+  ⚠ **但它的 kind 是「張量名前綴」（ffn_/attn_/cache/norm）不是 op 類型**，同一層張量
+  總是一起出現 ⇒ **設計矩陣共線性，最小二乘會失敗**（fit 122.7%、出現負的 t_k）。
+  ⇒ 它只能回答「哪一群張量貴」，**不能**回答「ADD 一個節點多少 µs」。
+
+### ⚠️ 第 9 條：邊際價 ≠ 平均價，別拿邊際價去乘總量
+
+K3 實測「融合省一檔 dispatch」的**邊際**價 = 17.9 µs；但 M 曲線截距反推的**平均**價 =
+250 ms ÷ 3056 dispatch = **81.8 µs**，差 **4.6×**。
+⇒ **A/B 量到的 Δ 只能除以該 A/B 的 Δdispatch**，不能拿去乘「全部 dispatch 數」。
+
+### ⚠️ 第 10 條：M 掃描分不出「grid 太小」與「Metal 固定成本」
+
+兩者在「改變 M」下的預測**數學同形**（固定開銷被 M 攤薄 ⇒ ms/位置 下降）。
+⇒ 別再用 M 曲線去判 (A)/(B)。而且 M 曲線的截距**不能**除以節點數當「每節點固定成本」：
+M=1 讀權重本就與 M 無關 ⇒ 截距裡最大的一塊是**權重頻寬**，不是 dispatch 開銷。
+
+### ⚠️ 第 11 條：`ffn_moe_` 是前綴，路由節點會被誤當成「讀 pool slot 的 MoE」
+
+`CGC-NSM`／`CGC-GPUNODE` 的 kind 是張量名前綴，而 **`ffn_moe_argsort` / `ffn_moe_logits` /
+`ffn_moe_probs` / `ffn_moe_topk` 全都被 `ffn_moe_` 前綴命中**——但它們是**路由**，便宜、
+且**不讀 expert pool slot**。寫 `k.startswith("ffn_moe_")` 當「MoE 計算」會得到假陽性
+（第一版就這樣把「MoE 在 segment 第 0 個 buffer」誤判成「在最後一個」）。
+⇒ 分類時**先排除路由再判 core**：`is_core = startswith(MOE_CORE) and not is_route`。
+
+### ✅ 第 12 條（可重用招式）：用 `CGC-NSM` 的 `[a,b)` 重建 segment 內的節點順序
+
+每列是一個 command buffer：`[a,b)` 節點區間 ＋ 實測 `dur_ns` ＋ 區間內各 kind 計數。
+**`a==0` 就是新 segment 的開始**（該 buffer 總是先出現），其內按 `a` 排序 ⇒ **免費拿到
+segment 內的節點先後順序**，不需要重建、不需要 `CGC_GRPH_DBG`（後者只 fire 前 6 次，只有 prefill）。
+
+用處：判「某類節點前面還有多少 GPU 工作可以拿來遮別的東西」——例如 L3 的 async fill 視窗。
+實測（2026-09-21）：**MoE core 永遠在 segment 的第一個 buffer**（5811/5811，前面 duration 佔比
+med = 0.000，按 segment 大小分層後仍然 0）⇒ 單流 decode 的 async fill 視窗 = 0。
+腳本範本：`Backup/phase_decomp/L3/segment_moe_position.py`。
+
+**交叉驗證這類「遮蔽量」結論時，用 `gap` vs `cb`（同一支 run、兩個獨立儀器）**：
+`gap`（GPU 時鐘空檔）若 ≥ `cb`（CPU 側 fill），代表「完全沒被遮到」，而且 GPU 空轉得比 fill 還久。
+
+### ⚠️ 第 13 條：**【已撤銷 2026-09-21 當天】** 別用 `F_NOCACHE` 探針報絕對 GB/s
+
+這一條原本寫「形狀差 4.4×、併發 2 緒最優」，並據此把 neighbour prefetch 判成賺。
+**兩處都錯，已由 `docs/L3_PREFETCH_RETRACTED_2026-09-21.md` 撤銷**。錯的原因有兩個，
+第二個是方法論等級的：
+
+1. **讀尺寸搞錯**：expert 在檔內是 **3 支獨立 GGUF 張量**（詳見第 14 條），
+   R=1 只會把每次讀從 ~0.21 MiB 放大到 ~0.64 MiB，**永遠不會出現 3 MiB 讀**。
+   我拿 1 MiB ↔ 3 MiB 的比值去定價，兩端都不在真實區間。
+2. **探針自己跟自己差 2.3×**（同一 3 MiB、2 緒、同檔案、背靠背交替）：
+   `os.pread` 2.36 GB/s vs `os.preadv` 5.46 GB/s；而同一 `preadv` 在另一支腳本只有 1.93。
+   根因幾乎可以確定是 **12.72 GiB 的檔放在 16 GB RAM 的機器上，頁快取裝得下大半**，
+   `F_NOCACHE` 並沒有把讀隔離乾淨（seq 量到 5.4 GB/s 已超過這台 SSD 的物理上限）。
+
+⇒ **規矩**：這台機器上的 `F_NOCACHE` 探針**只能用來做同一支儀器內部的相對比較**，
+絕對 GB/s 一律不可引用，也不可跨腳本比。要真冷讀數字，先解決「檔 ≲ RAM」這個根本衝突
+（用遠大於 RAM 的檔、或外接盤），否則不存在乾淨窗口。
+⇒ 相對比較的結論是：**0.32 → 1.29 MiB 吞吐基本持平**（R=1 時間比 ×1.87–3.05）
+⇒ **「多讀 X 倍位元組 ≈ 多花 X 倍時間」在這個區間是對的**，`NEIGHBOUR_PREFETCH_VERDICT`
+原本的「淨虧」判決**恢復有效**。
+
+**仍然有效的三條硬要求**：① `F_NOCACHE`（fcntl 48）；② **丟掉第一輪**（恆慢 20–40%）；
+③ 用 `pool_wait_us / misses` 之類的 **run 級歸一化量**當主指標，不要用 t/s（單臂 ±27%）。
+
+### ⚠️ 第 14 條：expert 在檔內的佈局要**讀 GGUF 頭**，不要用「每 expert 幾次 read」去猜
+
+`python3 Backup/phase_decomp/L3/gguf_expert_layout.py --layer 5`（0 重建，直讀模型檔 header）：
+
+```
+blk.L.ffn_gate_exps.weight  dims=[2048,512,256]  82.0 MiB -> 0.3203 MiB / expert
+blk.L.ffn_up_exps.weight    dims=[2048,512,256]  82.0 MiB -> 0.3203 MiB / expert
+blk.L.ffn_down_exps.weight  dims=[512,2048,256] 110.0 MiB -> 0.4297 MiB / expert
+                                      one expert = 1.0703 MiB（3 支張量，佔全檔 85.1%）
+```
+
+- **GGUF 的 `dims` 是逆序存放** ⇒ `dims[-1]`（=256，專家數）是**最外層**軸 ⇒
+  **e-1 / e / e+1 在同一支張量內是檔案連續的**（neighbour prefetch 的連續性假設成立）。
+- 但**三支張量彼此獨立、偏移相隔上億位元組** ⇒ 任何「把 3 個鄰居合併成一次大讀」的想像都是錯的：
+  你只會得到 3 次各放大 (2R+1) 倍的讀。
+- ⚠️ 引擎的 kind 枚舉是 `0=gate 1=up 2=down 3=gate_up`（`llama-expert-cache.h:78`），
+  但實測 `reads/miss = 4.96`（prewarm miss = 0），**比 3–4 段還多**，多出來的 ~2 次來源未定位
+  （draft/MTP 路徑 / wide path / cold path 各計一次 `n_reads`）。
+  ⇒ 別用 `n_reads` 反推段數，也別用 `pread_usec / n_reads` 定價每讀成本
+  （實測 13–17 ms/讀，對 220 KiB 物理上不可能，該計數器口徑有問題）。
+
+### ⚠️ 第 15 條：thermal 是**單調漂移**，不是噪音 ⇒ 臂間要冷卻、順序要 ABBA、HEAVY 臂作廢
+
+實測（2026-09-21 21:06，交付 cell，同一負載只差先後）：
+第 1 臂 w=8 **120/120 採樣 NOMINAL**；緊接著的第 2 臂 w=2 **81/120 採樣 HEAVY**。
+⇒ 只看「發射時 NOMINAL」的閘門**完全擋不住**：熱是臂**內部**升上去的，而且往單一方向走。
+
+單調漂移**不能用 AB 交替抵銷**（交替只對雙向隨機漂移有效），要做三件事：
+
+1. **臂間冷卻**：每臂前 `sleep 150` 再輪詢等到 NOMINAL（腳本 `wait_nominal()`，有硬上限）。
+   實測加了 150 s 冷卻後，6 臂**全部 107–117/117 採樣 NOMINAL**。
+2. **順序 ABBA**（round 奇偶反轉臂序），讓單向漂移對稱地打到兩臂。
+3. **HEAVY 臂作廢**：`thermal.worst == HEAVY` ⇒ 直接標 `invalid` 踢出中位數，不要「降權引用」。
+
+- **主指標用 run 級累加量的配對比**（`pool_wait_us / misses`），不要用 t/s：
+  實測 us/miss 臂內 CV ≈ 0.7%（w=8）而 t/s 單臂噪音 ±27%。
+- **n 小時唯一誠實的顯著性**是「配對同向數 / 總對數」＋ `2^-n`（硬幣零假設），
+  不要去算 t 檢定：效應幾個百分點、n=3~5、母體不是常態。
+- 交付 cell 一輪 ≈ 70 s，冷卻 150 s ⇒ **一對 ≈ 7 分鐘**，n=5 要 ~35 分鐘，排程要留這個量。
+
+### ⚠️ 第 16 條：要 decode 的**節點形狀**用 `CGC_ELEMW_CENSUS`，不要用 `CGC_GRPH_DBG`
+
+| 儀器 | 門檻 | 印什麼 |
+|---|---|---|
+| `CGC_GRPH_DBG`（`ggml-backend.cpp:2091`） | `static ... cgc_grph_dbg_n < 6` ⇒ **整個行程只有 6 個圖** | 只 `ne[0], ne[1]` 兩維；實測 5/6 是 `n_nodes=4116`（**prefill**）⇒ **拿不到 decode** |
+| **`CGC_ELEMW_CENSUS=1`**（`ggml-metal-ops.cpp:582`） | **3000 行**（行數，不是圖數） | **`ne=[n0,n1,n2,n3]` 全四維** + `name` + `op` + unary sub-op |
+
+⇒ 後者 **0 重建就能拿到 decode 形狀**（`python3 Backup/phase_decomp/K5/elemw_census.py --reps 1`，
+30 s）。用 `CGC_GPU_TIMING=1` 的 `step=` 行當錨點，兩個 `step=` 之間就是純 decode。
+
+- ⚠️ `want` 清單是 `UNARY/MUL/GLU/SCALE/L2_NORM/DIV/CLAMP/SUM_ROWS` ⇒ **不含 ADD**
+  （小 op 最大一支看不到），但覆蓋 K3 的 cluster-1。
+- ⚠️ `CGC_GPU_NODES_MATRIX` 的外層門檻是 `ns_ops = CGC_GPU_NODES && CGC_GPU_OPS`
+  （`:1873`/`:1889`）⇒ **要四個 env 一起開**：`CGC_GPU_NODES=1 CGC_GPU_OPS=1 CGC_GPU_TIMING=1
+  CGC_GPU_NODES_MATRIX=1`。只設 MATRIX 會得到 **0 行**（已實測兩次）。
+- ⚠️ **未解**：ELEMW 與 NSM 同時開時 NSM 仍 0 行（原因未定位）⇒ 「元素數 × 實測時長」
+  的同 run 回歸目前做不了，只能跨 run 用 kind 對齊（同 cell 可接受，但必須標注）。
+
+### ⚠️ 第 17 條：一個 dispatch ≈ 18–19.5 µs，而且**幾乎全是固定開銷**
+
+兩個獨立儀器互證（2026-09-21）：
+- `CGC-NSM` 裡 `nk==1` 的 buffer ＝ 單 dispatch 的實測 GPU 時長：`ffn_moe_argsort`
+  **1490 個、中位 18.6 µs**（另有 `cache` 68 個中位 1334 µs，是另一類東西）
+- K3 實測邊際價 `0.0195%/dispatch` × 步時 ~100 ms = **19.5 µs**
+
+⇒ 吻合在 5% 內，可引用。而且 argsort 的工作量只有幾個元素 ⇒ **這 18 µs 不是執行時間**。
+⇒ **任何「撐 grid／提高佔用率」的構想都動不了它**；(A) grid 太小與 (B) Metal 固定成本在
+任何「grid 大小 vs 時間」的觀測下**同形**，要判別得改 kernel 的 threadgroup 配置做 A/B
+—— 那是另一個量級的工程，不是「改個 dump」。
+⇒ 看到「小 op 群佔 X% 時間」就想「拿回 X%」的算法是錯的：**X% 裡最大的一塊是
+dispatch 固定開銷**。
+
+### ⚠️ 第 21 條：先算「這份預算能證明多大的效果」，再決定要不要 sweep（2026-09-22）
+
+（`scripts/check/closed_loop_autotune.py`、`docs/CLOSED_LOOP_AUTOTUNE_2026-09-22.md`）
+
+- **最有產出的一張表**：給定預算與 σ，能被認證的最小真實差距。
+  16 launch、σ=0.16 ⇒ 約 **68%**；σ=0.06 ⇒ 約 **52%**（兩臂解析式給 23.5%／8.4%，**過於樂觀**，
+  因為要打敗的對手不止一個，且 `log(cell/插值ref)` 疊了兩段 ref 的雜訊 ⇒ 用**仿真標定**
+  `calibrate_boundary()`，不要用代數）。
+- ⇒ **預期只差 3–5% 的 knob 不要 sweep**：14 次 launch 在數學上分不出來，加多少旋鈕都一樣。
+  這是算出來的，不是悲觀。也解釋了為什麼這個 repo 一路上每層都「低於門檻」。
+- 閉環三件事各自帶**自己的突變**（進程內對照，沒寫死布林值）：policy→後驗集中度掉 3.1 pts；
+  sigma 固定 0.06→假發現 6%→54%；noev→6%→93%。哪天突變不再有代價，整套會自己變紅。
+- ⚠️ **regret 不是它贏的地方**：small budget 下學習策略 regret 偶爾**比均勻分配差**
+  （quiet 1.92% vs 1.75%）。贏的是「每次 launch 換到的證據」，不是「部署得多準」。
+- ⚠️ 觀測假發現率 **6% > 標稱 5%**：同 block 內的 cell 共用那兩次 ref launch，誤差相關 ⇒ n 高估證據。
+- ⚠️ 高噪聲下報價偏**高** 1–2 個百分點（`exp()` 是凸函數，Jensen；σ=0.02 時偏差 ≤0.2 pt）
+  ⇒ **決策要用 P(best)（數 argmax，對單調變換免疫），不要用報價數字**。
+- ⚠️ `--broken` 有值時 `--exec` 會拒絕啟動：突變是用來跑植入真值的，不是拿真實 GPU 時間去量已知錯的演算法。
+
+### ⚠️ 第 19 條：GDN 軸「operator 存在」，但這個 workload **一次都沒進去**（2026-09-22）
+
+（第 12 條說 GDN 已是 Metal fused op、別再發明 chunked scan —— 還是對的。這條是補上「那它有沒有在跑」。）
+
+- 反了兩次才到答案：先因為只搜 `LLM_FUSED_OP_GDN_CH` enum 而誤判 ABSENT；更正後又以為「關掉 fusion
+  能測出 fusion 的成本」，結果 **ablation 後的 dump 與 default 逐位元相同**。
+- **不要從「沒差異」直接下結論**。判準是 builder 自己回報的 `gdn_saw_fused` / `gdn_saw_manual`
+  （`models/delta-net-base.cpp` 呼叫 `cgc_shape_count_gdn`，印在 `phase=final`）：
+  本次 server 歷程兩者皆 **0/0** ⇒ `build_delta_net` 從沒進去 ⇒ dumps 相同是「沒東西可比」，
+  不是「兩條實作數值一致」。**GDN 相關的省時到目前為止全部是在量 0。**
+- ⚠️ MTP 陷阱：spec decode 時 target 一次驗證多 token，`n_seq_tokens > 1` 走 **chunking** 分支，
+  只關 `CGC_SHAPE_GDN_AR` 會看不見任何變化。**要 ablation 就兩個都關。**
+- `bitident=NO` 的 row 在 harness 裡是 **ABLATED**，不可與錨定數字比較（它是「fusion 的成本」，
+  永遠不是候選值）。
+
+### ⚠️ 第 20 條：讀比率用**幾何**，而且要在**訊號的時間點**插值（2026-09-22）
+
+（另一份：`docs/ORDER_DRIFT_CORRECTION_2026-09-22.md`）
+
+- 吞吐是被**乘**的（熱機讀 `rho × t/s`），所以 `log` 才會變加法 ⇒ ref 的組合／插值要用
+  **幾何（log 內插）**，權重取「Arm 實際被量的時刻」（cell 遠長於 ref，索引中點不是它的時刻）。
+- 實測今晚 ref 序列 11.72/10.83/5.22：`M=17` 那列算術 ref 8.02 vs 幾何 7.52，**差 6.75%**，
+  Δ 從 +17.47% 變 +25.40% —— 但那列**本來就 UNANCHORED**（refs 差 51.8% > 10%），
+  **校正不會把它救回資料**，它只是量化了這個 artefact。
+- `crossover_estimate.py --selftest`（14/14）＋ `--selftest --broken`（舊估計器 **必須紅**，最差錯 8.03%）。
+- ⚠️ 幾何**不是處處都贏**：兩側 ref 長度差很多時，「被量測的時刻」不再是點，算術反而剛好較準
+  （表裡 0.47% vs 0.07%）。所以 `mean_gap_pct` 是**診斷**不是第二道閘門。
+- ⚠️ 交叉設計**去不掉** carry-over（pool／page cache／SLC 留在下一隻 arm 身上的狀態）：
+  兩條 arm 分歧 >10% 要**印出來**，不要平均掉。
+
+### ⚠️ 第 22 條：看到「residual / remainder / 未解釋項」**先審計它的減法公式**（2026-09-23）
+
+實例（`docs/ROUND_REMAINDER_IDENTIFIED_2026-09-23.md`，零 GPU 重算既有 log）：
+`verify_marginal.py:245` 的 `remainder = round_ms − Σ_40層(wait+cb+submit) − draft − begin`
+被當成「post-layer per-round work（邊際 verify token 的 70–102%）」寫進結論，還因為
+「它隨 T 成長」看起來像一個真實機制。實測：
+
+- 那個 `Σ_40層` 是**一個 step** 的層時間，而**一個 round 有 1.5–2.3 個 `segs=41` verify step**
+  （`CGC-DECPROF` step 數 ÷ `calls_draft`）⇒ 減掉的比實際花的少 ⇒ 剩的 ≈ `(n_step−1) × step`。
+- **單一 step 的中位時間不隨 T 變**（179.8 vs 178.0 ms）⇒ 「隨 T 成長」只是 n_step 在長，
+  免費的。把它包進 `round ≈ n_step × step + draft` 後閉合到 **+7~22%**，沒有 100+ ms 黑盒。
+
+規則（順序照做）：
+1. **指名單位**：減法兩邊是不是同一個計數單位（step vs round、per-call vs per-step、
+   mean vs median）？殘差會把單位錯配**整數倍放大**。
+2. **分母從哪來**：這裡的 `calls_draft` 是引擎計數器（可信），而 step 數是**取樣**的
+   DECPROF（兩 arm 的 `rounds` 不同 ⇒ 取樣率直接污染比率）。取樣率不同的兩個 arm 不能比「每輪幾個」。
+3. **單步時間要看中位數**：DECPROF 的**第一行**是 warmup（37/51/12），中位數是
+   **wait 71–77% / cb 17–23% / submit 5–7%**，而且三項恆等 100% ⇒ **step 內沒有殘差**。
+4. 追「殘差在哪」之前先問：**它是不是一個被低估的已知項乘上一個倍數？**
+
+（`scripts/check/round_ledger.py --selftest` 9/9、`--arms <arms.jsonl>` 直接印這張表。）
+
+### ⚠️ 第 18 條：選主指標前先看穩定性排名 —— `union+gap` **不比** t/s 穩，而且**不是步時**
+
+實測（2026-09-22 §EN-417，同一交付 cell，權威 `docs/METRIC_STABILITY_2026-09-21.md`）：
+
+| 指標 | 離散度 | 用法 |
+|---|---:|---|
+| **`µs/miss`（pool_wait_us/misses）** | **CV 1.95%**（w=8,n=5）／4.55%（w=2） | ✅ **主指標** |
+| t/s（llama-bench avg_ts） | **CV 7.88%**／7.43% | 只當哨兵，幅度不引用 |
+| `union`（block-mean 修正後 SEM） | 5.0% | 同 run 內相對比較 |
+| `union+gap` | **7.7%**（逐行 CV 35–47%） | ❌ 與 t/s 同級或更差 |
+| `gap` 單獨 | **逐行 CV 64–85%** | ❌ 不可作證據 |
+
+**四個會翻船的點**：
+1. **⚠「單臂 t/s 噪音 ±27%」是 K3 cell 的值**；交付 cell（reps=3 ＋臂間冷卻 150 s）實測
+   **只有 7.88%**，差 3.4× ⇒ 噪音底是 cell 相關的，別混用。
+2. **⚠ `union+gap` 不是步時**：交付 cell 同 run，步時 **267.84 ms** vs `union+gap` **127.29 ms**
+   ⇒ **低估 2.10×**（它是 GPU 時鐘跨度，不含 `wait`/`cb`/`submit`）⇒ 拿它算天花板會得到
+   26.5 t/s 這種不存在的數字。**要步時就用 `ML / t_s`。**
+3. **「逐步樣本多 ⇒ 穩」是錯的**：37–59 行**強自相關**，用 block mean(5) 修正後有效 n 只剩
+   5–8 個；且**後半 vs 前半 −2.2%~−21.6%（8 支全負）** ⇒ 非平穩，取哪幾步平均是 bias 不是 noise。
+   ⇒ 算逐步量的不確定度**一定要做 block mean**，別直接用 `sd/sqrt(n)`。
+4. **所有 run 的 `skipped` 均值 4.9–7.3（非 0）**，而程式註明「skipped 必須為 0」
+   ⇒ `busy`/`union`/`gap` 帶未知偏差，**只可做同 run 內相對比較**（含 busy/union = 1.510）。
+
+**測出 1.7% 效應需要每側幾臂**（雙樣本 95%，未配對上界）：**t/s ≈165 臂，µs/miss ≈10 臂**
+⇒ 效應只有幾個百分點時，**唯一可行的主指標是 run 級累加量**，不是 t/s，更不是逐步 GPUTIME 量。
 
 ## 判準（已校準，直接照用）
 
@@ -2150,3 +2509,898 @@ RUN_REPLAY_BENCH=0 git commit -F <msg-file>
 - **吞吐一律不可由單次 matrix 引用**：同一 nominal 配置的三跑（其中兩跑同 binary）
   極差達 **33.6%**（`pp@1024` 79.88 → 106.69），**方向不一致**，且連 pool 行為都不同
   （hit 97.1%/reads 519501 vs hit 97.3%/misses 16185）。列原始讀數可以，**下結論不行**。
+
+## K0：把「每節點 µs」拆成 GPU 執行 vs 主機端（2026-09-21 新增，動 kernel 前必跑）
+
+「步時 ≈ 節點數 × 每節點固定成本」是自洽的（50 µs × 2455 nodes ≈ 123 ms ≈ 步時），
+但**空 dispatch 實測只有 3.28 µs** ⇒ 那 30–90 µs 裡一定有第二個成分。**沒做這一步就寫 kernel，
+就是在賭主詞是誰。** 全文 → `docs/METAL_OCCUPANCY_PROJECT_PLAN_2026-09-21.md`。
+
+- **命令**（六個 env 2026-09-21 已在 `run_server.sh` allowlist，**不必 bypass launcher**；
+  換 branch 要先用 `grep -c <VAR> scripts/run_server.sh` 查一次，allowlist 是 per-revision 的）：
+  `CGC_GPU_NODES=1 CGC_GPU_OPS=1 CGC_CB_N_MAIN=1 CGC_GPU_NODES_TRACE=1 CGC_GPU_TIMING=1 CGC_MM_DBG=1`
+- **⚠⚠ `uni` 欄實測沒有開火（2026-09-21 K0 親測，推翻上面原本的寫法）**：24 個 op 裡 **23 個是 `-1`**
+  （真實 op 永遠共用 buffer；直方圖是 6-node 26,187 個、64-node 5,160 個），唯一有值的 `RESHAPE`
+  = 826 µs/node × 598 node = 494 s ≫ 該步 112.84 ms ⇒ **物理上不可能**。`CGC_CB_N_MAIN=1` 救不了它。
+  ⇒ **per-op 歸因不要用 `uni`**；替代＝ `CGC-NSM` 的 per-buffer `dur_ns` ＋ node 區間
+     （但 per-kind 最小二乘會 collinear：`MUL_MAT_ID/GLU/SUM_ROWS/CLAMP/DIV` 同 `ub=55.85` ⇒ 不可分離）。
+  ⚠️ 不要同時把 `CGC_SERVER_N_CB` 拉大：**n_cb=127 會卡死 Metal command buffer 建立，可用區間 ≤ ~16**。
+- `CGC_MM_DBG=1` 印 `MMDBG <family> ne11 ne00 ne01 type0 type1` ⇒ 直接拿到每個 mul_mat 的形狀與選了哪一族。
+- 解析器現成：`scripts/check/gdn_split.py`（支援 `uni` ＋ least squares）、`scripts/check/attn_moe_split.py ops`。
+- **決策表要寫死在跑之前**（避免事後找解釋）：`uni` ≈ 30–90 µs ⇒ GPU-bound，主線是 context dispatch 幾何；
+  `uni` ≪ 30 µs ⇒ 時間在主機端 encode/submit（`commit+waitUntilCompleted` 實測 **164 µs**），那是另一條線。
+
+- **★ G2 硬約束（2026-09-21，使用者更正 + 逐行核對）**：`nxpsg` 不是「K 方向分組」這麼委婉——它就是
+  **歸約樹的形狀開關**。`ggml-metal.metal:4067-4085` 用五個 `if (nxpsg >= N)` 逐層開 `simd_shuffle_down`
+  (16/8/4/2/1)，而 host 端 `ggml-metal-ops.cpp:2604-2637` 拿 `ne11`(=M) 選 nxpsg ⇒
+  **什麼都不動，樹就隨 batch 換**。
+  ⇒ 永久禁用：`nxpsg`、`N_SIMDWIDTH`、以及 mul_mv 裡的 K 分組（`ix=tiisg/8`、`stride N_SIMDWIDTH/8`、
+    `:3737-3742` ＋ `simd_sum` `:3760`）。`r1ptg` 機制上安全（每列獨立累加器）但由 ne11 選 variant ⇒ 當保險也禁。
+  ⇒ 允許：沿輸出軸加 threadgroup、`nsg`、**以及 `nr0`**（2026-09-21 補：`nr0` 只改「一個 simdgroup 扛幾列」，
+    **不改每列的 K 分割**（恆 32 路，`kernel_mul_mv_q1_0_f32_impl` 的 `first_row=(r0*NSG+sgitg)*nr0` ＋ `sumf[nr0]`）
+    ⇒ bit-safe；`nr0=2→1` 合法且能讓總 thread 翻倍 —— **但沒有用，見下**）。
+  ⇒ 允許：沿輸出軸加 threadgroup、`nsg`。K1 期間 verify 路徑全程鎖 `CGC_MM_BITIDENT=1`。
+  ⇒ 不變量請寫成：「**K 分割必須是 (tsrc0, ne00, N_SIMDWIDTH) 的函數，永遠不得是 M 或新 grid 形狀的函數**」。
+- **「改 grid」是 G2 相容的，而且 repo 內已有先例**：`ggml-metal-ops.cpp` 的 `CGC_MM_BITIDENT` 註解寫明
+  「grid 的列數不影響逐位元結果」。禁的是 split-K／tree reduce／accumulator 型別／mul+add↔fma／scale 位置。
+- **★ K0 已經跑完（2026-09-21 16:2x），結論是負的 ⇒ 上面這整套「改 dispatch 幾何」建議不做**：
+  - **`threads ÷ 輸出元素` = 16–128**（`CGC_MM_DBG` 20,019 行，每個觀測到的 decode 形狀）
+    ⇒ 輸出軸早已被完全切開（每列一個 simdgroup），**要再加 thread 只能切 K ＝ 上面那條永久禁區**。
+    （`nsg` 加大**不增加**總 thread 數，只是把更多列塞進同一 threadgroup。）
+  - **合成的 13.6× 不適用，機制已指名**：那探針是**純 streaming payload、沒有歸約軸**；
+    真實 GEMV 的 32 條 lane 就是在切 K。
+  - formula：dispatch 在 `ggml-metal-ops.cpp:2763/2765`，總 threads = `ceil(ne01/(nr0·nsg)) × ne11 × 32·nsg`，
+    `nr1 = 1` 恆成立（`device.cpp:848`）⇒ `threads ÷ 輸出元素 = 32/nr0`（量化）或 `32·nsg/nr0`（f32）。
+  - **decode 主導形狀是 `ne11=4`，不是 1**（ne11 分布 1→1193、2→1994、**4→12832**、14→800、489/512→3200）
+    ⇒ **MTP verify 的 M=4 才是交付形狀**。
+  - ⇒ P(25 t/s) **<3%**；中央情境 **~14–15 t/s**；K3 融合（≤11.5%）升為唯一主力；**K4 主機側否證**
+    （`gpu_union` 佔步時 92%，`busy_sum/union = 1.17` ⇒ GPU 跨度吃掉整步，主機端沒空轉）。
+- **`threads ÷ 輸出元素` 指標怎麼讀**（`= 32/nr0`，iq4_xs 的 `nr0=2` ⇒ 16）：
+  它是「每個輸出元素分到幾條 lane」，而 kernel 端那 32 條 lane **就是在切 K**（不是閒著的）
+  ⇒ ≥1 的意思是「輸出軸已經切滿、每列已被 16 條 lane 瓜分 K」。
+  **但指標只是粗閘門，更硬的否證是絕對量**：實測主導形狀總 thread 數 **16k–524k**，
+  而 M4 GPU 同時駐留量大約幾萬 ⇒ **早已超過硬體容量，加 thread 只增加排程**。
+  唯一真的不夠的是 `ne01=1`（threads 64），但它只有 4 個輸出元素、`nr0=1` 頂多 128 ⇒ latency 主導，救不了。
+- **★★ 說「G2 / bit-exact」之前先拆成兩個要求（2026-09-21，§EN-396）**：
+  - **(a) M-invariance ＝ 功能需求，不能放**：MTP 的 draft 走 M=1、verify 走 M=4，兩邊必須自我一致，
+    否則 ULP 層互相否決 ⇒ 假拒絕（正確 token 被拒）。這跟模型品質無關，是機制自洽性。
+  - **(b) bit-exact vs 參考 kernel ＝ 測試約定**：業界不要求跨後端 bit-exact；greedy 下 1 ULP 只在
+    「logits 幾乎相等」時翻 argmax，而平手換哪個 token 語義上都無所謂。
+    它的真價值是**免費且檢定力無限的 oracle**（本機統計型驗證做不出 power）。
+  - ⇒ **若要放寬用分層**：Tier1 逐位元（預設）→ **Tier2「117 步 top-1 token ID 全同」＋logits 最大相對偏差上界**
+    （仍精確便宜，且放行所有不翻 argmax 的重排）→ Tier3 品質指標（**不要，做不出 power**）。
+  - ⇒ **放寬只買 ~4–5%（K0 實測上鎖價錢），不是 2×。bit-exact 不是 25 t/s 的瓶頸**（K1 已被 occupancy 否證）。
+  - ⇒ 放行 K-sharing 後**仍要保 (a)**，不變量不變：K 分割不得是 M 的函數。
+- **★★ 講「融合（fusion）」之前必須先說是哪一種（2026-09-21，§EN-397）——三種省的東西完全不同**：
+  - **① 合併 dispatch**（省 per-dispatch 固定成本）：G4 實測 **0.0736%/dispatch**，最大集群 72 個
+    ⇒ **上界 5.3%**；K0 獨立印證 per-buffer 固定成本 ≈ 13 µs（×360 = 步時 4.6%）。
+  - **② 垂直融合**（鏈式 producer→consumer，中間值留 register）：省**中間結果寫回顯存再讀回**的往返。
+    ⚠️ **thread 數不變 ⇒ 不解決 occupancy**。多數人把「融合」默認想成這一種，它不是解決算力用不滿的那種。
+  - **③ 水平融合**（N 個**互相獨立**的小 op 打包成一次 dispatch）：**這才是真的提高 occupancy**。
+    但 **decode 期是一條串行鏈**，K0 實測小 op「小到無法再並行」（`ne01=1` 只有 4 個輸出元素）
+    ⇒ **③ 在 decode 期沒有對象**。
+  - ⇒ 一句話：**「算力用不滿」≠「有並行性可挖」** —— GPU 空著不是因為活沒打包，是因為下一步依賴上一步，
+    融合不能憑空創造獨立性。
+  - ⇒ **立場修正**：G4 當年判 5.3%「不到 12.8% 門檻 ⇒ 不做」；**K1 已死之後問題變了**，
+    5.3% 是**目前唯一已量、且確定為正**的收益 ⇒ 應改判為值得做（但仍要配對 AB/BA 才讀得出來）。
+    全部融合上界 11.5%，扣掉 5.3% 剩 **~6% 未量**。
+  - ⇒ **大 op 不要碰**：`MUL_MAT` ≈ 屋頂 77%、`MUL_MAT_ID` ≥ 屋頂 ⇒ 無 occupancy 問題。
+  - ⇒ **K3 第一步不是寫 kernel，是量一次「垂直融合省多少」** —— 那個數字從來沒被單點量過。
+- **★★ K2（冗餘 bytes）已證偽（2026-09-21，§EN-399）：bytes 那一腿是空的，別再拿「120 個 CPY ≤22%」當槓桿**。
+  - **正確數字是 210 個 CPY（MTP on）／120 個（MTP off）⇒ MTP 專屬只有 90 個。舊說 120／124 停用。**
+    分離方法：`CGC_GRPH_DBG=1` 印全圖（`ggml-backend.cpp:2091-2099`），跑 MTP on vs `CGC_SERVER_MTP=0` 兩臂對照。
+  - MTP 專屬 90 個＝ conv state 由 `if` 分支 1 個/層 變 `else` 分支 K=4 個/層（`delta-net-base.cpp:487-526`，30 層 ×3）。
+    它們只搬 **8.64 MiB/步 ⇒ 步時 0.59%**，且是 rollback snapshot、真會被讀 ⇒ **不能刪**。
+  - 全部 210 個搬 71.4 MiB，但其中 **60 MiB 是基礎必要的 ssm state 寫回**（MTP off 也有）⇒ 不可省。
+  - **★ 但翻出一筆不屬於 K2 的帳：60 個零位元組 CPY**（每層 2 個，`ne=[24576,0]`／`ne=[524288,0]`，
+    元素數 = ne0×ne1 = 0；源張量無名；**與 `n_rs_seq` 無關**）。搬 0 bytes 卻各付一次 dispatch
+    ⇒ 60 × 0.0736%（G4 llama-bench 實測每個 dispatch）= **4.4% 步時** ⇒ **歸 K3，K3 對象從 72 擴到 132，上界 ~9.7%**。
+  - ⚠️ 未坐實：`ne[1]=0 ⇒ 0 bytes` 是從打印的 ne 推得；且「0 元素張量是否真的產生 dispatch」未驗證。
+- **⚠️ 解析 `CGC-GRPH` 行的坑**：節點名**含空格**（`cache_r_l0 (view) (copy of conv_input-0 (view))`）
+  ⇒ `name=(\S*)` 只解析到 2604/4116（漏 37%）⇒ 必須用非貪婪 `name=(.*?)\s+op=`。
+- **★ `gpu_union` 是比 t/s 靈敏得多的配對指標**：同配置連跑兩次差 **0.2%**（102.0 vs 101.8）
+  vs t/s 的 ±27%（±1.9 t/s）⇒ 優先把它做成 `paired_ab.py` 的第二指標，別再只用 t/s 判小幅改動。
+- **⚠ `CGC_MM_BITIDENT=1` 本來就是預設**（`run_server.sh:2187` 未設就強制 1）
+  ⇒ 想量「不上鎖」必須**明確設 `=0`**，否則你那一對是 null（我第一對就是這樣白跑）。
+  上鎖價錢 ≈ 4–5%（四指標同號）⇒ **今天已在付，且 G2 禁止退** ⇒ 那是 bit-exactness 的定價，不是收益。
+- **選配有個「查env不能有副作用」的姊妹陷阱**：閘門底下取不到 env 時用 `CGC_DUMP_ENV=1`，
+  它**同時**是唯一真相來源，不要在工具裡重打一份 env。
+- **★★ 第 22 條（2026-09-22 §EN-441）：開量表前先證明「軸真的會動」——
+  `run_server.sh` 的 SERVER_ENV 才是 llama-bench 的唯一入口**
+  - 機制：`llama_bench_matrix.run_arm` 的子行程 env = `dict(os.environ)` + resolved env，而轉出來的
+    resolved env **就是** `run_server.sh` 印的那份 `SERVER_ENV`。Knobs 是從**命令列**進去的
+    （`--arms prod25:KEY=VAL`）⇒ 不在 `os.environ` ⇒ **沒進 SERVER_ENV 的變數 llama-bench 一輩子看不到**。
+    （同一個坑第三次被抓到，見 `run_server.sh:1102`、`:1552`。）
+  - **症狀是最壞的那一種**：cell 照跑、照出 row、看起來有資料，實際上是 baseline 的重複 —— 今晚的
+    budget sweep 就是這樣：`LLAMA_ARG_EXPERT_CACHE` 不是任何程式讀的名字，10 個 arm ＋ 6 個 ref 的 stderr
+    **全部印 `n_slots=143`**，然後我們差點把 ±11% 的次序飄移寫成「6 GiB +3.40%」。
+  - **做法**：`scripts/check/shape_knob_search.py` 有 `resolved_env()` / `check_reachability()`。
+    判準**不要問「我的 key 有沒有活下來」**（launcher 常換名字：`CGC_SERVER_EXPERT_CACHE_BYTES` →
+    `CGC_EXPERT_CACHE_BYTES`），而是**整份 resolved env 對 reference cell 做 diff** —— 真旋鈕一定動到某物。
+    `--plan/--run` 遇空 diff 直接 **rc=2 拒絕**，`--allow-inert` 是逃生門不是通行證。
+    有 `--selftest`（27/27）兩條突變：正確 key 必須可達、舊 key 必須被判 INERT。
+  - **已知 INERT / 需要把手的（2026-09-22 實測）**：直接設 `CGC_N_CB` / `LLAMA_EXPERT_CACHE_WORKERS` / `CGC_OA_ASYNC`
+    會被覆寫 ⇒ 改用 `CGC_SERVER_N_CB` / `CGC_SERVER_WORKERS` / `CGC_SERVER_OA_ASYNC`；
+    `CGC_EVICTED_RING` 被 `run_server.sh:1361` 硬釘 0；`CGC_MMV_NR0`、`CGC_DRAFT_PREFETCH(_SYNC)`、
+    `CGC_PREFETCH_SRC`、`CGC_RN_ROUTING`、`CGC_P_ROUTE`、`CGC_DRAFT_STRICT` 完全沒 allowlist。
+  - **配套教訓（同類）**：flag 在 env 裡 ≠ 有執行。`CGC_LAYER_AHEAD_PREFETCH` 那一輪
+    （`docs/F2_F5_OVERLAP_AND_AUDIT_RESULT_2026-09-20.md:33`）就是 `prefetch=0/0`、零 PFDBG；
+    `CGC_PREROUTER` 也是靠 `queued=0` 才發現被 `prewarm_hot` 全擋。**先看計數，再看 t/s。**
+
+- **★★ 第 23 條（2026-09-22 夜 §EN-442）：「kernel 層也要一起調」是對的，但先把錯切面切掉**
+  - **別把 NSG×dense 當新機會**：`CGC_MMV_NSG` 在 **IQ4_XS 上早已 1..32 掃過並否證**
+    （`shape_probe/sweep_nsg.py:38-42` 那三條形狀就是 `iq4_xs`；pipeline 名
+    `kernel_mul_mv_iq4_xs_f32_nsg=8` 是硬證）。而且 dense 家族有**自我否證的上界**：
+    全部打到 100% DRAM 峰值也只有 **2.42%** ⇒ tile size / unroll / vector width 也救不了。
+  - **三層成本階梯**（決定「要不要跑」而不是「能不能跑」）：調度 knob 94 s ／ kernel·泛函常數
+    （`CGC_MMV_NSG`、clamp 1..32）94 s 且**免重建**（Metal function constant）／
+    **kernel·原始碼 = rebuild + 重跑 m123 anchor gate**（會蓋掉別條線正在 mmap 的 dylib）。
+  - **joint（shape ⊗ kernel）的儀器已經存在**：
+    `scripts/check/shape_probe/mmid_shapes.py --tokens 1,2,3,4 --nsg-sweep ...`，
+    shape 軸是 MTP tokens/op、kernel 軸是 NSG，用權威口徑 `marginal=(g(64)-g(32))/32`，
+    每個 arm 對**實際編出的 pipeline 名**驗（不對 env 變數驗）。selftest 27/27。
+  - **它的第一輪已經跑過，verdict 全 INVALID**（`Backup/phase_decomp/L3/shape_probe/mmid_nsg_sweep_rotated.json`）：
+    窗口 `busy-overridden`（usable 5.18 GiB < 共用門檻 7.8 GiB）、**null cell 自身寬 44%**。
+    ⇒ **先診斷 null cell，再診斷 kernel。** 方向對了不代表讀數能用。
+  - **還沒被否證的只有 MoE `MUL_MAT_ID`**：%峰值 **20–36%**，對比 dense 的 76–91%（lm_head 91.2%）。
+    量級換算 ~10% of step，**但中位數站在 44% 寬的 cell 上，不可引用**。
+  - **`CGC_MMV_FUSE=1` 有相反記錄**：`autotune_mmv.py:108-115` 記載 777/800 rows divergent、
+    端到端 15.94 vs 22.07 t/s 更慢、draft accept 崩。要把它列為下一步前，必須先在 prod25 cell
+    重現或宣告不適用 —— **不能當不存在**。
+
+- **★★ 第 24 條（2026-09-22 夜 §EN-443）：有人說「knob 太少所以找不到 2×，要 15 個全掃」時，先做三件事**
+  - **第一步：查它是不是已經被判過，或根本不是自由變數。** 例子（本專案實測）：
+    `n_batch`/`n_ubatch` **不是 knob** —— pool 開著時 `llama-context.cpp` 把它夾到
+    `cgc_pool_max_tokens()`(=8)，寬 batch 會 `GGML_ASSERT(n_tokens_all <= cparams.n_batch)`，
+    llama-bench 又不能外部設 ⇒ harness 固定 `-b 8 -ub 8`，**它被 M 綁死**；
+    「dense vs pool 記憶體分配」**就是** pool size 同一個自由度（dense 走 OS page cache，沒有第二個把手）；
+    tree speculation **在本 fork 不存在**（全樹 grep 無 tree/trie）；tile/unroll/vector width
+    **沒有 env 把手** ⇒ 代價是 rebuild + 重跑 m123 anchor gate（會蓋掉別條線的 dylib）。
+  - **第二步：找有沒有「自然實驗」已經給過答案。** 置換策略（LRU→LFU）看起來很誘人，但 09-21 `IO_PATH_AB` §③
+    已經做過它的反向版本：4 GiB vs 8 GiB ⇒ miss **1.91×**、capacity miss **3.15×**、`cb` 41.8→**90.0 ms**，
+    而 **t/s 10.60 vs 10.28 不動**。⚠ 那是跨 run（single-run ±27% 不能跨場比）⇒ 它是「降優先」不是「結案」。
+  - **第三步：算 objective 的價格，不要只看 knob 的數量。** 同一個問題兩個儀器差兩個數量級：
+    surrogate（`shape_probe/mmid_shapes.py`）跑完一整條軸 **~3 分鐘**、噪音底 **~2.4%**；
+    端到端（prod25 cell）**94 s 一次 launch**、CV **11.2%**（log σ≈0.28）⇒ 認證 3% 要 ~1350 launch ≈ **35 h**。
+    ⇒ **加 knobs 不會讓 3% 的效應變可見**（§EN-440：16 launch、σ=0.16 要真差距 ~68% 才認證得到）。
+  - **正確的話術**：不是「多掃幾個」，是「先把篩選搬到便宜的 objective：surrogate 分鐘級全掃 →
+    只有 ≥10% 的 arm 才值得上端到端」。加 axis 前先問：**這個 objective 一次多少錢、噪音底多少、認證 δ 要幾個樣本。**
+\n
+- **★★ 第 25 條（2026-09-23 §EN-444）：發任何量測之前，先問「這台機器現在是誰的」——而且要問兩次**
+  - **第二次才是那趟 那一趟最值錢的**：起點問「能不能發」，終點問「機器有沒有在過程中換人」。
+    前者你早就做得到，後者無法提前回答。已做成 `judge_window(before, after)` 放在
+    `scripts/check/shape_knob_search.py`：`hijacked`（淨→忙，中途換人）是一個自己的類別，不是 drift；
+    而且**有向** —— 只有「失去」機器算 hijack，反向（忙→淨）仍是 busy-overridden。
+  - **用共用詞彙 `server_window.decision()`，不要自己重打一個。** 它同時給 harness 與 launcher 兩個答案，
+    並標出 `binding` / `agree`；它看得見**外來的 llama 行程與 listening port** —— 這兩件事在任何
+    sweep 自己印出來的數字裡都看不見。多份 threshold 就是這份筆記已經付過兩次的那個缺陷。
+  - **實測到的事實（2026-09-23 夜）**：Mac16,12 / 16 GB 這台，**在完全沒有 llama 行程時
+    reclaimable 也只有 ~6.3 GB**（連採五次 6376/6242/6229/6385/6433 MB），而共用門檻
+    `NEED_MB=8000` ⇒ 桌面 app 常駐下**根本達不到**；那一夜的擺幅 0.83→9.43 GiB，
+    9.43 GB 那次是別人 8.1 GiB 的 server **退出那一瞬間**才量到的。
+    ⇒ 「乾淨窗口」在共用的小記憶體盒子上取決於別人的行程週期，不是排隊等得到。
+  - **microbench 有 footprint**：`mmid_shapes.py` 跑一次把 swapfile 從 5.1 推到 6.1 GiB（72 次 probe
+    invocation）。⚠ 我當初多寫了「**不會自動縮回**」—— **錯，它會**：實測 total 回到 4096 MiB。
+    我把「觀測到它還沒縮」寫成「它不會縮」（**暫態當成本質**）。正確的保留部分：量完要知道自己推過 swap。
+  - **先對時間線，再怪鄰居**：我一度把兩個 high-noise 的 sweep 怪到同步起來的 server 頭上，
+    一查 `ps`（`ps -p <pid> -o lstart`）才發現它是在我的 sweep **結束後**才起來的。無罪但結論不變：
+    讀數仍然不可用 —— 因為真兇是儀器自己的 footprint、拖垮一切的 pager。
+  - **不要偷偷放寬自己要用的門檻**：`NEED_MB` 的校準根據是「guarded run 載不進模型」＝**載入失敗**
+    門檻，與「讀得穩」的判準（joint probe 的 `nsg_decide` 要求 null cell ≤5%）不是同一件事。
+    想換判準要在 `server_window` 層帶證據改，不能在自己的 harness 裡放寬。
+
+
+26. **有人說「measurement tool 太吃記憶體、降 footprint 就好」時：先定價，再決定要不要砍**
+    （2026-09-23 實例，全文 `docs/FOOTPRINT_HALFSTEP_2026-09-23.md`）
+    - **三個成分要先分離**，砍錯一件就白砍：**分配量**（pool/bank/buffer）／**持續時間**（熱頁被摸多久）／
+      **幾何**（bank 多大）。第三件**不是我們的**：在本 fork 砍 `--experts` 就是換一個模型在量。
+    - **「行程多大」和「盒子少了多少」是兩個不相干的數字**：pool 320→146 MiB 讓**盒子可用下陷 −26.4%**，
+      但**峰值 RSS 三臂都一樣 232 MB**（pool 超過 bank 的頁從沒 fault-in）。
+      ⇒ 要看的是執行當下共用 `server_window` 的 `vm_free_mb`，不是 `/usr/bin/time -l` 的 child RSS。
+    - **single-invocation 的下陷看不見「累積」**：joint sweep 標頭寫 1.25 GiB，單次只掉 0.4 GiB，少掉的 6 GB 叫累積。
+      解法是 `--sequence N` 追**每次的出發點**，而且**多臂交錯**（讓共有的飄移公平分攤），不是單臂連打。
+    - **判準要寫在程式裡再跑，不能跑完才決定**：可分辨與否的唯一根據是
+      「差值是否大於兩邊各自的跨度」；只有一個 rep 就沒有跨度估計 ⇒ 要回 `unjudged`，不是回一個小贏。
+      同一條規則適用於任何多 arm 比較：先有跨度估計，才有「可分辨」。
+      （這條 register 住了自己的 selftest：我第一版把 1.7% 的差判成「可分辨」，是 selftest 抓出來的。）
+    - **結果可能是否定的，而這正是有價值的產出**：本案中 footprint 槓桿量得到（−26%）但比真因**小 20 倍**
+      （真因 = 跑的兩分鐘裡另一條線的 `llama-server` 正在載模型，盒子自己在 18 秒內擺 **1463↔9869 MB**）。
+      ⇒ 結論是「**共用門檻維持不動**」，而且是「量過才維持」，不是「預設不動」。
+    - **這種結論仰賴 begin/end 視窗**：只看 import 那一刻的 snapshot 回答不了「跑的時候盒子是誰的」。
+      加 `window_now()` + `lost_the_box(w0,w1)`（**有向**：「乾淨→被佔」才算遺失；probe 讀不到回 **None 不回 False**，
+      否則從沒取過視窗的那一輪會被印成「沒事」）。**而且閘門要真能擋（`return 2`）**——只印不擋等於沒裝。
+    - ⚠ **附帶的自我更正（同一毛病）**：我前兩輪寫過「swapfile 不會縮回」「這台機器沒有 8 GB 空檔」，
+      兩句都**被自己反證**（實測回 4096 MiB；連採六次 9364–9428 MB）。
+      教訓：不要把「我採到的時間點」寫成「它的性質」，也不要把單一樣本寫成分佈。
+
+27. **「同一個 config 重複跑卻散開」時：先做變異數分解，再談原因**
+    （2026-09-23 實例，全文 `docs/K3_SWING_ANALYSIS_2026-09-23.md`，工具
+    `scripts/check/k_swing_decompose.py`，selftest 18/18，**全程零 GPU**）
+    - **「時間在飄」是兩個不同的假設，不是一個**：(a) 每一步都吵 ⇒ launch 條件無關，只有「每條 arm
+      多跑幾個 request」有效；(b) **每次 launch 被指定一個不同的基準**，步與步之間其實很緊 ⇒
+      配對/暖機/重複的行為完全不同。**這兩件事的答案決定整個實驗設計，而且通常已經躺在存檔 JSON 裡。**
+    - **分解的前提是「一 arm = 一 launch = 多個 request」**——所以量測工具從一開始就要存
+      **逐 request** 的數字，不能只存 arm 平均。只存平均 ⇒ 這條永遠做不了。
+      估計式：單因子隨機效應，`MS_within` 期望 σ²_within、`MS_between` 期望 σ²_within + m·σ²_launch
+      ⇒ **`σ²_launch = max(MS_between − MS_within, 0)/m`**。`max(…,0)` 是刻意的地板：
+      MS_between<MS_within 會偶然發生，意思是「沒測到」，**不是負變異數**；印負數只會被人拿去相減。
+    - **F 臨界要當參數傳進去（`--f-crit`），不能在看到資料後調**——與 `nsg_decide` 的 5% 同一條紀律。
+    - **這個分解會順便解釋「配對為什麼沒用」**：配對（AB/BA）只能扣掉**兩組共有**的項。
+      若只有一組有 launch 級項，配對 sd 就只能 ≈ √2 × 單臂 sd —— 實測 2.28 vs 2.18 t/s，吻合。
+      **所以「配對沒買到東西」本身是一條證據，不是一句抱怨。**
+    - **工具要印三個數字**：launch 級 sd、一個 arm mean 的總散佈、以及「單靠 request 噪音原本該散多少」。
+      第三個才是配對有沒有用的判據。順手用它定價：`n = (總散佈/目標%)²` ⇒ 本案 k=3 要 25 臂/組 ≈ 58 min，
+      k=2 只要 4 臂。**「消掉/觀測到那個項」通常比「多跑 arm」便宜一個數量級。**
+    - ⚠ **`n = (散佈/目標)²` 壓的是標準誤，不是信賴區間**——95% CI 半寬要再乘 1.96² ≈ 3.8 倍。
+      兩個數字都要印，只印一個會讓人把「4 臂」當成結論（本案：k=2 其實是 4(SE)/16(CI)）。
+    - ⚠ **`max(MS_b − MS_w, 0)` 回 0 時不要寫成「沒有」——要給上界。**
+      模型下 `F_obs/(1+m·λ) ~ F(df1,df2)`，`λ = σ²_launch/σ²_within`，反解 F 的**下尾**即得
+      「資料排除不掉的最大 λ」。本案 k=2 點估 0.00% 但 **95% 上界 9.98%**；k=3 點估 13.16%、上界 35.78%。
+      上界與點估差 5–6 倍 ⇒ 那個 n 根本沒被定價，要誠實說「n 太小，無法定價」。
+      （**我第一版把 `F_0.05(4,10)` 算成 0.6126，正確是 0.1677** —— Simpson 積分寫錯，
+      且錯的方向剛好有利於我本來就想相信的結論。修法：用不完全 beta 實作的 `f_cdf`，
+      並用「`f_cdf(f_ppf(p))==p`」＋「`1/F_0.95(d2,d1)`」＋一個已知外部常數**三個錨把它釘進 selftest**。）
+    - **注意「arm 自己把自己跑熱」**：本案 k=2 有 4/5 臂在 3 個 request 間單調下滑（最多 −24%）
+      ⇒ ~70 s 的 arm 本身就是一條發熱曲線，**launch 前的閘門管不到它**。要看 first→last 的斜率。
+
+28. **要比較兩個「看起來只差一個寬度」的 arm 時：先確認它們走的是不是同一條 kernel/PSO**
+    （同上，2026-09-23）
+    - 寬度（batch/ntok/n_seq_tokens）常常**不是純量**，而是**分支條件**。本案：MTP k=3 一步 4 token、
+      k=2 是 3 token，而 `ggml-metal-ops.cpp:2590` 的 small-batch `mul_mv_ext` 對 **Q_K 家族門檻是
+      `ne11>=4`**、對 F32/F16/BF16/Q8_0 那群是 `ne11>=2`（`:2581`）⇒ **ntok=3 與 ntok=4 走不同 kernel**；
+      ext 內 `nxpsg`（`ne11<3`）、`r1ptg`（`case 4`）也不同 ⇒ 兩個不同 PSO。
+      **結果：任何「寬一點划不划算」的 t/s 差，都混了「那顆 kernel 好不好」。**
+    - **查法**：對每個型別群把進入門檻列出來（含「哪些型別根本不在清單裡 ⇒ 永遠走不到」），
+      再對照該模型的 tensor 型別分佈。**順便會發現某些 knob 根本摸不到那條路**
+      （本案 `mul_mv_ext` 裡 `nsg` 是寫死的 `=2` ⇒ `CGC_MMV_NSG` 無效）。
+    - **也要查「看起來很像的那個開關」是不是真的開著**：本案相位閾值（`llama-cgc-phase.h:133-143`）
+      一度是最可疑的候選，但**既有 log 的 `CGC-PHASE-SPLIT … width=8` 直接否證它**（3 與 4 都 ≤8）。
+      **先 grep 存檔 log 再讀碼**——banner 常常已經把答案印出來了。
+    - **「計數相同」不等於「時間相同」**：`CGC-SYNCFILL` 印的是**請求數**（`llama-context.cpp:6497`
+      `cold_filled=%zu`），真正的讀是 `pread`（`llama-expert-cache.cpp:35`）⇒ 服務時間看頁快取。
+      **所以「四次 arm 計數逐位元相同」完全不能排除 IO 服務時間差 1.43×。**
+    - **動手前先找「樹上已經有、但我們沒開」的計數器**：本案 `llama-expert-cache.cpp:432` 的
+      `CGC-RIG-SNAPSHOT … pread_usec=` 正是判生死的量，而 **09-23 全部 log 零命中**。
+      ⇒ **最便宜的下一步常常是「把那一行打開」，而不是多跑幾十條 arm。**
+    - **per-request 切換參數前先確認它沒被 `#if 0` 關掉**：本案 `server-schema.cpp:200` 的
+      `speculative.n_max` 就在 `:198` 的 `#if 0` 裡 ⇒ 「單一 process 內交替 k」做不到。
+      **設計了一個漂亮的單 process 實驗之前，先確認那個開關存在。**
+
+
+29. **有人問「所以結論是用 X 配置、N 次重複？」時：先確認那是「效應」還是「噪音」**
+    （2026-09-23 續，報告 §7）
+    - **「哪一組比較不吵」和「哪一組比較快」是兩個問題**，而且後者常常更大、更便宜、也更該先答。
+      本案：k=2 不只散得少（launch 級項 0%），它**平均快 16.4%**（12.13 vs 10.43 t/s）。
+      只回答噪音問題 ⇒ 把一個 16% 的效應當成量測衛生問題處理掉。
+    - **大效應不需要多臂**：配對 sd 1.83 t/s、diff 1.71 t/s ⇒ 約 **8 對 ABBA**（當時已有 5 對）。
+      ⚠ 我第一版寫「7 對」：n=7 時 t=2.47 vs 臨界 **2.447**，**只過 0.025**，而 sd 本身是 n=5 估的
+      ⇒ 那是一場 50/50 的賭。**用觀察到的 sd 去算 n，一定會算出一個剛好過的 n** —— 因為那個 sd
+      就是讓它剛好過的那個樣本來的。要多留一點，且臨界值隨 df 下降本身也是餘裕來源。
+      這比「25 臂」便宜一個數量級，**而且一次回答「台架用哪個 k」＋「交付 cell 該不該換 k」兩個問題。**
+      ⇒ **先認證效應，再談重複數。** 順序反了會在錯誤的 k 上精算臂數。
+    - **看形狀，不要只看 sd**：本案 k=3 是**雙峰**（3/5 掉到 8.6–10.7、2/5 正常 11.5–12.3），
+      不是「吵」。⇒ 「有些 launch 掉進一個慢狀態」。
+      **變異數項本來不該 bias 平均；它會 bias，正因為慢狀態是單邊的、不是對稱噪音。**
+      所以「launch 級變異」和「平均較慢」可以是**同一件事**的兩個讀法，別當成兩個現象。
+    - **動手前先查那個旋鈕是不是真的存在、要不要 rebuild**：本案 llama-bench 有
+      **`--spec-draft-n-max`**（`llama-bench.cpp:666`，預設 3，1..16），`run_server.sh:436`
+      把 `CGC_SERVER_MTP_N_MAX` 轉給它，`scripts/run_n30cache.sh:86` **預設就是 2**
+      ⇒ 換 k 是一行旗標，不必 rebuild。**「預設值」常常藏在某個 script 裡，而且可能跟你以為的不同。**
+    - **但換台架 ≠ 結論可搬**：k 同時換 kernel/PSO（見第 28 條）⇒ 在 k=2 排出的 knob 名次
+      不能直接搬到 k=3。所以流程是「先認證 k ⇒ 若換則台架自然變 k=2 ⇒ 才在 k=2 上精算臂數」。
+
+
+30. **「再跑 N 個就夠了」這句話本身是一個統計錯誤**（2026-09-23 續，協定見
+    `docs/K3_PAIR_CERT_2026-09-23.md`；工具 `k_swing_decompose.py --paired --planned-n`）
+    - **看過資料才決定要再跑幾個 = optional stopping**，它不會保留那個 α。
+      所以 n 要**事先登記**，而工具要**真的拒絕**：`n < planned ⇒ NOT YET`（不是結果）、
+      `n > planned ⇒ OVERRUN`（判決已發生，多跑的是另一個實驗）。
+      「再 2 對就夠」聽起來像勤儉，其實是把固定 n 檢定換成一個沒有校正的序列檢定。
+    - **用觀察到的 sd 反推 n，一定得到一個「剛好夠」的 n** —— 因為使它剛好夠的正是那筆樣本。
+      實例：n=7 ⇒ t=2.47 vs 臨界 2.447（過 0.025）；改 8 ⇒ t=2.64 vs 2.365。
+      而且臨界值本身隨 df 從 2.776 降到 2.365，這也是餘裕的一部分。
+    - **偷看已經發生時，就把它寫進協定而不是假裝沒有**：本案 n=5 的 t=2.08/p≈0.11 是先算出來的。
+      可補償的部分 = 「判決只做一次、做在登記的 n」；不可補償的部分要明寫。
+    - **事先把「不顯著時要做什麼」也寫死**。否則「不過 ⇒ 再加幾對」會自動發生。
+      本案：不過就改看機制（池 IO 時間），不是加樣本 —— **雙峰分佈的 sd 會越抽越大，加對無效。**
+    - **t 分位數不要另外引一套實作**：用 `|T|>t ⇔ F(1,df)>t²` 複用既有的 F 尾，
+      並把 `t_crit(4)=2.776 / t_crit(6)=2.447 / t_crit(10)=2.228` 釘進 selftest（外部錨）。
+
+31. **「這個計數器要打開得改碼重編」常常是錯的：先找它的呼叫點有沒有 env 閘**
+    （2026-09-23 實例）
+    - 本案 `CGC-RIG-SNAPSHOT … pread_usec=`（判生死的量）在 09-23 全部 log 零命中，
+      我原本以為要動 C++。**讀碼後發現它唯一呼叫點 `refresh_prefill_protect()`
+      （`llama-expert-cache.cpp:446`）在 `CGC_PREFILL_PROTECT_FILE` 未設時直接 return**
+      ⇒ 設一個 env 就有，**不必 rebuild**（在本 repo 特別重要：rebuild 會蓋掉別條線的 dylib）。
+    - **查法**：先看那個 print 函式的**所有**呼叫點，再看呼叫點的 early-return 條件。
+      只看「有沒有這個 env 名稱」會漏 —— 本案的閘是另一個 env（`CGC_PREFILL_PROTECT_FILE`）。
+    - **開關要開成「維持現狀」那一檔**：本案 flag 檔寫 `"0"` ⇒ protect 維持關閉（＝預設行為），
+      但 rig 照樣 snapshot。**做觀測不該同時改行為**，否則讀到的差混了兩件事。
+    - ⚠ **`getenv(...) != nullptr` 這種寫法，`VAR=0` 也會開**（`:474`）——A/B 一定要用 FILE 開關。
+    - ⚠ **舊 doc 的復現命令可能有不存在的 env**：本案
+      `docs/O1_PREFILL_PROTECT_RERUN_2026-09-19.md:87` 的 `CGC_RIG_SNAPSHOT=1` 在 src 裡 grep 不到。
+      **照抄之前先 grep 一次 src；新配方沒有實跑驗證過的話，要明寫「讀碼得來、未實跑」。**
+    - 順帶：**同一趟就把兩個量都收了**（配對 t/s ＋ `pread_usec`），
+      「為了機制再多跑一輪 arm」幾乎總是可以避免的。
+
+
+32. **★★ 引用 `CGC-DECPROF` 的 `wait` 之前，先確認你在講 GPU 還是 CPU —— 兩者指向相反的解法**
+    （2026-09-23 實例，我自己講錯過一次）
+    - `ggml-backend.cpp:2109-2122` `hook_seg()` 的三個區間：
+      `wait = st1-st0` ＝ **CPU 自旋忙等** GPU 跑完該段（`while (cgc_done(...) < target) sched_yield()`）；
+      `cb = st2-st1` ＝ top-k hook；`submit` ＝ 提交下一段。
+      **GPU 空轉是另一個欄位 `gap_sum`**（Metal 時間戳：上段 end → 下段 start）。
+    - 實測（穩態 verify step，n=221 中位數）：`total 161.0` ＝ `wait 123.2 (78%)` ＋ `cb 23.8` ＋ `submit 10.8`；
+      而 GPU 側是 `union 113.4 (71% 忙)` ＋ `gap 44.4 (28% 空)`，**union+gap = 157.8 ≈ total 161**。
+      ⇒ 「wait 78%」讀成「GPU 空轉 78%」會把解法從「讓 CPU 不必在關鍵路徑上」
+      翻成「讓 GPU 多做事」，**整套做白工**。
+    - **查法**：欄位語義去讀**印它的那段程式碼**，不要從名字推。
+      本案兩個儀器還互相打架（`CGC-GPUTIME` 的 `gpu_union=97%` vs DECPROF 的 `wait 71-77%`），
+      判掉的方式是找閉合式（`union+gap ≈ total`），不是選一個相信。
+    - **歸因 gap 要用回歸不要用中位數**：本案 `gap ~ (cb+submit)` 得 **r=0.957、slope=1.05、
+      截距 +10.1 ms** ⇒ 近乎 1:1 的因果（GPU 空轉 = CPU 的 hook＋submit ＋ 啟動偏斜）。
+      只比中位數看不出這件事。
+    - ⚠ 同一支 log 裡混著 **draft model 的廉價 step**：本案 552 條 DECPROF 裡只有 298 條是
+      verify（`segs=41` 且 `total>50`），其餘 ntok 小、total 中位數只有 3.3 ms。
+      **不分層取中位數會得到一個完全假的數字。**
+    - 順帶一條硬約束（註解原文）：*Waiting only on the main buffer fired the top-k hook while
+      the argsort was still running → stale ids → garbage remap → whole-graph corruption*
+      ⇒ **必須等整段跑完**，不能用「只等主緩衝區」這種看似便宜的最佳化。
+
+33. **★★ 要驗證「CPU/GPU 重疊」類優化，主指標用 step 級計數器（`gap`/`cb`），不要用 t/s**
+    （2026-09-23；上游是第 32 條的 wait/gap 口徑）
+    - **成本差一個數量級**：`gap` 是 step 級，一支 log 就有 1300+ 樣本、**不需要跨 launch 配對**；
+      `t/s` 是 launch 級、單臂 sd 18%、要 8 對 ABBA。同一個問題用前者可能只要一輪 A/B。
+    - **先算斜率再決定做不做**：對穩態 verify step 做 `gap ~ (cb + submit)` 迴歸
+      （`scripts/check/gap_attribution.py`，selftest 33/33）。
+      實測 **slope 1.02、r 0.981、截距 +7.2 ms**。
+      ⇒ slope ≈ 1 表示 CPU 的每一毫秒**全額**變成 GPU 空窗 ⇒ 把 CPU 挪出關鍵路徑回報是全額的；
+      slope ≈ 0 表示空窗另有來源 ⇒ 重疊類優化打錯靶。
+      **截距是這條路的地板**（本案 7.2 ms，消不掉）。
+    - **可行性先看「幾何餘量」，不要先看命中率**：本案 GPU 窗口（`wait` 129.8 ms）是 CPU 需求
+      （`cb` 39.3 ms）的 **3.3×** ⇒ 即使預測全部落空、每個都要真讀也來得及。
+      ⇒ 「預測目標 100% 已 resident」對「省 fill」是死亡（F2），對「把 CPU 挪出關鍵路徑」
+      卻**無害甚至有利**。**別用 prefetch 類實驗的 null 去否決預指派類設計。**
+    - **prefetch ≠ 預指派**：`prefetch_slot` 只消「fill」；F1 模型 `cb = 0.46·L + 0.695·M` 的
+      `0.46 ms/層` barrier **只要該層有 ≥1 miss 就照付** ⇒ 要連 barrier 一起消，必須讓該層在
+      **真 ids 到達時已無 miss**（提前填），而不只是「背景發 IO」。
+    - **預測源優先順序**：MTP 的 draft ctx 已在 verify 之前算出下一 token 的 ids
+      （`llama-context.cpp:5386`，accept 92–98%）**優於**「猜上一 token 重演」（~87%），且已在樹上。
+      ⚠ 真門檻是**整層 union 全覆蓋**，不是 per-expert：U=10、p=0.87 獨立 ⇒ `0.87^10 ≈ 25%`
+      ⇒ **pred 必須比 top-8 寬**，或換高 p 的源。先量再動手。
+    - **安全不變數**：快路徑的條件必須是「**真 ids 全部 resident**」，不是「預測對了就跳過」
+      —— 預測只決定**提前填什麼**，不決定**相不信任結果**。
+    - **計數器要有 `calls`**：`calls == 0` 就宣告該輪無效（F2 的 env flag 有設但沒被呼叫）。
+
+34. **★★ 給「預測類」優化定價時，`f_clean` 是 `r^U` 不是 `q^U`，而 `r = p_res0 + (1-p_res0)·q`**
+    （2026-09-23；我第一版把 q 直接當 r，**把預指派低估一個數量級**：q=0.87 → 我說 +0.8%，實為 +17.2%）
+    - **錯在哪**：門檻事件是「整層 union 零 miss」，但「resident」不只有「被預測覆蓋」一條路 ——
+      **基線已經有 `p_res0`（本案 85%）常駐**，預測只救那 `(1-p_res0)` 冷的。
+      漏掉 p_res0 等於假設基線常駐率是 0，於是指數 `U` 打在一個過小的底上。
+    - **自檢**：`q=0` 時 `f_clean` 必須等於基線 `p_res0^U`。把它寫進 selftest（本案第 3 項）。
+    - **指數要拿實測 union，不要拿 top-k**：本案 U=15.5（ntok=4）不是 8 ⇒ `0.87^15.5 = 11.6%`，
+      而使用者直覺算的 `0.87^8 = 33%`。**指數差 2 倍，門檻差 3 倍。**
+    - **★ 結論：槓桿是「預測寬度」不是「預測準度」**。寬度決定 q 的**結構上限**
+      （8 ids → 51.6%、16 → 76.3%、**24 → 91.1%**、32 → 100%），而準度只能在那之下打折。
+      ⇒ 先買寬度（可測、可控），相關性／準度當安全邊際（只能買 ~10 個百分點）。
+    - **★ 動手前先找「已經被算好但被丟掉」的寬度**：本案 draft ctx 一次算好 3 個 token × 8 = 24 ids，
+      而 `llama-context.cpp:5390-5391` **只取 j=0 一行**（理由「verify 從第一個 token 驗證」
+      —— 對 prefetch 的優先順序成立，對 prebind 的覆蓋率**不成立**）。
+      **改成取 j=0..n_tokens-1 是一行改動，收益 +5.4% → +19.5%。**
+    - **相關性用共用隨機效應量化**，不要只說「專家選擇不是獨立的」：
+      `r = logistic(mu + sigma·z)`、`f = E[r^U]`。`r^U` 對 r 凸 ⇒ Jensen ⇒ sigma 上升確實幫忙；
+      實測 sigma 0→3 只把 f 從 38% 拉到 75% ⇒ **幫忙但買不到一個數量級，不能當主論據**。
+    - **事前寫死的 gate 要打在 q 上，不要打在 f_clean 上**：f_clean 是 q 的函數，
+      用函數當 gate 等於把「門檻」和「模型」混在一起。本案：step −10% ⇒ **q ≥ 0.731**。
+    - 工具：`scripts/check/prebind_ev.py`（`--self-test` / `--sweep` / `--breakeven`）。
+
+35. **★★ 要引用 F1 的 `cb = 0.46·L + 0.695·M` 之前，先跟實測 cb 對一下 —— 它可能不相容**
+    （2026-09-23）
+    - 本案 ntok=4 實測 `cb = 39.3 ms`；若 p_res0 = 0.85，則 M ≈ 40 層 × 15.5 × 0.15 ≈ 93，
+      **單 fill 項 `0.695 × 93 = 65 ms` 就超過實測 cb** ⇒ 係數與該 regime 的實測不相容。
+      反解則得 p_res0 ≈ 0.95，與註解寫的 15% 冷缺口**差 3 倍**。
+    - ⇒ **兩者必有一錯（或來自不同 regime）。在拆掉之前不要用那組係數做定價**，
+      改用校準到實測的線性代理，並把矛盾本身登記成待量項。
+    - 通則：**任何「係數模型」引用前，用代入法驗一次量級**。數量級不對就停手。
+
+36. **★ 「按直方圖重分配」類的優化，先查直方圖是不是平的**
+    （2026-09-23；M5 prerouter 的實測 `precision = 4.2%`，隨機基準 8/256 = 3.1%）
+    - 樹上**已經有被量過命中率的預測器**：`CGC_PREROUTER`
+      （`llama-expert-cache.cpp:1446-1521`，全域頻率直方圖），結案在 `docs/M3_M5_CLOSURE_2026-09-17.md`。
+    - 4.2% ≈ 隨機 ⇒ **路由的邊際分佈幾乎是平的，沒有「永遠熱」的專家**
+      ⇒ 「按路由直方圖按層重分配容量」**沒有可搬的東西**，不是「搬到別層」的問題。
+    - **但它不能否決時間局部性類的預測**（prev-token 87%、draft ids）：
+      「長期每個專家一樣熱」與「相鄰 token 高度重複」**完全相容**。
+      ⇒ 判準：**看預測源是「邊際分佈」還是「時間局部性」，兩者的實測結論不可互搬。**
+    - 順帶：**容量類優化不是重疊類優化的替代品，是它的乘數** ——
+      本案 `p_res0` 0.85 → 0.95 讓同樣寬度的收益從 +5.5% 變 +9.6%、門檻 q 從 0.731 降到 0.578。
+
+41. **★★ 儀器的「條件不成立」要印出來，不要把多個數字綁在同一個 `if` 上**
+    （2026-09-23；第一支 `CGC-PREBIND-PROBE` log 整輪 0 行輸出，白跑一趟 13 GB 載入）
+    - 錯法：把「需要預測源的量」（q）和「不需要預測源的量」（U、p_res0、clean）寫在
+      **同一個 `if` 裡**，條件裡含 `draft_all_valid[il]`。預測源一壞，四個數字**一起消失**，
+      而且 log 上「0 行」無法區分：env 沒到？層對不上？draft 從沒跑？
+    - 正確：**拆開**。U／p_res0／clean 無條件輸出；q 只在 `pred=1` 的層上聚合，
+      並且**每一行都印 `pred=0/1`**，讓「有多少層真的有預測」本身成為可看的診斷量。
+    - ★★ 更關鍵的是**分母**：`pred=0` 的層 cov 是 0，把它們放進 q 的分母會把
+      「預測源沒收集到」**偽裝成「預測不準」** —— 兩種失敗的解法完全相反
+      （前者改收集、後者改預測器/寬度）。⇒ `q = Σhit / Σuni(pred=1)`，兩個分母分開記。
+    - 通則：**儀器的每一個輸出數字，都要能單獨回答「是沒量到還是量到很低」**。
+
+42. **★ 起量測之前先確認三件事：env 有沒有 allowlist、參數名是誰的、沉降期**
+    （2026-09-23，同一輪連踩三個）
+    - **① env allowlist**：`scripts/run_server.sh` 的 launch 行是
+      `env "${SERVER_ENV[@]}" "$BIN" ...`，**沒有列進去的 `CGC_*` 會被靜默丟棄**。
+      新加的 flag 必須自己 `SERVER_ENV+=(...)` 一段（腳本內已有十幾個例子與註解）。
+      但 `llama_bench_matrix.py` 是 `run_env = dict(os.environ); run_env.update(env)`（**merge**），
+      ⇒ 同一個 flag 走 launcher 要登記、走 bench matrix 不用。**兩條路的規則不同。**
+    - **② 參數名屬於哪一層**：`prod_profile.py` 的 `DECODE_SHAPE` 用
+      `--prompt/--gen/--depths/--batch/--reps`，那是 **`llama_bench_matrix.py` 的**參數；
+      `llama-bench` 自己認的是 `-p/--n-prompt`、`-n/--n-gen`、`-d/--n-depth`、
+      `-b/--batch-size`、`-r/--repetitions`。字面搬過去會得到
+      `error: invalid parameter for argument: --prompt`，0.4 s 印完 help 退出。
+      ⇒ **要嘛走 `llama_bench_matrix.py`（讓它轉），要嘛用對的名字，不要混。**
+    - **③ 沉降期**：`ggml_metal_rsets_init: ... residency set (keep_alive = 180 s)`
+      ⇒ 前一個 llama 行程退出後的 **180 s 內 GPU 記憶體還被佔著**。實測：別線 server 一退
+      就起 bench，`usable 52%` 照樣 `CGC-METAL-FAIL: status 5, Insufficient Memory` -> SIGABRT。
+      ⇒ **窗口的定義不是「沒有行程」，是「沒有行程且最後一支走了 ≥180 s」。**
+    - 附帶（同一輪）：`prefill250` arm 強制 `-b/-ub 5632`，在 16 GB M4（working set 11453 MB）
+      上 model 4617 MiB + 8 GiB pool 會 OOM；`prod25-stream` 不帶 -b/-ub 就能跑。
+      ⇒ **換 arm 前先比 `-b/-ub`，不要只看 pool 預算。**
+
+### ⚠️ 第 43 條：**配適用的統計量，不能是模型要預測的那個統計量**（2026-09-23）
+   場景：定價模型有一個自由旋鈕（這裡是層內相關性 `sigma`），而你手上只有一個可以
+   對上模型的實測量（這裡是 `clean_pct` = 整層零 miss 的層比例）。
+   直覺做法是「用 clean_pct 反解 sigma」—— **那是循環論證**：
+       模型要預測的量是 `E[r_z^U]`（U 階矩），而 clean_pct 正是它。
+       拿它配適出的 sigma 再去降門檻 ⇒ **用來放寬的數字 == 放寬後要預測的數字**，
+       而且方向永遠是「讓結論更好看」。
+   （實測：由 clean_pct 反解 sigma = 1.191 ⇒ 門檻 0.543；由變異數估 1.019 ⇒ 門檻 0.595。
+     差 0.05 的門檻就是 PASS/FAIL 的分界，而且反解那一側永遠比較寬。）
+   **改法：用另一個統計量配適，讓原本那個變成驗證點。**
+       二階矩（逐層常駐比例 `res=` 的變異數）估 sigma，再用它預測 U 階矩（clean_pct）。
+       `res_layer = (1/U)·Σ Bern(r_z)` ⇒ `Var[res] = Var[r_z] + E[r_z(1-r_z)]/U`；
+       二項修正項本身依賴 sigma ⇒ 不動點迭代（`prebind_ev.sigma_from_res_spread`）。
+       「二階矩能不能預測 U 階矩」是一個**可以為偽**的檢定 —— 它過了（28.9% vs 32.9%，
+       +4.0 pp）才能說這個函數形式站得住。
+   ⇒ **通則：配適 k 階矩，驗證 m 階矩（m ≠ k）。** 用同一階矩配適又驗證，永遠會過。
+   ⇒ 附帶：先檢查訊號是不是取樣噪音。這裡二項噪音 `E[r(1-r)]/U` 的 sd 是 0.066，
+     觀測 sd 是 0.108 ⇒ 訊號只佔 62%，但足以辨識；若觀測 sd ≈ 噪音 sd，就**不能**估。
+
+### ⚠️ 第 44 條：只要「編譯檢查」時，**只建目標檔，不要重連結**（2026-09-23）
+   `cmake --build` 是對「機器上所有正在跑的實驗」的一次寫入（蓋掉別條線正在 mmap 的
+   `libllama.dylib`）。但很多時候你只是想確認 `set -e` 之外的新程式碼能不能編譯，
+   根本不需要可執行檔。**這時候可以安全地繞過危險：**
+       cd src/llama.cpp/build && \
+       make -f src/CMakeFiles/llama.dir/build.make \
+            src/CMakeFiles/llama.dir/llama-context.cpp.o
+   只更新 `.o`，**不重連結** ⇒ `bin/libllama.dylib` 完全不動 ⇒ 不會殺掉別人的行程。
+   ⚠ 兩個前提（都踩過）：
+     - 頂層 `Makefile` **沒有 `.o` 目標**（`make src/.../x.cpp.o` 會靜默什麼都不做，
+       exit 0、無輸出，看起來像「已經是最新」）⇒ 必須用 `build.make`。
+     - cwd 必須是 **build 根**（`build.make` 內部用 `src/CMakeFiles/...` 相對路徑 include
+       `flags.make`；在 `build/src` 下跑會 `No such file or directory`）。
+   ⇒ 用法：改完程式碼先這樣驗一遍，**把「拿到 GPU 窗口才發現編不過」的風險歸零**；
+     真正的 `--build` 仍然留到窗口內（見第 42 條）。
+
+### ⚠️ 第 45 條：「重疊有沒有機會」要拆成**三個各自可為偽的命題**，別混著答（2026-09-23）
+   被問「GPU/CPU 能不能完全重疊」時，三個命題的答案常常**完全不同**，混著答一定會錯：
+   ① **算術上界**（把 CPU 獨佔段從步時裡減掉）—— 一定有，但它只是減法，不是方案。
+      例：步時 247.98，減掉 `cb` 42.04 ⇒ 15.14 t/s；減 74.18 ⇒ 17.94 t/s。
+      ⚠ 兩個儀器對同一個 `cb` 差到 1.8×（42 vs 74）本身是未閉合項 ⇒ 上界只能給**量級**。
+   ② **結構窗口**（issue 與 await 之間有沒有 GPU 工作可插）—— 這才是「做不做得到」。
+      實測 **0**：MoE core 永遠在 segment 第一個 command buffer（5811/6362，pre-MoE 佔比
+      med=0.000），ids 由段尾的 route 產出 ⇒ CPU 拿到 ids 時 GPU 已空；而 submit 後
+      第一個 buffer 立刻是 MoE core ⇒ 中間沒有任何 GPU 工作。挪 MoE 也不行（後面的 attn
+      依賴它的輸出）。**交叉驗證：`gap > cb` ⇒ GPU 空轉得比 fill 本身還久 ⇒ 遮蔽量零。**
+   ③ **消滅 IO**（讓重疊變成無意義）—— 常常是記憶體題不是工程題，先算再說：
+      `專家全集 = n_layer × n_expert × bytes/expert`，比對 `recommendedMaxWorkingSetSize − 非專家常駐`。
+      實測 10.70 GiB vs 剩 6.68 GiB ⇒ 差 4.0 GiB ⇒ 直接出局，省掉一整輪實驗。
+   ⇒ **回答順序：先算 ③（最便宜、常直接結案），再查 ②（決定做不做得到），最後才報 ①（且必須
+      標明「這是上界不是可達值」）。** 反過來會讓人拿 ① 當承諾。
+   ⇒ 附帶：**部分重疊 ≠ 0**。若已有實測覆蓋率 q，按「miss 數線性縮放」估樂觀上界
+     （`ensure_batch` 是批量 ⇒ miss 數線性影響時間，比 `f_clean`「整層零 miss」口徑寬鬆），
+     再減影子成本。實測 q=0.354 ⇒ 省 6.0~10.6%，但影子 ensure 38.3 ms/步 ⇒ 淨虧。
+     兩種口徑對同一個 q 會給不同結論 —— **報兩種，但都先減成本再下判決。**
+
+### ⚠️ 第 46 條：「讓它更快」和「讓它更早」天花板可以差 20 倍 —— 先問是哪一個（2026-09-23）
+   被問「X 不能加速嗎」時，**先分辨問的是 latency 還是 schedule**：
+   - **更快（latency）**：天花板就是 X 在步時裡的佔比，通常一眼就能判死。
+     實測：ids 相關的全部時間 = CPU 側 unwrap `pre` 4.1 µs/call（佔 `cb` 的 **0.55%**）
+     ＋ GPU 側 route 4.76 ms/步（步時 1.9%）⇒ **總天花板 2.0% < 3% 門檻** ⇒ 直接結案。
+   - **更早（schedule）**：天花板是「能移出臨界路徑多少」，跟 X 多快無關，可以大 20 倍。
+     實測：提前一層發起 fill ⇒ 上界 **+23.5%~+31%**。
+   ⇒ **判死「更快」之後不要連帶判死「更早」**，那是兩個問題。
+   ⇒ **動手造新儀器前，先查倉庫裡有沒有已經把那個量切開的 env/flag。**
+     本例 `CGC_HOOK_SPLIT=1` 早就存在，把 `cb` 切成 pre／ensure／drain／tail，
+     一份既有 log 就回答了「ids 佔多少」，比新寫一個 probe 便宜兩個數量級。
+     （查法：`grep -rn "CGC_[A-Z_]*" scripts/run_server.sh` 看 allowlist 裡有哪些開關，
+     再 `grep -rn` 那個名字找 docs／memory 裡的既有實測。）
+   ⇒ **「提前」的窗口要用 segment 的百分比算，不要拍脑袋。**
+     MoE core 佔 segment 60.1% ⇒ 最早只能在 60% 處發起 ⇒ 窗口是**後 40%**（1.30~1.59 ms），
+     而每層 fill 1.855 ms ⇒ **裝不進**，最多移出 70~86%。
+     ⇒ 通則：先量「觸發點在 segment 的哪個百分位」，再乘 segment 時長，最後才跟需求量比。
+
+### ⚠️ 第 47 條：跨 step 的「時間局部性」預測源，先確認**相鄰 step 的 token 是不是同一批位置**（2026-09-23）
+   直覺做法：把上一個 decode step 的 expert ids 存起來當這一步的預測源（註解還常寫
+   「相鄰 token 路由重疊 70-90%」，看起來背書了這個做法）。
+   **在 MTP／speculative decode 下這個直覺是錯的**：一個 step 的 `ntok` 是 `ntok` 個
+   **不同位置**的待驗證 token；下一步若全部接受，token 位置整批往後移 `ntok` 個
+   ⇒ 相鄰兩個 step 的 token **完全不相交**。「上一步的 token 0」是另一個 token，
+   不是同一個 token 的上一個狀態。
+   實測（Qwen3.6-35B-A3B，ntok=4，40 層）：只存 token 0 那一行 ⇒ 覆蓋率 0.354；
+   存「整個 step 的聯集」⇒ 才是同一量級的預測源。兩個數字差 1.7 倍以上，
+   而且**錯的那個比較難看** ⇒ 會做出錯誤的「證偽」結論。
+   ⇒ **判準：預測源的粒度要跟「被預測對象」一致。** fill 發的是 union（跨 token），
+     預測源就該是 union 量級；拿單一 token 的 top-k 去預測 union，
+     天花板就是 `k / |union|`（實測 8/19.41 = 41%），再怎麼調都過不了。
+   ⇒ **檢查方法：把「候選集合的實測大小」印出來**（`w8/w16/w24`）。
+     名義寬度 24 實際只有 13.5 就是一個警訊；若 `w ≈ k`（單一 token 的 top-k 大小）
+     而你以為在預測 union，那就是粒度錯了。
+   ⇒ 附帶：同一個 bug 讓「加寬度」看起來沒用 —— 邊際命中率 ~30% 其實是「再加的
+     都是別的 token 的專家」，不是「預測不準」。
+
+### ⚠️ 第 48 條：圖裡加**影子分支**做量測時，用「stamp」驗證排程順序，不要用運氣（2026-09-23）
+   為了量「如果提前算會得到什麼」，常見做法是在計算圖裡加一條**不接回主圖**的影子分支
+   （例：用 pre-attn 殘差多算一次 gate，只為了跟真實 top-k 比）。
+   問題：影子分支與真實路徑是**兩條獨立的 DAG 分支**，ggml 不保證誰先算。
+   若影子排在 top-k 之後，hook 讀到的是**上一輪**的值 —— 數字照樣很漂亮，是靜默錯誤。
+   **解法：兩個計數器。** 影子 capture 時 `shadow_stamp[il]++`，真實 hook 時
+   `hook_stamp[il]++`；兩者相等才代表「本步的影子值已在 hook 之前算完」。
+   不等就**跳過並計數**，最後把 skip 數印出來 ⇒ 「順序不對」變成可觀測的，不是假設。
+   （這與第 41 條同源：不要把「沒量到」摺進平均裡當成「量到很低」。）
+   ⇒ 影子分支的**命名**要能被 eval callback 認出來：圖建置期的 `cb(t, name, il)`
+     會把張量命名成 `"name-il"`（見 `llama_context::graph_get_cb`），
+     而 `expert_cache_eval_cb` 是靠 `t->name` 分派的 ⇒ 記得 `cb(shadow, "xxx", il)`，
+     光 `ggml_build_forward_expand` 加進圖並不會讓它進 callback。
+   ⇒ ⚠ 影子分支會真的佔 GPU 時間 ⇒ **那一輪的 t/s 不可引用**，只取幾何／命中率。
+
+### ⚠️ 第 49 條：在模型層檔案加圖節點前，**先解 GGUF 的 `general.architecture` 確認是哪一支**（2026-09-23）
+   一個 repo 裡常有好幾個結構幾乎一樣的 arch 檔（`qwen3next.cpp`／`qwen35moe.cpp`／
+   `qwen35.cpp` 都有 `attn_post_norm` + `is_recr` 的 hybrid 層迴圈）。憑「模型名字像哪個」
+   去猜會猜錯 —— 實測 `Qwen3.6-35B-A3B` 的 `general.architecture` 是 **qwen35moe**，
+   不是 qwen3next。
+   **症狀極具誤導性：改錯檔案 ⇒ 你加的節點從來沒被建出來 ⇒ 「完全沒量到」（計數器 0 行、
+   skip 100%），而不是「量到很低」。** 很容易被誤讀成「這個方向不行」。
+   ⇒ 查法（不用載模型，讀 GGUF header 前幾十個 KV 就夠）：
+       python3 -c "讀 magic/version/n_kv，逐個讀 key，印 general.architecture"
+   ⇒ 保險起見：加完之後**先跑一次看「有沒有任何輸出行」**，再去看數字。
+       「零行」和「數字很爛」要分開診斷（第 41 條）。
+
+### ⚠️ 第 50 條：這個 repo 的 eval callback 只轉發「段尾 top-k」—— 其它節點要開 `CGC_TD_CB`（2026-09-23）
+   `ggml_backend_sched_set_eval_callback` 裝的 callback，在**一般** ggml 排程器下每個節點都會
+   被叫（`ask=true` 問要不要算，`ask=false` 算完通知）。但這個 repo 走的是 **CGC 分段派送器**
+   （`ggml-backend.cpp` ~2490 與 ~3010）：
+     - `ask=false` 只對「每段最後的 top-k 節點」觸發（`ttopk`）；
+     - 其它節點**只有在 `getenv("CGC_TD_CB")` 存在時**才被逐段轉發（那段程式原本是給
+       `[CGC bit-bisect v7] in-compute tensor dump` 用的）。
+   ⇒ **要讓自訂節點進 eval callback，必須設 `CGC_TD_CB`。** 它是「逗號分隔的張量名過濾器」，
+     dispatcher 側轉發**全部**節點、dump 側才按名比對 ⇒ 設成 `1` 就不會真的 dump 任何張量。
+     代價：它會 `while (cgc_done(...) < target) sched_yield()` ⇒ **序列化 async pipeline**
+     ⇒ 那一輪的 t/s 不可引用（只取幾何／命中率）。
+   ⇒ 同一個節點會被轉發**多次**（實測 shadow_stamp=3 vs hook_stamp=2）⇒ 見第 48 條，
+     「是否本步」的判據要用 `stamp 有沒有前進`，不能用 `兩邊相等`。
+
+### ⚠️ 第 51 條：一個方向被儀器 bug 判死、bug 修掉之後，要做**兩件事**而不只是重算數字（2026-09-23）
+   ① **往下游追**：那個「判死」有沒有被拿去當**別的結論的前提**？
+      實例：prebind 的 FAIL 被寫進 MEMORY.md 變成「結案＝不做」＋「下一步改走 pread_usec
+      路線」⇒ bug 修掉後，**連帶作廢的還有「下一步」**，不只是那個數字。
+      更麻煩的是：**連「根因」都可能是 bug 的產物**（「union 19.41 vs 每次只能預測 8 ⇒
+      天花板 41%」—— 真實預測源是整步 union，寬度 16.9~28.7，不是 8）⇒
+      **根因與數字要一起作廢**，只改數字會留下一個看起來很合理、其實是從錯的資料推出的故事。
+      ⇒ 查法：`grep -rln` 那個方向的名字，逐個檔案看它是不是被當成前提。
+   ② **往橫向比：被判死的方向與新方向常常是「互補」而不是「替代」** —— 因為它們卡在不同的軸。
+      預取／預測類的方案永遠有三個軸，單看「覆蓋率」一定會選錯：
+        - **覆蓋**（預測命中多少）  ρ 0.849 > prebind 0.726
+        - **抓取**（過度抓取倍數）  ρ 1.03× < prebind 1.48×
+        - **視窗**（能提前多久發起） ρ 1.30~1.59 ms（卡住） vs prebind ≈ 一整步（不受限）
+      ⇒ 只看前兩軸會說「ρ 完勝」；加上第三軸，**在「視窗 1.30 ms」的世界裡 prebind 反而贏**
+        （16.06 vs 15.53 t/s）。
+      ⇒ **判準：把三個軸都列出來，明確說「誰卡哪個軸」，再回答選哪個。**
+        如果結論取決於某個未閉合的口徑（這裡是 `cb` 42 vs 74、視窗 1.30 vs 1.59），
+        **下一步是量那個口徑，不是再挑一個方向。**
+   ⇒ 附帶：**「成本塞得進窗口」≠「划算」**。`shadow_cost` 只算時間（w=28 → 44 ms/步，
+     塞得進 129.8 ms 陰影窗），**LRU 擾動與多餘 pread 的頻寬爭用都不在裡面**。
+     報成本時要明說這兩項「沒被定價」，不要讓「fits」被讀成「值得」。
+
+### ⚠️ 第 52 條：多機制的「疊加上界」——先問它住在哪個格點，再問它多大（2026-09-23）
+   續第 51 條：把三個軸列出來之後，很容易接著問「那兩個都做，疊加起來是多少？」
+   **那個數字九成是假的，而且假的方式是固定的：**
+   ① **把手算搬進 script + selftest**，讓它逐個重現已發表的每個數字（本次 7 個，容差 0.03 t/s）。
+      這麼做之前是「相信」，之後才是「可以驗」——而且 selftest 能把主張寫成不變式。
+   ② **把它拆成本身的貢獻 vs 增量**：實例 16.76 = 16.46（只做 ρ，+30.9%）**+ 0.30**（prebind 增量）。
+      「疊加 ⇒ +33%」是因果倒置 —— 33% 裡有 31% 是第一個機制自己的。
+      ⇒ **必問句式：Δ = 疊加 − 只做最好的那一個**（做成 selftest 不變式：本次全格點只值 +0.03~+0.30 t/s）。
+   ③ **它是哪一個格點？** 上界常常是「每個軸都取樂觀值」的那個角。本次是 cb=74.18 **且**
+      視窗=1.59 同時成立；換成同 run 的 cb=42.04 ⇒ 14.50（+15.4%），不是 16.76。
+   ④ **跨 regime 借數字 = 本線自己禁過的動作**（`joint_reconcile.py` 要求所有分量出自同一支 log；
+      `cb_headroom_probe.py` 把水位變成 entry condition）。cb 在本專案飄過 6.6×（11.26/21.23/
+      42.04/74.18）⇒ **用別支 log 的 cb 去放大本支 log 的結論，是同一類錯誤。**
+   ⑤ **給了它的極限值還要對上解析度**。本次：疊加增量 +0.13 t/s，而 k=3 有 launch 級 13.16%
+      配對扣不掉 ⇒ 需要三位數的臂 ⇒ **「測不到」就是結論**：不要做兩個。
+   ⇒ 對外只講「同 regime 紀律下的那個數」＋「結構上限」（把 cb 全藏起來 ⇒ step − cb，
+      這是唯一不需要任何覆盖率假設的上界）。
+
+### ⚠️ 第 53 條：「哪個項綁住」是 cfg 的函數——所以「下一個實驗是什麼」取決於待定讞的那個量（2026-09-23）
+   **不要因為某個項在一個格點上綁住，就把它當成全局的瓶頸。** 先算它在所有格點上綁不綁：
+     每層需求 F = cb / 40；綁住的條件是「提前量 < cov·F」
+     cb=42.04 ⇒ F=1.051 ms < 連最悲觀的視窗估計 1.30 ⇒ **視窗在任何情形都綁不住**
+     cb=74.18 ⇒ cov·F=1.584 ⇒ 視窗 <1.584 才綁（1.59→1.30 讓 ρ 從 16.46 掉到 15.53）
+   ⇒ 本案：**「下一步去量視窗」只有在 cb 偏大的那一口徑成立**；在 cb=42.04 那一格，
+     量視窗量到的東西不會改變任何結論。**順序是 cb 先**，而且 cb 還同時決定絕對尺度
+     （結構上限在 4 個 cb Candidate 之間是 +4.8% ~ +42.7%）。
+   ⇒ 具體做法：**同一支 log 同時讀這兩個**（cb 照 `cb_headroom_probe` 的水位條件；視窗百分位見第 54 條）。
+   ⇒ 泛化：只要者的 so-called「主導項」是**由另一個未定讞的量推導出來的**，
+     就先當它是待測的前提，不是已知的天花板。
+
+### ⚠️ 第 54 條：要量「提前／重疊窗口」之前，先驗那條影子分支在 node array 裡的落點（2026-09-23）
+   **ggml 的執行順序 = 建圖順序（node array），排程器不會幫你往前挪。**
+   ⇒ 影子分支的**輸入**何時可用 ≠ 它**何時被執行**。實例（`qwen35moe.cpp`）：
+     `inpSA=inpL` 在 `:187`（輸入已可用）⇒ attn `:189/:200` ⇒ residual `:209` ⇒
+     `attn_post_norm` `:216` ⇒ **影子分支建在 `:231`** ⇒ 真 gate 在 `:240`。
+     ⇒ 它落在 node array 的 attn **之後**、離真 gate 只幾行 ⇒ **提前量 ≈ 0**，
+       而那幾行正好就是我們在付的插入成本 ⇒ **那支 probe 只能量準度，拿不到任何窗口。**
+   ⇒ **不先移就去量百分位 ⇒ 量到 ~0，然後用一個「建圖順序」的理由把方向殺掉。**
+     這跟第 47 條（token-0 儀器 bug）是同一類：**結論是對的，但它量到的不是它以為的東西。**
+     修正本身零風險：把它移到 `:187` 之後、`:189` 之前（同一組輸入與權重、與 attn 無依賴）
+     ⇒ 節點落到 layer L 最前面，才是那個機制宣稱的「上一段一結束就發起」。
+     ⚠ 移了要重驗：分段轉發會不會把它放進別的 segment、stamp 新鮮度判據還成不成立。
+   ⇒ **怎麼量**：樹上已有 per-command-buffer 的 GPUStartTime/GPUEndTime + node range
+     （`ggml_metal_cgc_gpu_take_cb`，消費者 `CGC_GPU_NODES`）。
+     預設 `n_nodes_0 = MAX(64, 0.1N)` 會把目標節點埋進 ~64 節點的 buffer ⇒ 必須
+     **`CGC_CB_N_MAIN=1` + 大 `CGC_N_CB`**（一 node 一 buffer），node 的時間軸位置才可解。
+     **只取 START，不要取 duration**：全 VIEW/RESHAPE/PERMUTE 的 buffer 一條 GPU 命令都沒有
+     （既有記錄：報出過 592 µs/node 的假值）。
+     那一趟本身是重擾動環境（一 node 一 buffer 會拉長 encode／提交），
+     ⇒ **只取其序數含義，不要引用它的 t/s 或 cb**。
+
+### ⚠️ 第 55 條：修完「探針位置」之後，要用位置 A/B 證明 TRADE 是位置給的，不是數學給的
+   （承第 54 條；2026-09-23 實際落地）
+   把影子分支挪前的那一刻，必須先問：**哪個結論會變、哪個不會**。
+   實例（ρ probe）：**準度（cov_uni=0.854）不受位置影響** —— 它比的是兩組 logits，
+   與 node 在圖裡排第幾個無關；**只有「提前量／窗口」那一維被位置影響到全部**。
+   ⇒ 挪位置**不需要**撤回已發表的準度數字，但要公開標注「那一輪是 late 位置量的」。
+      寫法：`docs/RHO_STAGE0_RESULT_2026-09-23.md` §8（doc 開頭放 ⚠ 聲明，原文留著作错题）。
+
+   ⇒ **機械動作**（三件，漏一件就白做）：
+     ① 把影子 block 貼到**生產者的正下方**（本例 `inpSA = inpL` 的下一句），不是貼到「盡量前面」。
+     ② **把它的輸入依賴一併提前**：本例 nextn 的 `inpSA = ggml_get_rows(...)` 原本與 `cur` 那行
+        寫在 attn 之後。它與 attn 無依賴 ⇒ 上移不改值，但能保證 ρ 用到**與真實路線同一個**
+        （已 mask 的）tensor，且**不多一顆 node**（留在原處再算一次就是重複節點，白付一份成本）。
+     ③ **舊位置留成對照臂**（本例 `CGC_RHO_PROBE_LATE=1`），不要直接刪掉。
+        ⇒ 「位置 A/B」的判據：**同一支 binary、同一組權重，`ρ` 必須逐位元相同，只有 GPU
+        時間戳位置不同**。若 `ρ` 變了 ⇒ 「無依賴」的前提壞了，回頭查，不要直接報 lead。
+
+   ⇒ 組合量 eval 時 **`env "${ARR[@]}" A=1 B=1 cmd`**（bash）；zsh 要用 `${=VAR}` 或寫死 flags，
+     因為 **zsh 對未加引號的參數不做 word splitting**（`$COM` 會整串變成一個參數，
+     include path 全丟 ⇒ `fatal error: 'llama-model.h' file not found`）。
+
+   ⇒ **别在不会被执行的 arch 檔案裡留副本**：（本專案 `general.architecture = qwen35moe`，
+     曾在 `qwen3next.cpp` 也貼一份）留副本會在下次改主角時**靜默分歧**，而同步它的成本
+     比「換 arch 時重貼一次」還高。只留一行註解指回真身。
+     改錯 arch 的症狀是**「完全沒量到」（0 行、skip=100%），不是「量到很低」** ⇒ 看到零行
+     先懷疑 arch，不要懷疑 tuning。
+
+### ⚠️ 第 56 條：量「提前量 lead」的四個機械坑（2026-09-23 實測，全踩過一遍）
+   ① **CGC-NSM 沒有時鐘，只有 duration** ⇒ 它答不了「時間軸上早多少」。
+      要 GPUStartTime 得另開一行（`CGC_GPU_NODES_START=1` → `CGC-NSCB`，本專案已加）。
+      **新開關 + 新行標，不要改既有行的格式**：`CGC-NSM` 有三個parser 在吃它
+      （`gdn_split` / `per_op_slice_parse` / `attn_moe_split`），加欄位會靜默餵壞它們。
+   ② **buffer 不是 1 node 寬，是 ~5 node 寬**。`CGC_N_CB=127` 會卡死 Metal 的
+      command-buffer 建立（`run_server.sh:1743` 有實測），可用上限 ≈ 16 ⇒
+      **只能給 lead 的區間**（悲觀 = 對方 buffer 的 START − 我方 buffer 的 END），
+      區間跨 0 就必須印 INDETERMINATE，不准挑一邊報。（`rho_lead_parse.py` 已把這條寫成
+      selftest 不變式。）
+   ③ **要印 range 裡的全部名字，不能只印第一個**：只印第一個時 `cgc_rho_logits` 被埋在
+      5-node buffer 的中間，症狀是「影子節點彷彿根本不在圖裡」（0 命中）。
+   ④ **`llama_bench_matrix.py --workdir` 不會自己 mkdir**，目錄不存在時它會把整趟 llama-bench
+      跑完才在寫 stderr log 時炸 `FileNotFoundError` ⇒ 白跑 N×45 s（2026-09-23 白跑 4 趟）。
+      ⇒ 每個 workdir 先 `mkdir -p`。
+
+### ⚠️ 第 57 條：「逐位元相同」在 decode 準度量上是不可能達成的判據（2026-09-23 自我更正）
+   我曾把位置 A/B 的判據寫成「兩臂 `cov_uni` 必須完全相同，否則『無依賴』前提壞了」。
+   實測：同臂三趟 0.8528/0.8655/0.8616（散佈 0.013），兩臂差 0.019 —— **同階**。
+   原因不是數學，是**母體**：解碼軌跡（MTP 接受數）每次跑都不一樣 ⇒ ntok=4 的層數
+   2000/1840/2120 vs 1840/1680/1880 ⇒ token 母體不同 ⇒ 命中率本來就會動。
+   ⇒ 正確判據換成兩條：**(a) 差落在同臂散佈的噪音帶內；(b) 兩臂都在門檻同一側。**
+     兩條都過就可以說「位置不影響準度」，不要再要求位元相同。
+     反之若差 **遠大於** 噪音帶，那才是數學被改動的訊號 —— 這時候要回頭查輸入張量，
+     不是查 tune。
+
+### ⚠️ 第 58 條：同一個量在不同 log 差 N 倍時，先問「是不是同一支 run 的不同窗口」（2026-09-23）
+   `cb` 在本專案量過 11.26／21.23／42.04／74.18 ms（6.6×），兩天裡被當成「兩個 regime 分歧」
+   在爭，而它決定收益是 +14% 還是 +24~31%。**實測後答案：它們是同一支 run 的兩個窗口。**
+
+   在交付 cell 本體加 `CGC_DECODE_PROFILE=1` 跑兩趟，同支 log 裡：
+       穩態（對齊 `--warm-skip 64`）ntok=4   cb median 42.09 / 42.24
+       含池預熱                               cb mean   47.84 / 49.62（rep1 全部 61.84 / 70.59）
+   ⇒ **74.18 = 含池預熱／高 swap 那一格；42.04 = 穩態。而交付錨點用 `--warm-skip 64`，
+     時鐘從預熱之後才開始 ⇒ 交付 regime 就是 42，74 撤回。**
+
+   判據（不要再用「哪個 regime 比較對」這種無法偽的問法）：
+   ① **把兩個候選值都放回同一支 log 的不同窗口去定位**，能定位就是窗口問題，不是 regime 問題；
+   ② **哪一個窗口對應錨點的採樣區間，就用哪一個** —— 錨點的 `--warm-skip`／warmup
+      約定決定了答案，不是你的偏好；
+   ③ 定價用 **mean 不是 median**（Σcb 才決定吞吐）；`joint_reconcile.py` 報的是 median，
+      直接拿它去定價會低估長尾（這裡 mean 50 vs median 42）。
+
+### ⚠️ 第 59 條：讀 `CGC-DECPROF` 的三個坑（2026-09-23，`scripts/check/cb_delivery_read.py`）
+   ① **prefill 圖也算一個 step row**：`-d 512` 的 prefill 是一整個 `graph_compute`，
+      印成 `ntok=512, cb=5791 ms`，一筆就把 rep1 的 mean 從 61.8 拉到 134.4 ⇒ 用
+      `--max-ntok` 排除。
+   ② **`dp_layers` 只有兩個值：1（MTP draft 模組）與 40（verify，主模型可路由層）**。
+      混著算 median 描述的是一個不存在的母體 ⇒ 只取 verify 步。
+      （順帶可用來確認定價模型裡的層數常數是否正確。）
+   ③ **DECPROF 的 `total` 就是真實 step**（可用 bench 的 `n_gen ÷ t/s ÷ rep` 反算交叉驗證；
+      兩趟都吻合到 2% 內）⇒ `Σcb/Σtotal` 是可引用的時間加權佔比。
+
+### ⚠️ 第 60 條：一個軸被機械排除之後，要把它從下一步清單裡刪掉（2026-09-23）
+   「視窗是不是主導項」爭了一輪，最後不是靠論證結案的，是靠一條 selftest 不變式：
+   **`lead` 在實測區間（1.31→3.00 ms）換任何值，`t/s` 完全不變**
+   （`cov·F = 0.860 × 50.40/40 = 1.084 ms < 1.31 ms` ⇒ 視窗永遠綁不住）。
+   ⇒ 把「下一個實驗去量視窗百分位」**從清單刪除**，別再為它排 GPU。
+   做法：把「這個軸不綁」寫成 `max−min < 1e-9` 這種會紅的檢查，而不是寫一句話在文件裡。
+
+### ⚠️ 第 61 條：baseline 讀不到錨點時，先看 `swap_used_mib`，不要先怪噪音（2026-09-23）
+   同一支 build、同一個 cell、thermal 全程 NOMINAL，base 卻從錨點 12.57 一路掉到
+   **9.47 → 4.62**。我第一次把它歸給「單臂噪音 ±27%」，第二次歸給「熱浸沒冷卻」，
+   **兩次都錯**。真因是 swap：
+   `swap 5301 MiB` + `anon 8.69 GiB` ⇒ 8 GiB 的 expert pool 被換出到 SSD
+   ⇒ `cache hit` 從 68.7% 崩到 **57.2%**、`us/job` 13907 ⇒ t/s 腰斬再腰斬。
+   **重開機後 swap=0，同一支 build 立刻回到 11.97**（±1.22，錨點 12.57）。
+   判據（每一趟都要看，不是只有可疑時才看）：
+   - `mem_state()["swap_used_mib"]` **> 0 就拒跑**（不是當參考值）。
+   - `driver.log` 的 `cache: hit xx%` 是同一件事的另一面：
+     **hit% 掉了 ⇒ 先懷疑水位，不要懷疑被測的機制**。
+   - ⚠ **熱壓 NOMINAL 完全擋不住這個**（hist 192/192 NOMINAL 照樣 4.62）
+     ⇒ 「gate 過了」不等於「機器是乾淨的」，thermal 與 mem/swap 是兩個獨立的軸。
+   ⇒ A/B 腳本要把 mem gate 寫成 `usable_pct >= 30` **且** `swap_used_mib == 0`，
+     並在拒跑時印出 swap 值（否則下次還是會被誤讀成噪音）。
+
+### ⚠️ 第 62 條：A/B 腳本必須複用交付工具的閘門，不能自己長一份（2026-09-23）
+   `prod_profile.py` 每趟前做 **mem gate + `wait_nominal(420s)`，等不到就拒跑**。
+   我自己寫的 `rho_fill_ab.sh` 只有「有沒有別的行程在跑」的檢查 ⇒ 少的就是這一套，
+   結果整批數據都帶著同一個系統性偏移（見第 61 條）。
+   規則：**A/B 腳本 import 交付工具自己用的那兩個實作**
+   （`from profile_duo import wait_nominal`、`from prefill_certifiability import mem_state`），
+   不要重寫一份 polling —— 重寫的那份一定會跟交付口徑漂移，而漂移的方向永遠是「比較寬鬆」。
+
+### ⚠️ 第 63 條：per-layer 的 `CGC-DECPROF` 行是**部分口徑**，定價一律用 step 級 `gpu_union`（2026-09-24）
+
+`CGC_DECODE_PROFILE_ALL=1` 會吐 `CGC-DECPROF topN: L<l> wait=.. cb=.. gpu=.. union=..` 逐層行。
+**不要用它們做「一層 / 一個 expert 多少 ms」的定價**：
+
+- 實測：逐層行的 `wait` ≈ 0.13–0.18 ms，40 層 × 0.175 = 7 ms，而 step 級 `wait` 是 **64 ms**
+  ⇒ 逐層行低了 ~9×。這跟 `CGC-HOOKSPLIT` 的 `ensure` vs `CGC-DECPROF` 的 `cb` 差 9.5×
+  是**同一個口徑洞**（`docs/MISS_AXIS_RESULT_2026-09-24.md` §3），不是兩個獨立的謎。
+- 安全的做法：用 **step 級** `CGC-GPUTIME: .. gpu_union=U ms` 除以層數
+  （2026-09-24 實測 67.42 ms ÷ 40 = **1.685 ms/層**），再乘你要的拆分係數。
+
+⇒ 「單層 1.6~2.5 ms」「單 expert 0.126~0.169 ms」這種數字，只能從 step 級 union 往下拆，
+   不能從逐層行往上讀。工具：`scripts/check/miss_reprice.py`（`--self-test` 16/16，附敏感度帶）。
+
+### ⚠️ 第 64 條：切 step 不能用「單調性」—— 零行的 step 會讓相鄰 step 合併（2026-09-24）
+
+寫 log parser 時很自然會用「某個欄位（layer id、step id）不再遞增 = 新 step 開始」來切段。
+**只要有一種 step 是一行都不印的，這個啟發式就是錯的**，而且它會製造**假紅燈**：
+
+- 實例（`scripts/check/miss_mask_check.py` 第一版）：`BATCHDBG`／`MISSMASK` 只在
+  `misses > 0` 時印一行，所以 miss=0 的 step 完全不出現 ⇒ 兩個相鄰 step 被併成一個
+  （後者首個 layer id 大於前者最後一個時）。它報出 **57/103 step 的 LAYER_DIFF**，
+  但逐層抽樣每一層其實都對得上 —— 全是假的。
+- 正確做法：**改成逐 key（例如逐 layer）的序列比對**。把同一個 key 在所有 step 的觀測排成
+  序列，兩邊各自省略「該 step 無觀測」的情形 ⇒ 判斷一致時序列自然等長且逐項相同；
+  長度不同（例如一邊含 prefill step）時**從尾端對齊**。
+- 通則：**任何「某 step 可能零行」的 log 都不能用單調性切 step。** 同理，
+  「用 median 判 warm-skip 效應」（見第 62/63 條的口徑坑）也是同一類錯誤：
+  選了一個天生把你要量的東西排掉的統計量。
+
+附帶：`CGC_MISS_MASK=1` / `CGC_MISS_MASK_DBG=1`（2026-09-24 第 2 步新增）是「哪些 (layer, expert)
+是佔位」的 device-side 出口；實測與 host `BATCHDBG` **逐位相同**（38 層 / 421 元素 / 0 差異），
+成本量不出來（Δ = −0.95 ± 2.01 ms/step，`segs=41` 不變 ⇒ 無新增 CB）。
+詳見 `docs/MISS_MASK_STEP2_2026-09-24.md`。
+
+### ⚠️ 第 65 條：填池統計的口徑 —— `fill_wait_us`/`pread_usec` 都不能拿來算 decode 段吞吐（2026-09-24）
+
+`CGC-SHAPE v=1 phase=final` 會印 `read_mib / pread_us / fill_wait_us / compulsory / capacity`。
+**這三個時間欄位沒有一個能代表「decode 一步花多少時間在填池」**：
+
+| 欄位 | 實際語義 | 為什麼不能用 |
+|---|---|---|
+| `fill_wait_us` | 只有兩個累加点：`llama-expert-cache.cpp:998`（prefetch 在飛的等待）與 `:1102`（**單 expert** `fill_pool_direct`） | decode 走 `ensure_batch → fill_segments_pool`，**這一條完全不累加**。實測 3.40 s 基本來自 prefill，除以 decode 步數會得到虛高的 12.4 ms/step |
+| `pread_usec` | 跨 worker **累加**，可以超過 wall clock（註釋自己寫「553 s inside a 92.6 s wall」） | 實測 1500.6 s / 56 s wall = 26.8×，大於 worker 數 8 ⇒ 歸因不明 |
+| `read_mib` | 總搬運量 | 沒有時間，只有它能給「每次 fill 搬多少 bytes」（實測 1674.6 MiB / 4123 = **0.406 MiB/fill**） |
+
+⇒ 要 decode 段填池吞吐，**必須新加一個只包住 `fill_segments_pool`、按 step 累計的計時器**。
+
+### ⚠️ 第 66 條：開工閘門不能寫成「去量一個還不存在的臂」（2026-09-24）
+
+寫閘門時很容易寫成「先把 X 做出來，量它的 Y，再決定要不要做 Z」。**如果 X 依賴 Z，這是循環依賴**。
+
+- 實例：閘門「量『單段提交＋背景 fill』臂的穩態 miss 率，<10% 才開工第 3 步」。
+  但單段提交把 hook 整個拿掉，而 fill（`ensure_batch` 同步填 ＋ `CGC_LAYER_AHEAD_PREFETCH`
+  後台預取）**全住在 hook 裡** ⇒ 那一臂不存在，要跑它就得先做出背景 fill，而那正是閘門要判的。
+- 通用解法：**換成「算損益平衡點，看實測區間落在哪一側」**。把不可測的那一維用**兩個可測端點夾逼**
+  （本例：零 fill 天花板 43.0% 與同步 fill 穩態 4.7%），只要整個區間都在平衡點同一側，
+  判決就與未知量無關 ⇒ 閘門可判定。
+- 附帶：**端點要用長序列取**，前幾步的讀數會騙人（本例 gen 8 前幾步報 62%，256 步穩態是 43.0%）；
+  同時**報「平的」還是「收斂的」本身就是結論**（`decay_rel`）—— 平的代表零 fill。
+- 工具：`scripts/check/miss_rate_series.py`（`--self-test` 15/15，切 5 段 + `decay_rel` + FLAT/DECAYING 判定）。
+
+### ⚠️ 第 67 條：正確性儀器的「一次性告警」不要用單一層號當 gate（2026-09-24）
+
+為了避免「以為開了其實沒開」，很自然會寫：
+
+```cpp
+static bool announced = false;
+if (ok) { ...; if (il == 0 && !announced) { announced = true; print("ACTIVE"); } }
+else if (il == 0 && !announced) { announced = true; print("NOT APPLIED"); }
+```
+
+**這在「第 0 層是特例」的系統裡必錯**，而且錯的方向最壞：**假陰性**。
+
+- 實例：`CGC_ZEROMISS` 的告警 gate 在 `il == 0`。但第 0 層不在 GPU slot-table 路徑上
+  （step 2 的逐位比對也只找到 38/40 層可比）⇒ 它**永遠**走 else 分支印 NOT APPLIED，
+  並把 `announced` 設成 true ⇒ **後面 39 層即使真的生效也不會印 ACTIVE**。
+  結果是「程式明明生效了，日誌卻說沒生效」，會讓人往錯誤方向查很久。
+- 通則：**不要用「某一個 index」當一次性 gate；用計數。**
+  ```cpp
+  static int n_applied = 0, n_skipped = 0;
+  ... n_applied++ / n_skipped++;
+  // 累計到預期總數後印一次摘要
+  if (n_applied + n_skipped >= EXPECTED) print("applied=%d skipped=%d", ...);
+  ```
+  並對 **skipped 的前 2 筆**印明細（含為什麼跳過的欄位），不要只印總數。
+- 附帶一條：**任何「只在某層/某步生效」的機制，都先確認那一層是不是特例**。
+  本 repo 已知的特例：`il == 0` 走 CPU；第 1 步是冷啟動（miss 40/40，穩態是 18.1）。
+
+## §68 判斷「某段 CPU 時間是否在關鍵路徑上」：**用 no-op 診斷臂做差分，不要用時間對齊**（2026-09-25）
+
+要判斷某個 CPU 段（例：expert pool 的 demand fill）到底值不值得優化，唯一可靠的判據是
+**關掉它、看端到端 t/s 變多少**。不要試圖把兩個儀器的時間軸對齊：
+
+- 時間對齊會失敗，因為兩個儀器的**口徑不同、且可能是不同 regime**。實例：
+  `CGC-EBTIMER` 量到 fill ≈ 21 ms/step，而 DECPROF 的 `cb`（註釋明寫含 blocking fill）
+  只有 0.3~15.6 ms ⇒ 看似矛盾。真因是那份 DECPROF 是 **MTP off** 的舊檔，而 EBTIMER 那輪
+  是 **MTP on**（verify 4 token，union 19/層 vs 8/層）⇒ regime 不同，不能互證。
+- **做法**：加一個 env-gated 的 no-op 開關，讓該段變成空操作，同 build、同 cell 跑配對。
+  ```cpp
+  static const bool cgc_eb_nofill = getenv("CGC_EB_NOFILL") != nullptr;
+  ok.assign(n, cgc_eb_nofill ? 1 : 0);   // ← 假裝成功，否則呼叫端的 memset 補零會把
+  if (n == 0 || cgc_eb_nofill) return;   //    你想排除的成本又加回來
+  ```
+  ⚠ gate 要加在**函式開頭**（不是呼叫點），才能一次覆蓋所有呼叫路徑。
+  ⚠ 這種臂輸出是 garbage（資料沒讀）⇒ **只能看時間，不能看正確性**。
+- 判據：差 ≥15% 才算「在關鍵路徑上」（單臂噪音底就 ±27%）。
+- 同一支開關順便當**儀器自檢**：nofill 臂的 `CGC-EBTIMER` 應該掉到 ~0，
+  沒掉就代表你 gate 錯了地方（還有別條 fill 路徑）。
+
+## §69 reps>1 的 log：冷啟動在**每個 rep 的開頭**，不在整份 log 的開頭（2026-09-25）
+
+`llama-bench --reps 3` 會**每輪重新載入 13 GB 模型** ⇒ 每個 rep 都有自己的冷啟動段。
+所以「看最後 N 行」和「看最後 25%」**都不安全**：末尾會跨進最後一個 rep 的冷啟動。
+
+- 實例：madvise 對照臂「最後 40 行」p50 = 88.9 ms，看起來是基線 21.4 ms 的 4 倍，
+  一度像「madvise 讓 fill 爆炸」。分段看之後，兩組在每段都在噪音內一致。
+- 做法：**切成 4 段，取各段中位數，再取這些中位數的中位數**（`segment_profile` + median）。
+  這樣一個 rep 的冷啟動（佔 1/3...1/4）會被其他段投票壓過去。
+  `scripts/check/fill_onpath_ab.py --self-test` 有 4 個針對這個的測項（含中段冷啟動）。
+- 相關：`--warm-skip 64` 只消掉**第一個** rep 的長尾，不消後面 rep 的。
+
+## §70 no-op 臂的**快取統計是反向的**，不要拿它讀替換策略（2026-09-25）
+
+`CGC_EB_NOFILL=1` 這種「假裝成功」的 no-op 臂，會讓 `ok.assign(n,1)` 把**沒有真正填充**
+的 slot 也標成 resident ⇒ 後續 lookup 全部命中。實測：
+
+| | hit% | misses | reads |
+|---|---|---|---|
+| fill（真） | 94.0 | 9769 | 43128 |
+| nofill（no-op） | **96.9**（↑） | **5845**（↓） | **13962**（↓） |
+
+看起來像「關掉 fill 之後快取變好了」，實際上**正好相反**——池裡根本沒有 bytes。
+
+⇒ **no-op 臂只准看 t/s 與你自己那條經過自檢的計時器（`CGC-EBTIMER`）**，
+`cache: hit / misses / reads / cap%` 那一行的任何差別都是開關副作用，**不是結論**。
+
+同一輪的另一個反向指標：`wired` 在 nofill 臂反而更高（6532 MiB vs 1740 MiB），
+因為沒有 pread 把內容真正 touch 到 ⇒ 也別拿 `wired`/`swap` 去比較這兩臂。

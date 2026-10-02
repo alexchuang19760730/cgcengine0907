@@ -1,0 +1,127 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— e-l201-dslab：decode 側 per-layer 緊湊 slab（把池趕出 Metal 工作集）
+#   承接 operator 2026-10-02 的裁定：L20-1（提交路徑）判死後，力氣轉「GPU 空轉」軸。
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼立這一張：
+#   ① 已量：decode 期間 GPU 利用率只 30–49%（持續 37–45%；prefill 80–99%）。空轉 ~55%。
+#   ② 已量（budget_gate.py 口徑）：池子 8192（宣告）＋ Metal 峰值駐留 12260（Backup/metal_working_set.json，
+#      2026-10-02 09:06）＋ 保留 1024 ＝ 21476 MiB ＞ recommendedMaxWorkingSetSize 11453 MiB
+#      ⇒ 赤字 ~10 GB，池子必然有一部分不在記憶體裡。**池子（8192）是最大的一項超額。**
+#   ③ 樹裡已有機件：prefill 走 CGC_PREFILL_STREAM（whole-layer slab，從不寫 pool，且已雙緩衝
+#      CGC_M2-DB）；decode 卻把每層 FFN 權重直指整個 8 GiB pool
+#      （llama-context.cpp cgc_apply_expert_geometry：wt->buffer = pool_buffer、ne[2] = slots_per_layer）。
+#      **同引擎、同權重，幾何不同 ⇒ 利用率 45% vs 94%。** 本卡把 decode 換成 prefill 那套幾何。
+# 全文（待寫）：docs/L201_DECODE_SLAB_DESIGN_2026-10-02.md
+id: e-l201-dslab
+owner: ace（線 A / 加速交付）
+created: '2026-10-02'
+axis: A
+depends_on: e-l201-groups
+blocked_by: "src/llama.cpp/src/llama-context.cpp 現由線 B 活躍編輯（2026-10-02 09:14:42 仍在寫）——按碰撞規矩本線未動該檔。"
+
+# ── 【目標】可判定問題，兩答案都有意義 ─────────────────────────────────────
+question: |
+  decode 的 FFN 權重若不再直指整個 8 GiB pool，改指 per-layer 緊湊雙緩衝 slab（只裝本步該層被路由到的
+  專家 union，池留在普通記憶體、不進 Metal 工作集），能不能讓 decode 的 GPU 利用率從 ~45% 抬起來
+  （⇒ Metal 工作集赤字 ~10 GB → ~1–2 GB），且輸出 bit-identical？還是空轉根源不在池（而在 GPU 內部
+  依賴氣泡 / kernel launch），此時 util 不動、且多付一趟 host 拷貝 ⇒ 應轉方案 C（平行度）？
+
+# ── 【現狀】權威基線 ───────────────────────────────────────────────────────
+baseline:
+  metric: "decode GPU util 30–49%（170 樣本，1 Hz Device Utilization）；tall 窗 tg 12.30 t/s、pp 240.92、thermal NOMINAL。"
+  cell:   "prod-new（MTP off）＋ harness bench；util 取 ioreg -r -c IOAccelerator 的 Device Utilization %。"
+  source: "Backup/l201_accel/gpu_util_run_20261002.json"
+  source_note: "util 採樣＝Backup/cgc_logs/gpu_util_decode_20261002.log；工作集上限快取＝Backup/metal_working_set.json（11453.25 MB，peak_wired 12260.16）。"
+  known: |
+    - ⚠ 自然實驗有**混淆**：prefill 同時具備 (i) slab 幾何與 (ii) 2048 token 平行度，decode 兩者皆缺。
+      所以「slab ⇒ 94%」不能直接推給幾何。本卡就是把兩者解耦的那一刀。
+    - ⚠ 上一輪 pagein 量測**作廢**（採樣窗內有線 B 的 llama-server 並發；bench 本身被壓縮機閘拒跑）。
+      ⇒ 「decode 是否 fault」目前**未測乾淨**，本卡同時是該問題的判別實驗。
+    - 池子 resident 6197 MiB（harness final stats）；hit rate 96.1%；fill_wait_us 3.87 s/整趟（非關鍵路徑）。
+    - 既有結論：縮池**不是**解（8G→12.06、6G→10.48、4G→7.67 t/s），因為它同時砍命中率。
+      本卡**不縮池**，只改 Metal 可見的身分。
+
+# ── 【假設】機制＋預期 ─────────────────────────────────────────────────────
+hypothesis:
+  mechanism: |
+    ① 幾何：cgc_apply_expert_geometry 的 decode 分支改指 per-layer 緊湊 slab
+       （復用 cgc_gather_slab ＋ CGC_M2-DB 的 set0/set1 雙緩衝），ne[2] = K（本層 union 大小），
+       池留在普通記憶體（不建 Metal buffer）⇒ Metal 工作集少掉池那一項。
+    ② leaf：寫表塊由 expert→pool slot 改 expert→**slab 內位置**（非本層 union 的專家 → ZERO slot），
+       與 slab 排列一致；mul_mat_id 讀到的仍是同一批權重位元組 ⇒ 結構上 bit-identical。
+    ③ 填充：每層在既有 per-segment hook 內，把本層 union 的專家從池 memcpy 進 slab；雙緩衝讓
+       層 L+1 的填充與層 L 的 GPU 計算重疊（照抄 prefill 的 cgc_db_start_prefill/wait）。
+  expected: "decode util ≥ 60%（現 45%）；tg ≥ 13.5 t/s（現 12.30，+10%）；M1/M2/M3 9/9；赤字 ~10 GB → ~1–2 GB。"
+  basis: |
+    prefill（slab 幾何）util 94% vs decode（pool 幾何）45%；budget_gate 赤字 10 GB 中池佔 8192；
+    llama-context.cpp:9483-9499（decode 幾何）、:3878-3912（leaf 寫入）、:8184-8206（prefill 雙緩衝 slab）、
+    llama-expert-cache.cpp:4346（fill_layer_slab，新增「從池取 top-k」變體）。
+
+# ── 【預註冊判決規則】 ─────────────────────────────────────────────────────
+acceptance:
+  window_valid: |
+    (a) 兩臂 rc=0 跑完；(b) 量具臂 stderr 有 CGC-DECODE-SLAB 行且 slab_bytes > 0（證明 slab 真被填）；
+    (c) oracle 配對 M1/M2/M3 9/9、config_diffs==[]；(d) 同窗 GPU util 有 ioreg 樣本；
+    (e) **不得**在採樣窗內有其他 llama-server（否則 util 與 pagein 作廢——見上一輪教訓）。
+  success: |
+    M1/M2/M3 9/9 ∧ decode util ≥ 60% ∧ tg ≥ 13.5 t/s（同窗成對，Δ > 兩臂散布）。
+  falsify: |
+    M1 ≤ 2/9 ⇒ 緊湊 slab 幾何不保持 bit-identity ⇒ 判死。（正確性先於速度。）
+  undecidable: |
+    臂跑完但 util 樣本 < 30 或窗內有並發 llama ⇒ 重跑；slab 未被填（slab_bytes=0）⇒ 接線錯，先修。
+  on_fail: |
+    M1 9/9 但 util 仍 ≤ 50% ⇒ **池不是空轉根源** ⇒ 當場把方案 A 判掉，轉方案 C（平行度：MTP/投機/continuous
+    batching），並回填看板「不主張」段。
+
+# ── 【量化目標】 ───────────────────────────────────────────────────────────
+targets:
+  m1_success_min: 8
+  m1_falsify_max: 2
+  util_success_min: 60
+  tg_success_min: 13.5
+  slab_bytes_min: 1
+
+# ── 【技術子目標】 ─────────────────────────────────────────────────────────
+subgoals:
+  - id: sg-dslab-fill
+    text:   "llama-expert-cache.cpp 加「從池取本層 union → 緊湊 slab」的填充原語（不從 disk 讀）"
+    expect: "slab 內位元組 == 池內同專家的位元組（可 grep 比對）；slab_bytes > 0"
+    how:    "新增 fill_topk_slab_from_pool(cache, layer, kind, base, stride, ids, n_ids)，逐 id memcpy 池段"
+  - id: sg-dslab-geom
+    text:   "llama-context.cpp cgc_apply_expert_geometry decode 分支：CGC_DECODE_SLAB=1 時改指 slab（ne[2]=K）"
+    expect: "default off ⇒ 幾何完全不變（既有 oracle 9/9 再過）；on ⇒ CGC-POOL-SPLIT-GEOM 顯示 mode=dslab"
+    how:    "在 decode 分支前置 `if (cgc_decode_slab) { wt->data=slab; wt->buffer=sbuf; wt->ne[2]=K; return; }`"
+  - id: sg-dslab-leaf
+    text:   "寫表/leaf 塊改寫緊湊下標（expert → slab 位置；非 union → ZERO slot），排列與 slab 一致"
+    expect: "M1 9/9（決策一致＝讀到同一批權重）；CGC-DECODE-SLAB 印 clamp 與 cold 計數"
+    how:    "改 llama-context.cpp 寫表塊與 leaf 塊；⛔ 位置必須在 ggml_backend_sched_alloc_graph 之後（:3916 註解）"
+  - id: sg-dslab-dbuf
+    text:   "雙緩衝：層 L+1 填充與層 L 計算重疊（照抄 prefill cgc_db_start_prefill/wait）"
+    expect: "填充不落關鍵路徑；Δstep 不因填充而變差"
+    how:    "復用 cache_gather_slab＋cgc_db_slab[2][4] 與既有背景填充執行緒"
+
+# ── 【臂】 ────────────────────────────────────────────────────────────────
+arms:
+  - prod-new                                          # 控制臂（pool 幾何，現況）
+  - prod-new:CGC_DECODE_SLAB=1                        # 實驗臂（緊湊 slab 幾何）
+non_prod_reason: "端點是 bit-identity ＋ util（儀器），t/s 僅同窗成對佐證；util 臂永不單獨引用 t/s。"
+
+# ── 【D5 oracle 閘】 ──────────────────────────────────────────────────────
+d5_gate:
+  required: true
+  oracle: "scripts/check/m123_oracle_gate.py --profile prefill250"
+  control_tag: "dslab-ctl-2026-10-02"
+  arm_tag: "dslab-arm-2026-10-02"
+  pass: "M1/M2/M3 9/9；config_diffs==[]（CGC_DECODE_SLAB 須先登記進 DIAGNOSTIC_KEYS，聲明哪此位元組不變）"
+
+# ── 【交付】 ─────────────────────────────────────────────────────────────
+delivery:
+  patch: "src/llama.cpp/src/llama-expert-cache.cpp（fill_topk_slab_from_pool）＋ src/llama.cpp/src/llama-context.cpp（幾何/leaf/雙緩衝）＋ scripts/run_server.sh（allowlist）＋ scripts/check/m123_oracle_gate.py（DIAGNOSTIC_KEYS）"
+  base:  "現況 pool 幾何（decode 直指 8 GiB pool）"
+  apply_and_run: |
+    1) cmake --build src/llama.cpp/build --target llama-server llama-bench -j10
+    2) 控制臂：harness.py bench --arm prod-new
+    3) 實驗臂：harness.py bench --arm prod-new:CGC_DECODE_SLAB=1
+    4) 見證：m123_oracle_gate.py --profile prefill250 --env CGC_DECODE_SLAB=1 --tag dslab-arm-2026-10-02
+    5) 判詞：M1 9/9 ∧ util ≥ 60% ∧ tg ≥ 13.5
+  caveat_r5: "util 採樣窗內**不得**有其他 llama-server；壓縮機 BUSY 就用 compressor_pressure.py 輪詢等 QUIET。"

@@ -34,6 +34,10 @@ removal arms are read against the two endpoints of the pair (0 and `alloff`'s pc
   both partway                       -> both contribute; the two pcts are the shares
   neither at either endpoint          -> neither switch alone explains it (report both pcts)
   |pct(alloff)| > 5% and no arm at 0   -> report; do not name a single switch
+Two preconditions run first and REFUSE the attribution rather than qualify it: the arms must
+start from the same box state (swap_before spread <= 512 MiB) and the launch-order drift must be
+smaller than the difference being attributed -- both failed on this box's first 4-arm family
+(2026-09-26: arm 1 at swap 0.00M, arms 2+ at ~3.9 GB; the run creates that swap itself).
 Spread within an arm is reported: >12% is a mixed regime, and a mixed-regime arm cannot be
 compared to anything (MEASUREMENT_CONTRACT §3.3b).  `cross_session_glance_alloff_vs_card_floor`
 is printed for information only -- cross-session numbers are not a verdict.
@@ -61,6 +65,11 @@ ORDER = ["armed", "p0only", "m2only", "alloff"]
 REFERENCE = "armed"
 FLOOR_TG = 11.90       # the card's prod-new floor, for an explicitly cross-session glance only
 NEAR = 5.0             # % within which two arms are called the same
+# Two preconditions that a 4-arm family on this box fails by construction unless it is designed
+# around them. Both were MEASURED on 2026-09-26, first pass: arm 1 started at swap 0.00M and every
+# later arm at ~3.9 GB (the run itself creates that swap: 8 GiB anonymous pool + 13.6 GB mmap on a
+# 16 GB box), and launch order is the covariate that made same-config arms differ by 17.5%.
+START_STATE_TOL_MIB = 512.0   # arms must begin from the same box state to be comparable at all
 
 
 def busy():
@@ -132,15 +141,64 @@ def launch(tag, spec, wd, cool):
 
 
 def verdict(arms):
-    """Apply the pre-registered rule to THIS session's arms; never to another session's."""
+    """Apply the pre-registered rule to THIS session's arms; never to another session's.
+
+    Two preconditions run BEFORE the attribution, because both failures were measured here and
+    both produce a confident-looking wrong answer rather than an error:
+      * same start state -- swap_before must not differ across arms by more than
+        START_STATE_TOL_MIB. Without it, "arm 1 clean vs arms 2-8 at 3.9 GB" reads as a switch
+        effect.
+      * launch-order drift -- rotation only cancels order if the drift is small next to the
+        effect. Estimated from the earliest-position reps vs the latest-position reps; a drift
+        as large as the difference being attributed means the attribution is about the box.
+    """
+    used = [a for a in arms if a.get("tg")]
     by = {}
-    for a in arms:
-        if a.get("tg"):
-            by.setdefault(a["tag"], []).append(a["tg"])
+    for a in used:
+        by.setdefault(a["tag"], []).append(a["tg"])
     med = {k: st.median(v) for k, v in by.items()}
     spread = {k: (round(100.0 * (max(v) - min(v)) / st.median(v), 1) if len(v) > 1 else None)
               for k, v in by.items()}
     out = {"median_tg": med, "spread_pct": spread, "reference": REFERENCE}
+
+    # Compare the arms' MEAN start state, not each rep's: what has to be equal is the mix of box
+    # states each arm was given. Rotation balances that when every slot is equally dirty, and it
+    # cannot when only the first slot is clean -- which is this box: one boot has exactly one
+    # clean slot and the run creates ~4 GB of swap before the second arm.
+    starts = {k: [a.get("swap_before_mib") for a in used if a["tag"] == k
+                  and a.get("swap_before_mib") is not None] for k in by}
+    out["start_swap_mib_per_rep"] = starts
+    means = {k: round(st.mean(v), 1) for k, v in starts.items() if v}
+    out["start_swap_mean_mib"] = means
+    if len(means) > 1:
+        out["start_state_spread_mib"] = round(max(means.values()) - min(means.values()), 1)
+        if out["start_state_spread_mib"] > START_STATE_TOL_MIB:
+            out["verdict"] = (f"PRECONDITION FAILED: the arms did not get the same mix of box "
+                              f"states (mean swap_before spread "
+                              f"{out['start_state_spread_mib']:.0f} MiB > "
+                              f"{START_STATE_TOL_MIB:.0f} MiB; {means}) -- this family compares "
+                              f"the box, not the switches. One clean slot per boot cannot be "
+                              f"rotated away; give each arm its own clean window, or free enough "
+                              f"memory that the run does not swap at all")
+            return out
+
+    pos = sorted({a["order_index"] for a in used if a.get("order_index") is not None})
+    if len(pos) > 1:
+        early = [a["tg"] for a in used if a.get("order_index") == pos[0]]
+        late = [a["tg"] for a in used if a.get("order_index") == pos[-1]]
+        alltg = [a["tg"] for a in used]
+        if early and late:
+            drift = round(100.0 * (st.mean(early) - st.mean(late)) / st.mean(alltg), 1)
+            out["order_drift_pct"] = drift
+            out["order_drift_note"] = (f"mean of slot {pos[0]} vs slot {pos[-1]}; crude but it is "
+                                       f"the covariate that matters")
+            if abs(drift) >= NEAR:
+                out["verdict"] = (f"PRECONDITION FAILED: launch-order drift {drift:+.1f}% is as "
+                                  f"large as the difference being attributed (>= {NEAR}%)"
+                                  f" -- balance the arms across slots (--passes 4) or run one "
+                                  f"arm per clean window")
+                return out
+
     if REFERENCE not in med:
         out["verdict"] = "PRECONDITION FAILED: no in-session `armed` reference arm"
         return out

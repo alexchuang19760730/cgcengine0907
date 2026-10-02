@@ -6,7 +6,7 @@ agent_created: true
 
 > **這是快照，不是權威副本。**
 > 權威位置：`~/.workbuddy/skills/github-transport-fallback/SKILL.md`（由 host 持續寫入）。
-> 本檔於 2026-09-20 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
+> 本檔於 2026-09-27 由 `agent_harness/scripts/import_harness_snapshot.py` 複製進 repo，唯一目的是讓 `agent_harness/`
 > 底下的內容能被 `agent_harness/scripts/auto_git_push.ps1` 定時推送；原檔改了這裡**不會**自動跟上。
 > 要改 skill 請改原檔，再重跑 `python3 agent_harness/scripts/import_harness_snapshot.py`。
 
@@ -36,6 +36,28 @@ curl -s -o /dev/null -w "api HTTP %{http_code}\n" --max-time 12 https://api.gith
 回 `Hi <user>! You've successfully authenticated`；`api.github.com` **200**；
 `codeload.github.com` **301／tarball 200**。⇒ **同一台機器、同一個帳號，三個出口的可用性不一致**。
 
+### ★ SSH 直連逾時 ≠ SSH 不通：先試本機 HTTP 代理的 CONNECT 隧道
+
+**實測（2026-09-24，macOS + 本機代理 `127.0.0.1:7897`）**：`ssh -T git@github.com`（22 埠）
+掛住 2 分鐘無回應（**`ConnectTimeout` 救不了** —— TCP 被中間設備接住後握手無應答），
+`ssh.github.com:443` 也 `Operation timed out`；但同一顆 key 走代理立刻成功：
+
+```bash
+ssh -o ProxyCommand="nc -X connect -x 127.0.0.1:7897 %h %p" \
+    -o IdentitiesOnly=yes -i ~/.ssh/alexchuang_ed25519 -T git@github.com
+# => Hi alexchuang19760730! You've successfully authenticated
+```
+
+⇒ **判準：SSH 逾時時不要跳去改憑證，先試 `-o ProxyCommand="nc -X connect -x <代理> %h %p"`。**
+代理埠從環境變數拿（`env | grep -i proxy`，通常是 7890/7897/1080）。
+
+⚠ 兩個配套陷阱：
+- **`ssh-add -l` 顯示「no identities」不代表沒有 key** —— `~/.ssh/config` 的
+  `IdentityFile` + `IdentitiesOnly yes` 仍然有效，agent 是空的也能認證。
+- **讀得通不代表寫得通**：匿名 `git ls-remote https://…` 會成功（public repo 可匿名讀），
+  但 `git push` 要憑證 ⇒ 症狀是 `could not read Username … terminal prompts disabled`。
+  不要因為 ls-remote 成功就以為 HTTPS 通道已可用。
+
 ## 第二步：SSH 通就用 SSH，而且**不要改動 remote 設定**
 
 用一次性 URL，避免污染使用者 repo 的 `.git/config`（也避免把 token 寫進 URL）：
@@ -63,6 +85,49 @@ git -c core.sshCommand="ssh -o ConnectTimeout=25" push  "$URL" HEAD:main
 3. **零重疊才 rebase**：`git rebase origin/<branch>`。
 4. ★ **rebase 之後重跑自己的自測**（rebase 可能把別人的改動帶進你依賴的檔案）。
 5. 推。**只用 `HEAD:main`，不要 `--force`。**
+
+## 第三步之二：推之前一定要做的三件量測（2026-09-24 實測補充）
+
+### ★ `git fetch --dry-run` **不會**更新 remote-tracking ref
+
+只看 dry-run 就斷定「遠端被推進了多少」會得到**自信的錯誤數字**：
+
+```bash
+git fetch --dry-run                       # 印出 292baacee..d5092577c，但 ref 沒動
+git rev-list --left-right --count HEAD...@{u}   # => 16 0   ← 拿舊 ref 算的，假的
+git fetch <remote> <branch>
+git rev-list --left-right --count HEAD...@{u}   # => 2 0    ← 真的
+```
+
+**實測（2026-09-24）**：差距是 16 vs 2 —— 中間 14 個本地 commit 其實早就被別人推走了。
+⇒ **判準：「ahead／behind 多少」一定要 fetch 完再算，不能只凭 dry-run 的輸出行。**
+
+### ★ `behind=0` 才代表可以 fast-forward
+
+- `behind=0` ⇒ 直接用 `git push <remote> HEAD:<branch>`，**不需要 rebase、不需要 `--force`**。
+- `behind>0` ⇒ 才走第三步的「看重疊 → rebase → 重跑自測」流程。
+
+### ★ 本地有**不屬於自己的**未推 commit 時：列出 → 問 → 才推
+
+fast-forward push 會把 HEAD 的**所有祖先**一起送上遠端。用
+`git log --oneline <remote>/<branch>..HEAD` 列出本地獨有的 commit，若其中有不屬於本次任務的
+（多 agent／多 session repo 的常態），**先用提問工具列出讓使用者選**（要一起推／只推自己的／
+先不推）。實測：同作者帳號下的另一條 session 12:49 的 `85c016280` 就是這樣一起被推出去的。
+
+「只推我自己的那一個」通常需要 cherry-pick 或 Git Data API ⇒ 會造成線圖分岔，**一般不值得**。
+
+### ★ 推完的驗證要比 push 輸出更嚴
+
+```bash
+git ls-remote <remote> <branch>          # 取回遠端 tip 的完整 sha
+git rev-parse HEAD                       # 本地 tip
+git rev-list --left-right --count HEAD...<remote>/<branch>   # 期望 0 0
+```
+
+三個都要對得上才算成功。只看 `To <url>  old..new` 那行不足以證明落地。
+
+⚠ **macOS 沒有 `timeout` 指令**（zsh 會吐 `command not found: timeout`）⇒
+第一步的通道探測不要用 `timeout N ssh …` 包，改用 `ssh -o ConnectTimeout=N` + `-o BatchMode=yes`。
 
 ## 最後手段：Git Data API（等同 `git push`）
 

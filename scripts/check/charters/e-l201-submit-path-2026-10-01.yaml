@@ -1,0 +1,150 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— e-l201-submit-path：L20-1 的端點重定義
+#   把「時間讀數」（36.33／49.0 ms、天花板 24.5）換成「機制／計數器端點」：
+#   每步提交數 41 → 1、ms/submit（T_sub）。時間端點**明文判死**（R6 三路皆死）。
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼要立這一張（docs/S1_FLOOR_ARM_ATTRIB_2026-09-30.md §處置 (b)；operator 2026-10-01 拍板）：
+#   ① 時間端點不可達：S1 的 36.33／49.0 ms 只在 `CGC_SEG_BATCH` 之下出現（R6-DIRTY；配對 M1 0/9），
+#      而「把單段提交做成輸出可驗」在同日三路判死（R1 探針不足／方案 C 全駐留 OOM／(i) post-submit 不可行）。
+#   ② 機制已量出方向：紅利 50.3 ms/step 中 hook CPU 只佔 6.5 ms（13%）；主項被判為**提交次數**
+#      （41 → 1，約 1.1–1.25 ms/次）——但那是 50.3 ÷ 40 的**推論**，不是實測。
+#   ③ 唯一還可判定的問題：提交路徑值幾 ms/step，且它是不是紅利的主體。
+#   ④ 2026-10-01（實作前查證）：**不需新碼**——`CGC_DECODE_PROFILE`（＋`CGC_GPU_TIMING`）已 commit、
+#      預設關、run_server 白名單已含，且每步印 `CGC-DECPROF: … wait/cb/submit … gap_sum` ⇒ 直接用它。
+#      零源碼改動 ⇒ D5 不適用；配對 oracle 仍跑（作為「儀器不擾動數值」的證據）。
+# 全文：docs/S1_FLOOR_ARM_ATTRIB_2026-09-30.md；L20-1 卡面（scripts/check/decode_board_2026-09-29.yaml）。
+id: e-l201-submit-path
+owner: engine（B 線 / L20-1）
+created: '2026-10-01'
+axis: S
+
+# ── 【目標】一個可判定的問題，且兩個答案都有意義 ──────────────────────────
+question: |
+  把提交路徑做成可觀測（每步提交數 ＋ 每次提交耗時 T_sub；新旗標 env-gated、default-off）之後，
+  40 × T_sub 能不能解釋 S1 紅利的主體（同場 50.3 ms/step）？
+  ⇒ 能 ⇒ 提交路徑＝紅利主體（機制成立；「在可驗臂上減提交數」另立卡）。
+  ⇒ 不能（40 × T_sub < 12.5 ms ＝紅利的 25%）⇒ 機制歸因錯 ⇒ L20-1 以「排除」結案，不再開盒。
+
+# ── 【現狀】權威基線（數字＋口徑＋出處）────────────────────────────────
+baseline:
+  metric: "紅利 50.3 ms/step（S1 49.0 vs 乾淨臂 91–118，五臂同場；09-29 冷場 52.0）；已量：hook CPU 6.5 ms/step；未量：提交數（41→1）與 T_sub（1.1–1.25 只是推論）"
+  cell:   "prod-new ＋ harness bench（MTP off、--fixed-fill-seed 1、reps 3）；S1 臂只作提交數對照"
+  source: "docs/S1_FLOOR_ARM_ATTRIB_2026-09-30.md"
+  source_note: "五臂表與 CGC-HOOKSPLIT 在該文；那一輪五臂皆 DIRTY（thermal HEAVY／swap）⇒ 只用歸因，任何 t/s 皆不得引用。"
+  known: |
+    - ⛔ 不得引用 S1 臂的 t/s（R6）；本卡端點是計數器與 T_sub。
+    - 零源碼改動（用既有 `CGC_DECODE_PROFILE`＋`CGC_GPU_TIMING`）⇒ D5 不適用；仍跑配對 oracle 證「儀器不擾動數值」（對照臂 9/9、儀器臂 9/9）。
+    - 提交點在 ggml-backend.cpp 的 sched 提交路徑（41 段/步 vs 單段 1/步）；成因字串是 L20-1 的卡點斷言（SKIPS THE HOOK）。
+    - ⛔ 不得把「50.3 ÷ 40」當實測引用；本卡的全部價值就是把它換成量到的 T_sub。
+
+# ── 【假設】機制＋預期（給區間、須有依據）──────────────────────────────
+hypothesis:
+  mechanism: |
+    每一次 segment submit 都帶著固定成本（同步 ＋ GPU 空轉；源碼註解：gap ≈ 1.3 × (cb + submit)）。
+    單段提交把每步 41 次 submit 壓到 1 次 ⇒ 若 T_sub ≈ 1.1–1.25 ms，紅利 ≈ 44–51 ms，與觀測 50.3 ms 一致。
+    **T_sub 的定義（跑前寫死）**：`T_sub :=（Σ cb ＋ Σ submit ＋ gap_sum）/ n_segs`，逐步驟取
+    `CGC-DECPROF` 行的 cb／submit（ms）與 `CGC_GPU_TIMING` 的 `gap_sum`（ms），n_segs 取同行的 `segs`。
+    （cb＝被跳過的 hook、submit＝encode+commit、gap＝段間 GPU 空轉——三者都是單段提交移除的東西。）
+  expected: "T_sub ∈ [0.63, 1.89] ms（40×T_sub ∈ [25, 76] ms，覆蓋 50.3 ±50%）⇒ MECHANISM；T_sub < 0.31 ms（40× < 12.5 ms）⇒ DEAD；[0.31, 0.63) ⇒ PARTIAL（主體否證、部分歸因成立）"
+  basis: "docs/S1_FLOOR_ARM_ATTRIB_2026-09-30.md（50.3／6.5／41→1）；src/llama.cpp/ggml/src/ggml-backend.cpp（提交路徑）"
+
+# ── 【預註冊判決規則】跑之前寫死 ────────────────────────────────────────
+acceptance:
+  window_valid: |
+    (a) 兩臂 rc=0 跑完；(b) 計數器見證 ≥1 行（`CGC-DECPROF` 行或 `CGC-GPUTIME` 行）；
+    (c) 判詞主量＝T_sub（引擎內計時器，逐步驟讀，不隨窗口漂移）；同場 Δstep 只作**佐證**——
+    乾淨窗（attribution=none、reps≥3、全 rep max/min ≤1.10）⇒ 一併報；髒窗 ⇒ 標「診斷級」、不參與判詞。
+  success: |
+    T_sub 落在 [0.63, 1.89] ms，且 40 × T_sub 與同場紅利（50.3 ms/step）一致（±50%）⇒ 判 MECHANISM
+    ⇒ 提交路徑＝紅利主體；後續（另立卡）：在不開 CGC_SEG_BATCH 的可驗臂上把提交數減量，
+    若 Δstep > 兩臂散布且配對 M1 9/9 ⇒ 紅利可交付。
+  falsify: |
+    T_sub < 0.31 ms（40 × < 12.5 ms/step ＝紅利的 25%）⇒ 提交路徑不是主體 ⇒ 判 DEAD：
+    L20-1 以「排除」結案（附機制），天花板維持 19.2，不再為它開盒。
+  partial: |
+    T_sub ∈ [0.31, 0.63) ms（40× ∈ [12.5, 25) ms ＝紅利的 25–50%）⇒ 主體說**否證**、但部分歸因成立
+    ⇒ 判 DEAD（附「部分歸因」）：L20-1 以「排除」結案，並把剩餘缺口（wait／pipeline 側）記為下一動起點（另立卡由 operator 拍）。
+  undecidable: |
+    計數器 0 行 ⇒ UNRESOLVED（接線沒通，不得唸成 T_sub=0）；窗口髒 ⇒ 定價 UNRESOLVED（見上）。
+  on_fail: |
+    DEAD ⇒ 回填 docs/S1_FLOOR_ARM_ATTRIB_2026-09-30.md 與本卡，並把 L20-1 卡面同步（operator 拍板後轉結案）。
+
+# ── 【量化目標】機器可讀 ────────────────────────────────────────────────
+targets:
+  t_sub_ms_min: 0.63
+  t_sub_ms_max: 1.89
+  t_sub_ms_dead_below: 0.31
+  submits_per_step_async: 41      # 誠實臂（待量）
+  submits_per_step_segbatch: 1    # 單段臂（對照；t/s 一律不引用）
+  tps_claims: 0                   # 本卡不得產出任何 t/s 主張
+
+# ── 【技術子目標】──────────────────────────────────────────────────────
+subgoals:
+  - id: sg-l201-submit-counter
+    text:   "引擎側提交計數器／計時器（每步提交數 ＋ T_sub），env-gated、default-off"
+    expect: "旗標不在 ⇒ 樹行為逐位元不變（配對 oracle M1 9/9）；旗標在 ⇒ 每步（或總結）見證 ≥1 行"
+    how:    "ggml-backend.cpp 的 submit 站點（acc 包住 submit、env 閘）；依 D5 先跑配對 oracle"
+    delivered: "**不需新碼**（2026-10-01 查證）：`CGC_DECODE_PROFILE`＋`CGC_GPU_TIMING` 已 commit、預設關、白名單已含；每步 `CGC-DECPROF` 行直接給 cb／submit／gap_sum。零源碼改動 ⇒ D5 不適用。"
+  - id: sg-l201-priced
+    text:   "誠實臂 ＋ S1 臂各一趟，讀提交數與 T_sub（計數器；S1 臂 t/s 不作任何主張）"
+    expect: "誠實臂 ≈41 次/步、S1 ＝1 次/步；T_sub 落點 ⇒ MECHANISM／DEAD"
+    how:    "prod-new ＋ harness bench；同一場、同 cell"
+  - id: sg-l201-no-tps
+    text:   "本卡不得產出任何 t/s 成績（S1 臂 R6 ⇒ 永不可引用）"
+    expect: "報告只出現計數器與 T_sub；提及紅利時標明「診斷級歸因」"
+    how:    "寫報告時自查；quote_gate 對 S1 臂仍判 R6-DIRTY"
+
+# ── 【臂】──────────────────────────────────────────────────────────────
+arms:
+  - prod-new:CGC_DECODE_PROFILE=1;CGC_GPU_TIMING=1    # 誠實臂（計數器；≈41 提交/步）——t/s 只在同場成對裡用，不作交付讀數
+  - prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1   # S1 對照（1 提交/步）；R6-DIRTY ⇒ t/s 一律不引用
+# 兩臂與五臂場（docs/S1_FLOOR_ARM_ATTRIB_2026-09-30.md）逐字相同，只多誠實臂的兩顆儀器。
+non_prod_reason: "端點是計數器／機制（不是 t/s）⇒ 不適用 prod-new＋harness bench 的結案規則；S1 臂的 R6 讓它的 t/s 永不可引用。"
+
+# ── 【交付】────────────────────────────────────────────────────────────
+delivery:
+  patch: |
+    無源碼改動（2026-10-01 查證：用既有 `CGC_DECODE_PROFILE`＋`CGC_GPU_TIMING`）⇒ D5 不適用；
+    配對 oracle 已跑（ctl M1/M2/M3 9/9；儀器臂 observed 9/9、INVALID COMPARISON＝跨組態不可比，照 `CGC_B_SCHEME` 先例）
+    ⇒ 儀器不擾動數值；`sg-l201-priced` 已跑，判詞見下面 result（2026-10-01 深夜回填）。
+  apply_and_run: |
+    1) 配對 oracle（同一 build）——對照：
+       python3 scripts/check/m123_oracle_gate.py --profile prefill250 --tag l201-submit-ctl-2026-10-01
+       儀器臂（與 reference 不可比 ⇒ 照 CGC_B_SCHEME 先例）：
+       python3 scripts/check/m123_oracle_gate.py --profile prefill250 --tag l201-submit-on-2026-10-01 \
+           --env CGC_DECODE_PROFILE=1 --env CGC_GPU_TIMING=1 --allow-incomparable
+    2) 讀數（同一場、兩臂）：
+       BUDGET_GATE=warn python3 scripts/check/harness.py bench \
+         --arm 'prod-new:CGC_DECODE_PROFILE=1;CGC_GPU_TIMING=1' \
+         --arm 'prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1' \
+         --prompt 2048 --gen 128 --depths 512 --reps 3 --warm-skip 64 --fixed-fill-seed 1 --batch 5632 \
+         --charter scripts/check/charters/e-l201-submit-path-2026-10-01.yaml \
+         --json Backup/l201_submitpath_2026-10-01/twoarm.json
+    3) 判詞：T_sub＝（Σcb＋Σsubmit＋gap_sum）/segs ⇒ MECHANISM／DEAD／PARTIAL（見 acceptance），回填本卡與 S1 文件
+
+
+# ── 【執行結果（2026-10-01 深夜，本檔回填）】─────────────────────────────
+result:
+  verdict: MECHANISM          # T_sub 落 [0.63, 1.89] ms；40×T_sub 覆蓋 50.3 的 ±50%
+  ran_by: "harness bench（同一 build；誠實臂帶兩顆既有儀器，S1 臂＝原三旗）"
+  arms:
+    async: "prod-new:CGC_DECODE_PROFILE=1;CGC_GPU_TIMING=1"                        # 誠實臂（計數器）
+    segbatch: "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1"      # S1 對照（R6 ⇒ t/s 不引用）
+  oracle:
+    control: "Backup/m123_oracle_gate/summary_l201-submit-ctl-2026-10-01.json（M1/M2/M3 9/9、comparable）"
+    instrument: "Backup/m123_oracle_gate/summary_l201-submit-on-2026-10-01.json（observed 9/9；INVALID COMPARISON ⇒ 與 reference 不可比，先例已立）"
+  counters:
+    witness: "誠實臂 53 行 CGC-DECPROF（decode n=48、ntok=1、step=8…384 每 8 步取樣；segs=41 全部）"
+    segbatch_arm: "0 行 DECPROF／GPUTIME（未武裝儀器，按設計）；1 提交/步是結構事實（single-segment early-return 路徑），非計數器所量"
+  t_sub_ms:
+    all:  {n: 48,  median: 0.937, p25: 0.747, p75: 1.152, min: 0.485, max: 2.724, mean: 1.016}
+    late: {n: 41,  median: 1.007, p25: 0.790, p75: 1.195}   # step ≥ 64（warm-skip 後）
+    components_median_ms: {cb: 6.755, submit: 10.020, gap_sum: 22.285}   # 每步（÷41 得每次提交）
+  forty_x_t_sub_ms: {all: 37.5, late: 40.3, reference: 50.3, coverage: "74–80%"}
+  step_total_ms: {median: 95.1, min: 68.2, max: 195.4}      # 佐證；髒窗 ⇒ 不作主張
+  window: "attribution=both（thermal HEAVY／swap +1475 MiB；budget OVERSUBSCRIBED 4838 MiB）⇒ 本輪 t/s 一律不引用；T_sub 是引擎內計時器，不隨窗口漂移。"
+  caveats:
+    - "50.3 ms/step 是 09-30 五臂場（該輪亦 DIRTY，診斷級歸因）⇒ 本判決把『50.3÷40 的推論』換成量到的 T_sub，不產生 t/s／價格。"
+    - "本場 S1 臂 t/s 異常（tg 9.49 vs 誠實臂 8.82；歷史同場 S1 20.39 vs control 10.07）⇒ 紅利未重現；S1 臂 t/s 依 R6 不引用，判詞不依賴它。"
+  artifacts: "Backup/l201_submitpath_2026-10-01/twoarm.json（＋ .logs/live/*.stderr.log）；oracle 兩份 summary"
+  next: "另立卡（operator 拍）：在不開 CGC_SEG_BATCH 的可驗臂上把提交數減量；驗收＝Δstep > 兩臂散布 ∧ 配對 M1 9/9 ⇒ 紅利可交付。"

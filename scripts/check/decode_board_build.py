@@ -37,6 +37,10 @@
       必須**跑前**就寫死驗收（`accept`）與機器判準（`judge`），而且候選臂必須在認可口徑上
       （quote_gate 的 R7）——否則這一格永遠升不了級、是白等的 pending。判準當場成立卻還停在
       pending ⇒ **紅**（該升進 `certified` 了），失敗方向與 runnable_gate 的「該結案了」一致。
+      [2026-10-01 operator：「D15 這要解決」] 紅訊息指向**機器路徑** `--promote`：判定成立 ⇒
+      機械合成 `certified` 列（值＝合格場次中位數＋區間、quote＝中位那一場、棘輪＝分布豁免）
+      並移除該 pending 條目；寫完重建＋`--check`，沒過 ⇒ **整檔回滾**。`board_pipeline.sh`
+      的重建模式會先跑它 ⇒ 下一次重建就自己升，不再需要人手抄。
   D17 棘輪 vs 認證表（2026-10-01）：`certify_anchor` 必須等於 `certified` 表上**最大的 decode 讀數**
       （那也必須是最高那一列的 `quote.artifact`），而且每一列入表時都**嚴格高於當時的上限**。
       有 decode 讀數的認證列一定要宣告 `ratchet:`（參與）或 `ratchet_exempt: <why>`（基準，不參與）
@@ -53,6 +57,7 @@ import glob as _glob
 import json
 import os
 import re
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -230,41 +235,370 @@ def _qg():
 PENDING_JUDGE_KINDS = ("quotable_launch_cluster",)
 
 
-def pending_cluster(root, judge):
-    """判一個「待升級」候選的機器判準：回 (n_launches, n_quotable, detail)。
+def cluster_fields(root, judge):
+    """`quotable_launch_cluster` 的**結構化**結果：回 (n_cell, fields, err)。
 
-    `quotable_launch_cluster` 問的是「這一批**獨立啟動**裡，有幾場真的過得了引用閘門」。
-    為什麼不能升級一個單點：§73.5 —— 同一支臂、同一格連三場是 8.933／8.486／10.923，而前兩場
-    各有一顆 rep 塌到 3.8–3.9 ⇒ 10.923 是那條分布的右尾之一，不是中心。
+    fields ＝ 每一場一個 dict：{file, verdict, value, cold, split, spread_all, spread_kept, reasons}。
+    `value` ＝ 引用值（`metrics.quoted_ts`；pp-less 拆欄後＝steady 平均，沒有才退回 `avg`）。
+
+    為什麼要結構化：D15 的判詞（`pending_cluster`）與機器升級（`cmd_promote`）**必須走同一支**
+    ——不然「升級」就是另一套規則，而這裡的每一條規則都是跑前寫死的。
     """
     pat = judge.get("glob")
     if not pat:
-        return None, None, "judge 缺 glob"
+        return None, [], "judge 缺 glob"
     cell = judge.get("cell") or "delivery"
     files = sorted(f for f in _glob.glob(os.path.join(root, pat), recursive=True)
                    if os.path.isfile(f))
     try:
         qg = _qg()
     except Exception as exc:  # noqa: BLE001
-        return None, None, "載不進 quote_gate：%s" % exc
-    n_cell, n_q, hits = 0, 0, []
+        return None, [], "載不進 quote_gate：%s" % exc
+    fields = []
     for f in files:
         try:
             recs = qg.scan([f])
         except Exception as exc:  # noqa: BLE001
-            return None, None, "quote_gate 判不了 %s：%s" % (os.path.basename(f), exc)
+            return None, [], "quote_gate 判不了 %s：%s" % (os.path.basename(f), exc)
         dec = [r for r in recs
                if (r.get("cell") or "") == cell and (r.get("shape") or "").startswith("p0/")]
         if not dec:
             continue
-        n_cell += 1
-        best = max(dec, key=lambda r: (r["metrics"] or {}).get("avg") or 0)
-        if best["verdict"] == "QUOTABLE":
-            n_q += 1
-            hits.append("%s %.3f" % (os.path.basename(f), (best["metrics"] or {}).get("avg") or 0))
+        best = max(dec, key=lambda r: ((r["metrics"] or {}).get("quoted_ts")
+                                       if (r["metrics"] or {}).get("quoted_ts") is not None
+                                       else (r["metrics"] or {}).get("avg")) or 0)
+        m = best["metrics"] or {}
+        val = m.get("quoted_ts") if m.get("quoted_ts") is not None else m.get("avg")
+        fields.append({"file": os.path.relpath(f, root) if os.path.isabs(f) else f,
+                       "verdict": best.get("verdict"), "value": val,
+                       "cold": m.get("cold_ts"),
+                       "split": bool(m.get("regime_split")) and m.get("cold_ts") is not None,
+                       "spread_all": m.get("all_spread"), "spread_kept": m.get("kept_spread"),
+                       "samples": m.get("samples"), "reps": m.get("reps"),
+                       "reasons": best.get("reasons") or []})
+    return len(fields), fields, ""
+
+
+def pending_cluster(root, judge):
+    """判一個「待升級」候選的機器判準：回 (n_launches, n_quotable, detail)。
+
+    `quotable_launch_cluster` 問的是「這一批**獨立啟動**裡，有幾場真的過得了引用閘門」。
+    為什麼不能升級一個單點：§73.5 —— 同一支臂、同一格連三場是 8.933／8.486／10.923，而前兩場
+    各有一顆 rep 塌到 3.8–3.9 ⇒ 10.923 是那條分布的右尾之一，不是中心。
+
+    2026-10-01（§3.3b 拆欄）：交付 cell（pp-less）的第 1 個 rep 天生冷 ⇒ 引用值是 **steady**
+    那一欄（`metrics.quoted_ts`；cold 值只當診斷並在點名時一起印）。
+    """
+    n_cell, fields, err = cluster_fields(root, judge)
+    if n_cell is None:
+        return None, None, err
+    cell = judge.get("cell") or "delivery"
+    hits = []
+    for f in fields:
+        if f["verdict"] != "QUOTABLE":
+            continue
+        note = ("（steady；cold %.2f 未計入）" % f["cold"]) if (f["split"] and f["cold"] is not None) else ""
+        hits.append("%s %.3f%s" % (os.path.basename(f["file"]), f["value"] or 0, note))
     if hits:
-        return n_cell, n_q, "；".join(hits)
-    return n_cell, n_q, "目前 0 場可引用（掃到 %d 場帶 %s decode 列）" % (n_cell, cell)
+        return n_cell, len(hits), "；".join(hits)
+    return n_cell, 0, "目前 0 場可引用（掃到 %d 場帶 %s decode 列）" % (n_cell, cell)
+
+
+# ── D15 的機器路徑：--promote（2026-10-01；operator：「D15 這要解決」）────────────────────
+# 規矩不變（條件**跑前**寫死）；變的只是「條件成立之後不必等人」：
+#   * `--promote [ID]`：對每一個 judge 當場成立的 pending 項，機械合成一列 `certified`
+#     （值＝合格場次的**中位數**＋區間；`quote`＝中位那一場；棘輪＝`ratchet_exempt`（分布是基準類）），
+#     插進 `certified:` 的**數字序**位置，並把那一條從 `pending_promotion` 移除。
+#   * fail-closed 三段（與 caliber_certify --update-board 同一套紀律）：
+#     ① 推之前看板已經紅 ⇒ 不動 —— **例外**：紅的**全部**是「我們正要升的那些 D15」時繼續
+#     （與 caliber 不同：D15 的紅本身就是「條件成立卻沒升」的觸發器，這正是要解的那件事）；
+#     ② 寫完重建＋`--check`，沒過 ⇒ YAML **逐字回滾**（產物也重建回去）；
+#     ③ judge 沒成立 ⇒ 不動（印出門檻差距）。
+#   * 它**不搬任何門檻**：合格與否仍由 quote_gate（R1–R8）與 pending 條目裡跑前寫死的
+#     `accept`／`judge` 判 —— 合成的是**必要欄位**，散文（敘述、反例、卡點）要再人工補。
+#   * D15 的紅訊息會直接叫你把這條指令跑起來（見 `validate()`）；`board_pipeline.sh`（重建模式）
+#     也會先跑它 ⇒ 下一次重建就自己升。
+# 用途上的唯一「新規則」：`--promote` 不改 `certify_anchor`（棘輪上限與分布無關）。
+def _indent(text) -> str:
+    return "\n".join("    " + l for l in str(text or "").split("\n"))
+
+
+def _yq(s) -> str:
+    """寫進看板的字串：轉義反斜線與雙引號；換行折成 `<br>`（看板的散文本來就用它分段）。"""
+    return '"%s"' % str(s).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "<br>")
+
+
+def run_gate(yaml_path=None, build=False):
+    """當場重跑看板閘門（D1–D17，含 D7 引用閘門）：回 (rc, 尾段輸出)。
+
+    build=False ⇒ 只 `--check`（**不寫任何檔**；升級前的預檢用）。
+    build=True  ⇒ 先重建產物（build 驗完才寫檔），再 `--check` 逐字對 —— 寫完 YAML 用：
+                   改了 YAML 就一定會讓 HTML「落後」（D4），不重建就不算驗完。
+
+    驗證器的**唯一實作**＝本檔（不另寫第二套判準）：這是子行程自己呼叫自己。
+    """
+    base = [sys.executable, os.path.join(HERE, "decode_board_build.py")]
+    extra = ["--yaml", yaml_path] \
+        if (yaml_path and os.path.abspath(yaml_path) != os.path.abspath(DEFAULT_YAML)) else []
+
+    def _run(cmd):
+        try:
+            cp = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+        except Exception as exc:  # noqa: BLE001
+            return 99, "閘門跑不起來：%s: %s" % (type(exc).__name__, exc)
+        out = (cp.stdout or "").strip() or (cp.stderr or "").strip()
+        return cp.returncode, "\n".join(out.split("\n")[-8:])
+
+    if build:
+        rc, tail = _run(base + extra)
+        if rc == 0:
+            rc, tail = _run(base + ["--check"] + extra)
+        return rc, tail
+    return _run(base + ["--check"] + extra)
+
+
+def promotion_row(pend, fields):
+    """pending 條目 → `certified:` 的一列（list[str]）＋摘要；門檻沒到 ⇒ (None, 原因)。
+
+    值＝合格場次的**中位數**（偶數取小的那一半）＋區間 min–max；`quote` 指中位那一場
+    （同值多場 ⇒ 檔名序第一場）—— 這是 pending 條目 `accept` 寫的「值是那 ≥2 場的中位數並附區間」。
+    """
+    j = pend.get("judge") or {}
+    try:
+        mn_l = int(j.get("min_launches") or 1)
+        mn_q = int(j.get("min_quotable") or 1)
+    except (TypeError, ValueError):
+        return None, "judge 的門檻不是整數（min_launches=%r、min_quotable=%r）" \
+            % (j.get("min_launches"), j.get("min_quotable"))
+    q = [f for f in fields if f["verdict"] == "QUOTABLE" and f["value"] is not None]
+    if len(fields) < mn_l or len(q) < mn_q:
+        return None, "門檻未達（可引用 %d／需 %d；場數 %d／需 %d）" % (len(q), mn_q, len(fields), mn_l)
+    vals = sorted(float(f["value"]) for f in q)
+    med, lo, hi = vals[(len(vals) - 1) // 2], vals[0], vals[-1]
+    mid = min((f for f in q if float(f["value"]) == med), key=lambda f: f["file"])
+    prof = str((pend.get("arms") or ["prod-new"])[0]).split(":", 1)[0].strip() or "prod-new"
+    per = "／".join("%s <b>%.3f</b>" % (os.path.basename(f["file"]), f["value"])
+                   for f in sorted(q, key=lambda f: f["file"]))
+    miss = sorted(f for f in fields if f["verdict"] != "QUOTABLE")
+    tail_note = ("（%s 未過：%s；判詞與理由見 quote）"
+                 % ("、".join(os.path.basename(f["file"]) for f in miss),
+                    "／".join(str(f["verdict"]) for f in miss))) if miss else ""
+    val_line = ("中位 <b>%.3f</b> t/s（區間 <b>%.3f–%.3f</b>）＝ %d 場獨立啟動裡 <b>%d 場</b>通過引用閘門；"
+                "逐場引用值（steady）：%s%s" % (med, lo, hi, len(fields), len(q), per, tail_note))
+    seg = []
+    for f in sorted(fields, key=lambda f: f["file"]):
+        s = "%s <b>%.3f</b>（cold %s" % (os.path.basename(f["file"]), f["value"],
+                                          ("%.3f" % f["cold"]) if f.get("cold") is not None else "—")
+        if f.get("spread_all") is not None and f.get("spread_kept") is not None:
+            s += "、全 rep %.3f→steady %.3f" % (f["spread_all"], f["spread_kept"])
+        s += "、%s" % f["verdict"]
+        if f["verdict"] != "QUOTABLE" and f["reasons"]:
+            s += "〔%s〕" % "；".join(str(x) for x in f["reasons"])
+        seg.append(s + "）")
+    why = ("分布的中位那一場（引用值 <b>%.3f</b>；cold %.3f 留診斷）。逐場（steady／cold／全 rep→steady／判詞）：%s"
+           "<br>⚠ 這一列由 <code>decode_board_build.py --promote</code> 機械合成：值＝合格場次的<b>中位數</b>＋區間、"
+           "quote＝中位那一場；分母（哪些場算）＝pending 條目裡跑前寫死的 <code>judge</code>，R1–R8 由 "
+           "<code>quote_gate</code> 當場複判（D7）。"
+           % (med, mid["cold"] if mid.get("cold") is not None else 0.0, "；".join(seg)))
+    src = "%s（%d 場；judge.glob=%s）" % ("、".join(f["file"] for f in sorted(fields, key=lambda f: f["file"])),
+                                          len(fields), j.get("glob"))
+    if pend.get("source"):
+        src += "；原 pending 條目的出處：%s" % pend["source"]
+    row = ["  - id: %s" % pend["id"],
+           "    item: %s" % _yq(pend.get("item") or ""),
+           "    value: %s" % _yq(val_line),
+           "    profile: %s" % prof,
+           "    entry: \"harness bench\"",
+           "    meets: true",
+           "    ratchet_exempt: %s" % _yq(
+               "基準（非棘輪）：這一列登記的是一條<b>分布</b>（值＝合格場次的中位數並附區間），"
+               "不是單場讀數 ⇒ 不參與棘輪（上限＝<code>certify_anchor.decode_ts</code>）。"
+               "由 <code>decode_board_build.py --promote</code> 機械升級：入表條件跑前寫死在 pending 條目"
+               "（<code>judge</code>＋<code>accept</code>）。"),
+           "    source: %s" % _yq(src),
+           "    quote: {artifact: %s, verdict: %s, why: %s}" % (_yq(mid["file"]), mid["verdict"], _yq(why))]
+    return row, "中位 %.3f（%d／%d 場可引用；quote=%s）" % (med, len(q), len(fields), mid["file"])
+
+
+def cert_text_insert(text, row_id, snippet):
+    """把一列插進 `certified:` 清單的**數字序**位置（不是尾端）：回新全文。
+
+    看板是手寫的（註解就是文件）⇒ 只能用行級手術，不能用 yaml round-trip。同 id 已在表上 ⇒
+    ValueError（不重複插入；那是 YAML 漂移，要人判）。
+    """
+    m0 = re.match(r"C(\d+)$", str(row_id))
+    if not m0:
+        raise ValueError("id 不是 C<數字> 形式：%r" % row_id)
+    want = int(m0.group(1))
+    lines = text.split("\n")
+    i = next((k for k, l in enumerate(lines) if l.startswith("certified:")), None)
+    if i is None:
+        raise ValueError("看板沒有 certified: 這一節")
+    j = i + 1
+    while j < len(lines) and (not lines[j].strip() or lines[j][:1] in (" ", "\t")):
+        j += 1
+    anchors = []
+    for k in range(i + 1, j):
+        m = re.match(r"^  - id: C(\d+)\s*$", lines[k])
+        if m:
+            anchors.append((k, int(m.group(1))))
+    for _k, num in anchors:
+        if num == want:
+            raise ValueError("%s 已經在 certified 表上（不重複插入）" % row_id)
+    ins = next((k for k, num in anchors if num > want), None)
+    if ins is not None:
+        return "\n".join(lines[:ins] + list(snippet) + [""] + lines[ins:])
+    k = i
+    for x in range(i + 1, j):
+        if lines[x].strip():
+            k = x
+    tail = lines[j:]
+    while tail and not tail[0].strip():
+        tail.pop(0)
+    return "\n".join(lines[:k + 1] + [""] + list(snippet) + [""] + tail)
+
+
+def pending_text_drop(text, pid):
+    """把 `pending_promotion` 的那一條移除（最後一條 ⇒ 整節收成 `pending_promotion: []`）：回新全文。"""
+    lines = text.split("\n")
+    i = next((k for k, l in enumerate(lines) if l.startswith("pending_promotion:")), None)
+    if i is None:
+        raise ValueError("看板沒有 pending_promotion: 這一節")
+    if lines[i].split(":", 1)[1].strip() not in ("", "[]"):
+        raise ValueError("pending_promotion: 不是清單（%r）⇒ 不敢動" % lines[i])
+    j = i + 1
+    while j < len(lines) and (not lines[j].strip() or lines[j][:1] in (" ", "\t")):
+        j += 1
+    starts = [k for k in range(i + 1, j) if re.match(r"^  - id: \S", lines[k])]
+    if not starts:
+        if pid in text:
+            raise ValueError("pending_promotion 裡找不到 %s 的條目（節是空的？）" % pid)
+        return text
+    spans = []
+    for n, s in enumerate(starts):
+        e = starts[n + 1] if n + 1 < len(starts) else j
+        while e > s and not lines[e - 1].strip():
+            e -= 1
+        spans.append((s, e))
+    tgt = next((sp for sp in spans if re.match(r"^  - id: %s\s*$" % re.escape(str(pid)), lines[sp[0]])), None)
+    if tgt is None:
+        raise ValueError("pending_promotion 裡沒有 %s" % pid)
+    block = []
+    for s, e in spans:
+        if (s, e) == tgt:
+            continue
+        if block:
+            block.append("")
+        block += lines[s:e]
+    new_block = ["pending_promotion:"] + block if block else ["pending_promotion: []"]
+    return "\n".join(lines[:i] + new_block + lines[j:])
+
+
+def cmd_promote(yaml_path=DEFAULT_YAML, only_id=None, gate=None, root=ROOT):
+    """D15 的機器路徑：判準成立 ⇒ 機械升進 `certified`（does not touch `certify_anchor`）。
+
+    回 rc：0 ＝ 照做了或不用做；1 ＝ 寫了但閘門沒過 ⇒ **已回滾**；2 ＝ 用法錯（指名的不存在／
+    還沒到門檻）。看板紅在 D15 待升級**以外**的地方 ⇒ 不碰（rc=0）；只紅在「要升的那幾條」⇒
+    照升（那正是 D15 的觸發條件）。
+    """
+    gate = gate or run_gate
+    if not os.path.exists(yaml_path):
+        print("--promote：看板檔不存在（%s）" % yaml_path)
+        return 2
+    try:
+        board = load_yaml(yaml_path)
+    except Exception as exc:  # noqa: BLE001
+        print("--promote：YAML 載不進（%s: %s）⇒ 不碰" % (type(exc).__name__, exc))
+        return 2
+    pend = [p for p in (board.get("pending_promotion") or []) if isinstance(p, dict)]
+    if only_id is not None:
+        pend = [p for p in pend if str(p.get("id")) == str(only_id)]
+        if not pend:
+            print("--promote：pending_promotion 裡沒有 %s ⇒ 不碰" % only_id)
+            return 2
+    else:
+        only_id = None
+    if not pend:
+        print("--promote：pending_promotion 是空的 ⇒ 沒有事要做")
+        return 0
+    cert_ids = set(c.get("id") for c in (board.get("certified") or []))
+    rc, tail = gate(yaml_path, False)
+    if rc != 0:
+        # D15 的紅＝「條件成立卻還躺在 pending」——那正是這一支要解的，不是阻擋條件。
+        # 所以只看「紅是不是**全部**落在我們正要升的 id 上」；有一條別的紅 ⇒ 不碰。
+        ours = set(str(p.get("id")) for p in pend)
+        errs_all, other = [], []
+        try:
+            errs_all, _ = validate(board, index_nodes(load_mindmap()), root=root)
+        except Exception as exc:  # noqa: BLE001
+            print("--promote：看板是紅的，而且判不了紅在哪（%s: %s）⇒ 不碰" % (type(exc).__name__, exc))
+            return 0
+        for e in errs_all:
+            if str(e).startswith("D4 "):
+                continue      # 「產物落後於 YAML」⇒ 寫完那一列的重建就會修好（post-check 會驗）
+            m = re.match(r"D15 (?:pending )?(\S+) ", str(e))
+            if not (m and m.group(1) in ours):
+                other.append(e)
+        if other:
+            print("--promote：⛔ 看板**現在就是紅的**（而且是 D15 待升級以外的紅）⇒ 不推"
+                  "（先修綠再來；隨後的 build／--check 會說紅在哪）：\n%s\n%s"
+                  % (_indent("\n".join("✗ " + str(e) for e in other[:6])), _indent(tail)))
+            return 0
+        print("--promote：看板現在是紅的，但紅的只有 %s 的 D15（條件已達成卻還沒升）"
+              "（允許附帶 D4：寫完重建就修好）⇒ 正是要升的那一條 ⇒ 繼續" % "、".join(sorted(ours)))
+    with open(yaml_path, encoding="utf-8") as fh:
+        original = fh.read()
+    text, done, missed = original, [], []
+    for p in pend:
+        pid = str(p.get("id"))
+        if pid in cert_ids:
+            print("--promote：⛔ %s 同時在 certified 與 pending_promotion ⇒ 不碰（YAML 漂移，要人判）" % pid)
+            missed.append(pid)
+            continue
+        n_l, fields, err = cluster_fields(root, p.get("judge") or {})
+        if n_l is None:
+            print("--promote：%s 判不了（%s）⇒ 不碰" % (pid, err))
+            missed.append(pid)
+            continue
+        row, why = promotion_row(p, fields)
+        if row is None:
+            print("--promote：%s 還沒到（%s）⇒ 不碰" % (pid, why))
+            missed.append(pid)
+            continue
+        try:
+            text2 = cert_text_insert(text, pid, row)
+            text2 = pending_text_drop(text2, pid)
+        except ValueError as exc:
+            print("--promote：⛔ %s 寫不進去（%s）⇒ 不碰" % (pid, exc))
+            missed.append(pid)
+            continue
+        text = text2
+        done.append(pid)
+        print("--promote：合成 %s：%s" % (pid, why))
+    if not done:
+        print("--promote：沒有可升級的條目（%s）⇒ 看板一個位元組都沒動"
+              % ("、".join(missed) or "沒有條件達成的"))
+        return 2 if only_id else 0
+    with open(yaml_path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    rc2, tail2 = gate(yaml_path, True)
+    if rc2 != 0:
+        with open(yaml_path, "w", encoding="utf-8") as fh:
+            fh.write(original)
+        rc3, tail3 = gate(yaml_path, True)
+        print("--promote：⛔ 寫完重跑閘門沒過 ⇒ **已回滾**（看板逐字回到升級前）：\n%s" % _indent(tail2))
+        if rc3 != 0:
+            print("  ⚠ 回滾後的重建也紅了（那代表升級之前就沒有真的綠；看它的輸出）：\n%s" % _indent(tail3))
+        return 1
+    print("--promote：✅ 升進 certified：%s；閘門重跑（重建＋--check）PASS：\n%s"
+          % ("、".join(done), _indent(tail2)))
+    print("  ⚠ 合成的是**必要欄位**（值＝中位＋區間、quote＝中位那一場、棘輪＝分布豁免）；要補敘述"
+          "（逐場卡點、反例…）直接編輯那一列 —— 判準不看散文。")
+    print("  ⚠ 頁面上的字面（summary／certified_note 的「最高…」）請順手同步：閘門不管字面，"
+          "但同一頁要講同一個數。")
+    if missed:
+        print("  ⚠ 沒動的：%s" % "、".join(missed))
+    return 0 if (only_id is None or only_id in done) else 2
 
 
 D7_EXCLUDED_CLOSURES = ("結案（排除）",)
@@ -1127,7 +1461,10 @@ def validate(board, nodes, root=ROOT):
             continue
         if n_l >= mn_l and n_q >= mn_q:
             errs.append("D15 pending %s **條件已達成**（%d 場可引用／門檻 %d、共 %d 場）卻還在 pending"
-                        " ⇒ 升進 certified（附 quote）：%s" % (p.get("id"), n_q, mn_q, n_l, how))
+                        " ⇒ 升進 certified（附 quote）：%s"
+                        " ▶ 機器路徑：python3 scripts/check/decode_board_build.py --promote %s"
+                        "（或跑一次 board_pipeline.sh：重建模式會先自動 promote）"
+                        % (p.get("id"), n_q, mn_q, n_l, how, p.get("id")))
     out = board.get("out") or ""
     if not out.startswith("docs/") or not out.endswith(".html"):
         errs.append("D3 out 必須是 docs/*.html（得到 %r）" % out)
@@ -1252,7 +1589,12 @@ def render_board(board, nodes, here, out_path):
           '所以這一格<b>先寫死怎麼算搬成功</b>（不是跑完再挑一個好看的），而且判準當場成立而它還躺在'
           '這裡沒升進上表時，<code>scripts/check/decode_board_build.py --check</code> 就紅。'
           '升級的對象是一個<b>分布</b>，不是一個單點——同一支臂同一格連三場是 8.933／8.486／10.923，'
-          '而前兩場各有一顆 rep 塌到 3.8–3.9（§73.5）。</div>')
+          '而前兩場各有一顆 rep 塌到 3.8–3.9（§73.5）。'
+          '<br><b>✅ 2026-10-01 起不必等人抄</b>（operator：「D15 這要解決」）：'
+          '<code>decode_board_build.py --promote [ID]</code> 會把成立的那一條機械合成一列 '
+          '（值＝合格場次的<b>中位數</b>＋區間、<code>quote</code>＝中位那一場、棘輪＝分布豁免）'
+          '插進「已認證」並移除 pending；寫完重建＋<code>--check</code>，沒過 ⇒ <b>整檔回滾</b>。'
+          '<code>board_pipeline.sh</code>（重建模式）會先跑它 ⇒ 下一次重建就自己升。</div>')
         A("<table><thead><tr><th>id</th><th>項目</th><th>怎麼才算搬成功（跑前寫死）</th>"
           "<th>現在</th><th>候選臂</th><th>現狀</th></tr></thead><tbody>")
         for p in pend:
@@ -1745,7 +2087,7 @@ def cmd_build(yaml_path=DEFAULT_YAML):
 
 
 def cmd_selftest():
-    import copy, tempfile
+    import contextlib, copy, io, tempfile
     import yaml as _y
     ok = 0
     base = load_yaml(DEFAULT_YAML)
@@ -1900,6 +2242,99 @@ def cmd_selftest():
     case("D15 同樣 3 場但門檻要 3 場可引用 ⇒ 不紅（可引用數還沒到）",
          not _pend(judge={"kind": "quotable_launch_cluster", "glob": "pend_run_*/**/*.json",
                           "cell": "delivery", "min_launches": 3, "min_quotable": 3}))
+
+    # --- D15 的機器路徑（--promote，2026-10-01 operator：「D15 這要解決」）---
+    #   同一批 pend_run_* fixture：run0／run1 可引用（各有一顆冷 rep ⇒ §3.3b 拆欄），run2 不可。
+    def _pspec(**over):
+        s = {"id": "C99", "item": "分布（fixture）", "why": "why", "accept": "accept",
+             "state": "待跑", "arms": ["prod-new"],
+             "judge": {"kind": "quotable_launch_cluster", "glob": "pend_run_*/**/*.json",
+                       "cell": "delivery", "min_launches": 3, "min_quotable": 2}}
+        s.update(over)
+        return s
+
+    def _raises(fn):
+        try:
+            fn()
+            return False
+        except ValueError:
+            return True
+
+    _pn, _pf, _pe = cluster_fields(gate_tmp, _pspec()["judge"])
+    _prow, _pwhy = promotion_row(_pspec(), _pf)
+    _pq = sorted(f["value"] for f in _pf if f["verdict"] == "QUOTABLE")
+    _pmed = _pq[(len(_pq) - 1) // 2]
+    _pmidf = min((f for f in _pf if f["verdict"] == "QUOTABLE" and float(f["value"]) == _pmed),
+                 key=lambda f: f["file"])
+    case("--promote：3 場 2 可引用 ⇒ 合成一列（值＝中位、quote＝中位那一場）",
+         _pn == 3 and _prow is not None and ("%.3f" % _pmed) in _prow[2]
+         and _pmidf["file"] in _prow[-1] and "ratchet_exempt" in _prow[6], (_prow, _pwhy))
+    case("--promote：合成列的 verdict 逐字＝QUOTABLE（D7 會當場複判）",
+         _prow is not None and "verdict: QUOTABLE" in _prow[-1])
+    case("--promote：門檻拉高（要 3 場可引用）⇒ 不合成",
+         promotion_row(_pspec(judge={"kind": "quotable_launch_cluster",
+                                     "glob": "pend_run_*/**/*.json", "cell": "delivery",
+                                     "min_launches": 3, "min_quotable": 3}), _pf)[0] is None)
+    _fy = ("out: docs/x.html\n"
+           "certified:\n"
+           "  - id: C1\n"
+           '    item: "a"\n'
+           "\n"
+           "  - id: C4\n"
+           '    item: "b"\n'
+           "\n"
+           "  - id: C6\n"
+           '    item: "c"\n'
+           "\n"
+           "# ── 待升級（D15）：條件**跑前**寫死 ──\n"
+           "pending_promotion:\n"
+           "  - id: C5\n"
+           '    item: "x"\n'
+           "    judge: {kind: quotable_launch_cluster, glob: \"pend_run_*/**/*.json\", "
+           "cell: delivery, min_launches: 3, min_quotable: 2}\n")
+    _fy2 = cert_text_insert(_fy, "C5", ['  - id: C5', '    item: "new"'])
+    case("--promote：插入位置＝數字序（C5 落在 C4 與 C6 之間）",
+         _fy2.index("C1") < _fy2.index("C4") < _fy2.index("C5") < _fy2.index("C6"), _fy2)
+    case("--promote：同 id 已在表上 ⇒ 拒絕（不重複插入）",
+         _raises(lambda: cert_text_insert(_fy2, "C5", ['  - id: C5'])))
+    _fy3 = pending_text_drop(_fy2, "C5")
+    case("--promote：最後一條 pending ⇒ 收成 `pending_promotion: []`（註解留著）",
+         "pending_promotion: []" in _fy3 and 'item: "x"' not in _fy3 and "待升級" in _fy3, _fy3)
+    _fy4 = _fy + "  - id: C7\n    item: \"y\"\n"      # 第二條（沒有 judge ⇒ 判不了、不碰）
+    _fy5 = pending_text_drop(_fy4, "C5")
+    case("--promote：還有別條 ⇒ 只移除指名的那一條（C7 還在）",
+         'item: "y"' in _fy5 and 'item: "x"' not in _fy5, _fy5)
+
+    # 回滾：stub 閘門（不真的跑子行程）——① 看板已紅 ⇒ 不碰；② 寫完紅 ⇒ 逐字回滾。
+    _ptmp = os.path.join(gate_tmp, "promote_board.yaml")
+    with open(_ptmp, "w", encoding="utf-8") as _fh:
+        _fh.write(_fy4)
+    _porig = open(_ptmp, encoding="utf-8").read()
+
+    def _gate_red(bp, build=False):
+        return 1, "紅（fixture）"
+
+    _buf = io.StringIO()
+    with contextlib.redirect_stdout(_buf):
+        _rc = cmd_promote(_ptmp, None, gate=_gate_red, root=gate_tmp)
+    case("--promote：看板現在就是紅的 ⇒ 不碰（一位元組不動、rc=0）",
+         _rc == 0 and open(_ptmp, encoding="utf-8").read() == _porig and "不推" in _buf.getvalue())
+
+    _seq = {"n": 0}
+
+    def _gate_flaky(bp, build=False):
+        if not build:
+            return 0, "綠（fixture）"
+        _seq["n"] += 1
+        return (1, "紅（fixture）") if _seq["n"] == 1 else (0, "綠（fixture）")
+
+    _buf = io.StringIO()
+    with contextlib.redirect_stdout(_buf):
+        _rc = cmd_promote(_ptmp, None, gate=_gate_flaky, root=gate_tmp)
+    case("--promote：寫完閘門紅 ⇒ **整檔回滾**（逐字＝升級前）＋ rc=1",
+         _rc == 1 and open(_ptmp, encoding="utf-8").read() == _porig and "已回滾" in _buf.getvalue())
+    case("--promote：指名一條還沒到門檻 ⇒ rc=2（不靜默）",
+         cmd_promote(_ptmp, "C7", gate=_gate_flaky, root=gate_tmp) == 2)
 
     # --- D13／決策佇列：blocked_queue 的排序與計數 ---
     def _queue(pairs, assertion=None):
@@ -2303,9 +2738,15 @@ def main(argv=None):
     ap.add_argument("--yaml", default=DEFAULT_YAML)
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--promote", nargs="?", const="", metavar="ID",
+                    help="D15 的機器路徑：pending_promotion 的 judge 當場成立 ⇒ 機械合成 certified 列"
+                         "（值＝合格場次中位＋區間、quote＝中位那一場）並移除該條目；寫完重建＋--check，"
+                         "沒過就整檔回滾。省略 ID＝全部適用的都升；給 ID＝只升那一條")
     a = ap.parse_args(argv)
     if a.selftest:
         return cmd_selftest()
+    if a.promote is not None:
+        return cmd_promote(a.yaml, a.promote or None)
     if a.check:
         return cmd_check(a.yaml)
     return cmd_build(a.yaml)
