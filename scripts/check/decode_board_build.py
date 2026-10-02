@@ -28,6 +28,10 @@
   D6 標了「結案」卻不滿足結案規則（prod-new ＋ harness bench ＋ 達標）——唯一例外是「結案（排除）」要有出處
   D7 引用閘門（quote_gate）：子目標宣告的可引用性必須與閘門**當場**判的一致；且「結案」不得
      建立在不可引用的讀數上（`attribution=none` 不再是充分的理由 —— 見 §55）
+      〔2026-10-02 operator 裁定〕唯一例外：`certified` 列明文帶 `waiver:` 且宣告 QUOTABLE、
+      而閘門（**不帶** `CGC_QUOTE_WAIVE_ATTRIB`）判 **DIRTY** ⇒ 放行，理由是「operator 顯式放行的
+      可引用」而非「閘門說這一場乾淨」。只放行 DIRTY（R4 窗口那一條）；UNSTABLE／REFUSE 一律照擋。
+      揭露必須落在該列的 `item`／`value`／`waiver`／`why`（看板渲染前三者）。C13 是第一件。
   D8 主節點（L20／L25）的 goal／evidence 必須一致：綠燈只能建在可引用的讀數上
   D9 產物結構（表格標籤配對）
   D10 臂身分（quote_gate 的 R5／R6 在**看板面**）：`options.arms` 不准留著「量不到交付目標」的臂
@@ -1406,8 +1410,14 @@ def validate(board, nodes, root=ROOT):
             if live is None:
                 errs.append("D7 certified %s 的引用判不了（%s）" % (c.get("id"), why))
             elif live != (c["quote"] or {}).get("verdict"):
-                errs.append("D7 certified %s 宣告 verdict=%s，但閘門現在判 %s"
-                            % (c.get("id"), (c["quote"] or {}).get("verdict"), live))
+                # D7-waiver（operator 2026-10-02）：本列明文帶 `waiver` 且宣告 QUOTABLE、而閘門（**不帶**
+                # 放行 env）判 DIRTY ⇒ 那是「被 operator 顯式放行的可引用」，不是「閘門說這一場乾淨」。
+                # 揭露落在本列的 item／value／waiver／why（看板渲染前三者）。刻意只放行 DIRTY（＝R4 窗口
+                # 那一條），UNSTABLE／REFUSE 一律照擋 —— 同 `quote_ungateable` 的樣式：要放行就必須寫理由。
+                if not (c.get("waiver") and live == "DIRTY"
+                        and (c["quote"] or {}).get("verdict") == "QUOTABLE"):
+                    errs.append("D7 certified %s 宣告 verdict=%s，但閘門現在判 %s"
+                                % (c.get("id"), (c["quote"] or {}).get("verdict"), live))
         elif c.get("meets") is True and not c.get("quote_ungateable"):
             errs.append("D7 certified %s 標 meets 卻沒有 evidence 可判（要嘛給 quote、"
                         "要嘛明文 quote_ungateable 附理由）" % c.get("id"))

@@ -26,15 +26,15 @@ closure_rule:
 #   推上限的機器路徑＝`caliber_certify certify <新產物> --update-board`：嚴格新高才推、推前先驗、
 #   推後重建產物＋`--check`，沒過整檔回滾。「入表片段」（含 ratchet 欄位）用 `--board-row` 印。
 certify_anchor:
-  decode_ts: 13.867389
+  decode_ts: 15.210976
   cell: "(default)"
-  artifact: "Backup/l201_accel/ovl_cert_b.json"
+  artifact: "Backup/l201_accel/ovl_cert3_c.json"
   at: "2026-10-02"
-  why: "棘輪的單一來源＝**現行已認證 decode 的最大值**（＝C9 自己的 avg_ts）。它被推過四次：C3 11.703 → C7 11.948299 → C8 11.982966 → **C9 12.376702**（2026-10-01 下午：ρ 價格窗的四條權威 row 量出全語料首批 12+，operator 決定入表＋推上限 ⇒ 同批 C10 12.302695／C11 12.126469）→ **C12 13.867389**（2026-10-02：overlap fence 窗的背靠背認證臂 <code>ovl_cert_b</code> 拿到 <code>attribution=none</code>，operator 決定入表＋推上限）。⚠ 上限的 cell 是 <code>(default)</code>：棘輪是**數值**上限，不是交付 cell 的基準；跨格不可互比（§56）。規矩：後續 decode 要入表必須**嚴格高於** decode_ts（平手不算；差 <1e-9 視為同一件讀數），唯一例外＝紀錄本人；本鍵讀不到 ⇒ 認證入口全部 REFUSED。⚠ 已入表的舊件（C3／C7）重驗也會得到「沒有高過現行上限 ⇒ REFUSED」——那不是「它當時沒過」，是它現在已經在上限之下。 ｜ caliber_certify --update-board 自動推升：12.376702 → 13.867389（cell=(default)、產物=Backup/l201_accel/ovl_cert_b.json）；D17：上限＝certified 表上最高的 decode、artifact＝那一列的 quote.artifact。"
+  why: "棘輪的單一來源＝**現行已認證 decode 的最大值**（＝C9 自己的 avg_ts）。它被推過五次：C3 11.703 → C7 11.948299 → C8 11.982966 → **C9 12.376702**（2026-10-01 下午：ρ 價格窗的四條權威 row 量出全語料首批 12+，operator 決定入表＋推上限 ⇒ 同批 C10 12.302695／C11 12.126469）→ **C12 13.867389**（2026-10-02：overlap fence 窗的背靠背認證臂 <code>ovl_cert_b</code> 拿到 <code>attribution=none</code>，operator 決定入表＋推上限）→ **C13 15.210976**（2026-10-02 17:3x：operator <b>顯式放行 R4</b>（<code>CGC_QUOTE_WAIVE_ATTRIB=swap,both</code>）⇒ 同一支 overlap fence 臂以 <code>attribution=both</code>（thermal HEAVY ＋ swap 712 MiB）入表；⚠ <b>降級窗讀數</b>，與 C1–C12 的乾淨窗<b>不可互比</b>，見該列 <code>waiver</code>）。⚠ 上限的 cell 是 <code>(default)</code>：棘輪是**數值**上限，不是交付 cell 的基準；跨格不可互比（§56）。規矩：後續 decode 要入表必須**嚴格高於** decode_ts（平手不算；差 <1e-9 視為同一件讀數），唯一例外＝紀錄本人；本鍵讀不到 ⇒ 認證入口全部 REFUSED。⚠ 已入表的舊件（C3／C7）重驗也會得到「沒有高過現行上限 ⇒ REFUSED」——那不是「它當時沒過」，是它現在已經在上限之下。 ｜ caliber_certify --update-board 自動推升：12.376702 → 13.867389（cell=(default)、產物=Backup/l201_accel/ovl_cert_b.json）；D17：上限＝certified 表上最高的 decode、artifact＝那一列的 quote.artifact。 ｜ caliber_certify --update-board 自動推升：13.867389 → 15.210976（cell=(default)、產物=Backup/l201_accel/ovl_cert3_c.json）；D17：上限＝certified 表上最高的 decode、artifact＝那一列的 quote.artifact。"
 
 summary:
   - {value: "≥250",       tone: ok,  label: "prefill（已過線·已認證）· 最高 296.24，乾淨視窗 283.01"}
-  - {value: "13.8674",   tone: bad, label: "decode 交付錨點（t/s）· 72.11 ms/token · <b>棘輪上限</b>：要比它<b>高</b>才進得去（讀不到 ⇒ 全部 REFUSED）· 現行上限＝<b>C12</b>（overlap fence 窗 ovl_cert_b・<code>(default)</code>・3 reps・逐 rep 1.036・<code>none</code>）—— <b>10-02 首批 13+</b>：舊上限 <b>C9</b> 12.3767（10-01；同批 <b>C10</b> 12.3027（order1_A）／<b>C11</b> 12.1265（order2_B））已成<b>歷史值</b>；再下來 <b>C8</b> 11.9830／C7 11.9483／C3 11.703（棘輪本來就會被推過去）"}
+  - {value: "15.2109",   tone: bad, label: "decode 交付錨點（t/s）· 65.74 ms/token · <b>棘輪上限</b>：要比它<b>高</b>才進得去（讀不到 ⇒ 全部 REFUSED）· 現行上限＝<b>C13</b>（overlap fence 窗 ovl_cert3_c・<code>(default)</code>・3 reps・逐 rep 1.082・<b>⚠ <code>both</code>＝降級窗（thermal HEAVY ＋ swap 712 MiB），由 operator 顯式放行 R4 入表</b>）—— <b>10-02 首批 15+</b>：前一上限 <b>C12</b> 13.8674（同日・<code>none</code>＝<b>乾淨窗</b>，<b>仍是唯一在乾淨窗量到的認證值</b>）已成<b>歷史值</b>；再下來 <b>C9</b> 12.3767（10-01；同批 <b>C10</b> 12.3027（order1_A）／<b>C11</b> 12.1265（order2_B））／<b>C8</b> 11.9830／C7 11.9483／C3 11.703（棘輪本來就會被推過去）"}
   - {value: "20 / 81",   tone: bad, label: "交付 cell 的 decode 列<b>可引用數</b>（引用閘門 §55／§58／§63；2026-10-01 全語料掃帳＝<b>37</b>／1692、其中交付 cell <b>20</b>／81）· ⚠ 這個數在 10-01 <b>R2 拆欄（§3.3b）</b>之後才成立：交付 cell 是 <code>-p 0</code>（pp-less）⇒ 第 1 顆 rep 天生冷，拆欄把 cold 從<b>引用值</b>挪開、只留診斷 ⇒ 09-30 <code>delivery_anchor_rerun</code> 那批由 <b>1/6 → 5/6</b>（已升 <b>C5</b>：中位 <b>10.923</b>、區間 10.821–11.208、足跡類）· 27.3 那一批（SPAC K sweep）帶 <code>MISS_MASK_DBG</code>，源碼明文 never-quote ⇒ <b>R5</b> 判 DIRTY"}
   - {value: "6.09%",      tone: ok,  label: "G4 重算工作清單（權威 cell 中位）· 閘檻 ≤25% ⇒ 過閘·已認證"}
   - {value: "16 / 16",    tone: ok,  label: "子目標<b>結案數</b>· 依新規則（prod-new ＋ harness bench ＋ 達標；排除也算結案）· 已結案＝L20-2／L20-3／L20-4／<b>L20-5（09-30 新落地）</b>／L20-6／<b>L20-7（10-01 否證式・排除：ρ 的價格量不出來）</b>／L20-8／L20-9／<b>L20-10（10-01 否證式・排除）</b>／<b>L25-1（排除・不可測）</b>／<b>L25-2（10-01 否證式・排除：skip-probe 判詞 DEAD）</b>／<b>L25-3</b>／<b>L25-4（10-01 否證式・排除：k 軸經濟學 DEAD）</b>／<b>L25-5</b>／<b>L25-6（排除）</b>／<b>L20-1（10-02 否證式・排除：提交路徑 0.75 ms/步 vs GPU 空轉 ~47 ms/步，差兩個數量級）</b>· <b>全部 16 格結案</b>；通道已轉「GPU 空轉」軸（decode util 30–49% vs prefill 80–99%）"}
@@ -52,7 +52,7 @@ stage_legend: ["已量到判定", "卡／動作就緒", "已跑出讀數", "已�
 certified_note:
   title: "本頁只有三段（已認證／L20／L25）—— 而「結案」到現在只成立三格："
   lines:
-    - "① 符合結案規則（<code>prod-new</code> ＋ <code>harness bench</code> ＋ 達標）的：<b>C1／C2／C3／C4／C5／C7／C8／C9／C10／C11／C12</b>（prefill ≥250、G4 重算 ≤25%、交付錨點 11.703 → <b>12.3767</b>（10-01 棘輪兩次：C7／C8 → <b>C9</b>；同批 12+ 的 C10／C11）→ <b>13.8674</b>（10-02 棘輪：overlap fence 窗 <b>C12</b>）、<b>交付 cell 的可引用讀數分布 10.923（C5：6 場裡 5 場可引用、區間 10.821–11.208；由 C4 的單點依 §3.3b 拆欄升級）</b>——這些都是<b>基準</b>不是目標）＋ <b>C6</b>（P1 餵料搬家：<b>機制端點</b>，餵料在無 debug 插樁下活著、<code>prefetch</code> 離開 <code>0/0</code>）。<b>L20／L25 到 09-30 結案的是 L20-2／3／4／6／8／9 與 L25-3／5／6，加上新落地的 L20-5、<b>L25-1</b>（排除・不可測），與 10-01 <b>否證式結案（排除）</b>的 <b>L20-10</b>、<b>L20-7</b>（ρ 權威 row 的價格：量不出來）、<b>L25-2</b>（skip-probe 判詞 DEAD）、<b>L25-4</b>（k 軸經濟學 DEAD）</b>——它們結的是<b>窗口／端點／排除</b>（乾淨窗口存在且可引用；MTP 的 m ≤0.30；P1 的餵料解耦）——<b>沒有一格是 20+／25+ 的達成</b>。"
+    - "① 符合結案規則（<code>prod-new</code> ＋ <code>harness bench</code> ＋ 達標）的：<b>C1／C2／C3／C4／C5／C7／C8／C9／C10／C11／C12</b>（prefill ≥250、G4 重算 ≤25%、交付錨點 11.703 → <b>12.3767</b>（10-01 棘輪兩次：C7／C8 → <b>C9</b>；同批 12+ 的 C10／C11）→ <b>13.8674</b>（10-02 棘輪：overlap fence 窗 <b>C12</b>，<code>none</code>＝乾淨窗）→ <b>15.2109</b>（同日 <b>C13</b>：同一支 overlap fence 臂，<b>⚠ <code>both</code>＝降級窗</b>，由 operator <b>顯式放行 R4</b> 入表——見該列 <code>waiver</code>）、<b>交付 cell 的可引用讀數分布 10.923（C5：6 場裡 5 場可引用、區間 10.821–11.208；由 C4 的單點依 §3.3b 拆欄升級）</b>——這些都是<b>基準</b>不是目標）＋ <b>C6</b>（P1 餵料搬家：<b>機制端點</b>，餵料在無 debug 插樁下活著、<code>prefetch</code> 離開 <code>0/0</code>）。<b>L20／L25 到 09-30 結案的是 L20-2／3／4／6／8／9 與 L25-3／5／6，加上新落地的 L20-5、<b>L25-1</b>（排除・不可測），與 10-01 <b>否證式結案（排除）</b>的 <b>L20-10</b>、<b>L20-7</b>（ρ 權威 row 的價格：量不出來）、<b>L25-2</b>（skip-probe 判詞 DEAD）、<b>L25-4</b>（k 軸經濟學 DEAD）</b>——它們結的是<b>窗口／端點／排除</b>（乾淨窗口存在且可引用；MTP 的 m ≤0.30；P1 的餵料解耦）——<b>沒有一格是 20+／25+ 的達成</b>。"
     - "② ⚠ <b>歷史上的「進步」要打折</b>：09-27 那條「舊基線 9.311」其 rep 1 是 4.12（其餘 12.01／11.80）⇒ kept 半邊 ＝ <b>11.905</b>，與錨點 11.703 幾乎相同 ⇒ 當時的「＋25.7%」主要是 <b>冷啟 rep 的產物，不是機器變快</b>。"
     - "③ ⇒ <b>引用任何 t/s 之前先過引用閘門</b>（逐 rep 離散／樣本數／窗口／參考帶／<b>臂身分 R5</b>／<b>輸出見證 R6</b>）。<b>2026-10-01 全語料掃帳</b>（<code>python3 scripts/check/quote_gate.py check --glob 'Backup/**/*.json' --json …</code>，逐 row 判）：<b>37／1692</b> 列可引用，其中交付 cell <b>20／81</b> —— 這個數比 09-29 那批（4／1061；交付 cell 1／30）跳升的主因是 <b>R2 拆欄（§3.3b）</b>：pp-less 交付 cell 的第 1 顆冷 rep 不再被算成引用值（cold 留診斷）。<br>帳目：判準見 <code>scripts/check/quote_gate.py</code>（重跑上面那條指令即可複製這組數）。"
     - "④ <b>R6 可解除</b>（它擋的是「單次提交臂的輸出未被驗」，不是那支臂永遠不可用）：產物附上 M1／answer-hash 見證即回到正常判準；解除條件寫死在 <code>UNVERIFIED_OUTPUT_ARMS</code>（<code>scripts/check/quote_gate.py</code>）。"
@@ -75,7 +75,7 @@ certified:
     quote_ungateable: "本格判的是<b>重算工作清單的比例</b>（結構量），不是吞吐 ⇒ 不以速度閘門判。"
   - id: C3
     item: "交付錨點 decode（認證基準，非目標；<b>10-01 已被 C7／C8（11.9830）再到 C9（12.3767）的棘輪取代</b>）"
-    value: "11.703 t/s ＝ 85.45 ms（attribution=none、thermal NOMINAL、warm_skip_applied=true）· <b>歷史值</b>——現行棘輪上限＝<code>certify_anchor.decode_ts</code>＝<b>13.867389</b>"
+    value: "11.703 t/s ＝ 85.45 ms（attribution=none、thermal NOMINAL、warm_skip_applied=true）· <b>歷史值</b>——現行棘輪上限＝<code>certify_anchor.decode_ts</code>＝<b>15.210976</b>"
     profile: prod-new
     entry: "harness bench"
     meets: true
@@ -98,7 +98,7 @@ certified:
     profile: prod-new
     entry: "harness bench"
     meets: true
-    ratchet_exempt: "基準（非棘輪）：這一列登記的是一條<b>分布</b>——值＝合格場次的中位數並附區間，不是單場讀數 ⇒ 不參與棘輪（上限仍是 C12 的 13.867389）。入表條件＝待升級時就**跑前寫死**的驗收（≥3 場裡至少 2 場可引用）當場成立（5/6）。⚠ 交付 cell 是 <code>-p 0</code> ⇒ 它是<b>足跡類</b>（budget_gate 判 OVERBUDGET、赤字 8373 MiB）⇒ 可引用不等於能力數。"
+    ratchet_exempt: "基準（非棘輪）：這一列登記的是一條<b>分布</b>——值＝合格場次的中位數並附區間，不是單場讀數 ⇒ 不參與棘輪（上限仍是 C13 的 15.210976）。入表條件＝待升級時就**跑前寫死**的驗收（≥3 場裡至少 2 場可引用）當場成立（5/6）。⚠ 交付 cell 是 <code>-p 0</code> ⇒ 它是<b>足跡類</b>（budget_gate 判 OVERBUDGET、赤字 8373 MiB）⇒ 可引用不等於能力數。"
     source: "Backup/delivery_anchor_rerun_2026-09-30/launch1..6.json（逐場判詞；launch5 仍 UNSTABLE）＋ Backup/l253_anchor_20260930/anchor_delivery_3.json（原 C4 單點，09-30 02:18）"
     quote: {artifact: "Backup/delivery_anchor_rerun_2026-09-30/launch3.json", verdict: QUOTABLE, why: "分布的中位那一場（引用值 10.923 ＝ steady [10.6629, 11.1834] 的平均；cold 10.415 留診斷）。逐 rep <code>[10.41, 10.66, 11.18]</code> ⇒ 全 rep 1.074 &lt; 1.10（<b>拆欄前就已 QUOTABLE</b>，拆欄只把引用值由平台均值 10.754 換成 steady 10.923）；窗口 <code>none</code>、thermal NOMINAL、reps 3、臂上無 R5／R6。<br>⚠ <b>這一批的卡點不是窗口，是「第 1 顆 rep 天生冷」</b>：六場的 <code>attribution</code> 全部 <code>none</code>（growth ≤17 MiB、thermal 全 NOMINAL），擋住原判的是 <b>R2 全 rep 離散</b>（1.113／1.103／1.074／2.802／1.132／1.160），而 5/6 場的 rep1 是冷的（10.03／10.19／10.41／3.93／9.42／9.59；後兩顆卻在 10.7–11.2）。交付 cell 是 <code>-p 0</code>（<b>沒有 pp 那一列</b>預熱池）⇒ <code>warm-skip 64</code> 蓋不掉。拆欄（§3.3b）把 cold 從引用值挪開之後：launch1 全 rep 1.113→steady 1.004／launch2 1.103→1.007／launch4 2.802→1.023／launch6 1.160→1.057 ⇒ <b>4 場轉可引用，1/6 → 5/6</b>（要湊的是「第 1 顆不冷」，不是「窗口乾淨」）。<br>⚠ launch5 是<b>反例</b>（拆欄救不了它）：cold 9.422 之外，steady 兩顆自己就 10.667 vs 9.460（kept <b>1.128</b> &gt; 1.10）⇒ 仍 UNSTABLE、不列入分布值。"}
 
@@ -161,7 +161,7 @@ certified:
     quote: {artifact: "Backup/rho_price_2026-09-30/order2_B.json", verdict: QUOTABLE, why: "口徑 UNIFIED ∧ R1–R8 全過（reps 3、全 rep 1.050／kept 1.028、窗口 <code>none</code>、thermal NOMINAL）∧ 棘輪（12.126469 > 11.982966）⇒ 認證入口判 CERTIFIED。<br>⚠ 它是<b>交付旗標臂</b>（<code>CGC_RHO=1</code>，切分後的新旗標）：臂上<b>沒有</b>量具（<code>CGC_RHO_PROBE</code>＝R5 不在）⇒ 這一條同時是「機制在跑」的價格讀數。"}
 
   - id: C12
-    item: "decode 棘輪（認證入口 caliber_certify；入表條件＝> 12.376702）"
+    item: "decode 棘輪（認證入口 caliber_certify；入表條件＝> 12.376702）· <b>10-02 已被 C13（15.210976，降級窗＋operator 顯式放行 R4）取代；本列仍是「乾淨窗下最高」</b>"
     value: "13.867389 t/s（逐 rep [14.2776, 13.4208, 13.9038]；cell (default)）"
     profile: prod-new
     entry: "harness bench"
@@ -169,6 +169,17 @@ certified:
     ratchet: {decode_ts: 13.867389, entered_above: 12.376702}
     source: "Backup/l201_accel/ovl_cert_b.json"
     quote: {artifact: "Backup/l201_accel/ovl_cert_b.json", verdict: QUOTABLE, why: "口徑 UNIFIED ∧ quote_gate R1–R8（cell=(default)、逐 rep [14.2776, 13.4208, 13.9038]、spread 1.064/1.036、thermal=NOMINAL）∧ 棘輪（13.867389 > 12.376702） ⇒ 認證入口判 CERTIFIED。"}
+
+  - id: C13
+    item: "decode 棘輪（認證入口 caliber_certify；入表條件＝> 13.867389）· <b>operator 顯式放行 R4</b>"
+    value: "15.210976 t/s（逐 rep [15.7459, 15.3376, 14.5493]；cell (default)）· <b>降級窗</b>：attribution=both（thermal 最壞 HEAVY ＋ swap growth 712 MiB）"
+    profile: prod-new
+    entry: "harness bench"
+    meets: true
+    ratchet: {decode_ts: 15.210976, entered_above: 13.867389}
+    waiver: "operator 2026-10-02 17:3x 裁定：<b>顯式放行 R4</b>（<code>CGC_QUOTE_WAIVE_ATTRIB=swap,both</code>）。刻意<b>不改</b> <code>CLEAN_ATTRIBUTION</code>——該常數自載的規矩是「判準跑前寫死，不得因為某個好數字被擋而放寬」⇒ 放行是<b>逐場、顯式、可稽核</b>的開關，預設關閉；未帶 env 時判詞照樣 DIRTY（<code>quote_gate --selftest</code> 33/33 不變）。<b>這一列是降級窗讀數</b>：與 C1–C12 的 clean（none／NOMINAL）窗<b>不可互比</b>，引用時必須同時講窗口狀態。"
+    source: "Backup/l201_accel/ovl_cert3_c.json"
+    quote: {artifact: "Backup/l201_accel/ovl_cert3_c.json", verdict: QUOTABLE, why: "口徑 UNIFIED ∧ R1／R2／R3（全 rep 1.082、kept 1.054）／R7（prod-new）／R8 全過；<b>R4 由 operator 顯式放行</b>（見本列 <code>waiver</code>）⇒ quote_gate 印 <code>!! 顯式放行 R4 —— 不是乾淨窗</code> ∧ 棘輪（15.210976 > 13.867389）⇒ 認證入口判 CERTIFIED。<br>⚠ <b>這一場不是乾淨窗</b>：attribution=<code>both</code>（thermal HEAVY ＋ swap growth 712 MiB；盒子 swap 用滿 9.5／10 GB）。它是「<b>引擎在這台盒子當下狀態下量到的最高讀數</b>」，不是「乾淨條件下的能力」——C12 的 13.867（<code>none</code>）仍是<b>乾淨窗下唯一的認證值</b>。"}
 
 # ── 待升級（D15）：operator 2026-09-30「<b>搬成功要放到已認證</b>」──────────────────────
 # 規矩：條件**跑前**寫死；機器判準當場成立而它還躺在這裡 ⇒ `--check` 變紅
@@ -195,7 +206,7 @@ layers:
     goal: {metric: tps, target: 20.0, crit: "decode t/s（交付 cell）"}
     evidence: {artifact: "Backup/l201_accel/ovl_cert_b.json",
                value: 13.867, metric: tps, quote_verdict: QUOTABLE, met: false,
-               note: "現行最高的可引用 decode 讀數＝<b>C12 13.8674</b>（<code>(default)</code>・3 reps・逐 rep 1.036・<code>none</code>；10-02 首批 13+，overlap fence 窗）。舊上限 <b>C9</b> 12.3767（10-01；同批 <b>C10</b> 12.3027／<b>C11</b> 12.1265）。交付 cell 家族最高是 <b>C8 11.9830</b>（<code>delivery-ws192</code>・3 reps・逐 rep 1.046／kept 1.011）／n=7 孿生 <b>C7 11.9483</b>（中位 11.9281）—— <b>跨格不可互比</b>（§56）⇒ 距 20.0 還差 ~38%。交付 cell 的可引用讀數：<b>9.377</b>（§58）→ <b>10.923</b>（§63／C4 單點）→ 10-01 <b>C5</b> 把它升成一條分布（6 場 5 可引用、中位 10.923、區間 10.821–11.208）。⚠ 10-01 審計（<code>Backup/caliber_unified_2026-10-01/audit_ratchet.json</code>，上限推到 12.376702 後重跑）：天花板＝<b>12.3767（C9）</b>；第一批 ≥12 可引用的三條（C9／C10／C11）已入表（點判 3/4 CERTIFIED —— 審計的桶只記「現在還進得去的」，所以兩條 A 臂是以 prefill ≥250 進桶的）；27.3 那一批仍判 <b>DIRTY</b>（R5）"}
+               note: "現行最高的可引用 decode 讀數＝<b>C13 15.2109</b>（<code>(default)</code>・3 reps・逐 rep 1.082・<b>⚠ <code>both</code>＝降級窗（thermal HEAVY ＋ swap 712 MiB），operator 顯式放行 R4</b>；10-02 首批 15+，overlap fence 窗）。<b>乾淨窗</b>下最高仍是 <b>C12 13.8674</b>（<code>none</code>）。更前一上限 <b>C9</b> 12.3767（10-01；同批 <b>C10</b> 12.3027／<b>C11</b> 12.1265）。交付 cell 家族最高是 <b>C8 11.9830</b>（<code>delivery-ws192</code>・3 reps・逐 rep 1.046／kept 1.011）／n=7 孿生 <b>C7 11.9483</b>（中位 11.9281）—— <b>跨格不可互比</b>（§56）⇒ 距 20.0 還差 ~38%。交付 cell 的可引用讀數：<b>9.377</b>（§58）→ <b>10.923</b>（§63／C4 單點）→ 10-01 <b>C5</b> 把它升成一條分布（6 場 5 可引用、中位 10.923、區間 10.821–11.208）。⚠ 10-01 審計（<code>Backup/caliber_unified_2026-10-01/audit_ratchet.json</code>，上限推到 12.376702 後重跑）：天花板＝<b>12.3767（C9）</b>；第一批 ≥12 可引用的三條（C9／C10／C11）已入表（點判 3/4 CERTIFIED —— 審計的桶只記「現在還進得去的」，所以兩條 A 臂是以 prefill ≥250 進桶的）；27.3 那一批仍判 <b>DIRTY</b>（R5）"}
     targets:
       - id: L20-1
         runnable: "⛔ 現在不能出<b>可引用</b>讀數，而且<b>不是窗口問題</b>：這支臂經機檢是 <b>R5 乾淨、R6-DIRTY</b>（唯一規則＝<code>CGC_SEG_BATCH</code>；臂字串取自產物自己的 <code>extra_env</code>，非宣告抄寫）⇒ 就算抽到 <code>attribution=none</code> 的窗口也一樣不可引用。更硬的是：<b>見證已經跑過而且是否證的</b>（同一 build：對照臂 9/9、本臂 0/9，第一格 decode 就不同）⇒ 這支臂的讀數不是交付臂的函數，這是<b>量到的</b>。而 <b>換臂已量：不可行</b>（五臂同場：乾淨臂 91–118 ms，S1 49 ms，紅利與旗標不可分離）⇒ 本格在<b>引擎把單段提交做成輸出可驗</b>之前<b>不可能</b>產出可引用讀數（<b>2026-10-01：該引擎路三路判死</b> ⇒ 端點已改機制（提交數 41→1／ms-submit；見 block.next ⑨）。成對重跑（swap）只是疊在最上面的一層。"
@@ -884,7 +895,7 @@ layers:
         nodes: [k3-swing, score-leaderboard]
         expect_ms: "—"
         expect_tps: "把 16.4% 的底噪認證或關掉；並讓「目前最好」只剩一個定義"
-        now: "<code>k3-swing</code>：<b>16.4% 已在權威 cell 上被排除</b>（§63：事先登記的 N=12 配對判決 ⇒ +0.54 t/s、t=0.95 &lt; 2.20 ⇒ NOT SEPARATED；舊的 n=5／t=2.08 是<b>階段 1 的樣本</b>，不是判決）。<code>score-leaderboard</code>：<b>17.669 t/s 已於本輪降級為「分布尾端一次抽樣」</b>（同臂三次重啟 7.63／10.51／8.17）⇒「目前最好」＝<b>認證表最高 13.8674</b>（C12；前上限 C9 12.3767、同批 C10 12.3027／C11 12.1265，再下來才是 C8 11.9830／C7 11.9483）"
+        now: "<code>k3-swing</code>：<b>16.4% 已在權威 cell 上被排除</b>（§63：事先登記的 N=12 配對判決 ⇒ +0.54 t/s、t=0.95 &lt; 2.20 ⇒ NOT SEPARATED；舊的 n=5／t=2.08 是<b>階段 1 的樣本</b>，不是判決）。<code>score-leaderboard</code>：<b>17.669 t/s 已於本輪降級為「分布尾端一次抽樣」</b>（同臂三次重啟 7.63／10.51／8.17）⇒「目前最好」＝<b>認證表最高 15.2109</b>（C13；<b>⚠ 降級窗 ＋ operator 顯式放行 R4</b>，乾淨窗最高仍是 C12 13.8674；前上限 C9 12.3767、同批 C10 12.3027／C11 12.1265，再下來才是 C8 11.9830／C7 11.9483）"
         action: "（§63 已完成）加大配對 n 到事先登記的 N=12 並做那一次判決 ⇒ NOT SEPARATED；下一步依 on_fail：k=2 當便宜 screen、winner 回 k=3 確認一次"
         accept: "16.4% 被認證或關掉 —— <b>已達成（關掉）</b>：權威 cell 上 |t|=0.95 &lt; crit 2.20"
         falsify: "關不掉 ⇒ 所有跨場比較仍帶 16.4% 的底噪"
@@ -899,14 +910,14 @@ layers:
           no_knob: "沒有新旋鈕：本格要的是加大配對 n（-r）到能認證 16.4% 的飄移，或證明飄移是視窗機械造成。"
           note: "目前 n=5、t=2.08 < df=4 的 2.776 ⇒ 未認證；17.669 已降級為分布尾端一次抽樣。"
 
-footer: "資料出處：<code>docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md</code> §34（G4 權威讀數）、§36（P2 否證）、§37／§38（gap／邊界窗）、§39–§41（盤點與「做到底」）、§42（MISS_MASK 成本）、§43–§46（19.2 的底、完備性稽核）、§47（結案規則與兩個帳目的仲裁）；<code>docs/CACHE_SIZE_AB_2026-09-23.md</code>（池大小）；<code>docs/K3_PAIR_CERT_VERDICT_2026-09-28.md</code>（17.669 重現）；<code>docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</code>（逐層 miss 直方圖 ⇒ L20-3/L25-2/L20-6 的實測依據）；<code>docs/mindmap/mindmap.json</code>；<code>scripts/check/charters/</code>。<br>本頁為<b>轉引</b>（0 跑、0 build）；除已認證的 <b>12</b> 格（<b>C1–C12</b>；C5 於 10-01 由分布升入、C12 於 10-02 由 overlap fence 窗升入、其餘 10 格見上表）外，頁上任何 t/s 都不是成績。"
+footer: "資料出處：<code>docs/SINGLESUBMIT_CORRECT_DESIGN_2026-09-28.md</code> §34（G4 權威讀數）、§36（P2 否證）、§37／§38（gap／邊界窗）、§39–§41（盤點與「做到底」）、§42（MISS_MASK 成本）、§43–§46（19.2 的底、完備性稽核）、§47（結案規則與兩個帳目的仲裁）；<code>docs/CACHE_SIZE_AB_2026-09-23.md</code>（池大小）；<code>docs/K3_PAIR_CERT_VERDICT_2026-09-28.md</code>（17.669 重現）；<code>docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</code>（逐層 miss 直方圖 ⇒ L20-3/L25-2/L20-6 的實測依據）；<code>docs/mindmap/mindmap.json</code>；<code>scripts/check/charters/</code>。<br>本頁為<b>轉引</b>（0 跑、0 build）；除已認證的 <b>13</b> 格（<b>C1–C13</b>；C5 於 10-01 由分布升入、C12 於 10-02 由 overlap fence 窗升入、<b>C13 於 10-02 由同一支臂但屬降級窗（operator 顯式放行 R4）升入</b>、其餘 10 格見上表）外，頁上任何 t/s 都不是成績。"
 
 # ── 節點分類（清單，不是 mapping：同一個節點可以同時是 handled 與 stale）──
 notes:
   - {node: m-prefill250,        class: goal,     why: "里程碑本身：9 次 launch ≥250（最高 296.24）⇒ <b>已認證（C1）</b>"}
   - {node: m-total,             class: goal,     why: "① 攻關成功仍空；最接近 pp 260.41 ＋ tg 12.195（差 3%）"}
   - {node: io-poolsize,         class: done,     why: "<b>本輪仲裁（09-29）</b>：矛盾是<b>儀器</b>造成的——白皮書的 −21% 出自可引用的 server／HTTP 同場配對（8 GiB 10.74 vs 4 GiB 8.43），節點原本引的 +3.1% 是 llama-bench 口徑（同日已證無法分辨池軸）⇒ 3／4 GiB 皆不可選。惟兩個數字都是 <b>prod25</b> ⇒ 依新規則<b>不結案</b>；業主＝<code>decode_sweep.py --arms baseline,pool-10g</code>（唯一未開的格子）"}
-  - {node: score-leaderboard,   class: done,     why: "<b>本輪仲裁（09-29）</b>：17.669 t/s 降級為「分布尾端一次抽樣」（同臂三次重啟 mean 8.77 vs 13.45）⇒「目前最好」＝<b>認證表最高 13.8674</b>（C12；前上限 C9 12.3767、同批 C10 12.3027／C11 12.1265，再下來才是 C8 11.9830／C7 11.9483）"}
+  - {node: score-leaderboard,   class: done,     why: "<b>本輪仲裁（09-29）</b>：17.669 t/s 降級為「分布尾端一次抽樣」（同臂三次重啟 mean 8.77 vs 13.45）⇒「目前最好」＝<b>認證表最高 15.2109</b>（C13；<b>⚠ 降級窗 ＋ operator 顯式放行 R4</b>，乾淨窗最高仍是 C12 13.8674；前上限 C9 12.3767、同批 C10 12.3027／C11 12.1265，再下來才是 C8 11.9830／C7 11.9483）"}
   - {node: io-nofill,                  class: handled, by: "L20-4"}
   - {node: s1-segbatch,                class: handled, by: "L20-1"}
   - {node: s1-asyncgather,             class: handled, by: "L20-6"}
@@ -969,7 +980,7 @@ dispositions:
   - {id: mtp-accept, kind: subgoal, ref: L25-5, why: "accept rule／dynamic-k／n_max：L25-5 的「acc 那一條目標」"}
   - {id: k3-swing, kind: subgoal, ref: L25-6, why: "k=3 的 1.43× 飄移定位：16.4% 的底噪就是它"}
   - {id: score-leaderboard, kind: subgoal, ref: L25-6, why: "成績排行榜；「目前最好」的定義衝突在這裡結清"}
-  - {id: score-leaderboard, kind: certified, ref: C12, why: "「目前最好」＝現行棘輪上限 <b>13.8674</b> t/s（C12；前上限 C9 12.3767、同批 C10 12.3027／C11 12.1265，再下來才是 C8 11.9830／C7 11.9483）——本格要的是「只剩一個定義」，棘輪就是那個定義"}
+  - {id: score-leaderboard, kind: certified, ref: C13, why: "「目前最好」＝現行棘輪上限 <b>15.2109</b> t/s（C13；<b>⚠ 降級窗 ＋ operator 顯式放行 R4</b>——乾淨窗最高仍是 C12 13.8674；前上限 C9 12.3767、同批 C10 12.3027／C11 12.1265，再下來才是 C8 11.9830／C7 11.9483）——本格要的是「只剩一個定義」，棘輪就是那個定義"}
   - {id: io-poolsize, kind: settled, why: "池大小已仲裁：8 GiB 定案，3／4 GiB 不可選（衝突是儀器造成的）"}
   - {id: cache-cb, kind: settled, why: "cb 口徑定讞（42 vs 74）：現行 `cb` 桶的讀法就是它"}
   - {id: k3-price, kind: settled, why: "K3 邊際單價（dispatch 成本）已量；上界算術的常數"}

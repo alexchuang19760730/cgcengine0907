@@ -128,6 +128,16 @@ SPREAD_LIMIT = 1.10          # 與 http_duo.py 同值（那裡的校準紀錄見
 MIN_KEPT_MEDIAN = 3          # http_duo.py 對「中位數」的 floor（3 個 kept ⇒ --reps 4）
 SPREAD_LIMIT_HTTP = SPREAD_LIMIT
 CLEAN_ATTRIBUTION = ("none",)
+# --- 顯式放行（operator 2026-10-02 17:3x 裁定）--------------------------------
+# ⚠ 預設**關閉**。刻意**不改** CLEAN_ATTRIBUTION（上一行的規矩：改動不得因為某個好數字被擋而放寬）。
+#   開啟時，列出的 attribution 值不再算 R4 失敗；但會在該 row 的 metrics["waived"] 留痕，
+#   而且**不**代表這一場變成乾淨窗 —— 它仍是降級窗讀數，只是被 operator 放行引用。
+#   啟用：CGC_QUOTE_WAIVE_ATTRIB="swap,both"
+WAIVE_ATTRIB_ENV = "CGC_QUOTE_WAIVE_ATTRIB"
+
+def _waived_attributions():
+    return {s.strip() for s in (os.environ.get(WAIVE_ATTRIB_ENV) or "").split(",") if s.strip()}
+
 BAND_PCT = 10.0
 INTEGRITY_TOL_PCT = 0.5      # 回報的 stddev 與 samples_ts 反算值的容許差
 
@@ -532,7 +542,12 @@ def judge(prod, row, reference=None, band_pct=BAND_PCT):
     if kept_spread > SPREAD_LIMIT:
         reasons.append("kept rep max/min=%.3f>%.2f" % (kept_spread, SPREAD_LIMIT))
     if attrib not in CLEAN_ATTRIBUTION:
-        reasons.append("attribution=%s≠none" % attrib)
+        if attrib in _waived_attributions():
+            m["waived"] = list(m.get("waived") or []) + [
+                "R4 attribution=%s：由 %s 顯式放行（operator 2026-10-02）"
+                % (attrib, WAIVE_ATTRIB_ENV)]
+        else:
+            reasons.append("attribution=%s≠none" % attrib)
     if reference:
         m["ref_delta"] = (float(avg) - float(reference)) / float(reference) * 100.0
         if abs(m["ref_delta"]) > band_pct:
@@ -659,6 +674,11 @@ def report(records, reference, band_pct):
     n_q = sum(1 for r in records if r["verdict"] == "QUOTABLE")
     print()
     print("VERDICT: %d/%d 可引用" % (n_q, len(records)))
+    for r in records:
+        w = (r["metrics"] or {}).get("waived")
+        if w:
+            print("  !! %s %s 顯式放行 R4 —— **不是乾淨窗**：%s"
+                  % (os.path.basename(r["file"]), r["shape"], "；".join(w)))
     for r in records:
         if r["verdict"] != "QUOTABLE":
             print("  · %s %s → %s：%s" % (os.path.basename(r["file"]), r["shape"],
