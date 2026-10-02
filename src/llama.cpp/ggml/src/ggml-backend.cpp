@@ -2175,6 +2175,12 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 // Segment 0 is never split (only a FENCED boundary has anything to gain from it).
                 int seg_cb_end[80] = {0};
                 int cbs_submitted = 0;
+                // [CGC 2026-10-02 leafonly D2] TREATMENT-APPLIED WITNESS. Same discipline as the fence's
+                // `armed == signalled` line: an arm whose flag reached the engine but whose mechanism
+                // never fired is a treatment-application NULL, not a negative result -- the charter's own
+                // section 2 records F2/exp-s2-overlap failing exactly that way. Printed on the DECPROF
+                // cadence as `splits=`, cumulatively, so >0 and growing is the proof the split ran.
+                static int64_t cgc_split_n = 0;
                 const int64_t dp_v0 = dp_on ? ggml_time_us() : 0;
                 struct ggml_cgraph gv0 = seg_view(0);
                 enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &gv0);
@@ -2228,6 +2234,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     const int sb = (s == n_segs-1) ? n_nodes - 1 : as_idx[s];
                     const bool do_split = split_ok && leaf_split_on &&
                                           leaf_split[s] > sa && leaf_split[s] <= sb;
+                    if (do_split) { cgc_split_n++; }   // treatment-applied witness (see declaration)
                     enum ggml_status ec2 = GGML_STATUS_SUCCESS;
                     if (do_split) {
                         struct ggml_cgraph gA = ggml_graph_view(&split->graph, sa, leaf_split[s]);
@@ -3016,11 +3023,12 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                         }
                         fprintf(stderr,
                                 "CGC-DECPROF: step=%lld segs=%d layers=%d total=%.2f ms | "
-                                "wait=%.2f (%.0f%%) cb=%.2f (%.0f%%) submit=%.2f (%.0f%%) ntok=%lld%s\n",
+                                "wait=%.2f (%.0f%%) cb=%.2f (%.0f%%) submit=%.2f (%.0f%%) splits=%lld ntok=%lld%s\n",
                                 (long long) dp_step, n_segs, dp_layers, (double) dp_tot / 1000.0,
                                 (double) dp_w / 1000.0, (double) dp_w * dp_inv,
                                 (double) dp_cb / 1000.0, (double) dp_cb * dp_inv,
                                 (double) dp_sb / 1000.0, (double) dp_sb * dp_inv,
+                                (long long) cgc_split_n,
                                 (long long) dp_ntok, dp_gpu_tail);
                         bool dp_used[64] = {false};
                         for (int rank = 0; rank < 8; rank++) {

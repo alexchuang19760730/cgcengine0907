@@ -269,3 +269,53 @@ operator 指示：×1.218 只是「encode/submit 離開關鍵路徑」那一半�
   `CGC_GPU_TIMING=1` 確認 `gap` 是否真的被填掉 —— **機制層的獨立證據比 t/s 抗噪**（若 gap 沒降，
   就是拆分的 B 段根本沒有早跑，那答案與 t/s 無關）。在那之前 `CGC_LEAF_SPLIT` **維持預設關閉**，
   且**不得**在板上寫任何增量數字。
+
+---
+
+## 11. D2 機制見證（2026-10-02 16:5x）：**治療確實施加了，但代價大於收益 ⇒ D2 判不划算**
+
+先證明「治療真的施加了」（charter §2 記過 `F2／exp-s2-overlap` 是 treatment-application null，所以
+在讀任何 gap／t-s 之前必須先有見證）。改動是**純列印**：`ggml-backend.cpp` 加 `static int64_t cgc_split_n`，
+`do_split` 時自增，並在既有 DECPROF 行加 `splits=%lld`（累計）。
+
+臂：`…CGC_GPU_TIMING=1;CGC_DECODE_PROFILE=1`（fence）vs 同＋`CGC_LEAF_SPLIT=1`（fence+D2），
+**同一批、同 reps=3**。產物 `Backup/l201_accel/leafonly_d2w/`。
+
+### 11.1 見證與代價（同 step 對照）
+
+| 量 | fence-only | fence+D2 |
+|---|---|---|
+| `splits=`（DECPROF，累計） | **0** | **13845 → 14781（遞增）** |
+| `submit` | 3.1–3.7 ms/步 | **9.0–23.9 ms/步** |
+| `cb` | 2.3–8.9 ms/步 | 10.2–24.7 ms/步 |
+| `total` | 56.5–63.0 ms/步 | 76.2–84.5 ms/步 |
+
+- ⇒ **治療確實施加了**（`splits` 遞增；且 fence-only 臂為 0 ⇒ 這個欄位是真的在區分兩臂，不是擺設）。
+- ⇒ **代價明確**：拆分讓 41 個柵欄邊界各多一次 `graph_compute`，`submit` 淨增 **約 5.5–20 ms/步**
+  （每邊界 ≈ +130 µs）。**這已經超過共享專家的 6.9%（≈5.5 ms/步）。**
+- ⇒ 因此 ABBA 的 −0.287 t/s 不是「窗口雜訊」而已：**機制層上它就是淨負或最多持平。**
+
+### 11.2 更重要的：D2 的機制前提本身是錯的
+`gap`（§9.2）是在**未開柵欄**的臂上量的（`prod-new:CGC_GPU_NODES=1;CGC_DECODE_PROFILE=1;
+CGC_GPU_TIMING=1;CGC_CB_N_MAIN=1`）。**而柵欄的工作就是填掉那段邊界空轉** —— 那正是它 ×1.218 的來源。
+⇒ 對一個**已經開柵欄**的段再拆一次，**沒有落點可吃**；剩下的序列化是 host round-trip（真依賴），
+不是閒置。D2 的 `+6.9%` 樂觀預期建立在「落點在柵欄之後仍然存在」這個未經量測的假設上。
+
+### 11.3 ★ 順手發現：`CGC_GPU_TIMING` 的 `gap` 在**開柵欄時失效**
+見證臂（fence on）的 GPUTIME 行是 `segs=1 bufs=9 skipped=351 skip_nc=351`，
+而 §9.2（fence off）是 `segs=40 bufs=355 skipped=5`。
+根因：該儀表在 hook 裡讀 `ctx->cmd_bufs[]`，其註解自己寫著前提是
+**「segment i+1 has not been submitted yet, so nothing else can be in flight」** ——
+**柵欄恰恰把這個前提破壞**（i+1 早在 hook 之前就提交了）⇒ 它讀到的是在途緩衝 ⇒ `skip_nc` 爆表、
+`gap` 讀成 0.00。**⇒ 開柵欄後不得再引用 `gap`／`gpu_busy_sum`**（`gpu_union`／`layer gpu_sum` 亦同）。
+這與 `CGC_LEAF_SPLIT` 無關，是**柵欄本身的既有代價**，本日才被顯露。
+
+### 11.4 判詞
+- **D2：判不划算（淨負）**。保留 `CGC_LEAF_SPLIT` 於**預設關閉**、並在樹上留作**已文獻化的否定**
+  （同 `CGC_SUBMIT_AHEAD` 的處置）；`seg_cb_end[]` 這個 cb 計數泛化**保留**（D5 兩趟已證對舊路徑零影響，
+  且任何未來的拆分都需要它）。
+- **這一軸（重疊家族）到此收在**：柵欄 ×1.218（乾淨窗、`attribution=swap` 不可引用）是**已量到的上限**；
+  leaf-only 精細化**無效**（機制已定位）。要再往上只能走 **S1（裝置端算 leaf）把 host round-trip 消滅** ——
+  那是「消滅」不是「重疊」，且與本軸可相加。
+- ⚠ 這一條也**改寫了 §8.7 的預註冊結論**：D2 的否證條件（<14.32）之所以看起來不成立，是因為
+  它量的是窗口惡化；**真正的否證來自機制（代價 > 收益）**。
