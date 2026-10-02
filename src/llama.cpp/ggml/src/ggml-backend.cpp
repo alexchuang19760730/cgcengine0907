@@ -3021,15 +3021,29 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                                      (double) dp_gg / 1e6,
                                      dp_gs == 0 ? " (NO TIMESTAMPS)" : "");
                         }
+                        // [CGC 2026-10-02 LINE-FORMAT REPAIR] `splits=` was added INTO this row by
+                        // commit b96ee4989 as a write-only witness (no parser reads it), and it
+                        // broke **19 parsers** in scripts/check/ whose last field is
+                        // `submit=(%) ntok=` -- they stopped matching real logs, and the
+                        // attribution toolchain failed SILENTLY (measured 2026-10-02:
+                        // `verify_marginal --nsm` reported "no CGC-DECPROF step rows" on a log that
+                        // holds 477 of them). This file's own rule for that situation is written
+                        // twice above (CGC-NSM / CGC-GPUOPS): a NEW fact gets a NEW tag, never a
+                        // longer existing row. The witness keeps its value on its own line.
                         fprintf(stderr,
                                 "CGC-DECPROF: step=%lld segs=%d layers=%d total=%.2f ms | "
-                                "wait=%.2f (%.0f%%) cb=%.2f (%.0f%%) submit=%.2f (%.0f%%) splits=%lld ntok=%lld%s\n",
+                                "wait=%.2f (%.0f%%) cb=%.2f (%.0f%%) submit=%.2f (%.0f%%) ntok=%lld%s\n",
                                 (long long) dp_step, n_segs, dp_layers, (double) dp_tot / 1000.0,
                                 (double) dp_w / 1000.0, (double) dp_w * dp_inv,
                                 (double) dp_cb / 1000.0, (double) dp_cb * dp_inv,
                                 (double) dp_sb / 1000.0, (double) dp_sb * dp_inv,
-                                (long long) cgc_split_n,
                                 (long long) dp_ntok, dp_gpu_tail);
+                        // The D2 treatment-applied witness, now on its own tag. Printed only when
+                        // the split path actually ran, so the untouched path adds no lines.
+                        if (cgc_split_n > 0) {
+                            fprintf(stderr, "CGC-LEAFSPLIT: step=%lld splits=%lld\n",
+                                    (long long) dp_step, (long long) cgc_split_n);
+                        }
                         bool dp_used[64] = {false};
                         for (int rank = 0; rank < 8; rank++) {
                             int dp_best = -1;
