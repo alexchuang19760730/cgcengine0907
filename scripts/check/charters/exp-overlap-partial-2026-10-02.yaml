@@ -105,6 +105,11 @@ arms:
   - prod-new:CGC_OVERLAP_FENCE=41                     # 全覆蓋
   - prod-new:CGC_OVERLAP_FENCE=8                       # 部分覆蓋（k 掃描）
   - prod-new:CGC_OVERLAP_FENCE=2
+  # [2026-10-02 leafonly D2] 段內切點：把含 remap 讀者的 A 段與「開頭就是共享專家」的 B 段分開提交，
+  # B 無柵欄 ⇒ 它第一批 dispatch 在 seg[i] 的 drain 期間就跑。落點＝gap 中位 7.6／均值 10.4 ms/步
+  # （Backup/l201_accel/leafonly_d1b/d1b.stderr.log）；要放進去的東西＝共享專家 6.9%（同 d1.stderr.log）。
+  # D5 兩趟皆 PASS（leafonly-d2-ctl / leafonly-d2-split：M1/M2/M3 9/9、comparable=true）。
+  - prod-new:CGC_OVERLAP_FENCE=41;CGC_LEAF_SPLIT=1
 non_prod_reason: "端點是 bit-identity ＋ 正解臂的 t/s；k 掃描臂只比 t/s，不各自宣稱 bit-identical。"
 
 # ── 【D5 oracle 閘】 ──────────────────────────────────────────────────────

@@ -297,6 +297,22 @@ DIAGNOSTIC_KEYS = {
     # NOT covered by this claim: k only fences the first k boundaries per graph, so a k that is too
     # small is not a correctness question at all -- the unfenced boundaries keep the upstream order.
     "CGC_OVERLAP_FENCE",
+    # [CGC 2026-10-02 線A · leafonly D2] exp-overlap-leafonly, the refinement of the fence above.
+    # The claim, stated per byte: CGC_LEAF_SPLIT=1 submits a fenced span as TWO graph_computes instead
+    # of one -- part A = [seg_start, first `ffn_up-` node) which holds every remap reader and keeps
+    # the event wait, and part B = [that node, seg_end] which begins with the shared expert
+    # (`build_ffn(cur, ffn_up_shexp, ...)`, whose input is the pre-MoE `cur`) and reads NO remap.
+    # Therefore: (a) part B commits before segment i's hook, and that is the entire point -- it is
+    # leaf-independent work by construction, so there is no read-before-write to lose; (b) every byte
+    # part B consumes from part A (moe_out -> ffn_out, then the residual into layer i+1) is ordered
+    # by Metal's own hazard tracking, the same mechanism CGC_SUBMIT_AHEAD (below) already proved for
+    # every non-remap tensor; (c) the remap leaf's own bytes and its read-after-write ordering are
+    # untouched -- part A still waits on the event that is signalled only after the write returns.
+    # What DOES move is when the dispatches are committed. If the claim is false the gate fails on the
+    # LOGITS, which is where it should fail. ⚠ This registration also carries the cb-accounting fix
+    # (seg_cb_end[]): with a two-part submit the old `done0 + (i+1)*bufs` hook wait would fire early
+    # and that WOULD corrupt the remap, so the split and that fix are one proposition, not two.
+    "CGC_LEAF_SPLIT",
     # CGC_SUBMIT_AHEAD is the RACY ceiling probe for the same axis (it mutates a remap buffer an
     # in-flight command buffer references). It is registered here ONLY so that a diagnostic run can
     # be compared on the same basis; an arm carrying it is expected to FAIL the identity check, and

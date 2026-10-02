@@ -2061,6 +2061,14 @@ fi
 if [ -n "${CGC_CB_N_MAIN:-}" ]; then
     SERVER_ENV+=(CGC_CB_N_MAIN="$CGC_CB_N_MAIN")
 fi
+# [CGC 2026-10-02 leafonly D2] CGC_LEAF_SPLIT=1 submits each fenced span as two graph_computes so
+# the shared expert (the only leaf-free work of any size in a span: 6.9% of decode GPU busy,
+# Backup/l201_accel/leafonly_d1/d1.stderr.log) starts during the previous segment's drain instead
+# of after its hook. Forwarded explicitly because an unlisted CGC_* is dropped silently -- the trap
+# this very comment block documents. Default OFF => byte for byte the old path.
+if [ -n "${CGC_LEAF_SPLIT:-}" ]; then
+    SERVER_ENV+=(CGC_LEAF_SPLIT="$CGC_LEAF_SPLIT")
+fi
 # [CGC 2026-09-18] CGC_GRPH_DBG=1 dumps the first 6 graph_computes' full node list
 # (`CGC-GRPH[i] name=... op=... ne=[..]`). It was NOT in this allowlist, so passing it through this
 # launcher did nothing -- the same silent-drop trap as CGC_VERIFY_OP_TIMING below. Its use here is

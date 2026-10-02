@@ -1879,6 +1879,31 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 }
                 const int n_segs = n_as_found + 1; // tail segment included
 
+                // [CGC 2026-10-02 leafonly D2] Per-segment split point at the SHARED EXPERT.
+                //
+                // Why: the only leaf-independent work of any size inside a span is the shared expert
+                // (`build_ffn(cur, ffn_up_shexp, ...)`), whose input is the pre-MoE `cur` and which
+                // never reads the remap leaf. Everything else in the span is transitively downstream
+                // of the leaf (the cross-boundary residual: qwen35moe.cpp:283 -> :290 -> next layer's
+                // attn_norm). So the fence cannot simply be moved: the gate has to cover the remap
+                // readers and NOT the shared expert. Measured size of that prize: 6.9% of decode GPU
+                // busy (Backup/l201_accel/leafonly_d1/d1.stderr.log), against a boundary GPU idle of
+                // median 7.6 / mean 10.4 ms/step (Backup/l201_accel/leafonly_d1b/d1b.stderr.log).
+                //
+                // `ffn_up-` is the first node of that cluster and is unambiguous: the MoE's own
+                // gate/up are named `ffn_moe_gate_up` / `ffn_moe_up`, so nothing else matches this
+                // prefix. -1 == "no split point in this span" => submit it as one graph_compute.
+                int leaf_split[80];   // n_segs can be n_as_found+1 (limit 64+1)
+                for (int s = 0; s < n_segs; s++) {
+                    leaf_split[s] = -1;
+                    const int sa = (s == 0) ? 0 : (as_idx[s-1] + 1);
+                    const int sb = (s == n_segs-1) ? n_nodes - 1 : as_idx[s];
+                    for (int k = sa; k <= sb; k++) {
+                        const char * kn = split->graph.nodes[k]->name;
+                        if (strncmp(kn, "ffn_up-", 7) == 0) { leaf_split[s] = k; break; }
+                    }
+                }
+
                 // poll the Metal backend for completed segments without blocking the pipeline
                 auto * reg = ggml_backend_dev_backend_reg(ggml_backend_get_device(split_backend));
                 typedef int (*cgc_done_fn)(ggml_backend_t);
@@ -2146,9 +2171,15 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
 
                 // submit the first segment, then pipeline: submit seg[i+1] ahead, wait for seg[i],
                 // fire the top-k hook (writes the remap leaf) that seg[i+1] consumes
+                // [CGC 2026-10-02 leafonly D2] cumulative completion accounting for the hook's wait.
+                // Segment 0 is never split (only a FENCED boundary has anything to gain from it).
+                int seg_cb_end[80] = {0};
+                int cbs_submitted = 0;
                 const int64_t dp_v0 = dp_on ? ggml_time_us() : 0;
                 struct ggml_cgraph gv0 = seg_view(0);
                 enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &gv0);
+                cbs_submitted += bufs;
+                seg_cb_end[0] = cbs_submitted;
                 if (dp_on) { dp_last_submit_us = ggml_time_us() - dp_v0; }
                 if (ec != GGML_STATUS_SUCCESS) {
                     return ec;
@@ -2171,11 +2202,47 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 // remap buffer is stable before the command buffer referencing it is committed.
                 // CGC_SUBMIT_AHEAD=1 restores the old racy submit-ahead order for A/B perf compare.
                 const bool submit_ahead = getenv("CGC_SUBMIT_AHEAD") != nullptr;
-                auto submit_seg = [&](int s) -> enum ggml_status {
+                // [CGC 2026-10-02 leafonly D2] CGC_LEAF_SPLIT=1 splits each fenced span in two:
+                //   part A = [a, split)  -- holds the remap readers -> stays GATED (it eats the
+                //                           one-shot ARM the caller set, because the ARM is consumed
+                //                           by whichever graph_compute runs next);
+                //   part B = [split, b]  -- starts with the shared expert and reads no remap
+                //                           -> NOT gated, so its first dispatches run during
+                //                           seg[i]'s drain instead of after its hook.
+                // Correctness is unchanged: B never reads the leaf, and everything B consumes from A
+                // (moe_out -> ffn_out, then the residual into the next layer) is ordered by Metal's
+                // own hazard tracking -- the same mechanism the racy diagnostic arm already proved
+                // for every non-remap tensor. Default OFF => byte for byte the old path.
+                //
+                // The cb accounting must change WITH the split: cgc_done is incremented once per
+                // command buffer and the Metal side always creates n_cb+1 of them per graph_compute,
+                // so a two-part submit adds 2*bufs completions for one segment. Leaving the hook's
+                // old `done0 + (i+1)*bufs` in place would fire it EARLY (stale ids -> garbage remap
+                // -> whole-graph corruption), which is precisely the failure this file's comments
+                // warn about. seg_cb_end[] below is that accounting.
+                const bool leaf_split_on = getenv("CGC_LEAF_SPLIT") != nullptr;
+                auto submit_seg = [&](int s, bool split_ok) -> enum ggml_status {
                     const int64_t v0 = ggml_time_us();
                     const int d0 = submit_dbg && cgc_done ? cgc_done(split_backend) : -1;
-                    struct ggml_cgraph gv = seg_view(s);
-                    enum ggml_status ec2 = ggml_backend_graph_compute_async(split_backend, &gv);
+                    const int sa = (s == 0) ? 0 : (as_idx[s-1] + 1);
+                    const int sb = (s == n_segs-1) ? n_nodes - 1 : as_idx[s];
+                    const bool do_split = split_ok && leaf_split_on &&
+                                          leaf_split[s] > sa && leaf_split[s] <= sb;
+                    enum ggml_status ec2 = GGML_STATUS_SUCCESS;
+                    if (do_split) {
+                        struct ggml_cgraph gA = ggml_graph_view(&split->graph, sa, leaf_split[s]);
+                        ec2 = ggml_backend_graph_compute_async(split_backend, &gA);
+                        if (ec2 == GGML_STATUS_SUCCESS) {
+                            struct ggml_cgraph gB = ggml_graph_view(&split->graph, leaf_split[s], sb + 1);
+                            ec2 = ggml_backend_graph_compute_async(split_backend, &gB);
+                        }
+                        cbs_submitted += 2 * bufs;
+                    } else {
+                        struct ggml_cgraph gv = seg_view(s);
+                        ec2 = ggml_backend_graph_compute_async(split_backend, &gv);
+                        cbs_submitted += bufs;
+                    }
+                    seg_cb_end[s] = cbs_submitted;
                     if (ec2 != GGML_STATUS_SUCCESS) {
                         return ec2;
                     }
@@ -2206,11 +2273,14 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     static int64_t w_us = 0, c_us = 0, n = 0;
                     const int64_t st0 = ggml_time_us();
                     if (cgc_done) {
-                        // wait for segment i's WHOLE run: all n_cb+1 cmd buffers of segments 0..i
+                        // wait for segment i's WHOLE run: every cmd buffer of segments 0..i
                         // (one completion per buffer). Waiting only on the main buffer (done0+i+1)
                         // fired the top-k hook while the argsort was still running -> stale ids ->
                         // garbage remap -> whole-graph corruption (echo prompt / all-'!').
-                        const int target = done0 + (i + 1) * bufs;
+                        // [CGC 2026-10-02 leafonly D2] `(i+1)*bufs` was that count only while every
+                        // segment was exactly one graph_compute. With CGC_LEAF_SPLIT=1 a segment can
+                        // be two, so read the cumulative count submit_seg banked instead.
+                        const int target = done0 + seg_cb_end[i];
                         while (cgc_done(split_backend) < target) {
                             gt_polln++;
                             sched_yield();
@@ -2840,7 +2910,9 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                         cgc_fence_arm(split_backend, ovl_v);
                     }
                     if ((ovl_here || submit_ahead) && i + 1 < n_segs) {
-                        ec = submit_seg(i + 1);
+                        // leafonly D2: only a FENCED boundary can profit from the leaf-free part
+                        // running early, so the split is enabled exactly when ovl_here is.
+                        ec = submit_seg(i + 1, ovl_here);
                         if (ec != GGML_STATUS_SUCCESS) {
                             return ec;
                         }
@@ -2859,7 +2931,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     }
                     const int64_t bd_t0 = ggml_time_us();   // [CGC §37] hook returned
                     if (!ovl_here && !submit_ahead && i + 1 < n_segs) {
-                        ec = submit_seg(i + 1);
+                        ec = submit_seg(i + 1, false);
                         if (ec != GGML_STATUS_SUCCESS) {
                             return ec;
                         }
