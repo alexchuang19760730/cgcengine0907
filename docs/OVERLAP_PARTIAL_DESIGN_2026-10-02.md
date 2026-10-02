@@ -95,3 +95,87 @@ host:  submit seg[i+1]  ──► cb 首部編碼 encodeWaitForEvent(E, v)   ←
 - **先重開機**：今日 swap 峰值 6.2 GB、本體 tg 由 12.3 掉到 10.35；不重開機，k 掃描的步時差會被足跡淹沒。
 - 入口：`harness bench`（k 掃描）＋ `ab_interleave.py`（成對）；壓縮機 BUSY 就輪詢等 QUIET。
 - 柵欄臂的 `fence_signals>0` 是**量具活著**的判據（同 `answer_md5` 守門的作用）。
+
+---
+
+## 8. 後續：「leaf-only fencing」可行性檢查（2026-10-02 晚；設計完成、**未實作**）
+
+operator 指示：×1.218 只是「encode/submit 離開關鍵路徑」那一半，要摸到 25 得拿回 racy 的全額
+×2.04 ⇒ 把柵欄精細化到「只柵欄 leaf 依賴的部分」。本節把這個命題先證偽、再給可行變體。
+
+### 8.1 結論（先講）
+**照字面做不可行，且理由不在實作而在圖結構**：下一段沒有「可供早跑的 leaf-independent 前綴」，
+因為**跨邊界殘差把整段綁在 remap leaf 上**。真正 leaf-independent 的只剩路由簿記與**共享專家**，
+後者是唯一夠大、值得投的一塊（元素數為 routed 有效量的 **12.5%**；步時佔比待儀器量，見 8.4）。
+
+### 8.2 證據一：下一段的絕大部分遞移依賴 leaf
+- 邊界＝`ffn_moe_argsort-<il>`（`ggml-backend.cpp:1843-1880`）⇒ `seg il+1` =［層 il 的 MoE 餘部
+  ＋ 層 il+1 的 attn／pre-FFN］。
+- 跨邊界殘差（`src/llama.cpp/src/models/qwen35moe.cpp`，逐行）：
+  - `:187` `inpSA = inpL`　→　`:243` `cur = build_layer_attn(...)`　→　`:252` `cur = ggml_add(cur, inpSA)`
+  - `:256` `ffn_residual = cur`　→　`:279` `cur = build_layer_ffn(attn_post_norm, il)`　→　`:283` `cur = ggml_add(cur, ffn_residual)`　→　`:290` `inpL = cur`
+  ⇒ 層 il+1 的 `attn_norm` 吃的是**層 il 的 post-FFN 殘差** ⇒ 依賴 `moe_out-il` ⇒ 依賴 remap leaf。
+  **是遞移依賴，不是快取效應。**（原 §5 的難點 ①「消費節點太靠前 ⇒ 可早跑的部分短」被證實，且比原本想的更糟：不是短，是沒有。）
+- remap leaf 的讀者＝`ffn_moe_gate_up`／`up`／`gate`／`down`（`mul_mat_id`：`llama-graph.cpp:2591`
+  `mm_id_ids = remap_ids`，消費於 `:2638/2658/2671/2853`）⇒ 消費者在段的**最前面**。
+
+### 8.3 證據二：真正 leaf-independent 的只有兩塊
+1. **路由簿記**：`ffn_moe_topk-*`、`ffn_moe_weights-*`（~5 節點，太小）。
+2. **共享專家**：`build_ffn(cur, ffn_up_shexp, …)`（`qwen35moe.cpp:598-620`）—— 它的輸入是
+   **MoE 之前的 `cur`**（`:622` 才 `ggml_add(moe_out, ffn_shexp)`），**與 routed experts／leaf 無關**
+   ⇒ 可以在 `seg il` 的 drain 與 hook 期間就跑。
+
+### 8.4 尺寸：從 GGUF 表頭算，不需跑模型
+**真正在用的模型＝`models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf`**
+（operator 2026-10-02 指正；先前本節誤引 `Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf`）。
+兩者表頭**幾何完全相同** ⇒ 下面的比值不受影響：
+`block_count 41`、`embedding_length 2048`、`expert_count 256`、`expert_used_count 8`、
+`expert_feed_forward_length 512`、`expert_shared_feed_forward_length 512`；
+`blk.0.ffn_{up,gate}_shexp.weight [2048,512]`、`blk.0.ffn_down_shexp.weight [512,2048]`。
+
+- 共享專家元素數/層 = `3·2048·512` = **3.15 M**；routed 有效 = `8·3·2048·512` = **25.17 M**
+  ⇒ **共享 = routed 有效量的 12.5%**。
+- ⚠⚠ **這是「元素數比」，不是「步時佔比」，而且它是上界**。本引擎的 decode 是 **IO-bound**
+  （routed experts 由 expert cache pool／SSD 串流，共享專家是常駐 dense ⇒ 讀的是 RAM 不是 SSD），
+  所以「12.5% 的元素」不等於「12.5% 的步時」。**步時佔比只能由儀器量出來 ＝ D1 的唯一目的。**
+- 保守區間：把「MoE 相關 GEMV 佔解碼 GPU 忙碌 25–65%」（DECPROF 量過的上界帶）乘上
+  「共享專家佔 MoE 元素 12.5%」⇒ 步時 **3–8%**；`14.32 × 1.03…1.08 ≈ 14.7–15.5 t/s`：
+  **有機會**越過 charter 的 ≥15，但不是保證（相乘是估計，不是量測）。
+
+### 8.5 為什麼「只柵欄 leaf 消費者」在**現行**實作下拿不到
+- 柵欄是**整段粒度**：`encodeWaitForEvent` 對該 `graph_compute` 的**每一個** cb 編碼
+  （`ggml-metal-context.m:1577`、註解 `:1254`）。
+- cb 是**連續節點區間**，且 `n_main = MAX(64, 0.1·n_nodes)`（`:1230-1233`）⇒ 對 ~50–110 節點的段，
+  前 64 個節點都落在 main cb ⇒ 共享專家（圖序在 `moe_out` 之後）與 leaf 消費者**同一個 cb**
+  ⇒ 要嘛全柵欄、要嘛都不柵欄。
+
+### 8.6 可行設計（分三步，先便宜後貴）
+- **D1（先行、便宜）**：把 `ffn_shexp` 加進 node-kind 前綴白名單（`ggml-backend.cpp:2352` 附近）。
+  現況 `ffn_shexp*` 落進泛用 `ffn_` 桶（`ns_fix` 有 `"ffn_"` 這個 catch-all）⇒ **量不出來**。
+  加一條之後，一次 `CGC_GPU_NODES` 診斷跑就直接給出共享專家的真實 GPU 佔比，
+  **用來驗收 8.4 的 7–8% 預測**（診斷讀數是比值 ⇒ 不受窗口髒不髒影響）。
+- **D2（若 D1 ≥5%）**：**讓共享專家早跑**——
+  (a) 段內**新增一個切點**（`ffn_shexp`），使〔`ffn_shexp`, `shared_expert_gate`, `ffn_shexp_gated`〕
+      成為一個**不含 remap 讀者**的獨立段；
+  (b) 排程器對「不含 remap 讀者的段」**不編柵欄**、但仍**早提交** ⇒ 它在 `seg il` 的 drain 期間就跑；
+      `ffn_out`（`= add(moe_out, ffn_shexp)`）之後改由 Metal 自己的 hazard tracking 擋
+      （racy 臂已證跨 cb 資源追蹤可用：它只有 remap 髒，其餘張量正確）。
+  - 不需要 mid-encoder wait：cb 級柵欄已足夠。先前記憶裡「插 wait 會全 NaN」**已查明是 prefill 被柵欄**
+    造成（`ggml-backend.cpp:2196-2199`：`CGC-MMID-ASSERT id_oob` ＋ all-NaN），**不是 wait 本身**。
+- **D3（若 D2 達標）**：S1（裝置端算 leaf ＝ 消滅 host round-trip）。它與重疊家族**相加**，不是替代。
+
+### 8.7 預註冊（發車前寫死；本節＝立項依據）
+- 子目標節點 id：`exp-overlap-leafonly`（新立項卡；**未發車**）
+- 控制臂 `prod-new`　／　處理臂 `prod-new:CGC_OVERLAP_FENCE=41:CGC_LEAF_SPLIT=1`（D2 的新旗標）
+- **預期 decode 14.6–15.5 t/s**（上界＝共享專家的 12.5% 元素比；真實值待 D1 定尺寸）；
+  `wait` 中位再降 0–6 ms/步；`cb` 增幅 <2 ms/步
+- 驗收：M1/M2/M3 **9/9** ∧ **≥15.0 t/s** ∧ `CGC-OVERLAP-FENCE … signalled>0`
+- 否證：M1 ≤2/9，**或** <14.32（連共享專家的量級都沒拿到）⇒ 判死本軸，改投 S1
+- ⚠ 若 D1 量出共享專家佔步時 <2% ⇒ 先把 D2 的成本與收益並列再決定是否實作（可能不值得動 src）。
+
+### 8.8 對「25」的路徑校正（重要）
+`12.377 × 2.04 = 25.2` **不是** bit-identical 設計可及的目標：2.04 需要**沿 stale leaf 全速跑完整段**
+（charter §hypothesis 自己載明 racy 臂輸出是垃圾、且提前終止）。保 bit-identity 的天花板要由
+**(i) 邊界 drain 的重疊 ＋ (ii) 消滅 host round-trip（S1）** 相加得到，不是乘 2.04。
+⚠ 因此「leaf-only fencing 拿回全額」的期望值應下修：能拿回的是**共享專家那一塊（~7–8%）**，
+不是 racy 差額的一半。
