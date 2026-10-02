@@ -2314,7 +2314,15 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                                     "ffn_moe_add", "gdn_state", "gdn_out",
                                     "ffn_moe_argsort", "ffn_moe_logits", "ffn_moe_probs", "ffn_moe_slots",
                                     "ffn_moe_topk", "ffn_moe_gate_up", "ffn_moe_gate", "ffn_moe_up",
-                                    "ffn_moe_down", "ffn_moe_", "ffn_gate", "ffn_up", "ffn_down", "ffn_",
+                                    "ffn_moe_down", "ffn_moe_", "ffn_gate", "ffn_up", "ffn_down",
+                                    // [CGC 2026-10-02 leafonly D1] The shared expert was landing in the
+                                    // catch-all `ffn_` bucket together with ffn_norm/ffn_out, so its share
+                                    // was unreadable -- and that share is exactly the number the "overlap
+                                    // the shared expert" lever needs (docs/OVERLAP_PARTIAL_DESIGN_2026-10-02.md
+                                    // section 8). Longest-prefix-wins makes this a pure vocabulary add:
+                                    // ffn_shexp / ffn_shexp_gated split out, every other bucket unchanged.
+                                    // No effect unless CGC_GPU_NODES is set (print-only instrument).
+                                    "ffn_shexp", "ffn_",
                                     // [CGC 2026-09-18] `top_k` is a REAL MoE op (ggml TOP_K, ne=[256,2]
                                     // over the expert logits) that had no entry, so its duration was
                                     // being reported as "(other)" -- while `ffn_moe_topk` IS in the
