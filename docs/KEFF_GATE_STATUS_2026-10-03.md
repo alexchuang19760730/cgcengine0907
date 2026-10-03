@@ -76,3 +76,61 @@ M-RoPE X=Y: 514/514, 517/517, 580/580, 543/543 …   × 30 行，全部 X == Y
 - runner：`Backup/spec_tree/keff_gate.sh`
 - 產物：`Backup/spec_tree/keff_gate{,.json,.logs}`
 - 來源文件：`docs/KEFF_CAP_2026-09-26.md`（根因與修法）、`docs/MTP_KAXIS_RECOMPUTE_2026-09-30.md` §4.2b（本輪更正其判詞）
+
+---
+
+## 6. 追加（2026-10-03 16:5x）：① 已落地、② 的前提被推翻、③ 窗口不可用
+
+### 6.1 ① 落地：新臂一律 `40-40:140`
+
+`scripts/check/charters/exp-marginal-decomp.yaml` 的臂字串已改（`40-40:16` → `40-40:140`），並把**理由**寫進卡裡
+（cap 決定 `min_usable = cap-1` ⇒ `decode width = floor(min_usable/top_k)`；cap<24 ⇒ width<2 ⇒ 任何 ≥2 顆的步被判成 PREFILL 圖）。
+09-28/29 的 dated 卡片**留原樣**（歷史對照、不回改）。10-01 的 `e-l254-kaxis-sweep` 本來就已是 `40-40:140`。
+
+### 6.2 ② 的前提被推翻：乾淨窗裡**沒有** draft=0 的輪次
+
+用 `Backup/l254_kaxis_20261001/k*.stderr.log`（10-01、**全臂 `attribution=none`、NOMINAL、swap 0**）逐 k 數引擎自己的 `SPECDBG round`：
+
+| k | mean_draft（= k_eff） | 直方圖 | draft=0 輪次 |
+|---|---|---|---|
+| 1 | 1.000 | {1:230} | 0 |
+| 2 | **1.797** | {1:47, 2:185} | **0** |
+| 3 | **2.500** | {1:38, 2:22, 3:136} | **0** |
+| 5 | 3.843 | {1:30, 2:15, 3:17, 4:7, 5:109} | **0** |
+| 7 | 4.726 | {1:46, 2:23, 3:12, 4:7, 5:5, 6:3, 7:112} | **0** |
+
+⇒ **今天那 13.5% 的 draft=0 是髒盒效應，不是系統性缺陷**（09-26 `KEFF_CAP §4` 記 11/76≈14%，10-01 乾淨窗記 **0/1090**）。
+⇒ 因此「修 i=0 值多少」**不能**用今天的數去定價 —— 乾淨窗的短少是另一回事：
+  它集中在「只拿到 1 顆」的輪次（k=3：38/196 = 19%），而**不是 0 顆**。
+⇒ **本節是對 §3「若把 i=0 碰撞修掉、k_eff 從 2.167 往 3 靠」那句的更正**：那個 2.167 本身是髒盒產物，不能當基準。
+
+### 6.3 ③ 配對量測：**守門已放開**（新），但**窗口不可用**（今日未取得）
+
+**新**：`scripts/check/llama_bench_matrix.py` 的 fail-closed spec 守門原本會拒跑「臂帶 `CGC_SERVER_MTP=1`
+而 cell 沒有 `--spec-type`」—— 而 `--spec-type` 是**整趟級**旗標，加了它**每一臂**都投機
+⇒ 守門的實際效果是**禁止同 session 的 off/on 配對**，這正是記錄裡「交付 cell MTP 增益 UNRESOLVED（缺配對量測）」的結構成因。
+已放開一種情形：臂自己帶**按臂 spec shim** `LLAMA_BENCH_SPEC[=1]`（＋可選 `LLAMA_BENCH_SPEC_DRAFT_N_MAX`，
+`llama-bench.cpp:1350-1358`，只在 CLI 沒給 `--spec-type` 時生效）⇒ 那一臂**只有它自己**投機。
+守門其餘部分不動（`=0`／空字串仍拒跑）；`--selftest` **11/11 unit ＋ 2/2 end-to-end**。
+⚠ 放開時會**大聲印** `!! note: ... PER-ARM spec shim ...`，並要求在產物裡把**實現的深度**讀回來（SPECDBG／ACCEPT），不得從 cell 假設。
+
+**但今日未取得可引用讀數**（`Backup/spec_tree/mtpon_rec/`）：
+
+| 臂 | 結局 | avg_ts | 逐 rep | attribution |
+|---|---|---|---|---|
+| ON（k=2、cap 140） | `incomplete=False` ✅ | 9.134 | 7.55／9.74／10.11 | **`swap`**（growth 4554 MiB、max_swap 11685 MiB > 實體 9.2 GB） |
+| OFF（`prod-new`） | `incomplete=False` | 8.241 | 10.34／**3.88**／10.50 | **`swap`**（growth 890 MiB、max_swap 11910 MiB） |
+
+⇒ 兩臂皆 `attribution=swap`、`max_swap` **超過實體記憶體** ⇒ **逐字不可引用**。
+**可引用的收穫只有一條**：**cap 修復在 k=2 上也成立**（`incomplete=False`；`:16` 之下同型臂是 5/5 崩）。
+另註：ON 臂 `llama_decode[…] returned -1` = **0**（今天 k=3 那趟是 6）—— 與 §6.2 一致，碰撞是盒子狀態相依的。
+
+### 6.4 「推進可認證紀錄」的前置條件（**唯一缺口**）
+
+需要一個 **乾淨窗口**：起跑 `attribution` 必須是 `none`，即
+- `swap` 存量先降回 < 2 GB，且
+- 起跑 `pages_available` 越過 `l255_close.SURVIVAL_MB`（7703 MB）——今天量到 6665／9849 兩次都不穩。
+
+而**最大的 hog 是 WorkBuddy 自己**（本輪閘門原文：`WorkBuddy Helper (Renderer) 2723 MiB` ＋ Electron 691＋420 MiB），
+⇒ 這一條**要 operator 手動做**（關 app 或重開機），不是本線能排的。
+在那之前：**MTP-on 進不了可認證紀錄**——not because the engine is broken, because the box is.

@@ -519,12 +519,34 @@ def mtp_without_spec(extra_env: dict[str, str], res_env: dict[str, str], spec_ty
 
     Value test, not presence: run_server.sh gates its MTP block on `= "1"`, so "0" is an honest off
     arm (the ARMS table has two of them). Any other non-empty value is treated as ON -- fail-closed.
+
+    [CGC 2026-10-03] One exception, and it is the case the guard was silently forbidding: when the
+    ARM ITSELF carries the per-arm spec shim `LLAMA_BENCH_SPEC[=1]` (+ optionally
+    `LLAMA_BENCH_SPEC_DRAFT_N_MAX`). llama-bench resolves those into `spec_type={"draft-mtp"}` and
+    the draft depth from the PER-ARM environment (llama-bench.cpp:1350-1358, "CLI first, then the
+    deprecated environment shim"), so the draft IS armed for that arm alone. That matters because
+    `--spec-type` is a whole-run flag: with it, EVERY arm of the cell speculates, so a same-session
+    MTP-off/MTP-on pair is impossible. Refusing the shim therefore makes the delivery-cell MTP gain
+    permanently unmeasurable -- which is the state the record has been in. The premise in the note
+    above ("a flag that nothing here adds for you") is simply false in this case, so the arm is
+    allowed -- loudly, because its depth comes from its own env and must be read back from the
+    artifact (SPECDBG histogram / ACCEPT), never assumed from the cell.
     """
     if spec_type:
         return ""
     for src, name in ((extra_env, "arm env"), (res_env, "resolved env")):
         v = (src or {}).get("CGC_SERVER_MTP")
         if v is not None and v.strip() != "0":
+            shim = (src or {}).get("LLAMA_BENCH_SPEC")
+            if shim is not None and shim.strip() not in ("", "0"):
+                depth = (src or {}).get("LLAMA_BENCH_SPEC_DRAFT_N_MAX")
+                print(f"!! note: {name} CGC_SERVER_MTP={v} with a PER-ARM spec shim "
+                      f"(LLAMA_BENCH_SPEC={shim}" +
+                      (f", LLAMA_BENCH_SPEC_DRAFT_N_MAX={depth}" if depth else "") +
+                      ") -- allowed: the draft is armed for THIS arm only, which is the only way a "
+                      "multi-arm cell can hold both an off and an on arm. Read the realized depth "
+                      "back from the artifact (SPECDBG / ACCEPT), not from the cell.", file=sys.stderr)
+                return ""
             return f"{name} CGC_SERVER_MTP={v}"
     return ""
 
@@ -1178,6 +1200,20 @@ SELFTEST_CASES: list[tuple[str, dict, dict, str, bool]] = [
     ("plain cell, no MTP at all", {}, {}, "", False),
     ("MTP=1 only in the resolved env", {}, {"CGC_SERVER_MTP": "1"}, "", True),
     ("non-1 value is still armed", {"CGC_SERVER_MTP": "yes"}, {}, "", True),
+    # [CGC 2026-10-03] the per-arm spec shim: this is the ONLY shape in which a multi-arm cell can
+    # hold both an off and an on arm (`--spec-type` is a whole-run flag). Allowed, loudly.
+    ("MTP=1 + per-arm spec shim (the pairing enabler)",
+     {"CGC_SERVER_MTP": "1", "LLAMA_BENCH_SPEC": "1"}, {}, "", False),
+    ("MTP=1 + shim with explicit depth",
+     {"CGC_SERVER_MTP": "1", "LLAMA_BENCH_SPEC": "1", "LLAMA_BENCH_SPEC_DRAFT_N_MAX": "2"}, {}, "", False),
+    ("shim explicitly 0 arms nothing",
+     {"CGC_SERVER_MTP": "1", "LLAMA_BENCH_SPEC": "0"}, {}, "", True),
+    ("empty shim arms nothing",
+     {"CGC_SERVER_MTP": "1", "LLAMA_BENCH_SPEC": ""}, {}, "", True),
+    # The shim is read from the ENV llama-bench actually inherits, so it counts wherever it lands --
+    # what matters is that it is present, not which of the two dicts carried it.
+    ("shim in the resolved env arms it too (it is still the env llama-bench reads)",
+     {}, {"CGC_SERVER_MTP": "1", "LLAMA_BENCH_SPEC": "1"}, "", False),
 ]
 
 

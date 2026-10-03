@@ -52,15 +52,28 @@ subgoals:
   - id: sg-marginal
     text: "把 34.7 ms 拆進 GPU 執行／IO／派發三桶"
     expect: "0（這是歸因，不是貢獻）"
-    how: "harness bench ×2（off ／ on-k1，spec 旗標是整趟級）＋ CGC_DECODE_PROFILE=1 ＋ CGC_GPU_TIMING=1；配對 Δ（不靠迴歸）"
+    how: "harness bench ×1（off ／ on-k2，**同一 session**）；spec 由按臂 env 給 ⇒ 不要在 CLI 給 --spec-type；＋ CGC_DECODE_PROFILE=1 ＋ CGC_GPU_TIMING=1；配對 Δ（不靠迴歸）"
 
 arms:
+  # ⚠ MTP-on 的臂字串：`CGC_SERVER_LAYER_CAPS` 的 cap 必須 >= 24（本卡用 `40-40:140`）。
+  #   理由（2026-10-03 定案）：cap 決定 min_usable = cap - 1 ⇒ decode width = floor(min_usable / top_k)。
+  #   `40-40:16` ⇒ min_usable 15 ⇒ width = floor(15/8) = 1 ⇒ **任何 2 顆以上的步（MTP verify 批）
+  #   被相位判據判成 PREFILL 圖**，改走整層 256 專家 slab 路徑（llama-context.cpp:8073 -> :8334 return），
+  #   每層同步串流 356 MiB ⇒ cb ≈ 4.1 s/步、跑不完。`40-40:140` ⇒ width = 8 ⇒ 走池路徑、正常。
+  #   量到的對照：cb 4070 ms -> 24.9 ms；5/5 incomplete -> 跑完。
+  #   ⇒ `40-40:16` 是 2026-09-28 為省記憶體引進的舊存活配方，**已廢**；
+  #     09-28/29 的 dated 卡片留原樣（歷史對照、不回改），但**新臂一律用 `40-40:140`**。
+  #   詳 docs/MTP_VERIFY_PHASE_MISCLASS_20261003_1630.html。
   - "prod-new"
-  - "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1"
+  # MTP-on 臂：spec 走**按臂 env**（LLAMA_BENCH_SPEC ＋ LLAMA_BENCH_SPEC_DRAFT_N_MAX，
+  # llama-bench.cpp:1350-1358，只在 CLI 沒給 --spec-type 時生效）⇒ 這樣 off/on 才能在**同一 session**
+  # 配對（CLI 旗標是整趟級的，給了就無法按臂分開）。這正是記錄裡「交付 cell MTP 增益 UNRESOLVED（缺配對）」的成因。
+  - "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;LLAMA_BENCH_SPEC=1;LLAMA_BENCH_SPEC_DRAFT_N_MAX=2"
 
 options:
   subgoal: L25-4
   profile: prod-new
+  # ⚠ 這兩格是「說明」：harness 從 CLI 讀 spec 旗標，不讀這裡（harness.py:1361）。配對那一趟不要放上 CLI。
   cli:
-    spec_type: draft-mtp
-    spec_draft_n_max: 1
+    spec_type: "draft-mtp（僅單臂跑時從 CLI 給；配對那趟改用按臂 env）"
+    spec_draft_n_max: 2
