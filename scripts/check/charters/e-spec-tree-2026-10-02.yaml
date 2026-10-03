@@ -1,0 +1,151 @@
+# ═══════════════════════════════════════════════════════════════════════
+# 實驗立項卡（Charter）—— e-spec-tree：樹式驗證（把部分接受的整輪重驗換掉）
+#   L25-4 的續篇；設計文 docs/SPEC_TREE_VERIFY_DESIGN_2026-10-02.md
+# ═══════════════════════════════════════════════════════════════════════
+# 為什麼要立這一張：
+#   L25-4 判 MTP 軸 DEAD，前提是「鏈式 spec 的最佳點 k=2 仍 −5.4%」。而鏈式有兩個結構缺陷：
+#     (i)  部分接受 → `ckpt.load_tgt()` ＋ `continue` ⇒ **整輪重驗、零產出**，且隨 rep 上升（2/24→…→20/46）；
+#     (ii) **沒有候選可選** ⇒ EcoSpec / AcceptMoE / EVICT 那一族（成本感知 draft 選擇）
+#          全部假設 draft **樹** ＋ 樹式注意力，對我們無從下手。
+#   本卡＝把那筆重驗換成樹式驗證（一次 target forward 驗多條路徑），**先問最窄的樹有沒有用**。
+# ⚠ 主要約束（今日實測，docs/MTP_AXIS_REOPEN_REVIEW_2026-10-02.md §8.3）：
+#   MTP-on 已把每層支持集推出池外（distinct 中位 139→205；超 143 槽 41/41；每步 union u/req 0.750）
+#   ⇒ 樹把 verify batch 加寬 = 更多冷專家。**所以 T1 必須又窄又淺，且必須同時報 hit%/misses。**
+# ⚠ 未被看板登記：`mindmap_subgoal_sync.py --check` 只走「看板 → 已登記的立項卡」，
+#   本檔不在看板的 subgoal.charter 清單內 ⇒ 對該閘**不可見**（該閘基線已有 3 處既存缺口）。
+id: e-spec-tree
+owner: 線A（engine / spec）
+created: '2026-10-02'
+axis: S
+
+# ── 【目標】──
+question: |
+  把 verify 從「單條鏈」換成「深度 1 分支、b=2 的最窄樹」（根掛 seq{0,1}；分支 A ＝ MTP 第 1 位的
+  第 1 候選續走，分支 B ＝ 第 1 位的第 2 候選續走），一次 target forward 驗完：
+  ⇒ 若 replay 比例顯著下降 ∧ emit_per_round 上升 ∧ 同 session 配對差 ≥ +5%
+    ⇒ 樹式成立，MTP 軸重開，且 EcoSpec 類（成本感知 draft 選擇）才有立足點；
+  ⇒ 否則 ⇒ 「樹式在 16 GB 盒上不成立」，MTP 軸依 L25-4 收束，預算移出。
+
+# ── 【現狀】──
+baseline:
+  metric: "鏈式 k=2（同 session、乾淨窗）：**10.902 t/s**（off 11.524 ⇒ −5.4%）；真 `emit_per_round` **1.625**；
+           `rounds` 120 / `calls_draft` 142 / `n_done` 195；replay **66/208 = 31.7%**；pool hit **60.6%**、misses **8741**"
+  cell:   "交付 cell（`delivery`：`-b/-ub 512`、`prompt 0`、`gen 128`、`depths 512`、`reps 3`、`warm-skip 64`、`ctx_size 4096`）
+           ＋ `--spec-type draft-mtp --spec-draft-n-max 2`"
+  source: "Backup/l254_kaxis_20261001/k2.json"
+  source_note: "成本律與 replay 口徑見 docs/L254_K_AXIS_ECON_2026-10-01.md（§量具修復 :93-113）；成本律 round_ms ≈ 63.6 + 35.2·T̂（:105）"
+  known: |
+    - 每輪固定項 **0.73 個純解碼步**；邊際 verify token **0.41 步**（攤薄是真的）。
+    - replay 是**純浪費**（一次完整 verify decode、零產出、不呼叫 drafter），比例隨 rep 上升。
+    - 鏈式沒有候選選擇空間 ⇒ 文獻那族（EcoSpec/AcceptMoE/EVICT）在我們的鏈上**無從下手**。
+    - ★ 今日：MTP-on 把支持集推出池外（distinct 中位 139→205；**41/41 層超 143 槽**）
+      ⇒ 樹的**主要成本風險**在這裡，不在算術。
+
+# ── 【假設】──
+hypothesis:
+  mechanism: |
+    部分接受時，鏈式要**整輪重驗**（把已接受的 ids 當下一輪 draft 再 verify 一次）；樹式把
+    「候選分支」在**同一次 forward** 裡驗完 ⇒ 同樣的 GPU 工作換到**更多有效產出**，
+    且部分接受不再是「全丟」而是「選勝出分支」。
+  expected: "replay 比例 31.7% → <10%；`emit_per_round` 1.625 → ≥1.9；同 session 配對差 ≥ +5%"
+  basis: "L254 的 replay 帳（66/208）＋ 成本律（每輪固定項 0.73 步 ⇒ 少輪 = 直接省固定項）＋ examples/speculative 的樹式模板"
+
+# ── 【驗收】跑前寫死 ──
+acceptance:
+  success: "機制端點：replay 比例 **<10%** ∧ `emit_per_round` **≥1.9**；速度端點：同 session ABBA 配對差 **≥ +5%**"
+  falsify: "任一成立即判「樹式在 16 GB 盒上不成立」並收束本軸：① 配對差 ≤0；② replay 相對降幅 <20%；
+            ③ pool `misses` 漲幅 > `emit_per_round` 漲幅（＝多驗的 token 被 IO 吃回去）"
+  on_fail: "任一臂 `attribution≠none` ⇒ 該臂 t/s 不引用（機制計數器仍可讀）；超過兩臂不合格 ⇒ 本趟作廢重跑"
+  equivalence: |
+    【**最強正確性見證，必須先過**】把樹**退化成寬度 1 的樹**（b=1）⇒ 與原鏈式在
+    同 seed／同 prompt 下 **token 序列逐位元相同**。不過就停，不往下（同 eng-mh-0082 的教訓：
+    先證明「治療真的施加」，否則後面的數字沒有意義）。
+targets:
+  replay_pct_max: 10.0          # 鏈式 31.7% → 目標
+  emit_per_round_min: 1.9       # 鏈式 1.625 / 1.806
+  paired_gain_min_pct: 5.0      # k=2 的破線缺口是 +5.4%
+  tree_width: 2                 # b=2、深度 1
+  tree_depth: 1
+
+subgoals:
+  - id: sg-tree-alt-cand
+    text:   "`common/speculative.*` 暴露第 1 位的第 2 候選（預設空、關閉時行為逐位元不變）"
+    expect: "新增欄位關閉時為空；原鏈式 token 序列不變"
+    how:    "`common_speculative_draft_params`（speculative.h:47-79）加預設空的候選欄位；MTP impl（speculative.cpp:1730-1890）在原只取 `cur_p->data[0].id` 處多填第 2 候選（`common_sampler_get_candidates` 已在 :1850 用）"
+  - id: sg-tree-batch
+    text:   "`llama-bench.cpp` 樹 batch 構建 ＋ 走樹接受（`CGC_SPEC_TREE`，預設關）"
+    expect: "開＝走樹；關＝逐位元走原鏈（:3079-3084 與 :3152-3205）"
+    how:    "根掛 seq{0,1}；分支 A/B 各自 seq；葉節點 `common_batch_add(..., {s}, true)`；接受後 `llama_memory_seq_rm` 清掉未選中分支。**不動** llama-batch/graph/kv-cache"
+  - id: sg-tree-equiv
+    text:   "等價性見證：b=1 的樹 ≡ 鏈式（逐位元）"
+    expect: "同 seed／同 prompt 的 token 序列完全相同"
+    how:    "兩臂同場（`CGC_SPEC_TREE=1` 且寬度 1 vs 關）比對輸出序列"
+  - id: sg-tree-mech
+    text:   "機制診斷：replay／emit_per_round／hit%／misses ＋ cold-guard 是否被觸發"
+    expect: "見 acceptance.success 的機制端點；misses 必須一併報"
+    how:    "讀 `CGC-BENCH-ACCEPT`（replay=／emit_per_round=）＋ pool cache 區塊；`CGC-PHASE-DBG` 看 `fast_eligible`"
+  - id: sg-tree-ab
+    text:   "同 session ABBA（tree / chain / chain / tree）"
+    expect: "配對差 ≥ +5%；否則照 falsify 收束"
+    how:    "一次 `harness bench` 四臂；絕對 t/s 需乾淨窗才可引用"
+
+# ── 【臂】──
+# 樹臂＝鏈式臂字串 ＋ CGC_SPEC_TREE=1（同 cell、只差這一個旗標）
+arms:
+  - prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1;CGC_MTP_NO_CTX_OTHER=1
+  - prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;CGC_MTP_PERF=1;CGC_MTP_NO_CTX_OTHER=1;CGC_SPEC_TREE=1
+
+# ── 【交付】──
+delivery:
+  patch: "**未實作**（設計完成）。門控 `CGC_SPEC_TREE`（預設關）。設計文：docs/SPEC_TREE_VERIFY_DESIGN_2026-10-02.md"
+  receptor: "docs/SPEC_TREE_VERIFY_DESIGN_2026-10-02.md（設計）；實作後回填 docs/L254_K_AXIS_ECON_2026-10-01.md／看板 L25-4"
+  evidence: "（待實作）"
+  result: "（未跑）"
+  apply_and_run: |
+    # T1a/T1b 實作 → 建置 → T1c 等價性 → T1d D5 → T1e 機制 → T1f ABBA
+    #
+    # ⚠ 起跑一定有兩道**非程式**的閘（2026-10-02 實跑撞過）：
+    #   A. **必須走 `harness bench`，不要手搓 llama-bench**。手搓會漏掉 `prod-new` 的基座 env
+    #      （關鍵是 `CGC_PREFILL_STREAM=1` + `CGC_GATHER_SLAB_CAP=256`：寬 prefill 要靠它走 slab 路徑）。
+    #      漏掉 ⇒ `-ub 512` 的 depth prefill 走 pool 路徑 ⇒ **Metal status 5 / compute #41 / 兩臂都 OOM**，
+    #      而 backtrace 落在 `test_gen`（llama-bench 的 depth prefill 就在那裡）⇒ 症狀長得像「引擎壞了」。
+    #   B. **budget gate 會拒跑**：靜態需求 model 13030 + pool 8192 = 21222 MiB > 實體 16384（超訂 4838 MiB）。
+    #      這是既定事實，operator 2026-10-01 已裁定 ⇒ 帶 **`BUDGET_GATE=warn`**（樣本會帶
+    #      `CGC_BUDGET_OVERSUBSCRIBED=1` 標記，C13 產物就是這樣）。
+    #   C. `CGC_SPEC_TREE`／`_B`／`_RS`／`LLAMA_BENCH_SPEC_DUMP` 必須在 `run_server.sh` 的 SERVER_ENV 白名單裡，
+    #      否則**靜默丟棄**（llama-bench 會跑在關閉狀態而閘仍報 PASS）。
+    0) python3 scripts/check/compressor_pressure.py            # 起跑閘：需 QUIET
+    1) python3 scripts/check/m123_oracle_gate.py --profile prefill250 --tag spec-tree-2026-10-02   # D5（MTP-off 需 9/9）
+    2) # 機制診斷（單臂，不主張 t/s）
+       BUDGET_GATE=warn python3 scripts/check/harness.py bench \
+         --charter scripts/check/charters/e-spec-tree-2026-10-02.yaml \
+         --arm "<樹臂字串>" --spec-type draft-mtp --spec-draft-n-max 2 \
+         --cell delivery --batch 512 --prompt 0 --gen 128 --depths 512 --reps 3 --warm-skip 64 --ctx-size 4096 \
+         --workdir Backup/spec_tree/diag --json Backup/spec_tree/diag.json
+    3) # 同 session ABBA
+       BUDGET_GATE=warn python3 scripts/check/harness.py bench \
+         --charter scripts/check/charters/e-spec-tree-2026-10-02.yaml \
+         --arm "<鏈式臂>" --arm "<樹臂>" --arm "<樹臂>" --arm "<鏈式臂>" \
+         --spec-type draft-mtp --spec-draft-n-max 2 \
+         --cell delivery --batch 512 --prompt 0 --gen 128 --depths 512 --reps 3 --warm-skip 64 --ctx-size 4096 \
+         --workdir Backup/spec_tree/abba --json Backup/spec_tree/abba.json
+    4) 讀值：CGC-BENCH-ACCEPT 的 replay=／emit_per_round=／mean_len／draft_ratio；pool cache 區塊的 hit%／misses；
+       CGC-MTP-PERF 的 calls_draft／t_draft_ms／gen_tok_per_round
+
+# ── 【前提更正 2026-10-02，實作 T1b 時撞到】──
+# 本卡原寫「不動 llama-batch/graph/kv-cache」＝只談 ENGINE 程式碼，這仍成立；
+# 但 **CONTEXT 的三個參數前提被漏掉**，而且它們**都要花記憶體**（完整版見
+# docs/SPEC_TREE_VERIFY_DESIGN_2026-10-02.md §9）：
+#   1. seq id：bench/production 的 context 是 n_seq_max=1 ＋ kv_unified=false ⇒ seq_id=1 **越界**
+#      （llama-context.cpp:2593 讓 llama_decode 回 -1）。樹的分支必然要第二個 seq
+#      ⇒ 需 kv_unified=true（單一 KV stream，不翻倍）或 n_seq_max=2（KV stream ×2、n_ctx_seq 折半）。
+#   2. recurrent 回滾：本模型是 GDN hybrid（LLM_ARCH_QWEN35MOE）⇒ recurrent 半邊不能就地刪後綴
+#      （llama-memory-recurrent.cpp:170），需 n_rs_seq>0；RS buffer = mem_size×(1+n_rs_seq)（:99）
+#      ⇒ **線性記憶體成本**。llm_arch_supports_rs_rollback() 對該 arch 回 true（llama-arch.cpp:1002）。
+#   3. batch seq 槽：llama_batch_init(n,0,1) 每 token 只有 1 個 seq_id 槽，樹根一 token 掛多 seq ⇒ 按寬度放大。
+# ⚠ **本軸的真正閘門是記憶體，不是算術**：16 GB 盒子（8 GiB pool＋13.6 GB 模型＋ngl 99）本來就貼著
+#   ~15.5/16 GB。2026-10-02 用 n_rs_seq=4 ＋ 8 GiB pool 冒煙 ⇒ 進 swap、UI 被 WindowServer 看門狗判死、
+#   llama-bench 自身 Metal status 5 abort（backtrace 在 test_gen ⇒ 樹代碼一次都沒跑到）。
+#   ⇒ 之後一律：**4 GiB pool ＋ n_rs_seq = k（=2）＋ 單趟**，先量記憶體再談速度。
+#   ⚠ 另：該次事故後 MTLCompilerService 一度不可用（XPC_ERROR_CONNECTION_INVALID），
+#     症狀是啟動即 abort（rc=134, <1 s，日誌有 "failed to create library"）——那是**系統殘留**，不是代碼。

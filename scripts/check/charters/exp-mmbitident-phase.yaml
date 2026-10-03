@@ -1,0 +1,48 @@
+id: exp-mmbitident-phase
+owner: shared
+created: 2026-10-03
+axis: M
+
+question: |
+  `CGC_MM_BITIDENT=0`（放行 small-batch mat-mv family）省下的 **4–5%** 到底在 decode 側還是 prefill 側？
+  逐 M 流量帳（`.workbuddy/memory/2026-09-18.md:3400-3416`，判別式＝LM head 是否同現）說
+  **M=1 省 0.00 GiB、M=2 只省 0.65 GiB，而 88% 的節省在 M=8 的 prefill 內段** ⇒ 判它為 prefill 槓桿；
+  但 `docs/K0_RESULT_2026-09-21.md:74-90` 在 **decode 窗（step 80–128）** 量到 `gpu_union`
+  中位 **102.0 → 97.0 ms（−4.9%）**（`wait` −4.9%、`gpu_busy_sum` −4.8%，三指標同號）。
+  **兩者矛盾，本節點就是解它。**
+
+baseline:
+  metric: "decode 窗（step 80–128）`gpu_union` 中位 102.0 ms、`wait` 111.6 ms、`gpu_busy_sum` 130.7 ms（BITIDENT=1）；出處 §1.1/§1.2"
+  cell: "prod25（MTP off）；儀器 CGC_DECODE_PROFILE=1 ＋ CGC_GPU_TIMING=1"
+  source: "docs/K0_RESULT_2026-09-21.md"
+
+hypothesis:
+  mechanism: |
+    family 的適用域是 `ne11 ∈ [2,8]`（`ggml-metal-ops.cpp:2846` 註解原文 "ne11=1 -> not even eligible"）。
+    MTP off 的每個 decode 步是 1 token ⇒ 若該步所有 `mul_mat` 都是 ne11=1，則 BITIDENT 對它**是 no-op**。
+    但 2026-10-03 的長 probe 實測顯示 **M=1 步的 logits 就已經不同**（`(0,0,'DEF')` 的 row_fnv1a64 就變）
+    ⇒ decode 步裡**確實存在** ne11∈[2,8] 的 matmul（很可能是 MoE 專家 gather 那類 `ne11` 不等於 token 數的
+    運算，而逐 M 帳沒把它算進去）。
+  expected: "BITIDENT=0 vs 1 的 decode 窗 `gpu_union` 中位差 ≈ 0（±0.5% 內 ⇒ 逐 M 帳對）；≥ +3% ⇒ 逐 M 帳漏項"
+  basis: "memory/2026-09-18.md:3400-3416；docs/K0_RESULT_2026-09-21.md:56-90；本轮長 probe dump"
+
+acceptance:
+  success: "以 K0 同一支儀器、同一窗法給出可引用的配對差，並指名 4–5% 的相位歸屬（decode / prefill / 兩者比例）"
+  falsify: "若兩臂 decode 窗 `gpu_union` 中位差 < 0.5%（儀器重現性 0.2%）⇒ 判「那 4–5% 是 prefill 槓桿」，
+            本軸對 decode 收束、M-invariant 版不為 decode 而建"
+  on_fail: "把結論寫進 Backup/spec_tree/M2_ONLY_CALIBER_LEVERS_2026-10-03.md §10，並把 M-invariant 版
+            從 decode 路線圖移除（只留 prefill 側記帳）"
+
+targets:
+  decode_tps: 15.9
+  prefill_tps: 250.0
+
+subgoals:
+  - id: sg-mmbi-phase
+    text: "指名 4–5% 的相位歸屬：decode 步內 ne11∈[2,8] 的 matmul 佔多少流量／時間"
+    expect: "0（這是歸因，不是貢獻）"
+    how: "ABBA 兩臂（BITIDENT=1/0）× 交付 cell；讀 CGC-GPUTIME 的 decode 窗中位，配 weight-traffic 帳"
+
+arms:
+  - "prod-new:CGC_MM_BITIDENT=1"
+  - "prod-new:CGC_MM_BITIDENT=0"

@@ -1,0 +1,52 @@
+id: exp-s1-ss-speed-prodnew
+owner: lineA
+created: 2026-10-03
+axis: L20
+
+question: |
+  「文字通順的那支單段提交臂」自己有沒有 ×1.72 的速度？
+
+  看板 L20-1 的 27.526 t/s（36.33 ms/step）出自臂
+  `prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1`
+  （`scripts/check/decode_board_2026-09-29.yaml:247`），而源碼自承那支臂用的是「合法但錯的
+  placeholder 映射」⇒ **routing is wrong, output is garbage, never a deliverable**
+  （`src/llama.cpp/src/llama-context.cpp:3785`）。
+
+  較新的 `CGC_S1_SINGLE_SUBMIT=1`（`llama-context.cpp:4234`「THE PREDICTION IS GONE」）是本線
+  質量測試用的那一支，它對巴黎 prompt 吐出的文本是**通順且切題**的（2026-10-03，95 字）。
+
+  本節點就問一件事：**那支通順的臂，自己有沒有紅利？** 若沒有 ⇒ ×1.72 屬於 garbage 臂 ⇒ 20+ 的門關著；
+  若同樣有 ⇒ 才存在「既快又通順」的候選。
+
+baseline:
+  metric: "同場控制臂（prod-new 無覆蓋）；歷史控制臂 88.29 ms/step（11.327 t/s，attribution=swap ⇒ 不可引用）"
+  cell: "prod-new 交付 cell（prompt 0 / gen 128 / depths 512 / batch 512 / ctx 4096）"
+  source: "scripts/check/decode_board_2026-09-29.yaml"
+
+hypothesis:
+  mechanism: |
+    單段提交把 41 個段合併成 1 個提交 ⇒ 消掉 40 個段邊界的 host round-trip。
+    2026-10-01 量到誠實臂 `T_sub` 中位 0.937 ms ⇒ 40×T_sub ≈ 37.5 ms/步。
+    若 `CGC_S1_SINGLE_SUBMIT` 走的也是「一跳提交」，它應拿到同量級紅利（比值 ≥1.5）；
+    否則紅利屬 `CGC_SEG_BATCH` 專有。
+  expected: "S1 臂 vs 控制臂 t/s 比值：有紅利 ⇒ ≥1.5；無 ⇒ ≈1.0"
+  basis: "docs/R6_RECOMPUTE_VERDICT_2026-10-02.md:9,35；decode_board_2026-09-29.yaml:242"
+
+acceptance:
+  success: "以統一入口（harness bench ＋ prod-new 基底）給出控制臂與 S1 臂的同場比值，並判定紅利是否屬 S1 臂"
+  falsify: "若比值 < 1.1 ⇒ 否證「通順的臂有速度」⇒ 20+ 只能靠 garbage 臂（不可用）⇒ 本軸收束"
+  on_fail: "把結論寫進 Backup/spec_tree/（20+ 的門標為關閉），並更新工作區記憶"
+
+targets:
+  decode_tps: 19.5
+  prefill_tps: 250.0
+
+subgoals:
+  - id: sg-s1-ss-speed
+    text: "量控制臂與 CGC_S1_SINGLE_SUBMIT 臂在 prod-new 交付 cell 的 t/s（同 session）"
+    expect: "控制 ~11.3；S1 臂 ？（判據：比值 ≥1.5 才有紅利）"
+    how: "python3 scripts/check/harness.py bench，2 臂 × reps 3，同一 session"
+
+arms:
+  - "prod-new"
+  - "prod-new:CGC_S1_SINGLE_SUBMIT=1;CGC_SLOT_TABLE_GPU=1;CGC_S1_SS_VERIFY=1;CGC_S1_MIN_IL=0"

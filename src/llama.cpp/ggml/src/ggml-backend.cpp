@@ -474,7 +474,22 @@ ggml_backend_dev_t ggml_backend_get_device(ggml_backend_t backend) {
 
 // backend copy
 
+// [CGC 2026-10-03 layout-assert diagnosis] print the full tensor description before aborting, so the
+// failing copy can be attributed from the log instead of guessed.  Only logs when layouts differ.
+static void cgc_layout_dump(const char * tag, const struct ggml_tensor * t) {
+    GGML_LOG_ERROR("CGC-LAYOUT: %s name='%s' type=%s op=%s ne=[%lld %lld %lld %lld] nb=[%zu %zu %zu %zu] nbytes=%zu data=%p view_src=%p view_offs=%zu buf=%s\n",
+        tag, t->name, ggml_type_name(t->type), ggml_op_name(t->op),
+        (long long) t->ne[0], (long long) t->ne[1], (long long) t->ne[2], (long long) t->ne[3],
+        t->nb[0], t->nb[1], t->nb[2], t->nb[3], ggml_nbytes(t), t->data,
+        (const void *) t->view_src, t->view_offs,
+        t->buffer ? ggml_backend_buffer_name(t->buffer) : "(nil)");
+}
+
 void ggml_backend_tensor_copy(const struct ggml_tensor * src, struct ggml_tensor * dst) {
+    if (!ggml_are_same_layout(src, dst)) {
+        cgc_layout_dump("src", src);
+        cgc_layout_dump("dst", dst);
+    }
     GGML_ASSERT(ggml_are_same_layout(src, dst) && "cannot copy tensors with different layouts");
 
     if (src == dst) {

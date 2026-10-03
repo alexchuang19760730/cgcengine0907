@@ -2861,6 +2861,71 @@ static bool bench_spec_setup(bench_spec_state & s, llama_model * model, llama_co
     return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// [CGC spec-tree 2026-10-02] Tree verification gate, width, and the two context
+// overrides the design doc's "no engine change" section did not know about.
+//
+// WHAT THIS IS. The chain verifier (below, the default) verifies ONE drafted path
+// [id_last, draft0 .. draftk-1] and, on partial acceptance, throws the whole round away and
+// re-verifies (the `n_replay` path). The tree verifier puts the runner-up candidate next to the
+// chosen one in the SAME batch as a real branch (design: docs/SPEC_TREE_VERIFY_DESIGN_2026-10-02.md),
+// so a rejected first token is a branch choice instead of a lost round.
+//
+// GATE SEMANTICS, and why "0" exists:
+//   unset -> tree OFF and NO context override. The production path, bit-for-bit untouched.
+//   "0"   -> tree OFF, but the context overrides below ARE applied. This is the CONTROL arm of a
+//            tree A/B: the tree arm and its chain control have to share one context mode, or the
+//            comparison moves two variables and the result means nothing.
+//   "1"   -> tree ON. Width from CGC_SPEC_TREE_B (default 2); width 1 is the degenerate tree that
+//            must equal the chain, which is the T1c equivalence witness.
+//
+// WHY THE CONTEXT OVERRIDES ARE NOT OPTIONAL (both are context PARAMS, not engine edits, but the
+// design's premise table missed them -- see the charter's follow-up note):
+//   1. seq ids. A branch is a second seq in the same batch. The bench context comes from
+//      llama_context_default_params() with n_seq_max=1 / kv_unified=false, and seq_id 1 is out of
+//      range there (llama-context.cpp:2593 rejects it and llama_decode returns -1). kv_unified=true
+//      keeps ONE KV stream (no memory doubling) and admits seq ids up to LLAMA_MAX_SEQ, so it is the
+//      smallest-footprint way to make the branch legal.
+//   2. state rollback. After the walk, the losing branch and the unaccepted suffix must leave the
+//      cache. This model is a Gated-DeltaNet hybrid (arch LLM_ARCH_QWEN35MOE): its recurrent half
+//      cannot erase a suffix in place (llama-memory-recurrent.cpp:170 -- "models like Mamba or RWKV
+//      can't have a state partially erased at the end of the sequence") unless per-token snapshots
+//      exist. `n_rs_seq` is upstream's knob for exactly this, and llm_arch_supports_rs_rollback()
+//      returns true for this arch (llama-arch.cpp:1002). Without it the trim fails and the stale
+//      cells pollute the next round's attention.
+static int cgc_spec_tree_env() {
+    const char * v = getenv("CGC_SPEC_TREE");
+    return v ? atoi(v) : -1;
+}
+
+static bool cgc_spec_tree_on() {
+    return cgc_spec_tree_env() == 1;
+}
+
+static int cgc_spec_tree_width() {
+    const char * v = getenv("CGC_SPEC_TREE_B");
+    int w = v ? atoi(v) : 2;
+    if (w < 1) { w = 1; }
+    if (w > 2) { w = 2; }
+    return w;
+}
+
+static bool cgc_spec_dump_on() {
+    return getenv("LLAMA_BENCH_SPEC_DUMP") != nullptr;
+}
+
+// [CGC spec-tree 2026-10-02] The recurrent-state rollback budget. It has to be >= the deepest
+// rollback the tree can ask for (= the tree depth = k = the draft count): llama_memory_recurrent
+// ::seq_rm() refuses a rollback larger than n_rs_seq (llama-memory-recurrent.cpp:184). It also
+// MULTIPLIES the recurrent state buffer by (1 + n_rs_seq) (:99), i.e. it is a direct, linear memory
+// cost -- the first thing to shrink on a box with no headroom, which is why it is an env knob and
+// the default is the minimum that covers the depth-1 tree at k=2.
+static int cgc_spec_tree_rs() {
+    const char * v = getenv("CGC_SPEC_TREE_RS");
+    int n = v ? atoi(v) : 2;
+    return n < 0 ? 0 : n;
+}
+
 static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, int n_threads,
                           bench_spec_state & s, const char * phase) {
     llama_set_n_threads(ctx, n_threads, n_threads);
@@ -2884,6 +2949,13 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
     // it anyway (common/speculative.h:61 marks it for removal).
     llama_tokens prompt_probe;
     llama_tokens draft;
+    // [CGC spec-tree 2026-10-02] The runner-up for each drafted position, parallel to `draft` (see
+    // common_speculative_draft_params::alt). Populated only when the gate is on; left empty
+    // otherwise, which is exactly the nullptr path the draft step skips for free.
+    llama_tokens draft_alt;
+    // [CGC spec-tree 2026-10-02] T1c witness storage: the committed token sequence, dumped when
+    // LLAMA_BENCH_SPEC_DUMP is set so a width-1 tree and the chain can be compared bit-for-bit.
+    std::vector<llama_token> emitted;
     // [CGC 2026-09-19 instrument parity] Storage for the draft distribution the rejection
     // rule consumes. The server hands this over only when the rule is on
     // (server-context.cpp:3218: `common_sampler_mtp_rejection_on() ? &slot.spec_draft_dist
@@ -2909,7 +2981,21 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
     // old (broken) trim instead, for A/B of the two mechanisms.
     common_prompt_checkpoint ckpt;
 
-    struct llama_batch batch = llama_batch_init(llama_n_batch(ctx), 0, 1);
+    // [CGC spec-tree 2026-10-02] llama_batch_init allocates n_seq_max seq-id slots PER TOKEN. The
+    // tree's root carries one seq id per branch ({0,1,...}), so a batch sized for 1 would write the
+    // second id out of bounds. Size it for the tree when the gate is on; the chain still needs 1.
+    const int batch_n_seq = cgc_spec_tree_on() ? cgc_spec_tree_width() : 1;
+    struct llama_batch batch = llama_batch_init(llama_n_batch(ctx), 0, batch_n_seq);
+
+    // [CGC spec-tree 2026-10-02] The tree walk implements GREEDY acceptance only; the MTP rejection
+    // rule (CGC_MTP_REJECTION) is applied by common_sampler_sample_and_accept_n, which the tree path
+    // does not call. Combining the two would silently measure acceptance with the rule OFF, so say
+    // it out loud rather than let the artifact imply otherwise.
+    if (cgc_spec_tree_on() && common_sampler_mtp_rejection_on()) {
+        fprintf(stderr, "[CGC spec-tree] CGC_MTP_REJECTION is set but the tree walk implements greedy "
+                        "acceptance only -- the rejection rule is NOT applied on the tree path. "
+                        "Unset one of the two to get a meaningful arm.\n");
+    }
 
     llama_token id_last = llama_vocab_get_add_bos(vocab) ? llama_vocab_bos(vocab) : std::rand() % n_vocab;
 
@@ -2950,6 +3036,17 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
         // calls => 1.59x too high). `emit_per_round = n_done/rounds` below is the quantity that maps
         // to machine cost: emitted tokens per verify decode.
         size_t n_replay  = 0;
+
+        // [CGC spec-tree 2026-10-02] The treatment witness. Following the CGC-LEAFSPLIT lesson, this
+        // gets its OWN tag rather than lengthening CGC-BENCH-ACCEPT: a new field on a line that 19
+        // parsers read is how `splits=` silently broke them (commit 2ab18619c). These say, per rep:
+        // whether the tree actually ran, whether a branch (not just the chain path) was taken, how
+        // often the path ended short (the rounds the chain would have thrown away as a replay), and
+        // whether the KV trim succeeded (it needs recurrent rollback -- see cgc_spec_tree_env()).
+        size_t n_tree_rounds       = 0;
+        size_t n_tree_branchB      = 0;
+        size_t n_tree_path_partial = 0;
+        size_t n_tree_trim_fail    = 0;
 
     // [CGC MTP path parity 2026-09-18] THE SIZE OF THIS VECTOR IS LOAD-BEARING. It used to be 0.
     //
@@ -3026,6 +3123,15 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
             // update_tgt after it (:452). The order matters for MTP because the draft context
             // SHARES KV with the target, so by the time update_tgt runs the draft step has already
             // written into the same memory -- and ckpt.pos_max stays the PRE-draft boundary.
+            // [CGC spec-tree 2026-10-02] UNCONDITIONAL on purpose -- and the reason IS the T1c
+            // witness. This was briefly gated on `!cgc_spec_tree_on()` (the tree never replays, so a
+            // snapshot is work with no reader). That gate made the two arms differ in more than the
+            // accept path, and the width-1 witness then diverged at TOKEN 0 -- where no partial
+            // acceptance has happened yet, so the tree's own logic cannot be the cause. A witness
+            // that cannot separate "the treatment" from "my own gating" is not a witness. Reverted:
+            // both arms snapshot, so the ONLY difference left is the accept/commit path. The tree arm
+            // therefore pays a snapshot it never reads -- a cost, not a correctness difference, and
+            // the conservative direction for a paired delta.
             ckpt.update_pos(n_past,
                     llama_memory_seq_pos_min(llama_get_memory(ctx), seq_id),
                     llama_memory_seq_pos_max(llama_get_memory(ctx), seq_id));
@@ -3047,6 +3153,13 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
             //     and llama-bench passed -1 = unbounded. An unbounded n-gram draft is up to size_m =
             //     48 tokens, i.e. a 49-token verify batch, which is NOT the "same k" this control
             //     exists to hold. Bounded to spec_draft_n_max it is exactly k, like draft-mtp.
+            // [CGC spec-tree 2026-10-02] `draft_alt` mirrors `draft` positionally and the draft step
+            // APPENDS (it does not clear). The two are only in lockstep if whatever emptied `draft`
+            // emptied `draft_alt` too -- so do it here, at the one point a fresh draft is asked for,
+            // where a stale entry cannot survive into the round even if a path forgot to clear.
+            if (cgc_spec_tree_on()) {
+                draft_alt.clear();
+            }
             common_speculative_get_draft_params(spec, seq_id) = {
                 /* .drafting = */ true,
                 /* .n_max    = */ ngram_arm ? s.params.speculative.draft.n_max : -1,
@@ -3060,9 +3173,14 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
                 // drive both sides. With the env unset this evaluates to nullptr, so the default
                 // path is bit-for-bit the previous behaviour.
                 /* .dist     = */ common_sampler_mtp_rejection_on() ? &draft_dist : nullptr,
+                // [CGC spec-tree 2026-10-02] The tree verifier consumes the runner-up array
+                // positionally; the chain arm leaves this nullptr, which is the pre-change default.
+                /* .alt      = */ cgc_spec_tree_on() ? &draft_alt : nullptr,
             };
             common_speculative_draft(spec);
 
+            // [CGC spec-tree 2026-10-02] Unconditional, same reason as the update_pos call above:
+            // gating this per-arm made the two arms differ in more than the accept path.
             ckpt.update_tgt(ctx, seq_id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
         }
 
@@ -3076,11 +3194,92 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
             break;
         }
 
-        // verify batch: [id_last, draft0 .. draftN-1]
+        // ── verify batch ────────────────────────────────────────────────────────────────
+        // chain (default): [id_last, draft0 .. draftN-1], one seq.
+        // tree (CGC_SPEC_TREE): root on seq{0..W-1}; branch b on seq b, whose first token is
+        //   (b==0 ? draft[0] : alt[0]) and whose tail is the chain's draft[1..]. Branches share
+        //   POSITIONS but not seqs, so the causal mask (llama-kv-cache.cpp:1632, seq_has) keeps
+        //   them from seeing each other. No engine change is involved -- the batch API already
+        //   carries a per-token seq-id array (include/llama.h:262-263).
+        const bool tree_on = cgc_spec_tree_on();
+        const int  tree_W  = cgc_spec_tree_width();
+        // A branch needs a REAL runner-up at position 0. Without one this round is a width-1 tree,
+        // which builds the chain batch exactly -- so "no alt" is not a special case, it is the
+        // degenerate tree, and it is the shape T1c pins.
+        const int  W_eff   = (tree_on && tree_W >= 2 && draft.size() >= 1 &&
+                              !draft_alt.empty() && draft_alt[0] >= 0) ? 2 : 1;
+
+        // One tree node = one batch slot. `slot` is implicit (== index into tree_nodes == batch
+        // index) because slots are appended to the batch in tree_nodes order.
+        struct cgc_tree_node {
+            llama_token      token  = -1;
+            int              parent = -1;
+            int              branch = -1;   // -1 = root, else 0..W_eff-1
+            std::vector<int> children;
+        };
+        std::vector<cgc_tree_node> tree_nodes;
+
+        const int P_base = n_past;   // the root's position; the tree cleanup needs it later
+
+        // [CGC spec-tree 2026-10-03] Give every branch seq the SAME memory prefix as the base seq.
+        // The allocator couples seqs that share a prefix and REQUIRES their memory positions to stay
+        // equal (llama-batch.cpp:323-335); a fresh branch seq has no memory positions at all, so the
+        // first width-2 round died with
+        //     init: sequence 1 is coupled to 0 in the input batch, but have divereged
+        // This is the template's exact step (examples/speculative/speculative.cpp:612-614: seq_keep(0)
+        // then seq_cp(0 -> s) for every branch s) before its verify decode. Skipped for W_eff == 1:
+        // with no branch there is nothing to copy, and width 1 must stay the chain bit-for-bit (T1c).
+        if (tree_on && W_eff > 1) {
+            llama_memory_t mem_pre = llama_get_memory(ctx);
+            llama_memory_seq_keep(mem_pre, seq_id);
+            for (int b = 1; b < W_eff; ++b) {
+                llama_memory_seq_cp(mem_pre, seq_id, (llama_seq_id) b, -1, -1);
+            }
+        }
+
         common_batch_clear(batch);
-        common_batch_add  (batch, id_last, n_past++, { seq_id }, true);
-        for (size_t i = 0; i < draft.size(); ++i) {
-            common_batch_add(batch, draft[i], n_past + (llama_pos) i, { seq_id }, true);
+        if (tree_on) {
+            tree_nodes.reserve(1 + (size_t) W_eff * draft.size());
+            auto tree_add = [&](llama_token tok, int parent, int branch) -> int {
+                cgc_tree_node n;
+                n.token  = tok;
+                n.parent = parent;
+                n.branch = branch;
+                if (parent >= 0) {
+                    tree_nodes[parent].children.push_back((int) tree_nodes.size());
+                }
+                tree_nodes.push_back(std::move(n));
+                return (int) tree_nodes.size() - 1;
+            };
+            tree_add(id_last, -1, -1);
+            for (int b = 0; b < W_eff; ++b) {
+                int prev = 0;   // root
+                for (size_t i = 0; i < draft.size(); ++i) {
+                    const llama_token tok = (i == 0) ? (b == 0 ? draft[0] : draft_alt[0]) : draft[i];
+                    prev = tree_add(tok, prev, b);
+                }
+            }
+            // The root belongs to EVERY branch, so the shared prefix is one cell, not W copies.
+            std::vector<llama_seq_id> root_seqs;
+            root_seqs.reserve(W_eff);
+            for (int b = 0; b < W_eff; ++b) {
+                root_seqs.push_back((llama_seq_id) b);
+            }
+            common_batch_add(batch, id_last, n_past++, root_seqs, true);
+            for (int b = 0; b < W_eff; ++b) {
+                for (size_t i = 0; i < draft.size(); ++i) {
+                    const int slot = 1 + b * (int) draft.size() + (int) i;
+                    GGML_ASSERT(slot < (int) tree_nodes.size());
+                    common_batch_add(batch, tree_nodes[slot].token, P_base + 1 + (llama_pos) i,
+                                     { (llama_seq_id) b }, true);
+                }
+            }
+        } else {
+            // verify batch: [id_last, draft0 .. draftN-1]
+            common_batch_add  (batch, id_last, n_past++, { seq_id }, true);
+            for (size_t i = 0; i < draft.size(); ++i) {
+                common_batch_add(batch, draft[i], n_past + (llama_pos) i, { seq_id }, true);
+            }
         }
 
         // [CGC MTP instrument 2026-09-18] THE MISSING PHASE CALL. Until this line existed, this
@@ -3149,12 +3348,81 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
         // and llama-server keeps one per slot (server-context.cpp:4218 `common_sampler_copy`).
         common_sampler_ptr smpl_save(common_sampler_clone(smpl));
 
-        std::vector<int> idxs(draft.size() + 1);
-        for (size_t i = 0; i < idxs.size(); ++i) {
-            idxs[i] = (int) i;
+        std::vector<llama_token> ids;
+
+        if (tree_on) {
+            // ── tree walk ───────────────────────────────────────────────────────────────
+            // Sample at the current node, accept, then follow the child whose token matches. The
+            // first node with no matching child ends the path, and THAT sample is the emitted
+            // token. The chain instead rolls the whole round back and re-verifies it (n_replay) --
+            // pure waste -- which is what this axis removes. At W_eff==1 the node table is a single
+            // chain and this walk must reduce to the chain's accept exactly; that is T1c.
+            (void) smpl_save;   // the tree never rolls the sampler back, so the clone is unused here
+            ids.reserve(draft.size() + 1);
+            int cur     = 0;    // node index == batch slot
+            int branchB = 0;
+            while (true) {
+                const llama_token id = common_sampler_sample(smpl, ctx, cur, false);
+                common_sampler_accept(smpl, id, true);
+                ids.push_back(id);
+                int next = -1;
+                for (int c : tree_nodes[cur].children) {
+                    if (tree_nodes[c].token == id) { next = c; break; }
+                }
+                if (next < 0) { break; }
+                cur = next;
+                if (tree_nodes[cur].branch == 1) { branchB = 1; }
+            }
+            n_tree_rounds += 1;
+            if (branchB) { n_tree_branchB += 1; }
+            if ((int) ids.size() - 1 < (int) draft.size()) { n_tree_path_partial += 1; }
+
+            const int m      = (int) ids.size() - 1;                       // accepted drafts
+            const int win_br = (m == 0) ? 0 : tree_nodes[cur].branch;      // branch of the winner
+
+            // ── KV cleanup ──────────────────────────────────────────────────────────────
+            // (a) drop the losing branch whole -- whole-seq removal never fails, recurrent included
+            // (b) if the winner is branch 1, re-tag its cells onto the base seq, then drop the temp id
+            // (c) trim the winning path's suffix. THIS needs partial removal: attention does ranges
+            //     natively, but the GDN half needs per-token snapshots (n_rs_seq, see
+            //     cgc_spec_tree_env()). The return value is COUNTED, never ignored -- a silent no-op
+            //     would leave stale cells visible to the next round's attention, which is exactly the
+            //     failure mode the CGC_SEQ_RM_TYPE_FULL note warns about.
+            llama_memory_t mem = llama_get_memory(ctx);
+            if (W_eff == 2) {
+                const llama_seq_id lose = (llama_seq_id) (1 - win_br);
+                llama_memory_seq_rm(mem, lose, -1, -1);
+                if (win_br != (int) seq_id) {
+                    llama_memory_seq_rm(mem, seq_id, -1, -1);
+                    llama_memory_seq_cp(mem, (llama_seq_id) win_br, seq_id, -1, -1);
+                    llama_memory_seq_rm(mem, (llama_seq_id) win_br, -1, -1);
+                }
+            }
+            if (!llama_memory_seq_rm(mem, seq_id, P_base + m + 1, -1)) {
+                n_tree_trim_fail += 1;
+            }
+
+            // commit in place -- no checkpoint, no replay
+            common_speculative_accept(spec, seq_id, (uint16_t) m);
+            n_acc_drf += m;
+            n_past    += m;
+            n_done    += (int) ids.size();
+            id_last    = ids.back();
+            draft.clear();
+            draft_alt.clear();
+            if (cgc_spec_dump_on()) {
+                emitted.insert(emitted.end(), ids.begin(), ids.end());
+            }
+            continue;
         }
 
-        auto ids = common_sampler_sample_and_accept_n(smpl, ctx, idxs, draft, nullptr);
+        {
+            std::vector<int> idxs(draft.size() + 1);
+            for (size_t i = 0; i < idxs.size(); ++i) {
+                idxs[i] = (int) i;
+            }
+            ids = common_sampler_sample_and_accept_n(smpl, ctx, idxs, draft, nullptr);
+        }
         GGML_ASSERT(!ids.empty());
 
         // partial acceptance: the target decoded more positions than we are keeping, and this
@@ -3210,6 +3478,13 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
         id_last = ids.back();
 
         draft.clear();
+
+        // [CGC spec-tree 2026-10-02] chain-side dump, so the T1c witness compares like with like.
+        // Replay rounds never reach here (they `continue` above), which is correct: a replay emits
+        // nothing, and counting its carried `ids` would make the chain look like it emitted more.
+        if (cgc_spec_dump_on()) {
+            emitted.insert(emitted.end(), ids.begin(), ids.end());
+        }
     }
 
     llama_synchronize(ctx);
@@ -3244,6 +3519,28 @@ static bool test_gen_spec(llama_context * ctx, llama_model * model, int n_gen, i
                 "draft_ratio=%s gen_tokens=%d n_gen=%d replay=%zu emit_per_round=%s\n",
                 phase, n_rounds, n_drafted, n_acc_drf, s_mean_len, s_ratio, n_done, n_gen,
                 n_replay, s_emit);
+    }
+
+    // [CGC spec-tree 2026-10-02] The treatment witness, on its OWN tag (see the counters' note):
+    // it must be readable whether the tree ran at all, whether a real branch was taken, how often
+    // the path ended short (the rounds the chain would have replayed), and whether the KV trim
+    // succeeded. Printed only when the gate was set, so a default run's stderr is unchanged.
+    if (cgc_spec_tree_env() >= 0) {
+        fprintf(stderr,
+                "CGC-SPEC-TREE phase=%s rounds_tree=%zu branchB=%zu path_partial=%zu "
+                "trim_fail=%zu replay=%zu\n",
+                phase, n_tree_rounds, n_tree_branchB, n_tree_path_partial,
+                n_tree_trim_fail, n_replay);
+    }
+
+    // [CGC spec-tree 2026-10-02] T1c: the committed token sequence, for a bit-for-bit diff between
+    // a width-1 tree and the chain. Gated, so it never appears by default.
+    if (cgc_spec_dump_on()) {
+        fprintf(stderr, "CGC-SPEC-DUMP phase=%s n=%zu ids=", phase, emitted.size());
+        for (size_t i = 0; i < emitted.size(); ++i) {
+            fprintf(stderr, "%s%d", i ? "," : "", (int) emitted[i]);
+        }
+        fprintf(stderr, "\n");
     }
 
     common_speculative_print_stats(spec);
@@ -3376,6 +3673,30 @@ int llama_bench(int argc, char ** argv) {
         }
         auto mparams = inst.to_llama_mparams();
         auto cparams = inst.to_llama_cparams();
+
+        // [CGC spec-tree 2026-10-02] Any CGC_SPEC_TREE value (including "0") selects the context mode
+        // the tree needs, so a tree arm and its chain control differ in ONE variable (the gate). The
+        // two reasons are in cgc_spec_tree_env() above; both are disclosed costs, not free.
+        //
+        // n_rs_seq is a LINEAR memory cost -- llama_memory_recurrent allocates `mem_size * (1 +
+        // n_rs_seq)` rows (:99) -- so it is the knob to shrink FIRST on a box with no headroom, and
+        // the reason it is an env rather than a constant. It must be >= the deepest rollback the
+        // tree can ask for, which is the tree depth = k = the draft count (llama-memory-recurrent
+        // .cpp:184 refuses a larger rollback). Default 2 = the minimum for the depth-1 tree at the
+        // delivery cell's k=2; measure before raising it. 2026-10-02: with 4 (and an 8 GiB pool) the
+        // box -- already at ~15.5/16 GB -- went into swap and froze (see the daily log).
+        if (cgc_spec_tree_env() >= 0) {
+            cparams.kv_unified = true;
+            cparams.n_rs_seq   = (uint32_t) cgc_spec_tree_rs();
+            // [CGC spec-tree 2026-10-03] kv_unified ALONE IS NOT ENOUGH. A branch is a second seq,
+            // and the allocator rejects any seq_id >= the CONTEXT's n_seq_max (llama-batch.cpp:59-63)
+            // -- that check reads cparams.n_seq_max, NOT kv_unified (llama-context.cpp:120 takes it
+            // from params.n_seq_max, default 1). Measured failure, width-2 arm, first round:
+            //     decode: failed to initialize batch   (ret=-1, n_tokens=5 pos 512..514)
+            // Width 1 only ever touches seq 0, so it passed and hid this. Both arms get the same
+            // value so a tree A/B still moves exactly one variable.
+            cparams.n_seq_max   = std::max(2u, (uint32_t) cgc_spec_tree_width());
+        }
 
         bool do_fit = inst.fit_target != cmd_params_defaults.fit_params_target[0] ||
                       inst.fit_min_ctx != cmd_params_defaults.fit_params_min_ctx[0];

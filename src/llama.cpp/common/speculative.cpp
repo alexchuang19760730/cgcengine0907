@@ -385,6 +385,13 @@ struct common_speculative_impl_draft_simple : public common_speculative_impl {
 
             if (dp.result->size() < (size_t) params.n_min) {
                 dp.result->clear();
+                // [CGC spec-tree 2026-10-02] `alt` is positional against `result`: clearing one
+                // without the other would pair a position with the wrong runner-up next round.
+                // Only the MTP impl fills `alt`, so for the others this is a no-op on an empty
+                // vector -- which is exactly the invariant we want everywhere.
+                if (dp.alt != nullptr) {
+                    dp.alt->clear();
+                }
             }
         }
     }
@@ -851,6 +858,13 @@ struct common_speculative_impl_draft_eagle3 : public common_speculative_impl {
 
             if (dp.result->size() < (size_t) params.n_min) {
                 dp.result->clear();
+                // [CGC spec-tree 2026-10-02] `alt` is positional against `result`: clearing one
+                // without the other would pair a position with the wrong runner-up next round.
+                // Only the MTP impl fills `alt`, so for the others this is a no-op on an empty
+                // vector -- which is exactly the invariant we want everywhere.
+                if (dp.alt != nullptr) {
+                    dp.alt->clear();
+                }
             }
         }
     }
@@ -1912,6 +1926,15 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                     }
                 }
 
+                // [CGC spec-tree 2026-10-02] the runner-up for this drafted position, read from the
+                // SAME candidate array and at the SAME point as `dist` above (i.e. after the p_min
+                // filter `continue`d, and after common_sampler_accept, exactly like the existing
+                // block). Kept in lockstep with `result` by construction: this is the only place
+                // any of the three grows. -1 = no runner-up available at this position.
+                if (dp.alt != nullptr) {
+                    dp.alt->push_back(cur_p->size >= 2 ? cur_p->data[1].id : (llama_token) -1);
+                }
+
                 if (params.n_max <= (int) result.size()) {
                     drafting[seq_id] = false;
                     n_drafting--;
@@ -1966,6 +1989,13 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
             if (dp.result->size() < (size_t) params.n_min) {
                 dp.result->clear();
+                // [CGC spec-tree 2026-10-02] `alt` is positional against `result`: clearing one
+                // without the other would pair a position with the wrong runner-up next round.
+                // Only the MTP impl fills `alt`, so for the others this is a no-op on an empty
+                // vector -- which is exactly the invariant we want everywhere.
+                if (dp.alt != nullptr) {
+                    dp.alt->clear();
+                }
             }
         }
     }
@@ -3007,6 +3037,12 @@ void common_speculative_draft(common_speculative * spec) {
                     if (!result.empty() && (int) result.size() > dp.n_max) {
                         SPC_DBG("truncating draft to %d tokens\n", dp.n_max);
                         result.resize(dp.n_max);
+                        // [CGC spec-tree 2026-10-02] keep the runner-up array parallel to `result`:
+                        // it is consumed positionally by the tree verifier, so a longer `alt` would
+                        // silently pair a token with the wrong position's alternative.
+                        if (dp.alt != nullptr && dp.alt->size() > (size_t) dp.n_max) {
+                            dp.alt->resize(dp.n_max);
+                        }
                     }
                 }
 

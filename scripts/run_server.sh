@@ -1576,12 +1576,39 @@ for _v in LLAMA_EXPERT_CACHE_NOHOOK LLAMA_EXPERT_CACHE_NOGATHER LLAMA_EXPERT_CAC
           LLAMA_BENCH_SPEC_DBG CGC_MTP_PERF CGC_SEG_BATCH CGC_SEG_BATCH_FAST CGC_FAST_COST \
           CGC_FAST_PROBE CGC_FAST_PROBE_DETAIL \
           CGC_S1_SINGLE_SUBMIT CGC_S1_SS_VERIFY CGC_S1_SS_DBG \
-          CGC_OVERLAP_FENCE CGC_SUBMIT_AHEAD; do
+          CGC_OVERLAP_FENCE CGC_SUBMIT_AHEAD \
+          CGC_SPEC_TREE CGC_SPEC_TREE_B CGC_SPEC_TREE_RS LLAMA_BENCH_SPEC_DUMP \
+          CGC_SERVER_SEED CGC_RSS_OFF; do
     if [ -n "${!_v:-}" ]; then
         SERVER_ENV+=("$_v=${!_v}")
     fi
 done
 unset _v
+# [CGC spec-tree 2026-10-02] The tree axis' own three names, same allowlist trap as the note below:
+#   * CGC_SPEC_TREE gates the tree verifier in llama-bench. Its value "0" is the CONTROL arm (tree
+#     off, but the tree-compatible context mode ON), which is why the loop forwards any non-empty
+#     value rather than only "1" -- a control that silently ran on profile defaults would compare
+#     the tree against the wrong chain.
+#   * CGC_SPEC_TREE_B selects the branch width (1 = the degenerate tree, which must equal the chain
+#     bit-for-bit = the T1c witness; 2 = a real branch).
+#   * LLAMA_BENCH_SPEC_DUMP makes llama-bench print the committed token sequence on `CGC-SPEC-DUMP`,
+#     which is how the width-1 tree and the chain are compared bit-for-bit.
+#   * CGC_SERVER_SEED pins the sampler seed in llama-bench (llama-bench.cpp:2845-2853). WITHOUT it the
+#     tool's `common_params_sampling::seed` stays LLAMA_DEFAULT_SEED and `get_rng_seed()` draws a FRESH
+#     random seed per PROCESS -> two arms of a bit-comparison differ at token 0 for RNG reasons only.
+#     Measured 2026-10-03: both arms printed `[CGC seed] sampler_seed=4294967295 pinned=0 temp=0.40
+#     top_p=0.80`, and the T1c "DIVERGES at token 0" verdict was that artifact, not a tree bug. Any
+#     A/B that compares token streams (or wants two arms to see the same tokens) must set this key to
+#     the SAME value on every arm; the `pinned=1` witness on stderr is the proof it arrived.
+# [CGC 2026-10-03 RSS heartbeat] `CGC_RSS_OFF=1` silences the `CGC-RSS: t=.. rss=..` heartbeat
+# (llama-context.cpp:~1204). WHY IT NEEDED A GATE: it was the only periodic print in the engine that
+# no env controlled -- a detached thread doing `task_info` + `fprintf` + `fflush` every 100 ms for the
+# whole process lifetime, i.e. roughly once per decode step at ~70 ms/step. WHY TURNING IT OFF IS
+# SAFE: the stall watchdog does not consume it, it EXCLUDES it (`llama_bench_matrix.py:573`
+# `_PROGRESS_RE = ^(?!CGC-RSS)`; harness.py:1817 repeats the rule), so a run without the heartbeat is
+# judged identically -- the line was the problem that regex was written to solve. UNSET = heartbeat
+# ON, byte-for-byte the old behaviour; when it IS set the engine prints an explicit
+# `CGC-RSS: heartbeat DISABLED by CGC_RSS_OFF` so a quoted run cannot hide the gate.
 # [CGC 2026-09-30 allowlist fix] The two names just added are the speculative framework's, not
 # MTP's, and both used to be unreachable from a non-MTP arm:
 #   * `LLAMA_BENCH_SPEC_DBG` (llama-bench.cpp:3123, PRESENCE-based) prints
@@ -1806,6 +1833,23 @@ fi
 # it changes no bytes and no timing path, only what is printed at teardown.
 if [ -n "${CGC_FILL_SPLIT:-}" ]; then
     SERVER_ENV+=(CGC_FILL_SPLIT="$CGC_FILL_SPLIT")
+fi
+# [CGC 2026-10-03 fast-path segment split] `CGC_FASTPATH_SPLIT=1` (on; `=N` with N>=2 sets the
+# flush cadence to N calls, default 41 = one flush per step) --
+# decompose the MTP verify fast-path window (`llama-context.cpp` ~8805-8974) into
+# zero / touch / wait / pub / remap / dbuf. It exists because that window IS what `CGC-DECPROF`
+# prices as `cb` (~4030 ms/step under the cliff, ~98 ms x 41 layers), while BOTH existing
+# instruments are blind to it BY CONSTRUCTION: `CGC_HOOK_SPLIT` accumulates after the early
+# `return` on this path (env delivered, zero lines printed -- measured 2026-10-03), and
+# `CGC_EB_TIMER` wraps `ensure_batch`, which this path never calls (so its ~235 ms reading
+# belongs to a different path and must not be subtracted from `cb`).
+# Same allowlist trap as every block above: the engine reads it but no entry here would forward
+# it, so the knob would look armed while never reaching the engine (caught as a DROPPED key by
+# `llama_bench_matrix.arm_env_dropped()`). Diagnostic only: it changes no bytes and no timing
+# path, only what is printed -- and it prints PER STEP, so a run killed mid-cliff still yields
+# readings (unlike an at-teardown-only counter).
+if [ -n "${CGC_FASTPATH_SPLIT:-}" ]; then
+    SERVER_ENV+=(CGC_FASTPATH_SPLIT="$CGC_FASTPATH_SPLIT")
 fi
 # [CGC 2026-09-26 rho landing] CGC_RHO_PROBE / CGC_RHO_FILL, forwarded for the first time. Same
 # allowlist trap as every block above: the engine has read both since 2026-09-23/24, but no entry

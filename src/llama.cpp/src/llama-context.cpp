@@ -1202,9 +1202,24 @@ void llama_context::sched_reserve() {
       fprintf(stderr, "CGC-RESERVE-SIZE: ctx#%d after-PP sched=%.2f MiB rss=%.1f MiB\n", cgc_res_seq, cgc_sched_total_mib(), cgc_ru.ru_maxrss/1048576.0); fflush(stderr); }
 #if defined(__APPLE__)
     {
+        // [CGC 2026-10-03] `CGC_RSS_OFF=1` silences this heartbeat. It was the only periodic print
+        // in the engine that no env gate controlled, and it runs off a DETACHED thread for the
+        // whole process lifetime: a `task_info` Mach call + `fprintf` + `fflush` every 100 ms --
+        // on the decode hot path, for a workload whose step is ~70 ms.
+        //
+        // Disabling it is safe for the tooling that watches for stalls: `llama_bench_matrix.py:573`
+        // sets `_PROGRESS_RE = ^(?!CGC-RSS)` precisely to EXCLUDE this line from "progress", so a
+        // run without it is judged identically (harness.py:1817 states the same rule). The heartbeat
+        // was the problem that regex was written to solve, not a signal anything depends on.
+        //
+        // Unset = on (nothing changes unless an arm asks); when it IS asked for, say so out loud --
+        // a silence that only exists under an env var is the one kind of gate a reader cannot see.
+        static const bool cgc_rss_off = getenv("CGC_RSS_OFF") != nullptr;
         static std::atomic<bool> cgc_rss_started{false};
         bool cgc_exp = false;
-        if (cgc_rss_started.compare_exchange_strong(cgc_exp, true)) {
+        if (cgc_rss_off) {
+            fprintf(stderr, "CGC-RSS: heartbeat DISABLED by CGC_RSS_OFF\n");
+        } else if (cgc_rss_started.compare_exchange_strong(cgc_exp, true)) {
             std::thread([]() {
                 const auto t0 = std::chrono::steady_clock::now();
                 for (;;) {
@@ -8788,15 +8803,81 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
                     cgc_n_past, cgc_warm_npast, (int) cgc_fast_eligible);
         }
         if ((verify_fast || draft_fast) && cgc_fast_eligible) {
+            // [CGC 2026-10-03 fast-path segment split] CGC_FASTPATH_SPLIT[=<calls/step>, def 41]
+            // -- the OTHER half of what `CGC-HOOK_SPLIT` cannot see.
+            //
+            // Why this instrument exists: `CGC-DECPROF`'s `cb` prices THIS whole window
+            // (ggml-backend.cpp:2754 st1..st2 == this callback) and, under the MTP-on verify
+            // cliff, reads ~4030 ms/step (~98 ms x 41 layers). Two existing instruments are blind
+            // here BY CONSTRUCTION, not by accident:
+            //   * `CGC-HOOK_SPLIT` accumulates at :9257 -- AFTER the `return` at :8974, so every
+            //     fast-path layer bails out before its counter is reached. Measured 2026-10-03:
+            //     the env IS delivered (live log), the tag prints ZERO lines.
+            //   * `CGC-EB_TIMER` wraps `ensure_batch` only, and this path never calls it. Its
+            //     ~235 ms reading belongs to a DIFFERENT path -- instrument readings from two
+            //     different paths must never be subtracted (that inference was made and retracted
+            //     on 2026-10-03; the rule is now in the measure-hygiene file).
+            // The only honest attribution of this window is to time it in place, BEFORE the return.
+            //
+            // Buckets (deltas on this thread):
+            //   zero  : llama_expert_cache_zero_reserved_slot  (idempotent per layer -- expect ~0)
+            //   touch : llama_expert_cache_touch               (takes cache->m -- contention suspect)
+            //   wait  : llama_expert_cache_wait_loading        (verify only; default OFF == no-op)
+            //   pub   : ids memcpy + cgc_publish_slot_table_counted + S1 dbg. The mark sits OUTSIDE
+            //           the `cache_slot_table_tensors` conditional on purpose: when there is no
+            //           table for this layer the region is skipped wholesale and its time must still
+            //           land somewhere, not vanish.
+            //   remap : the (n_tokens x n_expert_used) remap leaf write
+            //   dbuf  : llama_expert_cache_dbuf_refill         (verify only; queues prefetch)
+            // IDENTITY: zero+touch+wait+pub+remap+dbuf == this window's own total (same calls).
+            // New tag `CGC-FASTSEG:` -- a new fact gets a NEW tag, never a longer old row (lengthening
+            // a live row broke 19 parsers on 2026-10-02). Flushed every <calls/step> calls so a run
+            // killed mid-cliff still yields readings (same discipline as EBTIMER / HOOK_SPLIT).
+            static const bool fs_on = getenv("CGC_FASTPATH_SPLIT") != nullptr;
+            //   fs_n: flush cadence in CALLS. `CGC_FASTPATH_SPLIT=1` means ON with the default
+            //   cadence (41 = one flush per step, matching EBTIMER / HOOK_SPLIT: `=1` is how this
+            //   tree spells "on"); an explicit N >= 2 sets the cadence to N calls. The first cut of
+            //   this instrument read `1` as "cadence 1" and printed one line per layer (9003 lines
+            //   on a 3-rep run) -- a knob whose `=1` means something different from every other
+            //   instrument in this file is a trap, so the convention is now the tree's.
+            static const int  fs_n  = []() {
+                const char * e = getenv("CGC_FASTPATH_SPLIT");
+                int v = 0;
+                if (e != nullptr) {
+                    for (const char * p = e; *p >= '0' && *p <= '9'; ++p) {
+                        v = v * 10 + (*p - '0');
+                    }
+                }
+                return v > 1 ? v : 41;
+            }();
+            static int64_t fs_zero = 0, fs_touch = 0, fs_wait = 0, fs_pub = 0, fs_remap = 0, fs_dbuf = 0;
+            static int     fs_k = 0;
+            const int64_t fs_t0 = fs_on ? ggml_time_us() : 0;
+            int64_t fs_t = fs_t0;
+            auto fs_mark = [&](int64_t & acc) {
+                if (fs_on) { const int64_t n = ggml_time_us(); acc += n - fs_t; fs_t = n; }
+            };
+            auto fs_flush = [&]() {
+                fprintf(stderr, "CGC-FASTSEG: calls=%d zero_us=%lld touch_us=%lld wait_us=%lld "
+                                "pub_us=%lld remap_us=%lld dbuf_us=%lld total_us=%lld ctx=%s\n",
+                        fs_k, (long long) fs_zero, (long long) fs_touch, (long long) fs_wait,
+                        (long long) fs_pub, (long long) fs_remap, (long long) fs_dbuf,
+                        (long long) (fs_zero + fs_touch + fs_wait + fs_pub + fs_remap + fs_dbuf),
+                        cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP ? "draft" : "verify");
+                fs_zero = fs_touch = fs_wait = fs_pub = fs_remap = fs_dbuf = 0;
+                fs_k = 0;
+            };
             // zero the reserved ZERO slot once per layer: cold experts (slot table == -1) map to
             // it, so the FFN reads a finite zero contribution instead of an OOB pool row (NaN
             // cascade -> whole-graph corruption).
             llama_expert_cache_zero_reserved_slot(cache, (uint32_t) il);
+            fs_mark(fs_zero);
             // LRU-touch resident experts only (no fill, no wait): keeps hot slots' freshness so
             // the next step's pick_slot does not hand them out to a cold fill. draft_path tag:
             // fast-path telemetry splits verify (ctx_tgt) vs draft (ctx MTP) cold rates.
             llama_expert_cache_touch(cache, (uint32_t) il, uni.data(), uni.size(),
                                      cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP);
+            fs_mark(fs_touch);
             // [CGC Fast-Path Wait 2026-09-06] verify ctx only (ground-truth route; draft is a
             // prediction — waiting there would slow MTP draft without proportional quality gain).
             // For cold experts whose DBUF step-ahead fill is already in flight, wait up to
@@ -8805,6 +8886,7 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
             if (verify_fast) {
                 llama_expert_cache_wait_loading(cache, (uint32_t) il, uni.data(), uni.size());
             }
+            fs_mark(fs_wait);
             // [CGC SyncFill 2026-09-09] Residual cold experts: blocking fill instead of
             // ZERO-slot. The ZERO-slot fast path maps cold experts (slot_table == -1) to a
             // zeroed region -> the FFN reads zeros as if that expert contributed nothing,
@@ -8911,6 +8993,7 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
                 }
                 cgc_s1_equiv_dbg("fast", cache, il, n_tokens, n_expert_used, ids, cgc_stable, false);
             }
+            fs_mark(fs_pub);
             // write the remap leaf: resident -> slot index, cold -> ZERO-slot.
             ggml_tensor * remap = cache_remap_tensors[il];
             if (remap != nullptr && remap->data != nullptr) {
@@ -8939,6 +9022,7 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
                             il, n_zero_mapped, (long long) (n_tokens * n_expert_used));
                 }
             }
+            fs_mark(fs_remap);
             // [CGC 2026-09-15 S1 cleanup] The `CGC-FAST:` per-layer print that used to sit here (capped
             // at 20 lines) was a cheap churn proxy whose question is now answered by the counted
             // publish: see cgc_publish_slot_table_counted and n_slot_table_changed.
@@ -8956,6 +9040,9 @@ void llama_context::expert_cache_on_topk(ggml_tensor * t) {
             if (verify_fast && cgc_dbuf_on()) {
                 llama_expert_cache_dbuf_refill(cache, (uint32_t) il, uni.data(), uni.size());
             }
+            fs_mark(fs_dbuf);
+            ++fs_k;
+            if (fs_k >= fs_n) { fs_flush(); }
             return;
         }
         static int cgc_pre_post_n = 0;

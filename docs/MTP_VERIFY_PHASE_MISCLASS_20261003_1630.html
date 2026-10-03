@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MTP-on 的 4 秒懸崖：相位誤判（2026-10-03）</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#111827; --mut:#6b7280; --line:#e5e7eb;
+    --blue:#1d4ed8; --green:#047857; --red:#b91c1c; --amber:#b45309; --purple:#6d28d9;
+    --code-bg:#f6f8fa;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font-family:-apple-system,BlinkMacSystemFont,"PingFang TC","Helvetica Neue",Arial,sans-serif;
+       line-height:1.72;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1040px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:27px;line-height:1.35;margin:0 0 6px}
+  h2{font-size:20px;margin:40px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:24px 0 8px}
+  p{margin:10px 0}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 22px}
+  code{background:var(--code-bg);padding:1px 5px;border-radius:4px;
+       font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:6px;padding:12px 14px;overflow-x:auto}
+  pre code{background:none;padding:0;font-size:12.5px;line-height:1.6}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f9fafb;font-weight:600}
+  td.num,th.num{white-space:nowrap;font-variant-numeric:tabular-nums}
+  .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600;
+       border:1px solid transparent;white-space:nowrap}
+  .t-blue{background:#eff6ff;color:var(--blue);border-color:#bfdbfe}
+  .t-green{background:#ecfdf5;color:var(--green);border-color:#a7f3d0}
+  .t-red{background:#fef2f2;color:var(--red);border-color:#fecaca}
+  .t-amber{background:#fffbeb;color:var(--amber);border-color:#fde68a}
+  .t-purple{background:#f5f3ff;color:var(--purple);border-color:#ddd6fe}
+  .t-gray{background:#f3f4f6;color:#374151;border-color:#e5e7eb}
+  .box{border-left:4px solid var(--line);background:#fafafa;padding:12px 16px;margin:16px 0;border-radius:0 6px 6px 0}
+  .box.warn{border-left-color:var(--amber);background:#fffbeb}
+  .box.ok{border-left-color:var(--green);background:#f0fdf4}
+  .box.bad{border-left-color:var(--red);background:#fef2f2}
+  .box.pur{border-left-color:var(--purple);background:#faf5ff}
+  ul,ol{margin:10px 0 10px 22px}
+  li{margin:4px 0}
+  .lede{font-size:16px;background:#f9fafb;border:1px solid var(--line);border-radius:8px;padding:14px 18px;margin:18px 0}
+  footer{margin-top:48px;padding-top:14px;border-top:1px solid var(--line);color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>MTP-on 的「4 秒懸崖」是<b>相位誤判</b>，不是記憶體牆</h1>
+<p class="sub">2026-10-03 16:30 ／ 引擎線（line A）／ 產物：<code>Backup/spec_tree/on_fastseg*</code>、<code>Backup/spec_tree/on_cap140*</code></p>
+
+<div class="lede">
+<b>一句話</b>：<code>CGC_SERVER_LAYER_CAPS=40-40:16</code> 把第 40 層壓到 16 槽，使 <code>min_usable = 15</code>，
+於是 <code>decode graph width = floor(15/8) = 1</code>；而 MTP verify 批是 <b>2 顆</b> ⇒ 被判成 <b>prefill 圖</b>
+⇒ 走「整層 256 專家 slab」私有路徑（<code>:8334</code> 就 <code>return</code>，池路徑完全不執行），
+每層同步等一次雙緩衝填充 ⇒ <b>110 MiB × 41 層 ≈ 4.5 GB/步</b>從磁碟讀。
+把 cap 抬到 <code>40-40:140</code> ⇒ <code>width=8</code> ⇒ <b>同一支臂跑得完</b>。
+</div>
+
+<h2>1. 結論與量級</h2>
+
+<table>
+<thead><tr><th>量</th><th class="num">40-40:16（width=1）</th><th class="num">40-40:140（width=8）</th><th>出處</th></tr></thead>
+<tbody>
+<tr><td><code>CGC-PHASE-SPLIT</code></td><td class="num">routable=15 → width=1</td><td class="num">routable=139 → width=8</td><td><code>on_fastseg</code> / <code>on_cap140</code> 的 stderr</td></tr>
+<tr><td><code>cb</code>（ntok=2 中位）</td><td class="num">4070 ms</td><td class="num">24.9 ms</td><td><code>CGC-DECPROF</code></td></tr>
+<tr><td><code>total</code>（ntok=2 中位）</td><td class="num">4301.9 ms</td><td class="num">127.7 ms</td><td><code>CGC-DECPROF</code></td></tr>
+<tr><td>結局</td><td class="num">incomplete（5/5）</td><td class="num">跑完</td><td>臂 JSON 的 <code>incomplete</code></td></tr>
+<tr><td><code>avg_ts</code></td><td class="num">—</td><td class="num">10.995</td><td><code>on_cap140.json</code></td></tr>
+<tr><td><code>CGC-FASTSEG</code> 行數</td><td class="num">1</td><td class="num">9003</td><td>同一支儀器</td></tr>
+</tbody>
+</table>
+
+<p>⇒ <code>cb</code> 差 <b>163 倍</b>；檢定用的 <code>40-40:140</code> 那一趟 <code>attribution=swap</code>
+⇒ 它的 <code>avg_ts</code> <span class="tag t-amber">不可引用</span>（只作比值／機制診斷，見 §7 與 §9）。</p>
+
+<h2>2. 閘門鏈（機制）</h2>
+
+<p>每一步都是一手可查的：</p>
+
+<ol>
+<li><code>CGC_SERVER_LAYER_CAPS=40-40:16</code> ⇒ 第 40 層 16 槽 ⇒
+    <code>llama_expert_cache_usable_slots = 16 - 1 = 15</code>（扣掉保留的 ZERO 槽）。</li>
+<li><code>min_usable = min(有池層的 usable)</code> = <b>15</b>（<code>llama-context.cpp:344-361</code>）。</li>
+<li><code>cgc_decode_width = min(cap=8, floor(15/8)) = 1</code>（<code>llama-cgc-phase.h</code>）。</li>
+<li>MTP verify 批 <b>n_tokens = 2 &gt; 1</b> ⇒ <code>cgc_select_graph_phase(2,1) = PREFILL</code>
+    （<code>llama-cgc-phase.h:141</code>）。</li>
+<li>⇒ 走 <code>llama-context.cpp:8073</code> 的 <code>if (!cgc_is_decode_graph(...))</code> 分支：
+    <b>整層 256 專家 slab</b>（<code>CGC_PREFILL_STREAM=1</code> 已 armed），每層同步等一次雙緩衝填充。</li>
+<li>該分支在 <code>:8334</code> <code>return</code> ⇒ <b>fast path 與池路徑在 verify 步完全不執行</b>。</li>
+</ol>
+
+<div class="box bad">
+<b>日誌直接有證</b>：<code>slab=110.00 MiB filled=115343360 bytes db=1</code>（<code>db=1</code> ＝ 雙緩衝）。
+<b>算術自洽</b>：110 MiB × 41 層 ≈ 4.5 GB/步；<code>cb ≈ 99 ms/層 × 41 ≈ 4.1 s/步</code>。
+這條成本<b>與批寬無關</b>（永遠讀全部 256 專家），正好解釋三個觀測：<code>cb(ntok=2) ≈ cb(ntok=512)</code>、
+<code>gpu_sum</code> 只佔 8%、<code>gap_sum ≈ total</code>。而 draft 步（ntok=1 ≤ width=1）是 decode 圖
+⇒ 走池路徑 ⇒ 健康（<code>cb</code> 5.7 ms／步）。
+</div>
+
+<h3>2.1 為什麼兩支既有儀器看不到它（設計使然，不是意外）</h3>
+<table>
+<thead><tr><th>儀器</th><th>盲點</th><th>證據</th></tr></thead>
+<tbody>
+<tr><td><code>CGC_HOOK_SPLIT</code></td><td>累加點在 <code>:9257</code>，而 fast path 在 <code>:8974</code> 就 <code>return</code></td><td>env 有到引擎（live log），tag 印 <b>0 行</b></td></tr>
+<tr><td><code>CGC_EB_TIMER</code></td><td>只包 <code>ensure_batch</code>，這條路不呼叫它</td><td>它的 ~235 ms 屬<b>另一條路</b>；跨路徑不可相減</td></tr>
+</tbody>
+</table>
+
+<h2>3. 驗證：同一支臂，只改一個 cap</h2>
+
+<p>兩趟都是 <code>prod-new</code> ＋ MTP-on k=1（存活配方其餘不變）＋ 交付 cell（<code>p0_n128_d512_r3</code>），
+只是把 <code>CGC_SERVER_LAYER_CAPS</code> 由 <code>40-40:16</code> 改成 <code>40-40:140</code>：</p>
+
+<pre><code># 40-40:16
+CGC-PHASE-SPLIT: cap=8 routable=15 slots / top_k=8 -> decode graph width=1 tokens (bound=1, T_prefill=512, non-binding); prefill slab armed (CGC_PREFILL_STREAM=1)
+CGC-DECPROF ... ntok=2  total=4301.9 ms | wait=198.5 cb=4071.0 submit=...   (incomplete=True)
+
+# 40-40:140
+CGC-PHASE-SPLIT: cap=8 routable=139 slots / top_k=8 -> decode graph width=8 tokens (bound=8, T_prefill=512, non-binding); prefill slab armed (CGC_PREFILL_STREAM=1)
+CGC-DECPROF ... ntok=2  total= 127.7 ms | wait= 96.3 cb=  24.9 submit=...   (incomplete=False, avg_ts=10.995)</code></pre>
+
+<div class="box pur">
+<b>記錄裡早有半張答案</b>：<code>docs/MTP_KAXIS_RECOMPUTE_2026-09-30.md:144-158</code> 已記
+「把 <code>LAYER_CAPS</code> 由 <code>40-40:16</code> 改成 <code>40-40:140</code> ⇒ <code>routable=139 → width=8</code>
+⇒ 同一支臂跑得完（NOMINAL、<code>attribution=none</code>、<code>base_check PASS</code>）；width=1 那趟是 arm-timeout」。
+本輪在 <b>k=1</b> 上覆現，並補上<b>機制</b>（09-30 只記了「跑不完」這個事實）。
+來源追溯：<code>40-40:16</code> 是 2026-09-28 為了省記憶體引進的
+（<code>docs/MTP_BITIDENT_CLOSEOUT_2026-09-28.md:113</code>：「存活成本｜ON 要活下來還得動 <code>CGC_SERVER_LAYER_CAPS=40-40:16</code>」）。
+</div>
+
+<h2>4. A. TPOT 分解</h2>
+
+<p>本節只列<b>有實測出處</b>的量；沒有量到的段落明寫「未量」，不推估。</p>
+
+<table>
+<thead><tr><th>項</th><th class="num">ms/token</th><th>出處／口徑</th><th>狀態</th></tr></thead>
+<tbody>
+<tr><td>MTP-off 交付 cell</td><td class="num">82.4</td><td><code>Backup/spec_tree/marginal2/off.json</code>（12.135 t/s，reps 11.46/12.49/12.46）</td><td><span class="tag t-amber">attribution=swap ⇒ 非主張</span></td></tr>
+<tr><td>MTP-on k=1，width=8</td><td class="num">90.95</td><td><code>Backup/spec_tree/on_cap140.json</code>（10.995 t/s，reps 9.888/12.042/11.055）</td><td><span class="tag t-amber">attribution=swap ⇒ 非主張</span></td></tr>
+<tr><td>MTP-on k=1，width=1（懸崖）</td><td class="num">2151</td><td><code>CGC-DECPROF</code> total 4301.9 ms ÷ 2 顆</td><td><span class="tag t-red">不是可用的 t/s，只示量級</span></td></tr>
+</tbody>
+</table>
+
+<p><b>三段拆解</b>（口徑：交付 cell、MTP-on k=1、width=8、<code>CGC-DECPROF</code> 逐 step 中位）：</p>
+<ul>
+<li><b>不可避免</b>：<code>wait</code> 96.3 ms/step（verify 步），即 GPU／IO 的實際等待 —— 這是這條路徑的正常成本。</li>
+<li><b>可回收</b>：<b>本輪沒有量到</b>。唯一已知的可回收項是段邊界的 overlap 柵欄（歷史 ×1.218），但它不屬本輪變數。</li>
+<li><b>必須還回去</b>：無（本輪沒有引入近似）。</li>
+</ul>
+
+<div class="box warn">
+<b>未量與為什麼</b>：本輪是<b>歸因</b>，不是交付，因此沒有跑「同 session、同 cell 的 MTP-off/on 配對」。
+上表兩個 t/s 都落在 <code>attribution=swap</code> 的窗口 ⇒ 依本 repo 的 R4 判準列為<b>非主張</b>，
+只能用來看<b>比值與機制</b>，不可寫進任何認證表。
+</div>
+
+<h2>5. B. decode 分段拆解</h2>
+
+<p><code>total = wait + cb + submit</code>（<code>ggml-backend.cpp:2987-2990</code>），逐 step 中位：</p>
+
+<table>
+<thead><tr><th>段</th><th class="num">width=1（懸崖）</th><th class="num">width=8（健康）</th><th>同步或可 overlap</th></tr></thead>
+<tbody>
+<tr><td><code>wait</code></td><td class="num">198.5 ms</td><td class="num">96.3 ms</td><td>同步等待（GPU／IO）</td></tr>
+<tr><td><code>cb</code></td><td class="num">4071.0 ms</td><td class="num">24.9 ms</td><td>同步阻塞（hook 內：槽管理 ＋ 阻塞填充）</td></tr>
+<tr><td><code>submit</code></td><td class="num">14 ms</td><td class="num">—</td><td>可與下一段 overlap（已被柵欄收割過）</td></tr>
+</tbody>
+</table>
+
+<h3>5.1 <code>cb</code> 內部的六桶（新儀器 <code>CGC_FASTPATH_SPLIT</code>）</h3>
+
+<p>健康態（width=8）下，fast-path 塊<b>單次呼叫</b>中位 <b>5 µs</b>（<code>zero/touch/wait/pub/remap</code> 皆 0，
+<code>dbuf</code> 4 µs）⇒ ×41 層 ≈ <b>0.2 ms/步</b> ⇒ <b>那個塊不是成本點</b>。
+其餘的 24.9 ms/步在它<b>之前的序言</b>（本輪未拆）。</p>
+
+<div class="box warn">
+<b>本輪第一趟儀器給的是「否定但決定性」的答案</b>：在 width=1 的臂上，
+<code>CGC-FASTSEG</code> <b>整趟只印 1 行</b>（<code>ctx=draft</code>）⇒ verify 步<b>根本沒進那個塊</b>。
+⇒ 先前所有「4 秒在 fast-path 視窗裡」的推論（含本線自己先前的）全部作廢；
+也證明<b>「從 env 反推走了哪條路」不算證</b> —— 要裝儀器在<b>那條路上</b>量。
+</div>
+
+<h2>6. C. prefill ＋ decode 同報</h2>
+
+<table>
+<thead><tr><th>相位</th><th class="num">width=8 那一趟</th><th>來源</th></tr></thead>
+<tbody>
+<tr><td>prefill（depth 512，ntok=512）</td><td class="num">total 7267.3 ms/步（wait 1913.0／cb 4548.8）</td><td><code>CGC-DECPROF</code>，同一次 launch</td></tr>
+<tr><td>decode（ntok=2 verify）</td><td class="num">total 127.7 ms/步（wait 96.3／cb 24.9）</td><td>同上</td></tr>
+<tr><td>thermal／swap</td><td class="num">attribution=swap</td><td>臂 JSON</td></tr>
+</tbody>
+</table>
+
+<p>兩者取自<b>同一次 launch</b>，各帶窗口標記。注意 prefill 用 slab 路徑是<b>設計如此</b>
+（<code>512 &gt; width=8</code>）—— prefill 不屬本次修復的對象。</p>
+
+<h2>7. 現場閘門輸出原文</h2>
+
+<pre><code>python3 agent_harness/engine_loop/traces/validate.py            # 見文末 §7.2 原文
+python3 agent_harness/engine_loop/traces/selftest.py            # 10/10 rejected
+python3 agent_harness/engine_loop/memory/build_memory_index.py --check
+python3 agent_harness/engine_loop/index_assets.py --check
+python3 scripts/check/m123_oracle_gate.py --tag fastseg-dormant-20261003</code></pre>
+
+<h3>7.1 D5 數值閘門（本輪動了 <code>src/</code>）</h3>
+<p>見 §7.2 的原文；結論寫在該節。本輪所有新旋鈕（<code>CGC_RSS_OFF</code>、<code>CGC_FASTPATH_SPLIT</code>）
+預設<b>未設</b> ⇒ 閘門跑的是<b>休眠態</b>，這是唯一有判決力的那一趟。</p>
+
+<h3>7.2 原文</h3>
+<pre><code>$ python3 agent_harness/engine_loop/traces/validate.py
+  lessons.jsonl: 219 records {'lesson': 219}
+    WARN  eng-mh-0048: applies_to path does not exist: src/llama.cpp/build/bin/libllama.0.0.279.dylib
+  -&gt; OK, 1 warning(s)          (該 warning 為既有欠帳，與本輪無關)
+
+$ python3 agent_harness/engine_loop/traces/selftest.py
+  10/10 injected violations rejected
+
+$ python3 scripts/check/m123_oracle_gate.py --tag fastseg-dormant-20261003
+   M1 numeric identity    (bit-identical logits)  : 9/9  (100.0%)
+   M2 decision agreement  (same argmax token)     : 9/9  (100.0%)
+   M3 top-k set agreement (same top-N id set)     : 9/9  (100.0%)
+   GATE fastseg-dormant-20261003: PASS   M1(bit-identical)=9/9  M2(argmax)=9/9  M3(topk)=9/9  n=9
+   cross-tab: {'num_eq_dec_eq': 9, 'num_eq_dec_ne': 0, 'num_ne_dec_eq': 0, 'num_ne_dec_ne': 0}
+   build : libllama.0.dylib=a30ccd028b7cfd77  libggml-metal.0.dylib=1a9c83ef34c82edb
+           libggml-base.0.dylib=ed1a864e8894c310  llama-server=054fb22f04a01c5c
+   # summary_fastseg-dormant-20261003.json: comparable=True, config_diffs=[],
+   #   coverage_pct=100.0, n_compared=9, ref_md5=e1663cc10d529571553e7105b4a7a51b
+
+$ BIN_DIR='src/llama.cpp/build/bin' RUN_REPLAY_BENCH=0 bash scripts/check_build_tracked.sh --repo "$PWD"
+OK: 沒有 FAIL —但本次有 5 個區段被 SKIP，所以「OK」只代表「沒有失敗」，不代表它們被驗證過。
+  SKIP 非 dev 分支的 @rpath 驗收
+  SKIP 原始碼↔binary 同步（手動跑 hook 時無 staged；commit 時必有 staged）
+  SKIP RUN_CGC_PROD_ACCEPT=1 未啟用
+  SKIP RUN_DEPLOY_HARMONYOS_ACCEPT=1 未啟用
+  SKIP RUN_REPLAY_BENCH=0（依 D2：replay 基線已 stale）</code></pre>
+
+<div class="box ok">
+<b>判讀</b>：<code>comparable=True</code> ＋ <code>config_diffs=[]</code> ⇒ 這一次比較<b>不跨配置</b>，
+那三個 9/9 是<b>裁決</b>而不是「印出來看的」。而本輪所有新旋鈕（<code>CGC_RSS_OFF</code>、<code>CGC_FASTPATH_SPLIT</code>）
+在該 profile 上<b>未設</b> ⇒ 這一趟驗的是<b>休眠態的惰性</b>：碼在裡面、但它不執行時數值不動。
+</div>
+
+<h3>7.3 補：儀器「開著」的那一趟不進 D5</h3>
+<p>本輪沒有跑「儀器開啟」的 D5。理由：該臂會多出兩個不被 <code>DIAGNOSTIC_KEYS</code> 收錄的 env
+（<code>ENV.CGC_FASTPATH_SPLIT: ref='&lt;absent&gt;' now='1'</code>）⇒ 必然 <code>comparable=False</code>，
+那時的 9/9 依 gate 自己的說明只是「印出來看的」，<b>沒有判決力</b>。
+依 skill 的判準，只有「休眠態 <code>comparable=True</code>」那一趟有判決力，本輪已取得（§7.2）。</p>
+
+<h2>8. 這件事更正了什麼</h2>
+
+<table>
+<thead><tr><th>早先判詞（2026-10-03 同日）</th><th>現況</th></tr></thead>
+<tbody>
+<tr><td>「懸崖是記憶體牆／swap 正回饋」</td><td><b>主因是相位誤判</b>；thrash 是後果（每步串流 4.5 GB）</td></tr>
+<tr><td>「<code>cb</code> 與批寬無關」＝某個與 token 無關的固定成本</td><td>真因是<b>永遠讀全部 256 專家</b></td></tr>
+<tr><td>「MTP-on k=1 在這台盒子上跑不完」</td><td>是<b>配方 <code>40-40:16</code> 跑不完</b>；<code>40-40:140</code> 跑得完</td></tr>
+<tr><td>「<code>:8974</code> 的早退確實被走」（由 env 反推）</td><td><b>錯</b>：那條路沒被走（儀器 0 行）</td></tr>
+</tbody>
+</table>
+
+<h2>9. 誠實邊界</h2>
+
+<ul>
+<li><b>不主張</b> <code>40-40:140</code> 的 <code>avg_ts = 10.995</code> 可引用 —— 該窗口 <code>attribution=swap</code>。
+本輪是<b>歸因</b>（機制與量級），不是 t/s 交付。</li>
+<li><b>不主張</b>「修好 width 就能提速」。09-30 已證：<code>width=8</code> 之下 <code>k_eff</code> 仍 <b>~1.6</b>。
+下一個閘門是 <code>is_mem_shared</code> 的 draft 位置碰撞（<code>X = Y</code> 形態，
+<code>docs/KEFF_CAP_2026-09-26.md</code>）—— draft loop 第二步在同位置再解一次，
+<code>llama_decode</code> 拒絕、迴圈 <code>break</code>、<b>靜默只吐一顆</b>。</li>
+<li><b>不主張</b>「健康態的 <code>cb</code> 24.9 ms/步已經拆完」—— 新儀器只覆蓋 fast-path 塊（0.2 ms/步），
+其餘在序言，本輪未拆。</li>
+<li><b>未跑</b>：同 session 的 MTP-off／on 配對（本輪無此變數）；clean 窗重跑。</li>
+</ul>
+
+<h2>10. 附錄：儀器與產物</h2>
+
+<table>
+<thead><tr><th>項</th><th>位置</th></tr></thead>
+<tbody>
+<tr><td>儀器（新增）</td><td><code>src/llama.cpp/src/llama-context.cpp</code>，tag <code>CGC-FASTSEG:</code>，旋鈕 <code>CGC_FASTPATH_SPLIT</code></td></tr>
+<tr><td>轉發白名單</td><td><code>scripts/run_server.sh</code></td></tr>
+<tr><td>runner</td><td><code>Backup/spec_tree/on_fastseg.sh</code>（width=1）、<code>Backup/spec_tree/on_cap140.sh</code>（width=8）</td></tr>
+<tr><td>產物</td><td><code>Backup/spec_tree/on_fastseg{,.json,.logs}</code>、<code>Backup/spec_tree/on_cap140{,.json,.logs}</code></td></tr>
+<tr><td>判定文件</td><td><code>Backup/spec_tree/PHASE_MISCLASS_VERDICT_2026-10-03.md</code></td></tr>
+</tbody>
+</table>
+
+<div class="box ok">
+<b>可操作結論</b>：MTP-on 的臂字串<b>永久</b>由 <code>40-40:16</code> 改成 <code>40-40:140</code>（或任何 ≥ 24 的 cap）——
+否則任何 MTP-on 量測量到的都是「串流全部專家」，而不是 MTP。
+</div>
+
+<footer>
+flashkv-devserver ／ 引擎線 ／ 2026-10-03 16:30 ／ 本檔為 D5 白皮書附件；
+數字全部現場量測，未量者已明寫。
+</footer>
+
+</div>
+</body>
+</html>

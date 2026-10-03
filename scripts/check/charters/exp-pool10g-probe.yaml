@@ -1,0 +1,49 @@
+id: exp-pool10g-probe
+owner: lineA
+created: 2026-10-03
+axis: IO
+
+question: |
+  expert cache 給到 **10 GiB** 會怎樣——OOM，還是變快？
+
+  背景：池目前固定 8 GiB（`CGC_SERVER_EXPERT_CACHE_BYTES`，`run_server.sh:543`），而縮池的曲線
+  已知（8G→12.06、6G→10.48、4G→7.67）⇒ **只測過「縮」，沒測過「擴」**。容量 miss 是這台盒子
+  剩下的已知缺口：工作集 ≈10.3 GiB vs 專家 ≈11.5 GiB；全駐留需 ≈14.3 GiB（放不下）。
+  但 **10 GiB 落在 8 與 14.3 之間，從沒被量過**。
+
+  ⚠ 主要風險是**過訂**：模型 12.72 GiB（`load_mode=none` ⇒ 不可回收）＋ 10 GiB 池 ≈ 22.7 GB
+  vs 16 GB 物理 ⇒ 極可能 OOM 或重度換頁（2026-09-22 量到整機換頁值 1.46×）。
+  本節點就是要**量出那條線在哪**——「OOM」也是一個答案。
+
+baseline:
+  metric: "prod-new 交付 cell 控制臂（池 8 GiB）；歷史縮池曲線 8G→12.06 / 6G→10.48 / 4G→7.67 t/s"
+  cell: "prod-new 交付 cell（prompt 0 / gen 128 / depths 512 / batch 512 / ctx 4096）"
+  source: "scripts/run_server.sh"
+
+hypothesis:
+  mechanism: |
+    (a) 若容量 miss 是缺口，擴池應減少 miss ⇒ t/s 上升（但需抵過多出來的換頁）。
+    (b) 更可能的是：13.6 GB 不可回收模型 ＋ 10 GiB 池超過 16 GB ⇒ 池本身被擠進 swap
+        ⇒ 每次專家讀取都等 page-in ⇒ t/s 下降或 Metal OOM（status 5）。
+  expected: "① OOM/status 5 ⇒ 「擴池不可行」；② 活著但 t/s 下降 ⇒ 過訂代價大於 miss 收益；③ t/s 上升 ⇒ 有槓桿"
+  basis: "docs/DENOMINATOR_PINNED_2026-09-22.md §2（換頁 1.46×）；docs/R6_RECOMPUTE_VERDICT_2026-10-02.md（143 槽 vs 256 專家）"
+
+acceptance:
+  success: "給出「10 GiB 池在 16 GB 盒子上」的明確判詞（OOM / 活著但更慢 / 更快），並附 swap 讀數"
+  falsify: "若臂 OOM 或 t/s ≤ 控制 ⇒ 擴池收束，池大小軸維持 8 GiB 定案"
+  on_fail: "寫進 Backup/spec_tree/，並更新工作區記憶"
+
+targets:
+  decode_tps: 15.2
+  prefill_tps: 250.0
+
+subgoals:
+  - id: sg-pool10g
+    text: "量 8 GiB 控制臂 vs 10 GiB 臂在 prod-new 交付 cell 的結局（OOM 或 t/s）"
+    expect: "控制 ~11；10 GiB 臂 ？"
+    how: "python3 scripts/check/harness.py bench，3 臂 × reps 3，同一 session"
+
+arms:
+  - "prod-new"
+  - "prod-new:!CGC_EXPERT_CACHE_BYTES=10737418240;CGC_SERVER_EXPERT_CACHE_BYTES=10737418240"
+  - "prod-new:CGC_RSS_OFF=1"

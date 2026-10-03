@@ -76,6 +76,21 @@ struct common_speculative_draft_params {
     // When nullptr the draft step skips the copy entirely (one predictable branch), so a default
     // run pays nothing for this feature.
     std::vector<common_draft_dist> * dist = nullptr;
+
+    // [CGC spec-tree 2026-10-02] OPTIONAL caller-owned storage, parallel to `result`: for each
+    // drafted position, the runner-up candidate the draft step saw (or -1 when the implementation
+    // exposed none). Same ownership convention as `result` / `dist` (the caller owns the storage;
+    // this struct only points at it).
+    //
+    // Why: the chain path throws a whole verify round away on partial acceptance precisely because
+    // it has no alternative to fall back on. A tree verifier needs the runner-up at a position to
+    // build a branch -- and it must come from the SAME sampler call as the chosen token, otherwise
+    // the branch is not a candidate the drafter was actually considering.
+    //
+    // Scope note (the same disclosed asymmetry as `dist`): only the MTP implementation fills this;
+    // draft-simple and the ngram drafts leave it untouched. When nullptr the draft step skips the
+    // copy entirely (one predictable branch), so a default run pays nothing for this feature.
+    llama_tokens * alt = nullptr;
 };
 
 common_speculative_draft_params & common_speculative_get_draft_params(common_speculative * spec, llama_seq_id seq_id);

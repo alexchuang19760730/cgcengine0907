@@ -1,0 +1,66 @@
+id: exp-marginal-decomp
+owner: lineA
+created: 2026-10-03
+axis: M
+
+question: |
+  **「邊際 verify token ＝ 34.7 ms」由什麼構成？**
+
+  由 L254 的兩個實測點反解出 `round_ms ≈ 52.0 + 34.7·T̂`（off `T̂=1.00／86.7 ms`、k=2 `T̂=2.80／149.1 ms`）。
+  那 **34.7 ms／token 的斜率**有三個候選構成：
+  ① **GPU 執行**（每顆 token 的 GEMV／attention）
+  ② **IO 等待**（該 token 的新專家讀取）
+  ③ **派發入場費**（節點數隨 token 數線性成長）
+
+  為什麼這一問決定一切：**若把這個邊際壓掉**，在接受率完全不動（E=1.625）的前提下就是
+  **×2.71**（邊際砍半 ×1.40、砍到 1/4 ×1.85）。⇒ **(i) 能不能單獨拿到 2× 完全取決於它。**
+
+baseline:
+  metric: "round_ms ≈ 52.0 + 34.7·T̂（兩點反解）；現況 k=2 為 91.8 ms/emit ⇒ ×0.94"
+  cell: "MTP-on 的 k 掃描（prod25／prod-new）"
+  source: "docs/L254_K_AXIS_ECON_2026-10-01.md"
+
+hypothesis:
+  mechanism: |
+    **設計修正（2026-10-03，第二次發車）**：原設計用 k≈4 取「同一趟內 T̂ 有變化 ⇒ 可逐點回歸」，
+    但 **k=4 違反存活配方**（必帶 `--spec-draft-n-max 1`）⇒ 兩趟 VOID（4.5 s/step 的 thrash，`incomplete=True`）。
+    ⇒ 改為 **存活配方 k=1 ＋ 一趟 off 對照**，且因 spec 旗標是**整趟級**（不能按臂混）⇒ **兩個 invocation**：
+      - `off`：`--arm "prod-new"`，**無** `--spec-type` ⇒ 每步都是 ntok=1 的 **target** 前向
+      - `on-k1`：存活配方 ＋ `--spec-draft-n-max 1` ⇒ draft 步 ntok=1（draft 模型）／verify 步 ntok=2（**target** 模型）
+    判準：**Δ ＝ on 的 verify 步 − off 的步** ＝ 「target verify 批多裝 1 顆 token」的邊際，逐桶拆：
+      - Δ`gpu_busy_sum` ≈ Δtotal ⇒ **GPU 執行是主項**
+      - Δ`gap` 或 Δ(`wait`−`gpu_union`) ≈ Δtotal ⇒ **IO／idle 是主項**
+      - Δ`segs`／Δ`bufs` 隨 token 數成長 ⇒ **派發入場費**
+    ⚠ k=1 的趟內沒有 T̂ 變化（verify 恆 ntok=2）⇒ **不靠迴歸，靠兩趟配對**；
+      要 2 點以上的斜率得再加 k=2 臂（verify 寬度會變，但記憶體風險較高、非本次）。
+    ⚠ 記錄裡有三條**互相矛盾**的一手線索，所以必須量：§8「權重搬運只值 7.5 ms/步（11%）」→ 不是搬運；
+      §9「MoE GEMV 全族 ≈5%、in-situ 只佔 GPU 忙碌 3.4%」→ 不是 GEMV；
+      DECODE25 §8「85.8 ms ≈ 64 ms miss 相關（75%）」→ 又指向 IO。
+  expected: "四個桶裡有一個的斜率接近 34.7 ms/token，其餘接近 0"
+  basis: "docs/L254_K_AXIS_ECON_2026-10-01.md:44-51；docs/NEXT_LEVER_20PLUS_2026-10-02.md §5,§8"
+
+acceptance:
+  success: "指名 34.7 ms 的主項（GPU 執行／IO／派發）並給比例"
+  falsify: "若四個桶的斜率都 ≈0 且加總 ≈34.7 ⇒ 歸因失敗，要換儀器（不主張）"
+  on_fail: "寫進 Backup/spec_tree/；(i) 的兩條分支按結果二選一"
+
+targets:
+  decode_tps: 20.0
+  prefill_tps: 250.0
+
+subgoals:
+  - id: sg-marginal
+    text: "把 34.7 ms 拆進 GPU 執行／IO／派發三桶"
+    expect: "0（這是歸因，不是貢獻）"
+    how: "harness bench ×2（off ／ on-k1，spec 旗標是整趟級）＋ CGC_DECODE_PROFILE=1 ＋ CGC_GPU_TIMING=1；配對 Δ（不靠迴歸）"
+
+arms:
+  - "prod-new"
+  - "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1"
+
+options:
+  subgoal: L25-4
+  profile: prod-new
+  cli:
+    spec_type: draft-mtp
+    spec_draft_n_max: 1
