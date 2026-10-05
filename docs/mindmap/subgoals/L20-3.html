@@ -46,7 +46,7 @@ table.queue td { vertical-align: top; }
   footer { margin-top:40px; padding-top:14px; border-top:1px solid #e5e7eb; font-size:12.5px; color:#6b7280; }
   .kv { width:100%; } .kv th { width:150px; background:#fff; font-size:13px; }
   .verdict { font-size:15px; font-weight:600; }</style></head><body>
-<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
+<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（17）</a></nav>
 <div class="container">
 <h1>L20-3 ｜ 重算本體 B（靜態 <code>ggml_acc</code>）</h1>
 <p class="subtitle">結案狀態：<span class="badge b-ok">結案（排除）（§70 改寫理由）——<b>前置已量、不成立</b>：穩態每層峰值 <b>6</b>（≤2 只覆蓋 64% 的步）⇒ 靜態圖只能取 k＝6；而同格重判說 k=6 的邊際是 <b>−1.62 ~ +4.24 ms（NOT_SEPARATED）</b>，不是原本跨格比較寫的 −2.1。<br>⚠ <b>改的是理由，不是判詞</b>：原判拿交付 cell 的重算 <code>6.07</code> 對 <b>(default) cell</b> 的 fill <code>3.955</code>（§56 不可比）；換成同格之後 B 從「貴」變成「<b>不可分辨</b>」——全覆蓋也只能回收步時的 ~1%。（09-30 operator：既然綠底，狀態就該寫結案——排除也是結案）</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>

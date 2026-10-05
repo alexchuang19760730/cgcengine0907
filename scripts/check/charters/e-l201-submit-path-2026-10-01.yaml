@@ -148,3 +148,24 @@ result:
     - "本場 S1 臂 t/s 異常（tg 9.49 vs 誠實臂 8.82；歷史同場 S1 20.39 vs control 10.07）⇒ 紅利未重現；S1 臂 t/s 依 R6 不引用，判詞不依賴它。"
   artifacts: "Backup/l201_submitpath_2026-10-01/twoarm.json（＋ .logs/live/*.stderr.log）；oracle 兩份 summary"
   next: "另立卡（operator 拍）：在不開 CGC_SEG_BATCH 的可驗臂上把提交數減量；驗收＝Δstep > 兩臂散布 ∧ 配對 M1 9/9 ⇒ 紅利可交付。"
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-1 同步；勿手改，改看板）】──
+options:
+  subgoal: L20-1
+  profile: prod-new
+  arms: []
+  knobs:
+    - {name: CGC_SEG_BATCH, value: "1", role: subject, why: "單段提交：41 段→1 段，本格要校準的就是它的 step", source: "charters/e-s1-base-calibrate arms[]"}
+    - {name: CGC_B_SCHEME, value: "1", role: subject, why: "段內 slot 指派方案", source: "同上"}
+    - {name: CGC_SLOT_TABLE_GPU, value: "1", role: subject, why: "讓 leaf 被建（G3 的前置）", source: "同上 + 實跑 arm"}
+    - {name: CGC_MISS_MASK, value: "1", role: instrument, why: "miss 遮罩計數，不改演算法", source: "node exp-prodnew-decode20-g4miss 實跑 arm"}
+    - {name: CGC_MISS_MASK_DBG, value: "1", role: instrument, why: "逐層 miss 明細", source: "同上"}
+    - {name: CGC_MISS_MASK_COST, value: "1", role: instrument, why: "miss 重算成本計時", source: "同上"}
+  # 以下臂已被判準刪除（不能量交付目標）：定義在 scripts/check/quote_gate.py 的 R5／R6；
+  # 逐子目標的理由與規則見看板同一格的 options.arms_removed。
+  arms_removed:
+    - arm: "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1"
+      rules: [R6]
+      flags: { CGC_SEG_BATCH: R6 }
+      why: "這一格的數（27.53／36.33 ms）只能從單次提交臂出來，而單次提交臂的 t/s 與交付目標不是同一個函數（R6）。"
+  note: "控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。"

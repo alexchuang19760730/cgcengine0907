@@ -1,4 +1,4 @@
-# 250 / 25 攻關 — 逐條技術白皮書總目錄（52 條）
+# 250 / 25 攻關 — 逐條技術白皮書總目錄（56 條）
 
 > 每一條實驗／嘗試一對檔案（`html` ＋ `md`）：**目標 → 判準 → 結果 → 判定** ＋ 依據 ＋ 對應報告。
 > 回 [mindmap 總圖](../index.html)　·　[HTML 版總目錄](index.html)
@@ -25,7 +25,7 @@
 | 3b | [server 窗口／box 准入（單一來源閘門）](sys-window.html) | 不適用 | 2 | [sys-window.md](sys-window.md) | BOX_ADMISSION_SINGLE_SOURCE 定為單一來源；SERVER_WINDOW_LEDGER 記錄逐次窗口。**09-29 |
 | 3b | [expert cache 血統設計（09-05~09-09 期）](na-design.html) | S 序列化消減 | 8 | [na-design.md](na-design.md) | HYBRID_DESIGN／INVARIANTS／INTEGRATION_DIFF／COMMIT_DIGEST：血統進了生產的 expert |
 
-## 實驗階段（階段性）（19）
+## 實驗階段（階段性）（23）
 
 *③a —— 機制／量測成立，但產物還不能進生產*
 
@@ -50,6 +50,10 @@
 | 3a | [在**今天的交付口徑**上（`prod-new` profile、`…](exp-churn-delivery-630.html) | S 序列化消減 | 0 | [exp-churn-delivery-630.md](exp-churn-delivery-630.md) | 主 context ntok=1 的 churn 非 0（publish 級 3026/14976、entry 級 4014/119808， |
 | 3a | [在**認可入口**（`harness bench`、`prod-ne…](exp-prodnew-decode20-g4miss.html) | S 序列化消減 | 0 | [exp-prodnew-decode20-g4miss.md](exp-prodnew-decode20-g4miss.md) | **閘已過**（09-29 權威 cell）：重算工作清單中位 **6.09%**（19.0/step、IQR 3.85–8.65）、`mm |
 | 3a | [在單次提交臂上，**把每一步的 union 不經 hook 交給預取…](exp-singlesubmit-fillahead.html) | S 序列化消減 | 0 | [exp-singlesubmit-fillahead.md](exp-singlesubmit-fillahead.md) | decode 27.26 t/s |
+| 3a | [**「邊際 verify token ＝ 34.7 ms」由什麼構成…](exp-marginal-decomp.html) | M MTP on 加速 | 0 | [exp-marginal-decomp.md](exp-marginal-decomp.md) | decode 9.97 t/s |
+| 3a | [M2 slab pool-reuse（整層填的 memcpy 省多少）](e-m2-slab-reuse.html) | M MTP on 加速 | 0 | [e-m2-slab-reuse.md](e-m2-slab-reuse.md) | decode 8.26 t/s |
+| 3a | [2026-10-03 operator 裁定「移除所有具名格、pro…](exp-default-cell-first-2026-10-03.html) | 不適用 | 0 | [exp-default-cell-first-2026-10-03.md](exp-default-cell-first-2026-10-03.md) | 尚無可引用讀數：1 個 run 全部非乾淨（attribution.verdict=swap（swap_growth=3122.309999 |
+| 3a | [把段邊界重疊柵欄（CGC_OVERLAP_FENCE=41）搬到**…](exp-fence-default-cell-2026-10-05.html) | S 序列化消減 | 0 | [exp-fence-default-cell-2026-10-05.md](exp-fence-default-cell-2026-10-05.md) | 尚無可引用讀數：1 個 run 全部非乾淨（attribution.verdict=swap（swap_growth=3431.74 MiB |
 
 ## 已結案（廢棄／不適用）（18）
 

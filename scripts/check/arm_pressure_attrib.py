@@ -43,8 +43,11 @@ import server_window as sw                # noqa: E402  window provenance + the 
 from mem_oversub_probe import guard, vm_snapshot  # noqa: E402  counters, one parser
 
 ARM_CMD = [sys.executable, str(HERE / "llama_bench_matrix.py")]
-DEFAULT_CELL = ["--prompt", "2048", "--gen", "128", "--depths", "512", "--reps", "3",
-                "--ctx-size", "0", "--warm-skip", "64"]
+# [CGC 2026-10-03] 形狀＝llama-bench 出廠值（測試卡 §2.5 預設 cell；operator 裁定移除所有具名格）。
+# 原本是 `-p 2048 -d 512 -r 3 --warm-skip 64`——那個形狀已不存在，留著只會被 `cell_contract`
+# 以「batch/prompt/warm_skip 不一致」fail-closed 拒跑。
+DEFAULT_CELL = ["--prompt", "512", "--gen", "128", "--depths", "0", "--reps", "5",
+                "--ctx-size", "0", "--warm-skip", "0"]
 
 
 # ── parsing (pure, so the fixtures can drive it) ─────────────────────────────────────────────

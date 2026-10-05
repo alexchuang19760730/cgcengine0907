@@ -36,8 +36,15 @@ arms:
 options:
   subgoal: L20-3
   profile: prod-new
-  arms:
+  arms: []
   knobs:
     - {name: CGC_MISS_MASK_HIST, value: "1", role: instrument, why: "逐層 miss 直方圖（決定靜態寬度 k 的唯一量）", source: "docs/MISSHIST_REVIVAL_GATE_2026-09-29.md；runA.stderr.log"}
+  # 以下臂已被判準刪除（不能量交付目標）：定義在 scripts/check/quote_gate.py 的 R5／R6；
+  # 逐子目標的理由與規則見看板同一格的 options.arms_removed。
+  arms_removed:
+    - arm: "prod-new:CGC_SEG_BATCH=1;CGC_B_SCHEME=1;CGC_SLOT_TABLE_GPU=1;CGC_MISS_MASK=1;CGC_MISS_MASK_DBG=1;CGC_MISS_MASK_COST=1;CGC_MISS_MASK_HIST=1"
+      rules: [R5, R6]
+      flags: { CGC_MISS_MASK_COST: R5, CGC_MISS_MASK_DBG: R5, CGC_MISS_MASK_HIST: R5, CGC_SEG_BATCH: R6 }
+      why: "唯一的臂同時帶三個「原始碼／登記表明文不得引用吞吐」的診斷量具（R5）與單次提交（R6）⇒ 它量到的是量具的成本，不是交付目標。"
   no_knob: "本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置的儀器已經跑完（見上）⇒ <b>前置否證，不必再印</b>。"
-  note: "§51 尖兵已量：被定價的是散佈（320 op），沒被定價的是備援重算 320 列 ＝ 8.09 ms ⇒ 淨回收為負，decode ≥25 回到判死。<br>★ <b>復活門已關閉（09-29 實測）</b>：穩態每層峰值 <b>6</b>（不是 2）⇒ 要用 k≤3 才可能正回收，而那會讓 10.6% 的穩態步算錯（靜態圖不能按步改寬度）。均值 0.470 與板上原本寫的 0.49 相符 —— <b>k 由尾部決定，不由均值決定</b>。"
+  note: "★ <b>復活門已關閉（09-29 實測）</b>：穩態每層峰值 <b>6</b>（不是 2）⇒ 要用 k≤3 才可能正回收，而那會讓 10.6% 的穩態步算錯（靜態圖不能按步改寬度）。均值 0.470 與板上原本寫的 0.49 相符 —— <b>k 由尾部決定，不由均值決定</b>。<br><b>§70 同格重價：</b>k=2/3/4 分離為正（覆蓋 64.0／89.4／98.1%），k=5/6 跨零（99.7／100.0%），k≥7 為負 ⇒ <b>可行區與可覆蓋區不相交</b>。重算列價由今晚乾淨窗口的 kernel 探針量得（7.6–8.7 ms/320 列）；09-22 的 8.09 是 busy-overridden 窗口。"

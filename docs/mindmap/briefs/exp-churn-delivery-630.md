@@ -35,7 +35,7 @@
 - **被測 option**：`CGC_S1_TABLE_CHURN=1`；`CGC_SLOT_TABLE_GPU=1`
 - **儀器開關**（不是被測 option）：`CGC_GPU_TIMING=1`；`CGC_DECODE_PROFILE=1`
 - **arm 1（可複製）**：`prod-new:CGC_S1_TABLE_CHURN=1;CGC_SLOT_TABLE_GPU=1;CGC_GPU_TIMING=1;CGC_DECODE_PROFILE=1`
-- **結案狀態**：未結案（未跑）
+- **結案狀態**：結案（排除）（§64）——前置否證：「逐步之間那張表是常數」在今天的交付口徑上也不成立：交付步（MTP off、主 context、ntok=1）的 churn 不是 0（publish 級 19.8–20.2%、entry 級 3.2–3.4%，兩筆獨立 run）⇒ 依本格自己的否證句（「churn 仍大 ⇒ S1 的前提維持不成立」）判。⚠ 這一格沒有可引用的 t/s（兩筆都 attribution=swap、文件自己寫「都不得引用」）⇒ 走排除路徑（不是達標）。
 - **逐條處置**：整合進子目標　→ `L20-8`　—　在交付口徑上重檢 churn；L20-8 的產物
 - **測試 log（實跑）**：[churn.json](../../../Backup/churn_delivery_630_2026-09-28/churn.json)　[exp-churn-delivery-630_20260928_231234.json](../../../Backup/exp_runs/exp-churn-delivery-630_20260928_231234.json)
 - 要在 ntok=1 主 context 上重測（MTP-on 的 verify 形狀 k=3 與交付口徑不是同一個量）。

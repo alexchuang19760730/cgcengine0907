@@ -154,9 +154,20 @@ result_ab:
 options:
   subgoal: L20-2
   profile: prod-new
-  arms:
+  arms: []
   knobs:
     - {name: CGC_ZERO_SLOT, value: "1", role: subject, why: "被測：零槽位（主端點是計數器翻轉 zero_slot>0 且 placeholder=0）", source: "charters/e-s1-g3-zeroslot arms[]"}
     - {name: CGC_SEG_BATCH, value: "1", role: subject, why: "單段提交（G3 的載體）", source: "同上"}
     - {name: CGC_SLOT_TABLE_GPU, value: "1", role: subject, why: "讓 leaf 被建 —— 缺它 G3 是 no-op", source: "docs/G1B_G3_INSTRUMENTS_2026-09-26.md"}
+  # 以下臂已被判準刪除（不能量交付目標）：定義在 scripts/check/quote_gate.py 的 R5／R6；
+  # 逐子目標的理由與規則見看板同一格的 options.arms_removed。
+  arms_removed:
+    - arm: "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1"
+      rules: [R6]
+      flags: { CGC_SEG_BATCH: R6 }
+      why: "本格結案判的是計數器翻轉（zero_slot>0 且 placeholder=0），不是 t/s；作為「量 20+ 的選項」它不合格（R6）。"
+    - arm: "prod-new:CGC_SEG_BATCH=1;CGC_SLOT_TABLE_GPU=1;CGC_ZERO_SLOT=1"
+      rules: [R6]
+      flags: { CGC_SEG_BATCH: R6 }
+      why: "同上：處理臂也是單次提交臂，其 t/s 不可當交付目標的讀數（R6）；結案依據是 counter_quote，不是這一條。"
   note: "A/B 兩臂只差 CGC_ZERO_SLOT，不動 src/；2 趟，主端點是計數器不是 t/s。"

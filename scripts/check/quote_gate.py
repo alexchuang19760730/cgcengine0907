@@ -296,7 +296,17 @@ def _declared_prompt(prod, cell_name):
         except Exception:  # noqa: BLE001  閘門不因契約讀不到而改變判準方向
             _CONTRACT_CACHE = {}
     ctr = _CONTRACT_CACHE or {}
-    spec = ctr.get("cell") if cell_name == "(default)" else (ctr.get("cells") or {}).get(cell_name)
+    # 2026-10-03：具名格全部退役之後，**墓碑仍要能回答「這一格宣告的 -p 是多少」**——
+    # R2 的 pp-less 拆欄靠它，否則 137 份舊 `delivery` 產物會從「第 1 rep 天生冷 ⇒ 拆欄」
+    # 退化成「不穩 ⇒ UNSTABLE」，那是這一刀唯一的行為副作用。`cell_spec` 讀得到退役名。
+    spec = None
+    try:
+        import cell_contract as _cc
+        spec = _cc.cell_spec(ctr, cell_name)
+    except Exception:  # noqa: BLE001  契約讀不到 ⇒ 退回舊路徑，判準方向不變
+        spec = None
+    if spec is None:
+        spec = ctr.get("cell") if cell_name == "(default)" else (ctr.get("cells") or {}).get(cell_name)
     if isinstance(spec, dict):
         return _as_int(spec.get("prompt"))
     return None

@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""commit_bench.py -- the pre-commit production cell: prefill 2048 + decode, llama-bench 口徑.
+"""commit_bench.py -- the pre-commit production cell: llama-bench 出廠形狀（pp512 / tg128）.
 
 [2026-09-23] 每次 commit 前必跑：證明新的 build 沒有把 production shape 弄壞。
-形狀固定為「完整側」：2048-token prefill（-p 2048），接著 128-token decode（-n 128），
-context 預置 512（-d 512）。profile 固定 prod-new（MTP off + prefill250 支柱）。
-[2026-09-25] decode 加 --warm-skip 64，與測試卡 §2 權威口徑一致（docs/PROD_NEW_TEST_CARD_2026-09-24.md）：
-    commit_bench 量的是穩定態（池已暖）；冷啟動代價另測 —— pool 4G 下無 warm-skip 是 -33%
-    （docs/POOL_SWEET_SPOT_2026-09-25.md §2/§5）。生產冷啟動由 run_server.sh 的預熱請求解決。
+[2026-10-03] **operator 裁定：形狀改為 llama-bench 出廠值**（移除所有具名格之後，測試卡 §2.5
+    的預設 cell 就是這一組）：`-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5`、warmup 開、warm_skip 0。
+    出處：`src/llama.cpp/tools/llama-bench/llama-bench.cpp:392-439` 的 `cmd_params_defaults`。
+    舊口徑（`-p 2048 -d 512 -r 3 --warm-skip 64`）＝**已退役形狀**，與新讀數不可互比。
+    ⚠ `--warm-skip` 曾是「量穩定態（池已暖）」的手段；llama-bench 沒有這個概念，改成靠它自己的
+    warmup run（預設開）。冷啟動代價的舊量測見 docs/POOL_SWEET_SPOT_2026-09-25.md §2/§5。
+    profile 仍固定 prod-new（記憶體側不動：池 8 GiB／KV q8_0／ngl 99／load_mode none）。
 
 判定（可配）：
   prefill t/s >= --prefill-min （預設 120；prod-new 目標 250+，但機器狀態波動大，閘門保守）
@@ -33,10 +35,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 PROFILE = "prod-new"          # MTP off + prefill250 支柱（§EN-473：decode 13-14 / prefill 250+）
-PROMPT = "2048"               # 完整側：2048-token prefill
-GEN = "128"                   # 接著 128-token decode
-DEPTHS = "512"                # context 預置 512（decode 在長一點的 context 上量）
-REPS = 3
+# [CGC 2026-10-03] 形狀＝**llama-bench 出廠**（測試卡 §2.5 預設 cell，operator 裁定）。
+# 出處：`src/llama.cpp/tools/llama-bench/llama-bench.cpp:392-439` 的 `cmd_params_defaults`：
+# `-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5`、warmup 開、warm_skip 0（llama-bench 沒有 warm-skip）。
+# ⚠ 這裡與 §2.5 不一致 ⇒ `cell_contract` fail-closed 拒跑（單一口徑），所以兩邊要一起改。
+PROMPT = "512"
+GEN = "128"
+DEPTHS = "0"
+REPS = 5
+WARM_SKIP = 0
 
 
 def run_matrix(profile, prompt, gen, depths, reps, workdir, json_out, dry_run):
@@ -45,7 +52,9 @@ def run_matrix(profile, prompt, gen, depths, reps, workdir, json_out, dry_run):
            "--prompt", prompt, "--gen", gen, "--depths", depths,
            "--reps", str(reps),
            "--ctx-size", str(0),
-           "--warm-skip", "64",
+           # [CGC 2026-10-03] warm-skip 0：llama-bench **沒有** warm-skip 這個概念，而本卡的預設格
+           # 已貼齊它的出廠形狀 ⇒ 這一項留 64 會讓 tg 那一列量的是「第 65–128 顆」，不是 tg128。
+           "--warm-skip", str(WARM_SKIP),
            "--workdir", workdir,
            "--json", json_out]
     if dry_run:

@@ -33,13 +33,13 @@ BOX_ADMISSION_SINGLE_SOURCE 定為單一來源；SERVER_WINDOW_LEDGER 記錄逐�
 - **來源**：子目標看板（唯一來源）　·　置信度 `high`
 - **profile**：`prod-new`
 - **arm 1（可複製）**：`prod-new`
-- ⚠ **本格沒有旋鈕**：本格沒有既有旋鈕可動：batch／prompt／warm_skip 都是測試卡 §2.5 的嚴格維度（改了 fail-closed 拒跑），現有孿生機制只開放 reps／rep_split ⇒ 這是一個 cell 定義的決定，不是一次跑得動的實驗。
-- **結案狀態**：未結案（§56 於 09-29 立項：跨格子不可比已確定；兩個候選尚未分離）
+- ⚠ **本格沒有旋鈕**：孿生機制（cell_contract：rep_split／twin_of）只開放 reps／rep_split —— 而 twin_of 的 reps 孿生已經宣告並跑過（§2.5.4c，3→7）：它壓不了 A4 的 max/min、反而把效應抹平。⇒ 剩下的不是旋鈕／n：2026-10-01 operator 已明文否證式結案（排除）——判詞維持 REFUSE；A4／統計量改革另立前瞻案（已立卡：scripts/check/charters/e-quote-caliber-paired-2026-10-01.yaml；預註冊全文 docs/QUOTE_CALIBER_PAIRED_PREREG_2026-10-01.md）、不回填。
+- **結案狀態**：結案（排除）· 否證式（operator 明文 2026-10-01）：以 n=7 的兩臂同平台結成「起點在 n=7 下不再可辨」——判詞維持 REFUSE（A UNUSABLE，全 rep 1.1197），REFUSE ≠ 否証，結案是 operator 的明文處置；配對 per-rep 比率（B/A）中位數 1.0114、p=0.227 ⇒ 換統計量也到不了可判定。結案前的狀態：未結案（§56 於 09-29 立項：跨格子不可比已確定；兩個候選尚未分離）。2026-10-01 07:22（n=7 輪）：reps 孿生（§2.5.4c）在同一窗跑完 —— A delivery-reps7 median 11.7941、全 rep 1.1197 ⇒ UNUSABLE；B delivery-ws192-reps7 11.9281、1.0818 ⇒ QUOTABLE；診斷級 Δ +1.14%（n=3 讀 +4.8%）⇒ n↑ 壓不了 max/min、效應也回到同平台：卡點改成 decision（operator：A4 統計量或否證式結案）。證據：Backup/l2010_b1b3_2026-09-30/clean_ws192_{A,B}.json、clean_ws192_verdict.json（含 diagnostic）、docs/L2010_CLEAN_WS192_20261001.md
 - （同條另掛：`L25-3`）
 - **逐條處置**：整合進子目標　→ `L25-3`　—　box 准入單一來源閘門 —— 乾淨窗口那一格就是它
 - **逐條處置**：整合進子目標　→ `L20-10`　—　量測起點（同一行程裡 pp 測試的有無）屬於窗口條件
 - **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
-- 判別句互斥：B1（起點）⇒ 加大 warm-skip 的 delivery 升到 ~11.5；B3（batch）⇒ (default) 的 batch-512 孿生掉到 ~9.7。
+- 判別句（§2.5.4b，未改）：B 落在 11.5±5% ⇒ 起點是主因；落 10.5±5% ⇒ falsify。n=7 的實測是兩個都不成立但 A 不可引用：A／B 都落在 11.5±5%（11.794／11.928）⇒ 起點在 n=7 下不再可辨；2026-10-01 operator 明文：否證式結案（排除）（判詞維持 REFUSE）。
 
 ## 6. 與其它條目的關係（同軸／同階段，自動對照）
 

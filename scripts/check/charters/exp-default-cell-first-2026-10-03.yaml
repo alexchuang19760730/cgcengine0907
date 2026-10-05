@@ -1,0 +1,36 @@
+id: exp-default-cell-first-2026-10-03
+owner: lineA
+created: 2026-10-03
+# 這一趟是「新預設格的交付基準讀數」，不是任何一個優化軸的槓桿 ⇒ axis: na。
+# （形狀本身由 operator 2026-10-03 裁定，不是本實驗的自變數；本實驗只量它的值與窗。）
+axis: na
+
+question: |
+  2026-10-03 operator 裁定「移除所有具名格、prod-new ＋ harness bench 完全貼齊 llama-bench
+  出廠形狀」之後，**新的預設 cell（唯一可選格）在交付面上值多少**？
+  即：`-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5`、warmup 開、`warm_skip 0`、`ctx_size 0`，
+  記憶體側維持 prod-new（ngl 99／load_mode none／池 8 GiB／KV q8_0）之下，
+  `pp512` 與 `tg128` 兩列的第一筆讀數是多少、`attribution` 是哪一級？
+
+baseline:
+  metric: "舊形狀（已退役）的同格家族：pp2048 296.24（C1）／pp512 117.588 與 tg 11.885（delivery-std 首筆，-b 512 -d 512 --warm-skip 64）"
+  cell: "新 (default)：prompt 512 / gen 128 / batch 2048 / ubatch 512 / depths 0 / reps 5 / warm_skip 0 / ctx 0"
+  source: "docs/PROD_NEW_TEST_CARD_2026-09-24.md"
+
+hypothesis:
+  mechanism: |
+    與 delivery-std 首筆（`-b 512 -d 512 --warm-skip 64`）相比有兩個實質變化：
+    ① `--warm-skip 64 → 0` ⇒ tg 那一列不再丟掉前 64 顆，量的就是 llama-bench 的 tg128；
+    ② `-d 512 → 0` ⇒ **沒有 depth 預填**，池在 decode 起點是冷的，前幾顆會走缺頁路徑。
+    兩者都指向「同一個引擎、同一個窗口下 tg 會比 11.885 低」，但那正是 llama-bench 的數字。
+    `-b 2048 -ub 512` 對 `-p 512` 沒有實質影響（ubatch 仍是 512 ⇒ 一個 ubatch），pp 應與 117.6 同級。
+  expected: "pp512 ≈ 118 t/s（±15%）；tg128 ≈ 9.5 t/s，判別區間 8.0–11.0；attribution 期望 none（換頁成長 ≤512 MiB）或 swap"
+  basis: "Backup/spec_tree/DELIVERY_STD_FIRST_2026-10-03.md（同格家族的 pp/tg 與換頁機制）、llama-bench.cpp:392-439（出廠預設）"
+
+acceptance:
+  success: "得到一筆 cell 口徑齊備的 pp512／tg128 讀數（contract ok=True、cell 名 (default)、逐 rep 向量），並如實標注 attribution；pp 落在 100–136 且 tg 落在 8.0–11.0 之內 ⇒ 預期成立"
+  falsify: "若 tg > 11.9（高於帶 depth 預填的舊形狀）或 < 8.0（低於冷池可解釋的範圍）⇒ 機制解釋錯，要改寫「-d 0 冷池」這條歸因，不得把它當基準"
+  on_fail: "不編造數字；把實測值與 attribution 如實寫進測試卡 §2.5 的交付列，並在判詞檔寫明未達成的部分"
+
+arms:
+  - prod-new

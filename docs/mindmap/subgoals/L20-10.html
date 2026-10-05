@@ -46,7 +46,7 @@ table.queue td { vertical-align: top; }
   footer { margin-top:40px; padding-top:14px; border-top:1px solid #e5e7eb; font-size:12.5px; color:#6b7280; }
   .kv { width:100%; } .kv th { width:150px; background:#fff; font-size:13px; }
   .verdict { font-size:15px; font-weight:600; }</style></head><body>
-<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
+<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（17）</a></nav>
 <div class="container">
 <h1>L20-10 ｜ 格子判別：量測起點 vs batch</h1>
 <p class="subtitle">結案狀態：<span class="badge b-ok">結案（排除）· 否證式（operator 明文 2026-10-01）：以 n=7 的兩臂同平台結成「起點在 n=7 下不再可辨」——判詞<b>維持 <code>REFUSE</code></b>（A <code>UNUSABLE</code>，全 rep 1.1197），<b>REFUSE ≠ 否証</b>，結案是 operator 的明文處置；配對 per-rep 比率（B/A）中位數 1.0114、p=0.227 ⇒ 換統計量也到不了可判定。<br><b>結案前的狀態</b>：未結案（§56 於 09-29 立項：跨格子不可比已確定；兩個候選尚未分離）。<br><b>2026-10-01 07:22（n=7 輪）</b>：reps 孿生（§2.5.4c）在同一窗跑完 —— A <code>delivery-reps7</code> median <b>11.7941</b>、全 rep <b>1.1197</b> ⇒ UNUSABLE；B <code>delivery-ws192-reps7</code> <b>11.9281</b>、1.0818 ⇒ QUOTABLE；診斷級 Δ <b>+1.14%</b>（n=3 讀 +4.8%）⇒ <b>n↑ 壓不了 max/min、效應也回到同平台</b>：卡點改成 <b>decision</b>（operator：A4 統計量或否證式結案）。證據：<code>Backup/l2010_b1b3_2026-09-30/clean_ws192_{A,B}.json</code>、<code>clean_ws192_verdict.json</code>（含 <code>diagnostic</code>）、<code>docs/L2010_CLEAN_WS192_20261001.md</code></span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>

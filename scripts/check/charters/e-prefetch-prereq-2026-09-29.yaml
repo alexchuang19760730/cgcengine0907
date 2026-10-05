@@ -42,6 +42,14 @@ options:
   knobs:
     - {name: CGC_RHO_PROBE, value: "1", role: subject, why: "ρ 路線：按層批次化 prefetch（覆蓋 0.849、每步付 4.76 ms GPU 插入）", source: "docs/RHO_STAGE0_RESULT_2026-09-23.md；node cache-rho"}
     - {name: CGC_PREBIND_PROBE, value: "1", role: subject, why: "prebind／方案 A：預指派 slot", source: "docs/PREBIND_STAGE0_SPEC_2026-09-23.md；node cache-prebind"}
+    - {name: CGC_RHO, value: "1", role: subject, why: "ρ 的<b>交付旗標</b>（2026-10-01 切分落地）：影子節點＋capture＋fill 一起，量具不外洩 ⇒ 權威 row 上的價格量得到。它是本格 B 臂；判詞 <code>NO_EFFECT</code>（不是免費）", source: "docs/RHO_PRICE_AUTHROW_2026-09-30.md；scripts/check/rho_price_authrow.py"}
     - {name: CGC_PREBIND_PROBE_VERBOSE, value: "1", role: instrument, why: "prebind 逐筆明細", source: "同上"}
     - {name: CGC_RHO_PROBE_LATE, value: "1", role: instrument, why: "ρ 的晚探針變體", source: "docs/RHO_STAGE0_RESULT_2026-09-23.md"}
+  # 以下臂已被判準刪除（不能量交付目標）：定義在 scripts/check/quote_gate.py 的 R5／R6；
+  # 逐子目標的理由與規則見看板同一格的 options.arms_removed。
+  arms_removed:
+    - arm: "prod-new:CGC_RHO_PROBE=1"
+      rules: [R5]
+      flags: { CGC_RHO_PROBE: R5 }
+      why: "CGC_RHO_PROBE 自帶每層同步讀回，登記表明文 never quote throughput from it alone（R5）⇒ 它的 t/s 不能當 20+ 的數。"
   note: "前置題：先付 4.76 ms（藏掉或攤平）再談收益；前置成本 ≤ 收益且覆蓋不降才算過。"

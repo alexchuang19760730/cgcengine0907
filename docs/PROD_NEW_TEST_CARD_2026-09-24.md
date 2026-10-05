@@ -68,6 +68,30 @@ llama-bench -m models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
 
 ### 2.5 machine-readable CELL（driver 唯一讀取處：人讀 §2 命令、程式讀本塊）
 
+> ## ⛔ 2026-10-03 operator 裁定：**具名格全部退役；預設格貼齊 llama-bench 出廠形狀**
+>
+> **現行唯一可選的格＝`(default)`**。它的形狀逐字貼齊 `llama-bench` 出廠
+> （`src/llama.cpp/tools/llama-bench/llama-bench.cpp:392-439` 的 `cmd_params_defaults`）：
+> **`-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5`、warmup 開、`warm_skip 0`**。
+> prod-new 的記憶體側設定**不動**（`ngl 99` / `load_mode none` / 池 8 GiB / KV `q8_0` / threads 8）
+> ——那些不是 llama-bench 的形狀維度，是這個 fork 的硬約束。
+>
+> **退役的 12 個具名格**（`cells.<name>` 舊寫法一併列出，供舊文件對照）：
+> `offload-ngl30`、`offload-ngl30-delivery`、`delivery`、`delivery-std`、`delivery-mmap`、
+> `delivery-ws256`、`delivery-ws192`、`delivery-reps7`、`delivery-ws192-reps7`、`default-b512`、
+> `delivery-mmap-p6`、`delivery-repsplit`。
+> 舊文件裡的 `cells.delivery`、`cells.delivery-std`、`cells.delivery-repsplit` 等寫法**全部指向
+> 這些已退役的格**（§2.5.1 起的小節仍是它們的紀錄）。
+>
+> - `--cell <退役名>` **一律 fail-closed**（`cell_contract.resolve_cell` 會明說「已退役」，
+>   而不是退回預設——退回會讓一次命名錯誤變成另一格的數字）。
+> - 名字**沒有從紀錄裡消失**：JSON block 的 `retired_cells` 留墓碑（只存 `prompt`／`retired_at`／`why`）。
+>   兩件東西靠它才讀得懂：`caliber_gate` 要分得出「已退役（歷史）」與「打錯字（NON_UNIFIED）」；
+>   `quote_gate` 的 R2 pp-less 拆欄要那個 `prompt`（否則舊 delivery 產物會從「拆欄」退化成 UNSTABLE）。
+> - **以下 §2.5.1–§2.5.7 是歷史紀錄**：它們描述的格子已退役、不可再跑；舊產物仍可解讀——
+>   `caliber_gate` 對引用退役格名的檔案的判詞是 `RETIRED`（不算統一口徑、也不算紅）。
+>   新實驗一律走 `(default)`；`harness bench --arm prod-new` **不加任何形狀旗標**就是那一格。
+
 > 下面 JSON 是所有 driver（harness bench / commit_bench / llama_bench_matrix）組命令的**唯一齣處**。
 > driver 實際組出的命令與本塊不一致 ⇒ **fail-closed 拒跑**。臂專用開關（§4）在 `switches` 的 default 之上覆寫、並把覆寫記錄在產物；`provenance_required` 欄位必須出現（值可為 null，但不能缺席）。
 
@@ -79,198 +103,50 @@ llama-bench -m models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
     "ngl": 99,
     "load_mode": "none",
     "threads": 8,
-    "batch": 5632,
-    "ubatch": 5632,
-    "prompt": 2048,
+    "batch": 2048,
+    "ubatch": 512,
+    "prompt": 512,
     "gen": 128,
-    "depths": 512,
-    "reps": 3,
-    "warm_skip": 64,
+    "depths": 0,
+    "reps": 5,
+    "warm_skip": 0,
     "ctx_size": 0,
     "expert_cache_bytes": 8589934592,
     "cache_type_k": "q8_0",
     "cache_type_v": "q8_0",
     "fixed_fill_seed": 1
   },
-
-  "cells": {
-    "delivery": {
-      "ngl": 99,
-      "load_mode": "none",
-      "threads": 8,
-      "batch": 512,
-      "ubatch": 512,
-      "prompt": 0,
-      "gen": 128,
-      "depths": 512,
-      "reps": 3,
-      "warm_skip": 64,
-      "ctx_size": 4096,
-      "expert_cache_bytes": 8589934592,
-      "cache_type_k": "q8_0",
-      "cache_type_v": "q8_0",
-      "fixed_fill_seed": null
-    },
-    "delivery-mmap": {
-      "ngl": 99,
-      "load_mode": "mmap",
-      "threads": 8,
-      "batch": 512,
-      "ubatch": 512,
-      "prompt": 0,
-      "gen": 128,
-      "depths": 512,
-      "reps": 3,
-      "warm_skip": 64,
-      "ctx_size": 4096,
-      "expert_cache_bytes": 8589934592,
-      "cache_type_k": "q8_0",
-      "cache_type_v": "q8_0",
-      "fixed_fill_seed": null
-    },
-    "delivery-ws256": {
-  "ngl": 99,
-  "load_mode": "none",
-  "threads": 8,
-  "batch": 512,
-  "ubatch": 512,
-  "prompt": 0,
-  "gen": 128,
-  "depths": 512,
-  "reps": 3,
-  "warm_skip": 256,
-  "ctx_size": 4096,
-  "expert_cache_bytes": 8589934592,
-  "cache_type_k": "q8_0",
-  "cache_type_v": "q8_0",
-  "fixed_fill_seed": null
- },
- "delivery-ws192": {
-  "ngl": 99,
-  "load_mode": "none",
-  "threads": 8,
-  "batch": 512,
-  "ubatch": 512,
-  "prompt": 0,
-  "gen": 256,
-  "depths": 512,
-  "reps": 3,
-  "warm_skip": 192,
-  "ctx_size": 4096,
-  "expert_cache_bytes": 8589934592,
-  "cache_type_k": "q8_0",
-  "cache_type_v": "q8_0",
-  "fixed_fill_seed": null
- },
- "delivery-reps7": {
-  "twin_of": "delivery",
-  "ngl": 99,
-  "load_mode": "none",
-  "threads": 8,
-  "batch": 512,
-  "ubatch": 512,
-  "prompt": 0,
-  "gen": 128,
-  "depths": 512,
-  "reps": 7,
-  "warm_skip": 64,
-  "ctx_size": 4096,
-  "expert_cache_bytes": 8589934592,
-  "cache_type_k": "q8_0",
-  "cache_type_v": "q8_0",
-  "fixed_fill_seed": null
- },
- "delivery-ws192-reps7": {
-  "twin_of": "delivery-ws192",
-  "ngl": 99,
-  "load_mode": "none",
-  "threads": 8,
-  "batch": 512,
-  "ubatch": 512,
-  "prompt": 0,
-  "gen": 256,
-  "depths": 512,
-  "reps": 7,
-  "warm_skip": 192,
-  "ctx_size": 4096,
-  "expert_cache_bytes": 8589934592,
-  "cache_type_k": "q8_0",
-  "cache_type_v": "q8_0",
-  "fixed_fill_seed": null
- },
- "default-b512": {
-  "ngl": 99,
-  "load_mode": "none",
-  "threads": 8,
-  "batch": 512,
-  "ubatch": 512,
-  "prompt": 2048,
-  "gen": 128,
-  "depths": 512,
-  "reps": 3,
-  "warm_skip": 64,
-  "ctx_size": 4096,
-  "expert_cache_bytes": 8589934592,
-  "cache_type_k": "q8_0",
-  "cache_type_v": "q8_0",
-  "fixed_fill_seed": null
- },
- "delivery-mmap-p6": {
-  "ngl": 99,
-  "load_mode": "mmap",
-  "threads": 8,
-  "batch": 512,
-  "ubatch": 512,
-  "prompt": 0,
-  "gen": 128,
-  "depths": 512,
-  "reps": 3,
-  "warm_skip": 64,
-  "ctx_size": 4096,
-  "expert_cache_bytes": 6442450944,
-  "cache_type_k": "q8_0",
-  "cache_type_v": "q8_0",
-  "fixed_fill_seed": null
- },
- "delivery-repsplit": {
-      "ngl": 99,
-      "load_mode": "none",
-      "threads": 8,
-      "batch": 512,
-      "ubatch": 512,
-      "prompt": 0,
-      "gen": 128,
-      "depths": 512,
-      "reps": 1,
-      "warm_skip": 64,
-      "ctx_size": 4096,
-      "expert_cache_bytes": 8589934592,
-      "cache_type_k": "q8_0",
-      "cache_type_v": "q8_0",
-      "fixed_fill_seed": null,
-      "rep_split": { "of": "delivery", "launches": 3, "cool_to": "NOMINAL", "cool_max_s": 420 }
-    }
-  },
-
   "switches": {
     "LLAMA_EXPERT_CACHE_ALLOW_NGL": {
       "default": 1,
-      "values": [0, 1],
+      "values": [
+        0,
+        1
+      ],
       "role": "ngl>0 下 expert skip-load / L4 pool 的硬使能：expert_cache_skip_load = (ngl<=0 || ALLOW_NGL || L3_NGL) && !NOGATHER",
-      "prerequisite_for": ["CGC_EXPERT_SKIP_READRAW"]
+      "prerequisite_for": [
+        "CGC_EXPERT_SKIP_READRAW"
+      ]
     },
     "CGC_EXPERT_SKIP_READRAW": {
       "stage": "P0",
       "default": 1,
       "enforced": "run_server.sh cgc_swap_guard：未武裝且未用 CGC_SWAP_GUARD=off 宣告 ⇒ 拒跑（exit 2）",
-      "values": [0, 1],
+      "values": [
+        0,
+        1
+      ],
       "requires": "LLAMA_EXPERT_CACHE_ALLOW_NGL=1",
       "effect": "skip-load expert 不 read_raw，省 ~10.9 GiB 匿名駐留、swap 增量 -92%（5679→449 MiB）"
     },
     "CGC_POOL_MADVISE": {
       "default": 2,
       "enforced": "同上（cgc_swap_guard，同一道閘）",
-      "values": [0, 1, 2],
+      "values": [
+        0,
+        1,
+        2
+      ],
       "stage_map": {
         "1": "P1：fill（pread）前 madvise(DONTNEED) 丟將被覆蓋頁",
         "2": "P1+P2：fill 前 + evict 時都丟"
@@ -280,14 +156,89 @@ llama-bench -m models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
     "CGC_B_SCHEME": {
       "default": 1,
       "enforced": "同上（cgc_swap_guard；run_server.sh SERVER_ENV 白名單已接，沒列會被靜默丟）",
-      "values": [0, 1],
+      "values": [
+        0,
+        1
+      ],
       "effect": "熱門優先替換：不踢錯熱專家，讓 miss 收斂"
     }
   },
-  "runtime_adjustable": ["ctx_size", "fixed_fill_seed"],
-  "provenance_required": ["engine_md5", "swap_before", "swap_after", "thermal_launch", "thermal_worst", "fixed_fill_seed"],
+  "runtime_adjustable": [
+    "ctx_size",
+    "fixed_fill_seed"
+  ],
+  "provenance_required": [
+    "engine_md5",
+    "swap_before",
+    "swap_after",
+    "thermal_launch",
+    "thermal_worst",
+    "fixed_fill_seed"
+  ],
   "derived": {
-    "warm_skip_applied": "產物 n_gen 應 == cell.gen - cell.warm_skip（=64）；不符即「名義有、實際沒有」，fail-closed"
+    "warm_skip_applied": "產物 n_gen 應 == cell.gen - cell.warm_skip（=128）；不符即「名義有、實際沒有」，fail-closed"
+  },
+  "retired_cells": {
+    "offload-ngl30": {
+      "prompt": 2048,
+      "retired_at": "2026-10-03",
+      "why": "2026-10-03 operator 裁定：移除所有具名格、prod-new + harness bench 貼齊 llama-bench 出廠形狀（-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5）。此格不可再選；墓碑只保留 prompt（quote_gate 的 R2 pp-less 拆欄需要它）與格名，供舊產物稽核。"
+    },
+    "offload-ngl30-delivery": {
+      "prompt": 0,
+      "retired_at": "2026-10-03",
+      "why": "2026-10-03 operator 裁定：移除所有具名格、prod-new + harness bench 貼齊 llama-bench 出廠形狀（-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5）。此格不可再選；墓碑只保留 prompt（quote_gate 的 R2 pp-less 拆欄需要它）與格名，供舊產物稽核。"
+    },
+    "delivery": {
+      "prompt": 0,
+      "retired_at": "2026-10-03",
+      "why": "2026-10-03 operator 裁定：移除所有具名格、prod-new + harness bench 貼齊 llama-bench 出廠形狀（-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5）。此格不可再選；墓碑只保留 prompt（quote_gate 的 R2 pp-less 拆欄需要它）與格名，供舊產物稽核。"
+    },
+    "delivery-std": {
+      "prompt": 512,
+      "retired_at": "2026-10-03",
+      "why": "2026-10-03 operator 裁定：移除所有具名格、prod-new + harness bench 貼齊 llama-bench 出廠形狀（-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5）。此格不可再選；墓碑只保留 prompt（quote_gate 的 R2 pp-less 拆欄需要它）與格名，供舊產物稽核。"
+    },
+    "delivery-mmap": {
+      "prompt": 0,
+      "retired_at": "2026-10-03",
+      "why": "2026-10-03 operator 裁定：移除所有具名格、prod-new + harness bench 貼齊 llama-bench 出廠形狀（-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5）。此格不可再選；墓碑只保留 prompt（quote_gate 的 R2 pp-less 拆欄需要它）與格名，供舊產物稽核。"
+    },
+    "delivery-ws256": {
+      "prompt": 0,
+      "retired_at": "2026-10-03",
+      "why": "2026-10-03 operator 裁定：移除所有具名格、prod-new + harness bench 貼齊 llama-bench 出廠形狀（-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5）。此格不可再選；墓碑只保留 prompt（quote_gate 的 R2 pp-less 拆欄需要它）與格名，供舊產物稽核。"
+    },
+    "delivery-ws192": {
+      "prompt": 0,
+      "retired_at": "2026-10-03",
+      "why": "2026-10-03 operator 裁定：移除所有具名格、prod-new + harness bench 貼齊 llama-bench 出廠形狀（-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5）。此格不可再選；墓碑只保留 prompt（quote_gate 的 R2 pp-less 拆欄需要它）與格名，供舊產物稽核。"
+    },
+    "delivery-reps7": {
+      "prompt": 0,
+      "retired_at": "2026-10-03",
+      "why": "2026-10-03 operator 裁定：移除所有具名格、prod-new + harness bench 貼齊 llama-bench 出廠形狀（-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5）。此格不可再選；墓碑只保留 prompt（quote_gate 的 R2 pp-less 拆欄需要它）與格名，供舊產物稽核。"
+    },
+    "delivery-ws192-reps7": {
+      "prompt": 0,
+      "retired_at": "2026-10-03",
+      "why": "2026-10-03 operator 裁定：移除所有具名格、prod-new + harness bench 貼齊 llama-bench 出廠形狀（-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5）。此格不可再選；墓碑只保留 prompt（quote_gate 的 R2 pp-less 拆欄需要它）與格名，供舊產物稽核。"
+    },
+    "default-b512": {
+      "prompt": 2048,
+      "retired_at": "2026-10-03",
+      "why": "2026-10-03 operator 裁定：移除所有具名格、prod-new + harness bench 貼齊 llama-bench 出廠形狀（-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5）。此格不可再選；墓碑只保留 prompt（quote_gate 的 R2 pp-less 拆欄需要它）與格名，供舊產物稽核。"
+    },
+    "delivery-mmap-p6": {
+      "prompt": 0,
+      "retired_at": "2026-10-03",
+      "why": "2026-10-03 operator 裁定：移除所有具名格、prod-new + harness bench 貼齊 llama-bench 出廠形狀（-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5）。此格不可再選；墓碑只保留 prompt（quote_gate 的 R2 pp-less 拆欄需要它）與格名，供舊產物稽核。"
+    },
+    "delivery-repsplit": {
+      "prompt": 0,
+      "retired_at": "2026-10-03",
+      "why": "2026-10-03 operator 裁定：移除所有具名格、prod-new + harness bench 貼齊 llama-bench 出廠形狀（-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5）。此格不可再選；墓碑只保留 prompt（quote_gate 的 R2 pp-less 拆欄需要它）與格名，供舊產物稽核。"
+    }
   }
 }
 ```
@@ -363,6 +314,43 @@ llama-bench -m models/gguf/Nail-Qwen3.6-35B-A3B-MTP-UD-IQ3_XXS-denseIQ4X.gguf \
   已量 6.0／6.0、正規化 1.92%）下降 ⇒ 引擎側還有槓桿；**否證 ⇒ 25 的引擎側候選窮盡**（量化已被 operator 禁止）。
 - ⚠ 這不是放寬口徑：load_mode 與 pool 都寫死在格子裡，contract 照樣 fail-closed。
 
+#### 2.5.6 `cells.offload-ngl30` — 部分卸載（11/41 層上 CPU）的「足跡 vs 速度」判別格（2026-10-02 新增）
+
+- 由來：decode 的 GPU 利用率只有 ~30–49%（prefill 80–99%），而同窗 harness 自報 Metal 工作集峰值
+  **超額 ~10.0 GB**（池 8192 ＋ Metal 駐留 12261–12279 ＋ 保留 1024 ＝ 21458–21495 MiB ＞ 上限 11453）。
+  「把一部分層搬去 CPU」是唯一能在**不動模型、不量化**（operator 09-30 已裁定量化不做）的前提下
+  直接縮小 Metal 駐留的欄位。`ngl` 是**嚴格**維度（不在 `runtime_adjustable`）⇒ 只能宣告新格。
+- 這一格與 `(default)` **只差 `ngl` 99 → 30**（其餘逐字相同）。`i_gpu_start = (n_layer_all+1) - ngl`；
+  本模型 41 層 ⇒ **11 層（blk.0–10）留在 CPU、30 層在 Metal**。
+- ⚠ **`n_cpu_moe` 在本 fork 不存在**（誠實記一筆，免得下一個人再找）：
+  `grep -rni "cpu_moe" src/llama.cpp/src src/llama.cpp/include` ⇒ **0 命中**；它只出現在
+  `tools/llama-bench/llama-bench.cpp`（自己的參數 struct／JSON 欄位）、`common/arg.cpp`（CLI 註冊）、
+  `common/fit.cpp`（預算估算）⇒ 真跑起來是**靜默 no-op**。所以本格用 `-ngl`（會被
+  `llama-model.cpp:1344` 的 `i_gpu_start` 真正消費）。
+- 值由 `CGC_SERVER_NGL=30` 供給（`run_server.sh:539` → SERVER_ARGS `-ngl`；`FORWARD_VALUED` 已轉發
+  給 llama-bench，故 `actual.ngl` 讀得到）——**只給 `--cell offload-ngl30` 會被本塊擋**
+  （`ngl: 實際 99 ≠ 權威 30`），兩者一起給才是合規的一趟。
+- 判別句（成對，兩臂都帶 `CGC_EB_TIMER=1;CGC_DECODE_PROFILE=1`，差別只有 ngl）：
+  `wait`／等效權重頻寬改善 ⇒ **足跡假說成立**、decode slab staging 值得做；
+  `wait` 不動或更慢 ⇒ **足跡不是 20+ 的靶**（靶回到 E-B′ 指的 MoE GEMV）。
+
+**量測結果（2026-10-02 21:36–22:00，四種配置全數崩潰）**：
+
+| 配置 | 結果 |
+|---|---|
+| `ngl30`（prod-new 原樣，slab ON） | **rc=−6** `ggml-backend.cpp:478 GGML_ASSERT(ggml_are_same_layout(src,dst))`，崩在第一個 prefill 圖（`test_prompt`、ntok=2048），前一行是 `CGC-PREFILL-STREAM: CPU buft for il=0 kind=0 → using MTL0` |
+| `ngl30` ＋ `!CGC_PREFILL_STREAM=0`（pool 路徑） | **rc=−6** 另一條 assert：`llama-context.cpp:2627 GGML_ASSERT(n_tokens_all <= cparams.n_batch)` |
+| `ngl30` ＋ `LLAMA_EXPERT_CACHE_L3_NGL=1` | **rc=−6**，與第一列同一個 assert（同一個 prefill 圖） |
+| `ngl30` ＋ `L3_NGL=1` ＋ `!LLAMA_EXPERT_CACHE_L4_SKIP_LAYER0=1` | 未跑到（盒況閘：另一 session 的 bench 佔用、壓縮機 BUSY ⇒ 拒跑） |
+
+- ⇒ **本 fork 目前量不到 `ngl<99` 的完整側形狀**：prefill 時 expert-cache/slab 路徑對
+  **CPU 常駐層**（`il=0`）做 `ggml_backend_tensor_copy`，兩端 layout 不同 ⇒ abort。
+  這是**引擎缺陷**（不是 OOM、不是口徑問題），修復點在 `llama-context.cpp:8249` 的
+  「CPU buft for il=… → using MTL0」分支與 `ggml-backend.cpp:478` 之間。
+- 對照臂（`ngl 99`，同 session 緊接）**跑通**：tg 14.68、pp 224.66（`both`／DIRTY，僅證明入口與盒子正常）。
+- **尚未量到的**：decode-only 形狀（本格 `offload-ngl30-delivery`，prompt 0 ⇒ 沒有 2048 寬的 prefill，
+  可能繞過上面兩個 assert）＋ GPU util。⇒ 這是下一個可跑的探針（已宣告、**未量測**）。
+
 #### 2.5.1 `cells.delivery` — 交付 cell（2026-09-28 新增）
 
 **為什麼會有第二個 cell。** 在 2026-09-28 之前這裡只宣告**一個** cell，而
@@ -408,6 +396,24 @@ python3 scripts/check/harness.py bench \
 **Metal OOM**（`CGC-METAL-FAIL: kIOGPUCommandBufferCallbackErrorOutOfMemory`，2026-09-28
 可重現兩次），而它建議的逃生口（降 `-ub`／expert cache）正好指向 CELL 裡的**嚴格維度**
 ⇒ 那個 cell 動不了。`-b 512` 的交付 cell 沒有這個問題。
+
+#### 2.5.7 `cells.delivery-std` — 交付格的 **llama-bench 業界標準形狀**（`pp512 / tg128`）（2026-10-03 operator 指定）
+
+- **由來**：本卡 **§5.0 本來就要求**「每一臂必須**同時測並同時報 prefill + decode**」，且明文
+  「**禁止只報 tg**」「只報 decode 的讀數視為**不完整產物**，不可引用」。而交付格 `delivery` 是
+  `-p 0`（pp-less）⇒ 它**在結構上交不出 prefill**，是 §5.0 的唯一例外；也讓交付數字在板上無法與
+  其他格比（且第 1 顆 rep 天生冷——C5 註記原文：「沒有 pp 那一列預熱池」）。
+- **這一格**：`delivery` 的**其餘維度逐字不變**（`ngl 99`／`load_mode none`／`threads 8`／
+  `batch 512`／`ubatch 512`／`gen 128`／`depths 512`／`reps 3`／`warm_skip 64`／`ctx_size 4096`／
+  `expert_cache_bytes 8589934592`／q8_0 KV），**只把 `prompt` 由 `0` 改成 `512`**
+  ⇒ llama-bench 完整側出兩行：**`pp512`（prefill）＋ `tg128`（decode）**。
+- **`prompt` 是嚴格維度**（`runtime_adjustable` 只有 `ctx_size`／`fixed_fill_seed`）⇒ 只能宣告新格；
+  指名不存在的 cell 仍 fail-closed（`resolve_cell` 不退回預設）。
+- **用法**：`harness.py bench --cell delivery-std --prompt 512 …`——`--cell` 與 `--prompt` 必須一起給，
+  否則本塊擋「`prompt: 實際 N ≠ 權威 512`」。`-p 512` 同時**預熱專家池**。
+- ⚠ **與 `delivery`（`-p 0`）不可互比**：前者是「有 prefill 那一列」的形狀，後者是**足跡類**的冷啟形狀。
+- **判讀**：此格＝交付規格的對外數字（`pp512`／`tg128` ＋ §5.1 的 thermal／swap 標注）；
+  `delivery`（`-p 0`）降為足跡類診斷。**兩格都不得只報 tg**（§5.0）。
 
 ## 3. prod-new profile env（默認，顯式 env 永遠贏）
 

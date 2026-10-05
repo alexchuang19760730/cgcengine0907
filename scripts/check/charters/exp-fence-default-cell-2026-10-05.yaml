@@ -1,0 +1,35 @@
+id: exp-fence-default-cell-2026-10-05
+owner: lineA
+created: 2026-10-05
+# 段邊界重疊柵欄收割的是「序列化」那一桶（gap/wait）⇒ 掛 S 軸。
+axis: S
+
+question: |
+  把段邊界重疊柵欄（CGC_OVERLAP_FENCE=41）搬到**現行的交付格**上值多少？
+  柵欄在舊 (default) 形狀（-b 5632 -p 2048 -d 512 --warm-skip 64）上量到 C12 13.867389（乾淨窗）
+  與 C13 15.210976（降級窗），但**從未在交付格（llama-bench 出廠形狀 -p 512 -b 2048 -ub 512 -d 0 -r 5
+  --warm-skip 0）跑過** —— 這是「20+ 判死」之後唯一有名字、且沒有被否證的一步。
+
+baseline:
+  metric: "舊 (default) 形狀：柵欄前 12.376702（C9）→ 柵欄後 13.867389（C12，乾淨窗）＝ ×1.120；同臂降級窗 15.210976（C13）"
+  cell: "現行 (default)：prompt 512 / gen 128 / batch 2048 / ubatch 512 / depths 0 / reps 5 / warm_skip 0 / ctx 0"
+  source: "Backup/l201_accel/ovl_cert_b.json"
+
+hypothesis:
+  mechanism: |
+    柵欄把段邊界的 drain 與 hook 重疊（早提交 ＋ MTLSharedEvent：host 寫完 remap leaf 後
+    signalEvent，GPU 等到 leaf 就續跑 ⇒ host 不再 drain），紅利全在 wait。
+    交付格與舊格的差別是 -d 0（池在 decode 起點是冷的）與 warm_skip 0（冷的 rep 也計入）
+    ⇒ 段邊界往返的**次數與 miss 分布**不同，但柵欄收割的是**近乎固定的段邊界成本**
+    ⇒ 方向應不變、幅度可能縮小。
+  expected: "off 臂 tg ≈10.6（10-04 同格首筆）；on 臂 tg ≥ ×1.10（≥11.7），落在 11.0–13.0；pp 兩臂不動（柵欄屬 decode 段的段邊界）"
+  basis: "Backup/l201_accel/ovl_cert_b.json（舊格 ×1.120）、Backup/spec_tree/DEFAULT_CELL_FIRST_2026-10-04.md（同格首筆 10.60／pp 94.20）"
+
+acceptance:
+  success: "同一 invocation 拿到 off/on 兩臂的 pp512＋tg128；tg 比值 ≥1.10 ⇒ 柵欄在交付格上成立（即使窗不可引用，同場比值仍可讀）"
+  falsify: "tg 比值 ≤1.00（on 沒更快）或 pp 也動 >5%（那就不是 decode 段的效果）⇒ 柵欄在交付格不成立，要把它從「唯一未否證的一步」劃掉"
+  on_fail: "不編造；把比值與 attribution 如實寫進判詞，並在看板的 20+ 條目註明此路已否證"
+
+arms:
+  - prod-new
+  - prod-new:CGC_OVERLAP_FENCE=41

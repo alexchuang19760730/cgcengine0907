@@ -129,6 +129,18 @@ def declared_cells() -> set:
     return _CELLS
 
 
+def retired_cell_names() -> set:
+    """已退役的格名（2026-10-03：所有具名格退役，名字留墓碑）。
+
+    退役名與「打錯的格名」走**不同**的判詞：前者是歷史（加註記、照常判 R1–R8），
+    後者是錯誤（DIRTY）。來源與 `caliber_gate.retired_cells()` 同一份。
+    """
+    try:
+        return set((caliber_gate.retired_cells() or {}).keys())
+    except Exception:  # noqa: BLE001  讀不到 ⇒ 空集合（fail-closed：退役名會退回 DIRTY）
+        return set()
+
+
 def row_axis(row: dict) -> str:
     """這一列是 decode 還是 prefill（認證表的行只有這兩軸）。"""
     try:
@@ -423,18 +435,21 @@ def judge_file(path: str, kind: str = "any", decode_target: float = DECODE_FLOOR
     if not os.path.exists(path):
         out["notes"].append("產物不存在")
         return out
+    # ④ 格子清單（fail-closed：讀不到 ⇒ 不判可認證）
+    # ⚠ 順序：**先**取清單再判口徑。口徑那一條要用同一份清單才分得出「退役（歷史）」與
+    # 「未宣告（改名／打錯）」—— 兩者判詞不同（2026-10-03：具名格全部退役）。
+    cells = declared_cells()
+    retired = retired_cell_names()
+    if not cells:
+        out["notes"].append("測試卡 §2.5 的格子清單讀不到 ⇒ 格子這一條判不了（fail-closed）")
     # ① 口徑三條
     try:
-        v, why = caliber_gate.classify(path)
+        v, why = caliber_gate.classify(path, cells, retired)
     except Exception as exc:  # noqa: BLE001
         v, why = "UNKNOWN", "caliber_gate 判不了：%s: %s" % (type(exc).__name__, exc)
     out["caliber"], out["caliber_why"] = v, why
     if v != "UNIFIED":
         out["notes"].append("口徑：%s ⇒ %s" % (v, why))
-    # ④ 格子清單（fail-closed：讀不到 ⇒ 不判可認證）
-    cells = declared_cells()
-    if not cells:
-        out["notes"].append("測試卡 §2.5 的格子清單讀不到 ⇒ 格子這一條判不了（fail-closed）")
     # ②③ 逐 row 判引用與達標（唯一實作：quote_gate）
     try:
         stream = list(quote_gate.iter_rows([path]))
@@ -472,7 +487,14 @@ def judge_file(path: str, kind: str = "any", decode_target: float = DECODE_FLOOR
             if out["anchor_error"]:
                 miss.append("棘輪讀不到 ⇒ fail-closed")
         cell = m.get("cell") or "?"
-        if cell != "?" and cells and cell not in cells:
+        if cell in retired:
+            # 2026-10-03 具名格全部退役之後：退役名**不是**「宣告被改名／拿掉」。這一條抓的是
+            # 「改名 ⇒ 舊數字被靜默重新錨定」，而退役留有墓碑（名字、prompt、日期都在）。
+            # 這一行照常過 R1–R8 —— 它是「歷史可讀」，不是「可拿它當新讀數的格子」。
+            out["notes"].append(
+                "格名 %r 已退役（2026-10-03）⇒ 這一行的數字僅供歷史對照，"
+                "不可再作為新讀數的格子（現行唯一可選＝'(default)'：llama-bench 出廠形狀）。" % cell)
+        elif cell != "?" and cells and cell not in cells:
             verdict, reasons = "DIRTY", list(reasons) + [
                 "權威格：格子 %r 不在現行測試卡 §2.5 的宣告裡（宣告被改名／拿掉 ⇒ 這一行不是這一格）" % cell]
         out["rows"].append(dict(
@@ -491,8 +513,10 @@ def judge_file(path: str, kind: str = "any", decode_target: float = DECODE_FLOOR
     if not out["rows"]:
         out["notes"].append("產物裡沒有任何可判的 llama-bench row（不是統一 schema？走統一入口重跑："
                             "`python3 scripts/check/cell_contract.py --cell <name>` 會印那一條 harness bench 命令）")
-    out["certified"] = (bool(out["best"]) and out["caliber"] == "UNIFIED" and bool(cells)
-                        and not out["anchor_error"])
+    # `RETIRED` 與 `UNIFIED` 同權：退役格**跑不出新產物**（`cell_contract.resolve_cell` 對
+    # 退役名 fail-closed），所以一個退役格的產物只能是舊的 ⇒ 這一條路只會被用來**重驗歷史**。
+    out["certified"] = (bool(out["best"]) and out["caliber"] in ("UNIFIED", "RETIRED")
+                        and bool(cells) and not out["anchor_error"])
     return out
 
 

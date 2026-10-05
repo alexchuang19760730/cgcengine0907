@@ -699,6 +699,14 @@ def selftest() -> int:
     c1 = _bench_cmd(argparse.Namespace(**{**vars(ba), "fixed_fill_seed": 0}), ["prod-new"])
     expect("an explicit seed=0 passes through rather than being overridden by the default",
            c1[c1.index("--fixed-fill-seed") + 1], "0")
+    # 【CGC 2026-10-04】`--ubatch` 曾是 `_BENCH_DEFAULTS` 的一個死欄位：只有 `-b` 到得了 matrix，
+    # 而 matrix 的舊語意「有 -b 就 -ub 同值」會把新預設格宣告的 512 蓋成 2048 ⇒ 契約拒跑。
+    # 這條把「成對送出」釘住——缺一邊就是無聲地量錯形狀（同 fixed-fill-seed 的課）。
+    expect("--batch and --ubatch both reach the matrix (default cell is b2048/ub512)",
+           (c0[c0.index("--batch") + 1], c0[c0.index("--ubatch") + 1]), ("2048", "512"))
+    c6 = _bench_cmd(argparse.Namespace(**{**vars(ba), "ubatch": 256}), ["prod-new"])
+    expect("an explicit non-default ubatch passes through, not overridden by -b",
+           c6[c6.index("--ubatch") + 1], "256")
     expect("no --no-warmup unless asked (warm-up is the pool-warm equivalent)",
            "--no-warmup" in c0, False)
     expect("and it appears when asked",
@@ -966,8 +974,15 @@ _SWAP_ARM_KEYS = ("CGC_EXPERT_SKIP_READRAW", "CGC_POOL_MADVISE", "CGC_B_SCHEME")
 # fixed_fill_seed=1 是 docs/DECODE_STEADY_BASELINE_2026-09-19.md:45 的結論（σ 3.46→1.09）：
 # 沒有它，每個 rep 換一條隨機填充流，量到的是 cold/steady 的混合（run3 = 4.13/11.85/11.67），
 # 而那個混合會直接被讀成「噪音」。它進產物的 cell 區塊，不是隱含 default。
-_BENCH_DEFAULTS = dict(prompt=2048, gen=128, depths="512", reps=3,
-                       warm_skip=64, ctx_size=0, batch=5632, ubatch=5632,
+# 2026-10-03 operator 裁定：prod-new + harness bench **完全貼齊 llama-bench 出廠形狀**。
+# 出廠值就在原始碼裡（`llama-bench.cpp:392-439` 的 `cmd_params_defaults`）：
+#   -p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5、warmup 開。
+# 這一組**同時是測試卡 §2.5 的預設 cell**——兩邊不一致時 `cell_contract.check_cell` 會
+# fail-closed 拒跑，所以改這裡就必須改那裡（反之亦然）。
+# 刻意不貼的兩項：KV 維持 prod-new 的 q8_0、池子／ngl 不動——那是記憶體側的專案硬約束，
+# 不是 llama-bench 的形狀維度（operator 2026-10-03 選的是「形狀貼齊」）。
+_BENCH_DEFAULTS = dict(prompt=512, gen=128, depths="0", reps=5,
+                       warm_skip=0, ctx_size=0, batch=2048, ubatch=512,
                        fixed_fill_seed=1, prompt_file="", warmup=True)
 
 
@@ -1224,6 +1239,10 @@ def _bench_cmd(args, specs) -> list[str]:
         cmd += ["--prompt-file", args.prompt_file]
     if args.batch:
         cmd += ["--batch", str(args.batch)]
+    # 與 `--batch` 成對送出（見 argparse 處的 2026-10-04 註解）：缺它 ⇒ matrix 的舊語意會把
+    # ubatch 設成 batch，而新預設格是 b2048/ub512 ⇒ 契約拒跑。
+    if getattr(args, "ubatch", None):
+        cmd += ["--ubatch", str(args.ubatch)]
     # Named cell from the test card §2.5. Omitted = the default (prod-new) cell, so no existing
     # caller changes. Threaded here rather than inline so the selftest can prove it reached the
     # matrix -- the `--fixed-fill-seed` lesson is that a knob going missing is a wiring bug, not
@@ -1785,6 +1804,11 @@ def main(argv=None) -> int:
                    default=_BENCH_DEFAULTS["warmup"],
                    help="跳過 llama-bench 暖機（預設暖機 ON：它才是「池已暖」的等價物）")
     p.add_argument("--batch", type=int, default=_BENCH_DEFAULTS["batch"], help="llama-bench -b")
+    # [CGC 2026-10-04] `--ubatch` 一直是 `_BENCH_DEFAULTS` 裡的一個**死欄位**（沒有任何地方傳它）⇒
+    # 只有 `--batch` 到得了 matrix，而 matrix 的舊語意「-b X ⇒ -ub 也 X」再把格的 ubatch 蓋掉
+    # ⇒ 契約以「ubatch: 實際 2048 ≠ 權威 512」拒跑（新預設格 b2048/ub512 踩到）。
+    # 形狀既然由卡片宣告，這條路就必須把該維度**明文送出去**，不是靠下游猜。
+    p.add_argument("--ubatch", type=int, default=_BENCH_DEFAULTS["ubatch"], help="llama-bench -ub")
     p.add_argument("--cool-max-s", type=float, default=420.0,
                    help="thermal 閘的最長冷卻秒數（420 = repo 量到的最小充分冷卻）")
     p.add_argument("--no-thermal-gate", action="store_true",

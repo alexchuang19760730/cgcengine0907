@@ -41,4 +41,4 @@ options:
   knobs:
     - {name: CGC_EB_NOFILL, value: "1", role: subject, why: "關掉 fill 的診斷臂：fill 3.955 → 0.206 ms/step（−95%）", source: "docs/DIAGNOSTIC_ARMS_LEDGER_2026-09-25.md；node io-nofill"}
     - {name: CGC_EB_TIMER, value: "1", role: instrument, why: "fill 計時；09-29 新增 seg= 欄位區分 prefill／decode", source: "docs/FILL_COST_MEASURED_2026-09-25.md；charters/e-fillbudget-m-decomp arms[]"}
-  note: "本格要的是「哪一個 term 進 48.2 + x」的算式與不確定度，不是提速。"
+  note: "本格要的是「哪一個 term 進 48.2 + x」的算式與不確定度，不是提速。<br>⚠ <b>§69.6 跨格旗標：</b>價格指到正確的格子之後，倚賴舊價 <code>3.955</code>（(default) cell）的結論要重問一次——<code>MISSHIST_REVIVAL_GATE_2026-09-29.md</code> §4 的邊際在 ±0.9 ms 之內變號（k=6 重算 6.07 vs 交付 cell 價 6.79 ⇒ <b>+0.72</b>；vs 穩態 5.18 ⇒ −0.89）。重判需要一趟<b>同格</b>成對量，不是這一趟。"

@@ -32,10 +32,10 @@ qu gate（覆蓋率 ＋ 視窗）
 - **子目標**：`L20-7`　prefetch 的兩個前置分支
 - **來源**：子目標看板（唯一來源）　·　置信度 `high`
 - **profile**：`prod-new`
-- **被測 option**：`CGC_RHO_PROBE=1`；`CGC_PREBIND_PROBE=1`
+- **被測 option**：`CGC_RHO_PROBE=1`；`CGC_PREBIND_PROBE=1`；`CGC_RHO=1`
 - **儀器開關**（不是被測 option）：`CGC_PREBIND_PROBE_VERBOSE=1`；`CGC_RHO_PROBE_LATE=1`
 - **arm 1（可複製）**：`prod-new:CGC_PREBIND_PROBE=1`
-- **結案狀態**：未結案（有前置）
+- **結案狀態**：結案（排除）· 否證式（判詞 NO_EFFECT，2026-10-01 12:42）—— ρ 的價格題收在「這套設計量不出價格」，而方向一致（兩趟都是 B 較慢）⇒ 不得寫「ρ 免費」：四條權威 row order1_A 12.3027／order1_B 11.6573／order2_A 12.3767／order2_B 12.1265 全 QUOTABLE；order1 效應 −5.25% &gt; 兩臂散布 2.10% ⇒ 可解，order2 −2.02% ≤ 4.99% ⇒ 不可解 ⇒ 預註冊（兩趟同向才算 PRICE）判 NO_EFFECT、中位 −3.63%。⚠ R5 的解除條件（權威 row 上的可引用價格）因此仍未滿足；⚠ 這一輪順手打破「0 個 ≥12」的天花板：caliber_certify.py（棘輪）對三條判 CERTIFIED（12.3027／12.3767／12.1265 &gt; 現行上限 11.982966）⇒ 全語料首批 12+ 可認證列（operator 2026-10-01 決定：入表＋推上限 ⇒ 已新增 C9 12.3767／C10 12.3027／C11 12.1265，certify_anchor 推到 12.376702；order1_B 11.6573 不過棘輪、不入表）。【結案前的紀錄】未結案（有前置）
 - **逐條處置**：整合進子目標　→ `L20-7`　—　ρ 按層批次化 prefetch（覆蓋 0.849、每步付 4.76 ms）
 - **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
 - 前置題：先付 4.76 ms（藏掉或攤平）再談收益；前置成本 ≤ 收益且覆蓋不降才算過。

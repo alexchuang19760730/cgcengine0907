@@ -100,3 +100,12 @@ delivery:
     2) 照 `--plan` 跑兩臂（同一窗口、成對、交付 cell）
     3) python3 scripts/check/skip_probe.py --judge --a <A.json> --b <B.json> --write
     4) 判 `LEVER` ⇒ 新增「寫 ffn_moe_weighted」工作項；判 `DEAD` ⇒ L25-2 與 sg-kernel-busy 判死（附機制）
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L25-2 同步；勿手改，改看板）】──
+options:
+  subgoal: L25-2
+  profile: prod-new
+  arms:
+    - "prod-new"
+  no_knob: "本格沒有自己的旋鈕，而<b>唯一被指名過的機制（B 半補丁）已被量死</b>：價目漏掉備援重算 320 列 ＝ <b>8.09 ms</b>（同儀器實測；靜態寬度被正確性逼成 k=8）⇒ <code>39.0 ＋ 9.7~13.8 ＝ 48.7–52.8 ms</code>。⇒ 要嘛**新的**上界外機制，要嘛維持判死。<br>★ <b>它的復活門（那行逐層直方圖）09-29 已經跑過，且已關閉</b>：交付 cell 穩態每層峰值 <b>6</b>（不是 2）、≤2 只覆蓋 64% 的步；連把設計點降到峰值 6，重算 <b>6.07 ms</b> 都 > fill <b>3.955</b> ⇒ <b>不是「還沒量」，是量了、不成立</b>（<code>docs/MISSHIST_REVIVAL_GATE_2026-09-29.md</code>）。"
+  note: "§51 撤回 §50 的「未判定」⇒ decode ≥25 回到判死；<b>L25-1 是全板唯一還沒被判死的一格</b>。⤴ 2026-10-01：skip-probe 判詞 <code>DEAD</code>（Δstep −39.63 ms）⇒ 本格結案（排除），上界帳不再當路。均值 0.470 miss/層（板上原寫 0.49，相符）—— 但 <b>k 由尾部決定</b>：36% 的穩態步有某層 ≥3。要正回收需 k≤3 ⇒ 10.6% 的穩態步會算錯。"

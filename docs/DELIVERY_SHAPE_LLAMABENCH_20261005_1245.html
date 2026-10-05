@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>交付格＝llama-bench 出廠形狀：12 具名格退役、C14 基準列</title>
+<style>
+:root{--bg:#ffffff;--fg:#1f2328;--mut:#6b7280;--line:#e5e7eb;--card:#f9fafb;--blue:#1d4ed8;--green:#15803d;--red:#b91c1c;--amber:#b45309}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.7 -apple-system,"PingFang TC","Helvetica Neue",Arial,sans-serif}
+.wrap{max-width:1040px;margin:0 auto;padding:32px 20px 80px}
+h1{font-size:24px;margin:0 0 6px}
+h2{font-size:18px;margin:34px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+h3{font-size:15px;margin:20px 0 8px}
+.sub{color:var(--mut);font-size:13px;margin-bottom:18px}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.card .lab{color:var(--mut);font-size:12px;margin-bottom:6px}
+.card .big{font-size:22px;font-weight:600}
+.tag{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;border:1px solid}
+.t-red{color:var(--red);border-color:#fca5a5;background:#fef2f2}
+.t-green{color:var(--green);border-color:#86efac;background:#f0fdf4}
+.t-blue{color:var(--blue);border-color:#93c5fd;background:#eff6ff}
+.t-amber{color:var(--amber);border-color:#fcd34d;background:#fffbeb}
+.t-gray{color:var(--mut);border-color:var(--line);background:#f9fafb}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+th{background:#f9fafb;text-align:left;border-bottom:1px solid var(--line);padding:7px 9px;font-weight:600}
+td{border-bottom:1px solid var(--line);padding:7px 9px;vertical-align:top}
+.num{white-space:nowrap}
+.box{border-left:4px solid var(--blue);background:var(--card);padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:13.5px}
+.box.warn{border-color:var(--amber)} .box.bad{border-color:var(--red)} .box.ok{border-color:var(--green)}
+pre{background:#0f172a;color:#e2e8f0;padding:12px 14px;border-radius:8px;overflow-x:auto;font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+code{font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:#f3f4f6;padding:1px 5px;border-radius:4px}
+pre code{background:none;color:inherit;padding:0}
+ul{margin:8px 0 8px 22px} li{margin:4px 0}
+.foot{color:var(--mut);font-size:12.5px;margin-top:36px;border-top:1px solid var(--line);padding-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>交付格＝llama-bench 出廠形狀：12 具名格退役、C14 基準列</h1>
+<div class="sub">2026-10-05 · 線A（引擎層）· 版式依 <code>docs/PREFILL250_CONDITIONAL_DELIVERY_20260916.html</code> · 產物於 <code>Backup/spec_tree/</code></div>
+
+<div class="cards">
+  <div class="card"><div class="lab">目標 · 判準</div>
+    <div>交付格改成 <b>llama-bench 出廠形狀</b>（<code>pp512 / tg128</code>）；判準＝測試卡 <b>§5.0</b>「每一臂必須同時測並同時報 prefill + decode；<b>禁止只報 tg</b>」＋ 契約 fail-closed。</div></div>
+  <div class="card"><div class="lab">結果</div>
+    <div class="big num">pp512 94.20 / tg128 10.60</div>
+    <div style="margin-top:6px;color:var(--mut);font-size:12.5px">新形狀首筆（10-04）；柵欄 ON <b class="num">13.723</b></div></div>
+  <div class="card"><div class="lab">判定</div>
+    <div><span class="tag t-green">形狀已貼齊</span> <span class="tag t-red">讀數不可引用</span> <span class="tag t-blue">C14 基準</span></div>
+    <div style="margin-top:6px;color:var(--mut);font-size:12.5px">棘輪上限 <b class="num">15.210976</b> 不動</div></div>
+</div>
+
+<h2>§1 問題：舊交付格在結構上交不出 prefill</h2>
+<p>原本的交付格 <code>delivery</code> 是 <code>-p 0</code>（pp-less）。它在測試卡裡是 <b>§5.0 的唯一例外</b>：沒有 prompt 那一列，就沒有東西去預熱專家池，於是它交不出 prefill，而「只報 decode」在 §5.0 明文是<b>不完整產物、不可引用</b>。看板自己早就記下了病根（C5 註記原文：「沒有 pp 那一列預熱池」）。</p>
+<p>同時，歷史上的「decode 棘輪上限」<code>15.210976</code>（C13）是在<b>舊預設形狀</b>（<code>-p 2048 -b 5632 -d 512 -r 3 --warm-skip 64</code>）上量的 ⇒ 它與新形狀<b>不可互比</b>（§56），所以新形狀需要自己的基準線，而它此前<b>在看板上沒有任何一列代表</b>。</p>
+
+<h2>§2 改了什麼</h2>
+<h3>2.1 測試卡 §2.5：具名格全退役，預設格貼齊出廠</h3>
+<p>依 operator 裁定（2026-10-03）：<b>具名格全部移除</b>，<code>cells</code> 整塊改為 <code>retired_cells</code>（每格留墓碑：<code>prompt</code> / <code>retired_at</code> / <code>why</code>）；<b>唯一可選格＝<code>(default)</code></b>，其形狀＝llama-bench 出廠（出處 <code>src/llama.cpp/tools/llama-bench/llama-bench.cpp:392-439</code>）：</p>
+<pre><code>-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5   (warmup 開、warm_skip 0、ctx_size 0)
+prod-new 記憶體側不動：ngl 99 / load_mode none / 池 8 GiB / KV q8_0</code></pre>
+<p>三個把格名當真的地方同步處理：<code>cell_contract.resolve_cell()</code>（<code>--cell &lt;退役名&gt;</code> fail-closed，明說「已退役」）、<code>caliber_gate</code>（新判詞 <code>RETIRED</code>：不算統一口徑、也不算紅）、<code>quote_gate._declared_prompt()</code>（讀墓碑的 <code>prompt</code>，讓 R2 的 pp-less 拆欄對舊產物仍成立）。</p>
+
+<div class="box ok"><b>硬證（dry-run，未跑任何量測）</b><br>
+<code>llama-bench -ngl 99 --load-mode none -t 8 -expert-cache 8589934592 --cache-type-k q8_0 --cache-type-v q8_0 -b 2048 -ub 512 -p 512 -n 128 -d 0 -r 5 -o json</code><br>
+⇒ <code>cell 口徑校驗通過（cell=(default)，嚴格維度 14 項一致）</code>。不加任何形狀旗標即出這一列。</div>
+
+<h3>2.2 途中修掉的兩個「形狀送不出去」的真 bug</h3>
+<ul>
+<li><code>harness.py</code> <b>根本沒有 <code>--ubatch</code></b>（<code>_BENCH_DEFAULTS["ubatch"]</code> 是死欄位）⇒ 補上明文送出。</li>
+<li><code>llama_bench_matrix.py:1582</code> 的舊語意「給 <code>-b X</code> ⇒ <code>-ub</code> 也 X」會蓋掉格的 512 ⇒ 改成<b>只在格沒宣告 <code>ubatch</code> 時</b>才生效；<code>-b/-ub</code> 的唯一來源＝格 §2.5（<code>cell_declared_batch</code>）。</li>
+</ul>
+
+<h3>2.3 跨語料口徑分佈（同一批 1991 份產物）</h3>
+<table>
+<tr><th></th><th class="num">UNIFIED</th><th class="num">RETIRED</th><th class="num">NON_UNIFIED</th><th class="num">UNKNOWN</th></tr>
+<tr><td>HEAD</td><td class="num">394</td><td class="num">—</td><td class="num">476</td><td class="num">1121</td></tr>
+<tr><td>本輪後</td><td class="num">301</td><td class="num"><b>93</b></td><td class="num">476</td><td class="num">1121</td></tr>
+</table>
+<p><code>394 = 301 + 93</code>，其餘逐項不變 ⇒ <b>退役全額入帳、零新增紅燈</b>。</p>
+
+<h2>§3 量測：prefill + decode 同報（契約 §1 必備節 C）</h2>
+<p>兩筆皆為<b>同一次 launch</b> 同時輸出兩列，各帶 thermal 與 swap。兩筆的絕對值<b>都不可引用</b>（見 §6）。</p>
+<table>
+<tr><th>產物</th><th>格 / 形狀</th><th class="num">pp512 (t/s)</th><th class="num">tg128 (t/s)</th><th>thermal</th><th>attribution</th></tr>
+<tr>
+  <td><code>Backup/spec_tree/default_cell_20261004/default_cell.json</code>（10-04）</td>
+  <td><code>(default)</code> 新形狀</td>
+  <td class="num">94.203 ±19.028</td>
+  <td class="num">10.601 ±0.466</td>
+  <td>NOMINAL</td>
+  <td><span class="tag t-red">swap</span> growth +3122 MiB</td>
+</tr>
+<tr>
+  <td><code>Backup/spec_tree/delivery_std_20261003/std.json</code>（10-03）</td>
+  <td><code>delivery-std</code>（<b>已退役格</b>）</td>
+  <td class="num">117.588 ±6.889</td>
+  <td class="num">11.885 ±1.105</td>
+  <td>MODERATE</td>
+  <td><span class="tag t-red">swap</span> growth +4250 MiB</td>
+</tr>
+</table>
+<p><b>逐 rep</b>（10-04）：pp <code>[86.677, 78.705, 76.408, 113.678, 115.547]</code>（前 3 rep 與後 2 rep 是兩個 regime）；tg <code>[10.738, 10.189, 10.312, 10.417, 11.350]</code>。⇒ 出廠形狀在本機 5 reps 內<b>到不了穩態</b>（<code>-d 0</code> 無 depth 預填、<code>warm_skip 0</code> 不丟冷 rep —— 而這兩個正是舊格到穩態的手段）。⚠ 兩筆的機制候選（池暖 vs 記憶體黑洞）本產物<b>分不開</b>。</p>
+<div class="box warn"><b>不可互比</b>：<code>delivery-std</code> 的 <code>117.588 / 11.885</code> 屬<b>已退役格</b>（<code>-b 512 -d 512 --warm-skip 64</code>）⇒ 與新形狀那筆在 <code>-b/-d/-r/--warm-skip</code> 四個維度都不同。</div>
+
+<h2>§4 柵欄 × 新形狀：兩方向配對 ＋ C14</h2>
+<p><code>CGC_OVERLAP_FENCE=41</code> <b>從未在交付家族跑過</b>（46/46 的柵欄產物都是舊格 <code>p2048</code>）。同一 invocation 各跑一次、ON 先後各一次：</p>
+<table>
+<tr><th>趟</th><th class="num">OFF（<code>prod-new</code>）</th><th class="num">ON（<code>+FENCE=41</code>）</th><th class="num">比值</th></tr>
+<tr><td>① OFF→ON</td><td class="num">10.6893</td><td class="num">13.6641</td><td class="num">×1.278</td></tr>
+<tr><td>② ON→OFF</td><td class="num">10.9876</td><td class="num">13.7824</td><td class="num">×1.254</td></tr>
+<tr><td><b>均值</b></td><td class="num"><b>10.838</b></td><td class="num"><b>13.723</b></td><td class="num"><b>×1.266</b></td></tr>
+</table>
+<p><b>順序無關</b>：把 ON 放第一個跑，ON 仍 13.78、OFF 仍 10.99。四臂的 tg 逐 rep <code>max/min</code> 全部 ≤ <b>1.082</b>，而臂間差 27% ⇒ <b>臂內離散比臂間差小一個量級</b>。</p>
+<p>⇒ <b>13.723 ≈ 舊形狀乾淨窗最高 C12 13.8674</b> ⇒ 換成 llama-bench 出廠形狀<b>沒有損失速度</b>。</p>
+
+<h3>C14：新形狀的柵欄值登記為「基準類」（不參與棘輪）</h3>
+<p>權威入口 <code>caliber_certify certify</code> 對這筆判 <b>0/1 CERTIFIED</b>，三個獨立理由：① R4（四臂全 <code>attribution=swap</code>）② 棘輪（<code>13.66/13.78 ≤ 15.21</code>）③ 下限（prefill 119.8 &lt; 250）。<b>放行 R4 也過不了棘輪那一條</b>。⇒ operator 裁定走 <code>ratchet_exempt</code>（基準類）：新增 <b>C14</b>，<b>棘輪上限 15.210976 不動</b>。</p>
+<div class="box"><b>D7 的 waiver 例外只放行 <code>DIRTY</code></b>（<code>decode_board_build.py:1417</code>；<code>UNSTABLE</code> 一律擋）。多臂 pair 檔<b>必然 MIXED</b>（冷的 OFF 臂 pp spread 1.374）；harness 的原生逐臂 json 是 llama-bench 原始輸出、缺包裝 ⇒ 閘門「判不了」。⇒ <code>quote.artifact</code> 指向 <b>ON 跑第二趟（池已暖）那一臂</b>的單臂產物（<code>fence_on_cert.json</code>，已驗 <code>gate_verdict=DIRTY</code>），與 C12／C13 的「quote 都是單臂」慣例一致。</div>
+
+<h2>§5 現場閘門輸出（原文）</h2>
+<pre><code>$ python3 agent_harness/engine_loop/traces/validate.py
+    WARN  eng-mh-0048: applies_to path does not exist: src/llama.cpp/build/bin/libllama.0.0.279.dylib
+  -&gt; OK, 1 warning(s)
+
+$ python3 agent_harness/engine_loop/traces/selftest.py
+  10/10 injected violations rejected
+
+$ python3 agent_harness/engine_loop/memory/build_memory_index.py --check
+  memory index OK: 26 file(s), 1077 section(s), no drift
+
+$ python3 agent_harness/engine_loop/index_assets.py --check
+  manifest OK: 318 assets, existence + bytes + mtime all agree
+
+$ python3 scripts/check/decode_board_build.py --check
+  VERDICT: PASS（0 個問題）
+$ python3 scripts/check/mindmap_subgoal_sync.py --check
+  子目標 17；條目 56（歸屬 27／未歸屬 29）；缺口 0
+
+$ python3 scripts/check/cell_contract.py --selftest      -&gt; selftest 43/43
+$ python3 scripts/check/quote_gate.py --selftest         -&gt; SELFTEST PASS (33/33)
+$ python3 scripts/check/caliber_gate.py --selftest       -&gt; SELFTEST PASS（6/6）
+$ python3 scripts/check/memory_pressure.py --selftest    -&gt; 83/83 checks passed
+$ python3 scripts/check/mindmap_void_check.py --self-test-&gt; SELFTEST ALL PASS
+$ python3 scripts/check/llama_bench_matrix.py --selftest -&gt; budget-gate selftest: 4/4 cases passed
+$ python3 scripts/check/caliber_certify.py --selftest    -&gt; SELFTEST 33/34 (既存紅，見 §6)</code></pre>
+
+<h2>§6 誠實邊界（不主張什麼）</h2>
+<ul>
+<li><b>必備節 A（TPOT 分解）與 B（decode 分段拆解）本輪沒有新生產</b>。本輪的交付物是<b>口徑變更</b>（形狀重定義 ＋ 一筆基準列），不是速度主張；新形狀（<code>-d 0</code>、<code>warm_skip 0</code>）目前<b>連穩態都還沒到</b>，此時做分段分解只會量到冷啟 regime。舊形狀的分段見 <code>Backup/spec_tree/WAIT_ATTRIBUTION_2026-10-03.md</code> —— <b>它不可搬到本形狀</b>（§56）。</li>
+<li><b>所有 t/s 均不可引用</b>：四臂／兩筆的 <code>attribution</code> 皆非 <code>none</code>（swap growth &gt; 512 MiB）；pp 另有 <code>spread &gt; 1.10</code>。凡引用須與「降級窗」一起講。</li>
+<li><b>棘輪上限不動</b>：<code>certify_anchor = 15.210976</code>（cell <code>(default)</code>，<b>指 2026-10-03 之前的預設形狀</b>）。它是「已認證 decode 的最大值」，定義上只往上走；且<b>與新形狀不可互比</b>。C14 是<b>基準</b>，不是成績。</li>
+<li><b>D5 數值那一半不適用</b>：本 commit <b>0 個 <code>src/</code></b>。工作樹裡的 <code>src/llama.cpp/src/llama-context.cpp</code>（+17，<b>純註解</b>）與其 dylib <b>未納入本 commit</b>（未重建驗證、未跑 D5）。</li>
+<li><b><code>caliber_certify --selftest</code> 33/34 是既存紅</b>（用例「逐 rep max/min 1.107&gt;1.10 ⇒ UNSTABLE」現回 QUOTABLE；<code>all_spread &gt; LIMIT and not split</code> 在拆欄打開時不觸發）。已用 <code>git archive HEAD</code> 的暫存對照證明它在<b>本輪改動前就是 33/34</b>，非本輪引入。</li>
+<li><b>未跑 D5 的 <code>m123_oracle_gate</code></b>：本 commit 無 <code>src/</code> ⇒ 該閘門對它<b>沒有鑑別力</b>（產物沒變，比的是同一份 binary 對同一份參考）。</li>
+<li><b>看板已重建</b>（<code>docs/mindmap/*</code>）：它是從 <code>decode_board_2026-09-29.yaml</code> ＋ <code>mindmap.json</code> 機械生成；因而也重生了<b>其他線節點</b>的 brief（例如 L25-7／<code>e-m2-slab-reuse</code>）——那些節點的<b>內容不是本輪寫的</b>。</li>
+</ul>
+
+<h2>§7 依據</h2>
+<table>
+<tr><th>項目</th><th>出處</th></tr>
+<tr><td>llama-bench 出廠形狀</td><td><code>src/llama.cpp/tools/llama-bench/llama-bench.cpp:392-439</code></td></tr>
+<tr><td>格子宣告（唯一來源）</td><td><code>docs/PROD_NEW_TEST_CARD_2026-09-24.md</code> §2.5 ＋ <code>scripts/check/cell_contract.py</code></td></tr>
+<tr><td>§5.0「禁止只報 tg」</td><td><code>docs/PROD_NEW_TEST_CARD_2026-09-24.md</code> §5.0</td></tr>
+<tr><td>新形狀首筆</td><td><code>Backup/spec_tree/default_cell_20261004/default_cell.json</code>；判詞 <code>Backup/spec_tree/DEFAULT_CELL_FIRST_2026-10-04.md</code></td></tr>
+<tr><td>柵欄配對 ＋ C14</td><td><code>Backup/spec_tree/FENCE_DELIVERY_2026-10-05.md</code>；產物 <code>fence_default_20261005/{fence,fence_rev,fence_on_cert}.json</code></td></tr>
+<tr><td>退役前後分佈</td><td><code>python3 scripts/check/caliber_gate.py --sweep 'Backup/*/*.json'</code>（1991 份）</td></tr>
+<tr><td>看板（單一來源）</td><td><code>scripts/check/decode_board_2026-09-29.yaml</code>；產物 <code>docs/mindmap/prefill250decode20.html</code></td></tr>
+</table>
+
+<div class="foot">
+本頁為 <b>轉引 ＋ 現場閘門</b>：所有數字取自上述產物，閘門輸出為本機原文。量測口徑契約見
+<code>docs/MEASUREMENT_CONTRACT_2026-09-25.md</code>；提交閘門見 <code>~/.workbuddy/skills/cgc-commit-gate/SKILL.md</code>。
+</div>
+
+</div>
+</body>
+</html>

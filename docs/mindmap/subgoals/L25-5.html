@@ -46,7 +46,7 @@ table.queue td { vertical-align: top; }
   footer { margin-top:40px; padding-top:14px; border-top:1px solid #e5e7eb; font-size:12.5px; color:#6b7280; }
   .kv { width:100%; } .kv th { width:150px; background:#fff; font-size:13px; }
   .verdict { font-size:15px; font-weight:600; }</style></head><body>
-<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
+<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（17）</a></nav>
 <div class="container">
 <h1>L25-5 ｜ MTP 的產品化上限</h1>
 <p class="subtitle">結案狀態：<span class="badge b-ok">結案（§63，端點＝<b>m 比值門檻</b>）：乾淨窗口（<code>attribution=none</code>、NOMINAL、起跑 free 7159 MB）一趟 k=1 的 <b>m ＝ 0.159</b>（T_draft <b>13.70 ms/輪</b> ÷ 86.13；五條閘全過）≤ 目標 <b>0.30</b>。<br>⇒ 卡片自己推的 k 無窮上界 <b>24.59</b> 是由 <b>m=0.474</b> 推出來的。⚠ <b>09-30 更正</b>：原文寫「實測更小 ⇒ 上界仍成立」是<b>方向反了</b> —— m 在<b>分母</b>，m 越小上界<b>越高</b>：1000/(85.8×0.159) ＝ <b>73.30</b>（不是 24.59）。<br>⚠ 兩件事要說清楚：<b>(i)</b> m 在劣化窗只會被吹大（單邊性）⇒ 乾淨窗量到的 0.159 是<b>上界</b>；<b>(ii)</b> prod-new 的 draft 成本比 09-24 舊 build 高 <b>60%</b>（0.159 vs 0.099）⇒ 但<b>「天花板比舊帳面更低」講反了</b>：draft 成本變高 ⇒ m 變大 ⇒ 上限變低；本格量到的 m <b>比舊帳面小</b>（0.159 vs 0.474）⇒ 天花板<b>反而被抬高到 73.30</b>。兩者不衝突：09-24 舊 build 的 m≈0.099 是「同 cell、pool 3 GiB」的讀數，不能與 prod-new 的 0.159 直接比價；真正的帳應以<b>同一 cell</b> 為準。</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>

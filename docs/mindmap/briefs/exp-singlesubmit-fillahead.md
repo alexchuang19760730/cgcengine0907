@@ -33,7 +33,7 @@ decode 27.26 t/s
 - **來源**：子目標看板（唯一來源）　·　置信度 `high`
 - **profile**：`prod-new`
 - **被測 option**：`CGC_SPAC_DBG=1`；`CGC_PREFETCH_SRC=hist`；`CGC_PREFETCH_WINDOW=4`
-- **結案狀態**：未結案（P0 成立、P1 未做）
+- **結案狀態**：結案（P0＋P1 都成立，驗收在 harness bench 上達成 2026-09-30）—— 見 C6。⚠ 兩件要一起讀：① 這一格結的是機制端點，不是速度（這支臂仍是 R6 ⇒ t/s 不可引用）；② expect_ms 那條「連帶讓 debug 回讀可刪 ⇒ −0.46 ms/step」沒有做：回讀還在，只是餵料不再需要它。
 - **逐條處置**：整合進子目標　→ `L20-5`　—　單次提交臂上把 union 交給預取；P1 餵料的載體
 - **測試 log（實跑）**：[fed_default.json](../../../Backup/fillahead_2026-09-28/fed_default.json)　[exp-singlesubmit-fillahead_20260929_012703.json](../../../Backup/exp_runs/exp-singlesubmit-fillahead_20260929_012703.json)　[filla_run.json](../../../Backup/fillahead_delivery_2026-09-29/filla_run.json)　[certified.json](../../../Backup/p1_rbfeed_2026-09-30/certified.json)
 - 驗收：不開 debug 仍要有 CGC-RB-FEED 且 prefetch > 0/0。
@@ -103,6 +103,6 @@ decode 27.26 t/s
 
 ---
 
-← [在**認可入口**（`harness bench`、`prod-ne…](exp-prodnew-decode20-g4miss.md)　·　[總目錄](index.md)　·　[HTML 版](exp-singlesubmit-fillahead.html)
+← [在**認可入口**（`harness bench`、`prod-ne…](exp-prodnew-decode20-g4miss.md)　·　[總目錄](index.md)　·　[HTML 版](exp-singlesubmit-fillahead.html)　·　[**「邊際 verify token ＝ 34.7 ms」由什麼構成… →](exp-marginal-decomp.md)
 
 本檔由 `scripts/check/mindmap_brief_build.py` 從 `docs/mindmap/mindmap.json` 機械生成；改內容請改 JSON 後重跑，勿直接編輯本檔。

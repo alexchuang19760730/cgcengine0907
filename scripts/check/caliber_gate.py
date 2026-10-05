@@ -10,9 +10,14 @@
 統一口徑的定義（本閘門判的三條，缺一即 NON_UNIFIED）：
   1. **入口**：harness bench（llama-bench 路徑），不是 server completion 的 round。
   2. **格子**：屬於測試卡 §2.5 宣告的格子（`cell_contract.cell_names()`：'(default)' ＋ 具名格）。
+     **2026-10-03 起具名格全部退役**（operator 裁定：移除所有具名格、prod-new + harness bench
+     貼齊 llama-bench 出廠形狀）⇒ 引用退役格名的產物判 `RETIRED`：不算統一口徑、也不算紅。
+     若沒有這一條，137 份 `delivery` 與 81 份 `delivery-repsplit` 的舊產物會與「打錯格名」
+     拿到同一個判詞（NON_UNIFIED），而它們其實是**歷史**。
   3. **聚合**：逐 rep 向量（samples_ts），不是自訂 round。
 
-判詞：UNIFIED / NON_UNIFIED（附理由）/ UNKNOWN（掃不到 ⇒ fail-closed，不解讀成「合規」）。
+判詞：UNIFIED / **RETIRED（已退役格，僅供歷史）** / NON_UNIFIED（附理由）/ UNKNOWN（掃不到 ⇒ fail-closed，不解讀成「合規」）。
+⚠ RETIRED 只在「格子」這一條成立時給；其餘兩條（入口、聚合）仍照判——退役格不能拿來當後門。
 
 ⚠ 本閘門只管**口徑**；口徑合了還要過 `quote_gate.py`（窗、逐 rep 離散、R5/R6）才算可引用。
 
@@ -46,6 +51,16 @@ def declared_cells():
         return set()
 
 
+def retired_cells():
+    """已退役的格名 -> 墓碑。讀不到 ⇒ 空 dict（fail-closed：寧可把舊產物判紅，不要放行）。"""
+    try:
+        sys.path.insert(0, HERE)
+        import cell_contract  # type: ignore
+        return dict(cell_contract.retired_cells(cell_contract.load_contract()))
+    except Exception:
+        return {}
+
+
 def _read(path):
     try:
         return open(path, encoding="utf-8", errors="ignore").read()
@@ -53,9 +68,14 @@ def _read(path):
         return None
 
 
-def classify(path, cells=None):
-    """回傳 (verdict, reason)。"""
+def classify(path, cells=None, retired=None):
+    """回傳 (verdict, reason)。
+
+    `retired` ＝ 已退役的格名 -> 墓碑。**不傳就是空**（自測帶假 cells 清單時不會去讀真卡片）。
+    """
     cells = cells if cells is not None else declared_cells()
+    if retired is None:
+        retired = {}
     if not os.path.exists(path):
         return "UNKNOWN", "檔案不存在"
     t = _read(path)
@@ -90,31 +110,45 @@ def classify(path, cells=None):
             cell = m2.group(1)
     if not cells:
         return "UNKNOWN", "測試卡 §2.5 的格子清單讀不到 ⇒ 格子這一條判不了（fail-closed）"
-    if True:
-        if cell is None:
-            # harness bench 未指定 cell 時就是 '(default)'；但仍要有 samples_ts 佐證是 bench 路徑
-            if "samples_ts" in t:
-                cell = "(default)"
-            else:
-                return "UNKNOWN", "看不出格子，也沒有 bench 的 rep 向量"
-        if cell not in cells:
+    retired_hit = None
+    if cell is None:
+        # harness bench 未指定 cell 時就是 '(default)'；但仍要有 samples_ts 佐證是 bench 路徑
+        if "samples_ts" in t:
+            cell = "(default)"
+        else:
+            return "UNKNOWN", "看不出格子，也沒有 bench 的 rep 向量"
+    if cell not in cells:
+        # `retired` 收 set（只要名字）或 dict（名字 -> 墓碑）——兩種呼叫端都有人用。
+        _tomb = retired.get(cell) if isinstance(retired, dict) else ({} if cell in retired else None)
+        if _tomb is not None:
+            # 退役格：格名有意義（歷史），但它不再是可選格 ⇒ 下面**仍要**過聚合那一條。
+            retired_hit = (cell, _tomb)
+        else:
             return "NON_UNIFIED", "格子 %r 不在測試卡 §2.5 的宣告裡" % cell
     # 3) 聚合：逐 rep 向量
     if "samples_ts" not in t:
         return "NON_UNIFIED", "沒有逐 rep 向量（samples_ts）⇒ 不是統一口徑的聚合方式"
+    if retired_hit:
+        _c, _t = retired_hit
+        return "RETIRED", ("格子 %r 已退役（retired_at=%s）⇒ 僅供歷史、不可再作為新讀數的格子；"
+                           "逐 rep 向量齊備" % (_c, _t.get("retired_at") or "?"))
     return "UNIFIED", "cell=%s，逐 rep 聚合" % (cell or "?")
 
 
 def cmd_check(paths):
     cells = declared_cells()
+    retired = retired_cells()
     if not cells:
         print("  ⚠ 讀不到測試卡 §2.5 的格子清單 ⇒ 格子這一條判不了（fail-closed）")
     bad = 0
+    n_ret = 0
     for p in paths:
-        v, why = classify(p, cells)
+        v, why = classify(p, cells, retired)
         print("  %-12s %-58s %s" % (v, p, why))
-        bad += 0 if v == "UNIFIED" else 1
-    print("VERDICT: %d/%d 統一口徑" % (len(paths) - bad, len(paths)))
+        n_ret += 1 if v == "RETIRED" else 0
+        bad += 0 if v in ("UNIFIED", "RETIRED") else 1
+    print("VERDICT: %d/%d 統一口徑（其中 %d 為已退役格，僅供歷史）"
+          % (len(paths) - bad, len(paths), n_ret))
     return 0 if bad == 0 else 1
 
 
@@ -123,15 +157,16 @@ def cmd_sweep(pattern):
     import glob as _glob
     import collections
     cells = declared_cells()
+    retired = retired_cells()
     paths = sorted(set(_glob.glob(pattern)))
     if not paths:
         print("  沒有命中：%s" % pattern)
         return 1
     buckets = collections.defaultdict(list)
     for p in paths:
-        v, why = classify(p, cells)
+        v, why = classify(p, cells, retired)
         buckets[v].append((p, why))
-    for v in ("UNIFIED", "NON_UNIFIED", "UNKNOWN"):
+    for v in ("UNIFIED", "RETIRED", "NON_UNIFIED", "UNKNOWN"):
         print("== %s : %d ==" % (v, len(buckets[v])))
         for p, why in buckets[v]:
             print("   %-64s %s" % (p, why))

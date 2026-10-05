@@ -443,7 +443,32 @@ GROWTH_FIT_FLOOR = 226.0     # free >= 8100 -> growth ≈ 226 (constant; line cr
 GROWTH_RESIDUAL_MB = 500.0
 
 
-def is_clean(attribution_result: dict) -> tuple:
+def measured_worst(thermal_windows) -> str | None:
+    """**量測窗**的熱 worst（＝`thermal_windows[].worst.label` 的最壞者）；讀不到回 None。
+
+    [CGC 2026-10-03 線A] 為什麼需要它：`attribution()['thermal_worst']` 取的是**整臂**取樣的
+    worst（含載入／冷卻／收尾），而 `is_clean()` 拿它當「這一輪乾淨嗎」的熱條件 ⇒ 一個
+    **量測窗內 37/37 NOMINAL** 的臂，只要窗外的收尾讀到一次 MODERATE，就會被判不乾淨。
+    當日三次同型（`mtpon_pair_warm_20261003`：OFF 窗內 NOMINAL 37/37、整臂 MODERATE；
+    `mtpon_pair_20261003`：OFF 窗內 NOMINAL 3／MODERATE 29、整臂 HEAVY）。
+    判準的**嚴格度不變**（仍要求 NOMINAL），只是把「哪一段的熱」問清楚：
+    被引用的是**計時段**的數字，所以熱條件看計時段。
+    """
+    labels = []
+    for w in thermal_windows or []:
+        if not isinstance(w, dict):
+            continue
+        wr = w.get("worst")
+        lab = (wr or {}).get("label") if isinstance(wr, dict) else None
+        if lab:
+            labels.append(str(lab))
+    if not labels:
+        return None
+    order = {"NOMINAL": 0, "MODERATE": 1, "HEAVY": 2, "TRAPPING": 3, "SLEEPING": 4}
+    return max(labels, key=lambda x: order.get(x, 99))
+
+
+def is_clean(attribution_result: dict, thermal_windows=None) -> tuple:
     """(clean, why) —— 「這一輪的歸因乾淨到可以把吞吐放上成績面嗎」的**唯一定義**。
 
     WHY THIS IS A FUNCTION AND NOT ONE `if` PER CALL SITE: 2026-09-28 晚上，一次 swap 歸因的
@@ -453,9 +478,16 @@ def is_clean(attribution_result: dict) -> tuple:
     而漂移的那一天就是這種病回來的時候 —— 所以定義放這裡，寫入端與檢查端都呼叫它。
 
     乾淨 = `attribute()` 判 `none`（不是 HEAVY/TRAPPING/SLEEPING、沒有 swap／wired 成長、
-    沒有別的 llama 行程）**且** worst thermal 是 NOMINAL。
+    沒有別的 llama 行程）**且** thermal 是 NOMINAL。
     缺席一律不乾淨：讀不到 attribution、verdict 空字串、verdict 是未知字串 ⇒ False。
     （`clean` **不是**本檔的標籤；標籤集是 `none`／`swap`／`both`／`thermal`／`contention`。）
+
+    [CGC 2026-10-03 線A · 熱口徑修正] `thermal_windows` 給了就用**量測窗**的 worst
+    （`measured_worst()`），沒給才退回 `attribution.thermal_worst`（整臂 worst）。
+    理由見 `measured_worst()`；**嚴格度不變**（仍要求 NOMINAL），只是把「哪一段的熱算數」
+    對齊到**被引用的那一段**。
+    ⚠ 這是**判準修正**，不是放寬：窗內真的熱 ⇒ 結論不變；只有「窗內乾淨、窗外熱」的臂
+    會由不乾淨變成乾淨。**沒有 `thermal_windows` 的舊產物行為一字不變。**
     """
     if not isinstance(attribution_result, dict):
         return False, "沒有 attribution（缺席不是乾淨）"
@@ -468,9 +500,14 @@ def is_clean(attribution_result: dict) -> tuple:
             why += f"（{attribution_result['why']}）"
         return False, why
     th = attribution_result.get("thermal_worst")
+    win = measured_worst(thermal_windows)
+    if win is not None:
+        th, src = win, "量測窗"
+    else:
+        src = "整臂(舊口徑)"
     if th is not None and str(th) != "NOMINAL":
-        return False, f"attribution.verdict=none 但 thermal_worst={th}"
-    return True, "attribution.verdict=none" + (f"（thermal {th}）" if th else "")
+        return False, f"attribution.verdict=none 但 {src} thermal={th}"
+    return True, "attribution.verdict=none" + (f"（{src} thermal {th}）" if th else "")
 
 
 def budget() -> dict:
@@ -1156,6 +1193,23 @@ def _selftest() -> int:
               for v in ("swap", "both", "thermal", "contention", "clean")))
     check("is_clean：verdict=none 但 thermal 不是 NOMINAL 仍不乾淨",
           is_clean({"verdict": "none", "thermal_worst": "HEAVY"})[0] is False)
+    # [CGC 2026-10-03 線A] 熱口徑：有量測窗就看量測窗（整臂 worst 含載入／冷卻／收尾，
+    # 不是被引用的那一段 ⇒ 舊口徑會把「窗內 37/37 NOMINAL」的臂誤判成不乾淨）。
+    _mw = lambda *ls: [{"kind": "tg", "worst": {"label": l}} for l in ls]
+    check("is_clean：窗內 NOMINAL／整臂 MODERATE ⇒ 乾淨（舊口徑會誤判）",
+          is_clean({"verdict": "none", "thermal_worst": "MODERATE"},
+                   thermal_windows=_mw("NOMINAL", "NOMINAL"))[0] is True)
+    check("is_clean：窗內 MODERATE／整臂 NOMINAL ⇒ 不乾淨（窗內才作數）",
+          is_clean({"verdict": "none", "thermal_worst": "NOMINAL"},
+                   thermal_windows=_mw("NOMINAL", "MODERATE"))[0] is False)
+    check("is_clean：沒有 thermal_windows ⇒ 退回整臂 worst（舊產物行為不變）",
+          is_clean({"verdict": "none", "thermal_worst": "MODERATE"})[0] is False)
+    check("measured_worst：取最壞者；空／None ⇒ None",
+          measured_worst(_mw("NOMINAL", "HEAVY", "MODERATE")) == "HEAVY"
+          and measured_worst([]) is None and measured_worst(None) is None)
+    check("is_clean：理由要寫出用的是哪一段熱（可爭議）",
+          "量測窗" in is_clean({"verdict": "none", "thermal_worst": "MODERATE"},
+                              thermal_windows=_mw("NOMINAL"))[1])
     check("is_clean：缺席／空字串不是乾淨（fail-closed）",
           is_clean({})[0] is False and is_clean(None)[0] is False
           and is_clean({"verdict": ""})[0] is False)

@@ -153,3 +153,12 @@ delivery:
   plan: "① 統計量模組＋selftest（負控制）② 唯讀重播報告（翻轉帳）③ 交錯＋次序欄的產物鍵
     ④ 測試卡 caliber 宣告 ＋ 兩支閘門的條件式切換 ⑤ operator 採納"
   forbidden: "回填（既有判詞與已結格子不得重判）；以「讓 L20-10 變成可引用」為成功條件"
+
+# ── 【子目標設定（由 decode_board_2026-09-29.yaml 的 L20-10 同步；勿手改，改看板）】──
+options:
+  subgoal: L20-10
+  profile: prod-new
+  arms:
+    - "prod-new"
+  no_knob: "孿生機制（<code>cell_contract</code>：<code>rep_split</code>／<code>twin_of</code>）只開放 <code>reps</code>／<code>rep_split</code> —— 而 <code>twin_of</code> 的 reps 孿生<b>已經宣告並跑過</b>（§2.5.4c，3→7）：它壓不了 A4 的 max/min、反而把效應抹平。⇒ 剩下的不是旋鈕／n：<b>2026-10-01 operator 已明文否證式結案（排除）</b>——判詞維持 <code>REFUSE</code>；A4／統計量改革<b>另立前瞻案</b>（已立卡：<code>scripts/check/charters/e-quote-caliber-paired-2026-10-01.yaml</code>；預註冊全文 <code>docs/QUOTE_CALIBER_PAIRED_PREREG_2026-10-01.md</code>）、不回填。"
+  note: "判別句（§2.5.4b，未改）：B 落在 11.5±5% ⇒ 起點是主因；落 10.5±5% ⇒ falsify。n=7 的實測是<b>兩個都不成立但 A 不可引用</b>：A／B 都落在 11.5±5%（11.794／11.928）⇒ 起點在 n=7 下<b>不再可辨</b>；<b>2026-10-01 operator 明文：否證式結案（排除）</b>（判詞維持 <code>REFUSE</code>）。"

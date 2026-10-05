@@ -67,6 +67,41 @@ def cell_names(contract: dict) -> list[str]:
     return ["(default)"] + sorted((contract.get("cells") or {}).keys())
 
 
+def retired_cells(contract: dict) -> dict:
+    """已退役的格名 -> 墓碑（`{"prompt": N, "retired_at": ..., "why": ...}`）。
+
+    WHY THE NAMES SURVIVE THE CELLS (2026-10-03). Operator 裁定的原文是「把所有的格移除」——
+    移除的是**可選的格**，不是紀錄裡的名字。三件東西還要靠那些名字才讀得懂：
+    `caliber_gate` 要分得出「未知格名（錯誤）」與「已退役（歷史）」；`quote_gate` 的 R2
+    pp-less 拆欄要墓碑裡的 `prompt`（`_declared_prompt`）；審計要能回答「這一筆當年是哪一格」。
+    所以墓碑只保留名字與 `prompt`／日期／理由 —— 它**不是**格定義，`resolve_cell` 一律拒收。
+    """
+    rc = contract.get("retired_cells")
+    if rc is not None and not isinstance(rc, dict):
+        raise ContractError("`retired_cells` 必須是 mapping（name -> 墓碑），得到 %s"
+                            % type(rc).__name__)
+    return rc or {}
+
+
+def retired_names(contract: dict) -> list[str]:
+    return sorted(retired_cells(contract).keys())
+
+
+def cell_spec(contract: dict, name: str) -> dict | None:
+    """唯讀查格：預設格／在役具名格／退役墓碑都找得到；找不到回 None。
+
+    與 `resolve_cell` 的差別是**它不判可選性**：稽核要讀一個舊格的 `prompt`，那件事與
+    「這一格還能不能再跑」無關。
+    """
+    if name == "(default)":
+        return contract.get("cell")
+    live = (contract.get("cells") or {}).get(name)
+    if isinstance(live, dict):
+        return live
+    dead = retired_cells(contract).get(name)
+    return dead if isinstance(dead, dict) else None
+
+
 def resolve_cell(contract: dict, cell_name: str | None) -> tuple[str, dict]:
     """(label, cell) for the cell the caller asked for.
 
@@ -76,6 +111,9 @@ def resolve_cell(contract: dict, cell_name: str | None) -> tuple[str, dict]:
     else. Adding the delivery cell must not turn "the cell you named is not declared" into
     "here is a different cell's bar": that is how a naming mistake becomes a plausible number
     from the wrong cell. Set default unchanged: `cell_name=None` still means `contract["cell"]`.
+
+    2026-10-03: 所有具名格退役 ⇒ 指名一個退役格得到的是一個**指名原因的拒絕**（不是 fallback、
+    也不是和「從來沒有這一格」同一句話）——「那格沒了」與「你打錯字」是兩種病。
     """
     # The type check lives HERE, not only in `load_contract`: a validation in the loader is
     # skipped by every caller that passes an explicit `contract=`, which is exactly how the
@@ -92,6 +130,12 @@ def resolve_cell(contract: dict, cell_name: str | None) -> tuple[str, dict]:
                             + "\n   - ".join(errs))
     if cell_name is None:
         return "(default)", contract["cell"]
+    if cell_name in retired_cells(contract):
+        _t = retired_cells(contract).get(cell_name) or {}
+        raise ContractError(
+            "測試卡 §2.5 的 cell %r 已退役（retired_at=%s）。operator 裁定：移除所有具名格，"
+            "prod-new + harness bench 貼齊 llama-bench 出廠形狀 ⇒ 它只存在於紀錄裡、不可再選；"
+            "現在唯一可選的是 '(default)'。" % (cell_name, _t.get("retired_at") or "?"))
     named = (cells or {}).get(cell_name)
     if named is None:
         raise ContractError(
@@ -352,9 +396,12 @@ def selftest() -> int:
     r = check_cell(dict(cell), contract=ctr)
     c("完全一致 -> ok 且無 mismatch", r.ok and not r.mismatches)
 
-    run3 = dict(cell); run3["warm_skip"] = 0
+    # 由格自己宣告的值推導（2026-10-03：預設格的 warm_skip 由 64 改為 0，
+    # 寫死 64 的自測會跟著紅 —— 自測要驗「偏離就拒」，不是驗某個歷史數值）。
+    _ws = int(cell["warm_skip"])
+    run3 = dict(cell); run3["warm_skip"] = _ws + 64
     r3 = check_cell(run3, contract=ctr)
-    c("warm_skip=0（run3）-> 拒、mismatch 含 warm_skip",
+    c("warm_skip 偏離格宣告 -> 拒、mismatch 含 warm_skip",
       not r3.ok and any("warm_skip" in m for m in r3.mismatches))
 
     h = dict(cell); h["reps"] = 1
@@ -384,8 +431,25 @@ def selftest() -> int:
     c("缺 gen -> 拒（不把缺席當值）",
       not rm.ok and any("gen" in m for m in rm.mismatches))
 
-    rs = dict(cell); rs["warm_skip"] = "64"
-    c("'64' 字串 == 64 -> ok", check_cell(rs, contract=ctr).ok)
+    rs = dict(cell); rs["warm_skip"] = str(_ws)
+    c("warm_skip 以字串給 == 權威值 -> ok", check_cell(rs, contract=ctr).ok)
+
+    # ── 退役（2026-10-03：所有具名格退役，名字留墓碑）─────────────────────────────────────
+    # 這三條是這次改動的判準：退役名**不可選**，但**讀得到**（稽核與 quote_gate 的 pp-less 要用）。
+    _ctr2 = dict(ctr, retired_cells={"delivery": {"prompt": 0, "retired_at": "2026-10-03",
+                                                  "why": "測試用"}})
+    c("退役名不在可選清單裡", "delivery" not in cell_names(_ctr2))
+    try:
+        resolve_cell(_ctr2, "delivery")
+        _rr = None
+    except ContractError as e:
+        _rr = str(e)
+    c("指名退役格 -> 拒、且訊息明說『已退役』（不是『從來沒有這一格』）",
+      _rr is not None and "已退役" in _rr)
+    c("墓碑唯讀讀得到（prompt 供 pp-less 拆欄）",
+      (cell_spec(_ctr2, "delivery") or {}).get("prompt") == 0)
+    c("(default) 仍走預設 block", cell_spec(_ctr2, "(default)") == _ctr2["cell"])
+    c("從來不存在的格名 still 拒", cell_spec(_ctr2, "no-such-cell") is None)
 
     try:
         check_cell(dict(cell), contract={"schema": "x"})

@@ -46,7 +46,7 @@ table.queue td { vertical-align: top; }
   footer { margin-top:40px; padding-top:14px; border-top:1px solid #e5e7eb; font-size:12.5px; color:#6b7280; }
   .kv { width:100%; } .kv th { width:150px; background:#fff; font-size:13px; }
   .verdict { font-size:15px; font-weight:600; }</style></head><body>
-<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（16）</a></nav>
+<nav><a href="../index.html">◀ 攻關總圖</a><a href="../prefill250decode20.html">子目標看板</a><a href="index.html">逐子目標（17）</a></nav>
 <div class="container">
 <h1>L20-4 ｜ fill 那一個 term 的定價</h1>
 <p class="subtitle">結案狀態：<span class="badge b-ok">結案（§69）——<b>價格＝區間 [6.79, 20.68] ms/step</b>（交付 cell 步時 92.8 ms 的 7.3–22.3%）。口徑①<br>儀器（EBTIMER 包住整個 <code>ensure_batch</code>）<b>6.79 ms/step</b>（逐 rep 9.93／4.91／5.40、CV 33.6%；穩態 5.18、CV 4.1%）、口徑②牆鐘（逐 rep 配對 <code>1000/ts_A−1000/ts_B</code>）<b>20.68 ms/token</b>（30.96／16.89／14.19、CV 35.5%）；B 的底 0.061 ⇒ 可移除 6.73。<br>子目標 <code>sg-fill-price</code>（CV ≤ 20%）<b>未達</b>（整跑 33.6%／35.5%；只有換到穩態窗口才 4.1%）⇒ 依 <code>on_fail</code> 天花板<b>維持區間</b>，不得只用有利的那一端。⚠ <code>48.2</code> 出自別的 cell（p2048）⇒ 本格交付的是<b>價格</b>，不是 t/s。</span> ｜ 依 <b>decode-board-2026-09-29</b> 的結案規則（prod-new ＋ harness bench ＋ 達標）</p>

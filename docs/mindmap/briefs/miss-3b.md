@@ -31,7 +31,7 @@
 - **來源**：子目標看板（唯一來源）　·　置信度 `high`
 - **profile**：`prod-new`
 - **被測 option**：`CGC_SPAC_DBG=1`；`CGC_PREFETCH_SRC=hist`；`CGC_PREFETCH_WINDOW=4`
-- **結案狀態**：未結案（P0 成立、P1 未做）
+- **結案狀態**：結案（P0＋P1 都成立，驗收在 harness bench 上達成 2026-09-30）—— 見 C6。⚠ 兩件要一起讀：① 這一格結的是機制端點，不是速度（這支臂仍是 R6 ⇒ t/s 不可引用）；② expect_ms 那條「連帶讓 debug 回讀可刪 ⇒ −0.46 ms/step」沒有做：回讀還在，只是餵料不再需要它。
 - **逐條處置**：整合進子目標　→ `L20-5`　—　fill 觸發點搬出 hook ＋ batch 化 —— 正是 L20-5「餵料搬家」要搬的那一段
 - **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）
 - 驗收：不開 debug 仍要有 CGC-RB-FEED 且 prefetch > 0/0。

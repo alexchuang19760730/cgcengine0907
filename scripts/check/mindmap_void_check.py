@@ -306,18 +306,41 @@ def arm_binding(arm: dict) -> tuple:
     return False, "instrument.verdict=%s（%s）" % (v or "空", inst.get("why") or ""), True
 
 
+def _window_worst(thermal_windows):
+    """量測窗 worst（與 `memory_pressure.measured_worst()` 同義的本檔版，只在拿不到那支工具時用）。"""
+    labels = []
+    for w in thermal_windows or []:
+        if not isinstance(w, dict):
+            continue
+        wr = w.get("worst")
+        lab = (wr or {}).get("label") if isinstance(wr, dict) else None
+        if lab:
+            labels.append(str(lab))
+    if not labels:
+        return None
+    order = {"NOMINAL": 0, "MODERATE": 1, "HEAVY": 2, "TRAPPING": 3, "SLEEPING": 4}
+    return max(labels, key=lambda x: order.get(x, 99))
+
+
 def arm_verdict(arm: dict) -> tuple:
     """(clean?, why)。缺 attribution 欄位 ⇒ 不乾淨（缺席不是乾淨）。
 
     判定本身走 `clean_predicate()`（= `memory_pressure.is_clean`，與寫入端同一份）；
     下面的本檔版只在那支工具拿不到時才用。
+
+    [CGC 2026-10-03 線A · 熱口徑] 熱條件看**量測窗**（`arm['thermal_windows']`）而不是整臂 worst；
+    理由見 `memory_pressure.measured_worst()`。寫入端（`experiment_sync`）與本檔必須同一口徑。
     """
     att = arm.get("attribution")
     if not isinstance(att, dict):
         return False, "產物沒有 attribution 欄位（缺席＝無法證明，不是乾淨）"
     fn, _src = clean_predicate()
+    wins = arm.get("thermal_windows")
     if fn is not None:
-        return fn(att)
+        try:
+            return fn(att, thermal_windows=wins)
+        except TypeError:          # 較舊的 is_clean 沒有這個參數
+            return fn(att)
     v = str(att.get("verdict") or "").strip()
     if not v:
         return False, "attribution.verdict 是空的"
@@ -326,10 +349,12 @@ def arm_verdict(arm: dict) -> tuple:
         if att.get("why"):
             why += "（%s）" % att["why"]
         return False, why
-    th = att.get("thermal_worst")
+    th, src = _window_worst(wins), "量測窗"
+    if th is None:
+        th, src = att.get("thermal_worst"), "整臂(舊口徑)"
     if th is not None and str(th) != "NOMINAL":
-        return False, "attribution.verdict=none 但 thermal_worst=%s" % th
-    return True, "attribution.verdict=none" + ("（thermal %s）" % th if th else "")
+        return False, "attribution.verdict=none 但 %s thermal=%s" % (src, th)
+    return True, "attribution.verdict=none" + ("（%s thermal %s）" % (src, th) if th else "")
 
 
 def load_arms(path: str, root: str) -> tuple:

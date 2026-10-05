@@ -35,7 +35,7 @@
 - **被測 option**：`--spec-type=ngram-simple`
 - **候選（待指名）**：`--spec-ngram-simple-size-n=12（編譯期預設，不可覆寫）`；`--spec-ngram-simple-size-m=48（同上）`；`--spec-ngram-simple-min-hits=1（同上）`；`CGC_SERVER_LOAD_MODE=mmap`
 - **arm 1（可複製）**：`prod-new`
-- **結案狀態**：未結案（PRIMARY 候選已量、否證：ngram 的 E 0.984（6/6 rep 一致；archive 的 map-k 0.992）⇒ steps/token 這條無 draft-head 的路不攤薄；下一步＝SECONDARY CGC_SERVER_LOAD_MODE）
+- **結案狀態**：結案（排除）·不可測（operator 2026-09-30：不換盒子／不降模型）——PRIMARY 已否證（ngram 的 E 0.984）；SECONDARY＝load_mode=mmap：A 臂跑通（miss/step 中位 6.0、有 miss 層數中位 6.0/39、正規化 1.92%），B 臂在 pool 8 GiB 與 6 GiB 皆 Insufficient Memory、rc=−6 ⇒ 同形不可測。⛔ 這不是否證 ⇒ 本格自己的否證句「SECONDARY 否證 ⇒ 25 定案判死」不觸發；25 的定案現在只掛在 S1（is_mem_shared 的 draft 輪級掉線），而 S1 也要過同一個盒子（MTP-on 存活 ≥7703 MB、budget_gate 現判 OVERBUDGET）。（以下為結案前的舊註記，留檔）PRIMARY 否證；SECONDARY 09-30 首次實跑＝A 跑通、B fail-stop）：A 臂（delivery、load_mode=none）拿到 §8 兩量 —— ① miss 數/step 中位 6.0（IQR 4–12）② 有 miss 的層數/step 中位 6.0（min 1、max 39）、正規化 1.92%（與 e-fillbudget-m-decomp 的誠實臂 1.97% 獨立吻合；instrument ✅ BOUND：mm_pub 39/39、missmask_step=386、missmask_row=64）；B 臂（delivery-mmap）跑不完：command buffer 8 failed status 5 / Insufficient Memory、rc=−6、recovered 0 completed instance ⇒ 不是否證，是這台盒子量不到。
 - （同條另掛：`L25-2`）
 - **逐條處置**：整合進子目標　→ `L25-1`　—　decode ≥25 的主節點（tier 4）；§51 之後只剩 L25-1 一條活路（L25-2 唯一被指名的機制 B 已被量死）
 - **測試 log**：無實跑 log（本條的證據是下面的「對應報告」，不是量測產物）

@@ -376,6 +376,28 @@ def default_batch(env: dict[str, str], scalars: dict[str, str]) -> tuple[str, st
     return "8", "8", "pool-path clamp (cgc_pool_max_tokens)"
 
 
+def cell_declared_batch(cell_name: str | None) -> tuple[str, str]:
+    """`(batch, ubatch)` 逐字取自測試卡 §2.5 宣告的格（具名格或預設格）；讀不到 ⇒ ("", "")。
+
+    WHY THE CELL IS THE SOURCE OF `-b/-ub` (2026-10-03). `-b/-ub` 是**格的形狀維度**——
+    `cell_contract.check_cell` 會逐字比對——而 profile 的 `BATCH`／`UBATCH` 是 **server** 在
+    8192 ctx 下的批次（5632）。驅動若從 server 推導 bench 的批次，「宣稱的格」與「跑出的格」
+    在**預設路徑**上就必然不一致（實測：`--arms prod-new` 裸跑 ⇒ `-b 5632` vs 權威 2048 ⇒ 拒跑）。
+    形狀的唯一來源是卡片；server 的 batch 只影響 server。CLI 仍最高（顯式覆蓋要被記錄）。
+    """
+    try:
+        import cell_contract  # type: ignore
+        _label, cell = cell_contract.resolve_cell(cell_contract.load_contract(), cell_name)
+    except Exception:  # noqa: BLE001  讀不到/退役 ⇒ 交給呼叫端的既有 fallback，判準方向不變
+        return "", ""
+    if not isinstance(cell, dict):
+        return "", ""
+    b, ub = cell.get("batch"), cell.get("ubatch")
+    if b is None or ub is None:
+        return "", ""
+    return str(b), str(ub)
+
+
 def parse_rows(stdout: str) -> list[dict]:
     """Recover every COMPLETE top-level object from llama-bench's JSON array.
 
@@ -767,8 +789,21 @@ def run_arm(tag: str, profile: str, extra_env: dict[str, str], args, res: dict) 
     env, argv, scalars = res["env"], res["server_argv"], res["scalars"]
 
     fwd = forward_argv(argv)
-    b, ub, why = ((args.batch, args.ubatch, "cli") if args.batch and args.ubatch
-                  else default_batch(env, scalars))
+    # 優先序：CLI → **測試卡 §2.5 宣告的格** → profile/server scalars（見 `cell_declared_batch`）。
+    _cb, _cub = cell_declared_batch(getattr(args, "cell", None))
+    if args.batch or args.ubatch:
+        # 只給一個也當 CLI：另一個用**格宣告的**補齊。舊版要求兩個都給，否則整對被換成
+        # profile 推導值 ⇒ `--batch 4096` 這種單邊給法會被**靜默吞掉**（這正是本專案最討厭的
+        # 失敗形狀）。補不齊（格讀不到）才退回 profile。
+        b, ub = (args.batch or _cb), (args.ubatch or _cub)
+        if b and ub:
+            why = "cli" + ("" if args.batch and args.ubatch else "（另一邊取自 cell §2.5）")
+        else:
+            b, ub, why = default_batch(env, scalars)
+    elif _cb and _cub:
+        b, ub, why = _cb, _cub, "cell §2.5"
+    else:
+        b, ub, why = default_batch(env, scalars)
 
     cmd = [str(LLAMA_BENCH)] + fwd + [
         "-b", str(b), "-ub", str(ub),
@@ -1465,11 +1500,12 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--arms", default="prod25-stream",
                     help=f"comma list from {sorted(ARMS)} (or PROFILE:ENV=VAL;ENV=VAL)")
-    ap.add_argument("--depths", default="0,512,1024,2048,4096",
+    ap.add_argument("--depths", default="0",
                     help="llama-bench -d list: context already filled before the measurement")
     ap.add_argument("--prompt", default="512", help="llama-bench -p (pp); comma list allowed")
     ap.add_argument("--gen", default="128", help="llama-bench -n (tg)")
-    ap.add_argument("--reps", type=int, default=3)
+    ap.add_argument("--reps", type=int, default=5,
+                    help="llama-bench -r（2026-10-03：預設 5＝llama-bench 出廠值；原本 3）")
     ap.add_argument("--batch", help="override -b/-ub for both (default: derived from the arm)")
     ap.add_argument("--ubatch")
     ap.add_argument("--no-warmup", action="store_true",
@@ -1543,7 +1579,11 @@ def main() -> int:
             "   （內部自動化會自帶 CGC_INTERNAL_CALL=1；要復刻請顯式 export 後再跑。）",
             file=sys.stderr)
         return 2
-    if args.batch and not args.ubatch:
+    # 舊語意「給 -b 就等於 -b/-ub 同值」**只在格沒有宣告 ubatch 時**才成立。
+    # WHY (2026-10-04): 格是形狀的權威來源（`check_cell` 逐字比對 `ubatch`），而 `harness bench`
+    # 這條路只送 `--batch`（它沒有 `--ubatch` 參數）⇒ 這一行會把 ub 設成 batch，蓋掉格的 512 ⇒
+    # 契約以「ubatch: 實際 2048 ≠ 權威 512」拒跑。**格宣告了就以格為準**。
+    if args.batch and not args.ubatch and not cell_declared_batch(getattr(args, "cell", None))[1]:
         args.ubatch = args.batch
 
     armed: list[tuple[str, str, dict[str, str], dict]] = []

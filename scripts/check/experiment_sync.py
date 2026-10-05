@@ -134,14 +134,22 @@ def _mb(v):
     return f"{v:.0f} MiB" if isinstance(v, (int, float)) else "?"
 
 
-def _clean_attribution(att) -> tuple:
+def _clean_attribution(arm) -> tuple:
     """(clean, why) —— 判準從 `memory_pressure.is_clean()` 來，**不在这里重寫一遍**。
 
     讀不到那支工具就 fail-closed（不乾淨）：證明不了不是乾淨。
+
+    [CGC 2026-10-03 線A · 熱口徑] 參數是**臂**（不是 `arm["attribution"]`）：熱條件要看
+    **量測窗**（`arm["thermal_windows"]`），而那是**臂層級**的欄位。依據就是本檔自己那句
+    「本 repo 的驗收寫的是**量測期** NOMINAL」（見 `_arm_on_board` 的註解）——
+    意的本來就是計時段，只是 `is_clean` 以前只拿得到整臂取樣的 worst。
+    ⚠ 舊產物沒有 `thermal_windows` ⇒ 行為一字不變。
     """
+    att = arm.get("attribution") if isinstance(arm, dict) else None
     try:
         import memory_pressure as _mp
-        return _mp.is_clean(att)
+        wins = arm.get("thermal_windows") if isinstance(arm, dict) else None
+        return _mp.is_clean(att, thermal_windows=wins)
     except Exception as e:  # noqa: BLE001  判不了就不准上成績面
         return False, f"無法判定歸因（{e}）"
 
@@ -332,7 +340,7 @@ def build_run(arm: dict, log_rel: str, when: str) -> dict:
     cmd_desc = (f'llama-bench（{arm.get("profile", "?")}）-p {n_prompt} '
                 f'-n {n_gen} --warm-skip {arm.get("warm_skip", "?")}')
     inst = _instrument_of(arm, log_rel)
-    _c_ok, c_why = _clean_attribution(att)
+    _c_ok, c_why = _clean_attribution(arm)
     _i_ok, i_why = _instrument_ok({"instrument": inst})
     result = {}
     if pp is not None:
@@ -365,12 +373,19 @@ def build_run(arm: dict, log_rel: str, when: str) -> dict:
 
 
 def merge_run(entry: dict, run: dict) -> bool:
-    """把 run 併進 entry（同 log 去重）；把 st-run 標 done，並重算成績面。回是否新增。
+    """把 run 併進 entry（**同 log ＋ 同臂**去重）；把 st-run 標 done，並重算成績面。回是否新增。
 
     成績面（`res`／`best`／`target_gap`）**只有乾淨的 run 能影響**，見 `_recompute_result`。
+
+    [CGC 2026-10-03] 去重鍵加上 `arm`。`sync_artifact_file` 是**逐臂**呼叫本函式的（意圖就是每臂
+    各記一條），但一個**多臂產物**（例如 off／on 配對的 `harness bench --arm A --arm B`）的每一臂
+    都指向**同一份產物路徑**（`ensure_log_in_repo` 對 repo 內的產物直接回它的相對路徑）
+    ⇒ 只用 `log` 去重會**靜默吃掉第二臂之後的每一臂**，而那正好是配對實驗的對照臂。
+    加上 `arm` 之後：同一產物重複 sync 仍冪等（同 log ＋ 同臂 ⇒ 去重），不同臂各記一條。
     """
     entry.setdefault("runs", [])
-    if any(r.get("log") == run["log"] for r in entry["runs"]):
+    if any(r.get("log") == run["log"] and r.get("arm") == run.get("arm")
+           for r in entry["runs"]):
         # 去重的那一條也要重算：否則一個在本規則之前就寫壞的節點，再 sync 幾次都不會自己好。
         _recompute_result(entry)
         return False
@@ -650,7 +665,7 @@ def _arm_on_board(a: dict, path=None) -> tuple:
                 return False, "缺成對 log"
         except Exception:  # noqa: BLE001  判不了就不因此刷掉（缺席不是「有問題」）
             pass
-    ok, _why = _clean_attribution(att)
+    ok, _why = _clean_attribution(a)
     if ok:
         return True, ""
     if not isinstance(att, dict):
@@ -1228,6 +1243,22 @@ def selftest() -> bool:
                       "thermal": "NOMINAL", "swap": {}, "verdict": ""})
     chk("merge_run：verdict 沒記錄（空）⇒ 不上成績面（fail-closed）",
         e_unk["best"] is None and "t/s" not in str(e_unk["res"]))
+
+    # [CGC 2026-10-03] 多臂產物：每一臂都指向**同一份** log（`ensure_log_in_repo` 對 repo 內的產物
+    # 直接回它的相對路徑）⇒ 去重鍵少了 `arm` 就會靜默吃掉第二臂之後的每一臂，而那正好是
+    # off/on 配對實驗的對照臂。突變檢查：把去重鍵退回只用 `log`，下面兩條都會紅。
+    e_multi = build_entry(ch_t, "S")
+    merge_run(e_multi, {"result": {"tg": 8.7}, "arm": "on", "log": "same.json", "when": "t1",
+                        "thermal": "NOMINAL", "swap": {}, "verdict": "none：thermal=NOMINAL"})
+    merge_run(e_multi, {"result": {"tg": 11.5}, "arm": "off", "log": "same.json", "when": "t1",
+                        "thermal": "NOMINAL", "swap": {}, "verdict": "none：thermal=NOMINAL"})
+    chk("merge_run：同一 log 的兩個臂各記一條（多臂產物不吞臂）",
+        len(e_multi["runs"]) == 2 and [r["arm"] for r in e_multi["runs"]] == ["on", "off"])
+    chk("merge_run：再 sync 同一 (log, arm) 仍冪等（不重複）",
+        merge_run(e_multi, {"result": {"tg": 8.7}, "arm": "on", "log": "same.json",
+                            "when": "t1", "thermal": "NOMINAL", "swap": {},
+                            "verdict": "none：thermal=NOMINAL"}) is False
+        and len(e_multi["runs"]) == 2)
 
     # ── 排行榜：只有乾淨歸因的臂能上榜（2026-09-28）───────────────
     chk("leaderboard：乾淨的臂可以上榜", _arm_on_board({"attribution": {"verdict": "none"}})[0] is True)

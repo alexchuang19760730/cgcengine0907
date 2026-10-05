@@ -175,7 +175,7 @@
         "cli": [],
         "no_knob": "",
         "note": "⚠ 本格的 `knobs.name` 有兩種：`CGC_*`＝env；`--*`＝**CLI 旗標**（`--spec-type` 不是 env，寫成 env 會被 allowlist 靜默丟掉 —— 那正是 MTP 修復臂空轉一趟的原因）。三趟：A 對照＝裸 `prod-new`（不帶任何 spec 旗標）、B＝A ＋ 上面那串、C＝B 重跑（驗 ON 自身 identical）。驗收三條：**① `need_n_rs_seq()==0` ② `E>1` ③ `answer_md5` 與 A 相同**。⛔ 三趟的 t/s 一律先過引用閘門；本格的第一個產物是「有沒有乘數」，不是速度。",
-        "state": "未結案（PRIMARY 候選已量、否證：ngram 的 E 0.984（6/6 rep 一致；archive 的 map-k 0.992）⇒ steps/token 這條無 draft-head 的路不攤薄；下一步＝SECONDARY CGC_SERVER_LOAD_MODE）",
+        "state": "結案（排除）·不可測（operator 2026-09-30：不換盒子／不降模型）——PRIMARY 已否證（ngram 的 E 0.984）；SECONDARY＝load_mode=mmap：A 臂跑通（miss/step 中位 6.0、有 miss 層數中位 6.0/39、正規化 1.92%），B 臂在 pool 8 GiB 與 6 GiB 皆 Insufficient Memory、rc=−6 ⇒ 同形不可測。⛔ 這不是否證 ⇒ 本格自己的否證句「SECONDARY 否證 ⇒ 25 定案判死」不觸發；25 的定案現在只掛在 S1（is_mem_shared 的 draft 輪級掉線），而 S1 也要過同一個盒子（MTP-on 存活 ≥7703 MB、budget_gate 現判 OVERBUDGET）。（以下為結案前的舊註記，留檔）PRIMARY 否證；SECONDARY 09-30 首次實跑＝A 跑通、B fail-stop）：A 臂（delivery、load_mode=none）拿到 §8 兩量 —— ① miss 數/step 中位 6.0（IQR 4–12）② 有 miss 的層數/step 中位 6.0（min 1、max 39）、正規化 1.92%（與 e-fillbudget-m-decomp 的誠實臂 1.97% 獨立吻合；instrument ✅ BOUND：mm_pub 39/39、missmask_step=386、missmask_row=64）；B 臂（delivery-mmap）跑不完：command buffer 8 failed status 5 / Insufficient Memory、rc=−6、recovered 0 completed instance ⇒ 不是否證，是這台盒子量不到。",
         "also": [
           "L25-2"
         ],
@@ -416,8 +416,8 @@
         "candidates": [],
         "cli": [],
         "no_knob": "",
-        "note": "本格要的是「哪一個 term 進 48.2 + x」的算式與不確定度，不是提速。",
-        "state": "未結案（數字齊、口徑未裁）",
+        "note": "本格要的是「哪一個 term 進 48.2 + x」的算式與不確定度，不是提速。<br>⚠ <b>§69.6 跨格旗標：</b>價格指到正確的格子之後，倚賴舊價 <code>3.955</code>（(default) cell）的結論要重問一次——<code>MISSHIST_REVIVAL_GATE_2026-09-29.md</code> §4 的邊際在 ±0.9 ms 之內變號（k=6 重算 6.07 vs 交付 cell 價 6.79 ⇒ <b>+0.72</b>；vs 穩態 5.18 ⇒ −0.89）。重判需要一趟<b>同格</b>成對量，不是這一趟。",
+        "state": "結案（§69）——價格＝區間 [6.79, 20.68] ms/step（交付 cell 步時 92.8 ms 的 7.3–22.3%）。口徑①儀器（EBTIMER 包住整個 ensure_batch）6.79 ms/step（逐 rep 9.93／4.91／5.40、CV 33.6%；穩態 5.18、CV 4.1%）、口徑②牆鐘（逐 rep 配對 1000/ts_A−1000/ts_B）20.68 ms/token（30.96／16.89／14.19、CV 35.5%）；B 的底 0.061 ⇒ 可移除 6.73。子目標 sg-fill-price（CV ≤ 20%）未達（整跑 33.6%／35.5%；只有換到穩態窗口才 4.1%）⇒ 依 on_fail 天花板維持區間，不得只用有利的那一端。⚠ 48.2 出自別的 cell（p2048）⇒ 本格交付的是價格，不是 t/s。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -519,7 +519,7 @@
         "cli": [],
         "no_knob": "",
         "note": "控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。",
-        "state": "未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是穩定窗口 —— 該讀數經引用閘門判 DIRTY：逐 rep 1.015 合格，但 attribution=swap）",
+        "state": "結案（排除）——2026-10-02 判死（否證式）：提交路徑 0.75 ms/步（預註冊否證判據 T_sub &lt; 0.31 ms 成立）⇒ 不再投入。⚠ 原比較項「GPU 空轉 ~47 ms/步」已於 10-03 作廢 ⇒ 判死理由改由該判據承接。出處：Backup/l201_accel/fast_cost_split_decode_20261002.json、Backup/cgc_logs/gpu_util_decode_20261002.log。沿革：底已收斂到交付 cell：36.33 ms 重現；該讀數經引用閘門判 DIRTY：逐 rep 1.015 合格，但 attribution=swap）⚠ 2026-09-30 機檢更正：窗口不是這一格的主要卡點。對這支臂跑 quote_gate 的登記表 ⇒ R5 乾淨、R6-DIRTY（唯一規則 CGC_SEG_BATCH）⇒ 「只差窗口」作廢。⚠⚠ 同日把那條解除條件也跑掉了：配對 M1/M2/M3 ＝ 9/9 vs 0/9（第一格 decode 就不同）⇒ 輸出確實不同。⚠⚠⚠ 同日第三件事：換臂的設計題也有答案了 —— 沒有這種臂（五臂同場：控制 99.3／SLOT 118.1／B_SCHEME+SLOT 90.9／HOOK_SPLIT 91.8 ms；S1 49.0 ms）⇒ 底與旗標不可分離；且 hook 自身 CPU 只有 6.5 ms/step（vs 紅利 50 ms）⇒ 真正的卡點是提交路徑。詳見 docs/S1_FLOOR_ARM_ATTRIB_2026-09-30.md；該輪五臂皆 DIRTY（thermal HEAVY／swap）⇒ 診斷級，不可引用。2026-10-01：S2-c 首次 GPU 驗證未過 —— courier 有交棒（CGC-RHO-S2C: layers/step=40、SKIP 守衛也對），但 fill 開啟時 logits 全 NaN（引擎自蓋 invalid）；另抓到一個先於 S2-c 的獨立 NaN：CGC_SLOT_TABLE_GPU×單段臂。patch 已反轉、未套用（llama-context.cpp md5 逐字回原值）；帳：docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md §4.7。2026-10-01 16:5x：兩根 NaN 已 bisect（修正歸因） —— CGC_SLOT_TABLE_GPU=1 單獨跑是 valid／M1 9/9，加上 CGC_SEG_BATCH 才 全非有限值⇒ 不是那顆旗標自己 NaN，是單段提交 × GPU slot-table leaf 的交互（卡上舊語已改）。兩根各有指紋、可各自查；驗收都是 M1 9/9。證據 docs/L201_NAN_BISECT_2026-10-01.md。2026-10-01 結構裁決落帳：R6 三路判死（R1 恢復循環不足／C 全駐留 OOM／(i) post-submit 不可行）⇒「引擎把單段提交做成輸出可驗」作廢，卡點改 decision／operator（端點重定義：機制／計數器，或判死）。X 線診斷腳手架（a9/a10、Phase 0/1、R1PROBE）已全撤；2026-10-01 晚間再撤 S2-c 區塊與兩根 NaN 修（chartered 偵測亦除）⇒ 樹上 R6 殘留＝0（未提交僅餘 L25-2 精修與另一線 MTP／bench 校準）。2026-10-01 深夜：端點重定義落帳 —— 時間端點判死（36.33／49.18 不再主張；天花板維持 19.2 側）；機制端點（提交數 41→1／ms-submit）立項 scripts/check/charters/e-l201-submit-path-2026-10-01.yaml。2026-10-01 深夜：端點已量、判 MECHANISM —— 誠實臂（prod-new:CGC_DECODE_PROFILE=1;CGC_GPU_TIMING=1）T_sub 中位 0.937 ms／step≥64 1.007 ⇒ 40×T_sub＝37.5／40.3 ms（同場參考紅利 50.3 的 74–80%）⇒ 提交路徑＝紅利主體（預註冊判據 [0.63, 1.89]）。⚠ 本場髒窗（HEAVY／swap +1475 MiB）⇒ 任何 t/s 不引用；T_sub 本身是引擎內計時器（不隨窗口漂移）。S1 臂 1 提交/步只作結構對照（該臂未武裝儀器、0 行計數；t/s 依 R6 永不引用）。2026-10-03 措辭更正（零新量測；Backup/spec_tree/WAIT_ATTRIBUTION_2026-10-03.md）：① gpu_busy_sum/wait＝153%（儀器自帶判據：≥70% ⇒ wait 是真 GPU 執行）、gpu_union＝105% ⇒ 「GPU 空轉 47 ms/步」作廢；② 唯一有名字的縫＝gap 16.54 ms（23.7%），其 CPU 部分（hook 6.88＋submit 3.70＝10.58 ms）正是 overlap fence 收割的量（×1.218 ≈ 23.7%，內部自洽）；③ 殘餘 gap_not_cpu ≈ 6.0 ms 是 host 自旋（poll_iters 632,391/步），其兩個候選解（S1＝換口徑；async fill＝收益不足）都已試過 ⇒ 該檔結論＝20+ 在 bit-identical 口徑下判死（不存在 ≥5 ms 的可回收項）；本格判詞（提交路徑非主體）不變，改的是措辭與下一個靶。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -645,7 +645,7 @@
         "cli": [],
         "no_knob": "",
         "note": "驗收：不開 debug 仍要有 CGC-RB-FEED 且 prefetch > 0/0。",
-        "state": "未結案（P0 成立、P1 未做）",
+        "state": "結案（P0＋P1 都成立，驗收在 harness bench 上達成 2026-09-30）—— 見 C6。⚠ 兩件要一起讀：① 這一格結的是機制端點，不是速度（這支臂仍是 R6 ⇒ t/s 不可引用）；② expect_ms 那條「連帶讓 debug 回讀可刪 ⇒ −0.46 ms/step」沒有做：回讀還在，只是餵料不再需要它。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -683,8 +683,8 @@
         "candidates": [],
         "cli": [],
         "no_knob": "本格沒有 env 旋鈕：B 是靜態寬度 ggml_acc，要動 src/。前置的儀器已經跑完（見上）⇒ <b>前置否證，不必再印</b>。",
-        "note": "§51 尖兵已量：被定價的是散佈（320 op），沒被定價的是備援重算 320 列 ＝ 8.09 ms ⇒ 淨回收為負，decode ≥25 回到判死。<br>★ <b>復活門已關閉（09-29 實測）</b>：穩態每層峰值 <b>6</b>（不是 2）⇒ 要用 k≤3 才可能正回收，而那會讓 10.6% 的穩態步算錯（靜態圖不能按步改寬度）。均值 0.470 與板上原本寫的 0.49 相符 —— <b>k 由尾部決定，不由均值決定</b>。",
-        "state": "未結案（前置已量、不成立：穩態每層峰值 6；連把設計點降到峰值 6，重算 6.07 ms 都 > 它要取代的 fill 3.955）",
+        "note": "★ <b>復活門已關閉（09-29 實測）</b>：穩態每層峰值 <b>6</b>（不是 2）⇒ 要用 k≤3 才可能正回收，而那會讓 10.6% 的穩態步算錯（靜態圖不能按步改寬度）。均值 0.470 與板上原本寫的 0.49 相符 —— <b>k 由尾部決定，不由均值決定</b>。<br><b>§70 同格重價：</b>k=2/3/4 分離為正（覆蓋 64.0／89.4／98.1%），k=5/6 跨零（99.7／100.0%），k≥7 為負 ⇒ <b>可行區與可覆蓋區不相交</b>。重算列價由今晚乾淨窗口的 kernel 探針量得（7.6–8.7 ms/320 列）；09-22 的 8.09 是 busy-overridden 窗口。",
+        "state": "結案（排除）（§70 改寫理由）——前置已量、不成立：穩態每層峰值 6（≤2 只覆蓋 64% 的步）⇒ 靜態圖只能取 k＝6；而同格重判說 k=6 的邊際是 −1.62 ~ +4.24 ms（NOT_SEPARATED），不是原本跨格比較寫的 −2.1。⚠ 改的是理由，不是判詞：原判拿交付 cell 的重算 6.07 對 (default) cell 的 fill 3.955（§56 不可比）；換成同格之後 B 從「貴」變成「不可分辨」——全覆蓋也只能回收步時的 ~1%。（09-30 operator：既然綠底，狀態就該寫結案——排除也是結案）",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -898,7 +898,7 @@
         ],
         "no_knob": "",
         "note": "★ 09-29 起本格的量測口徑改為 <b>prod-new ＋ harness bench</b>（唯一認可入口），不再是 prod25／server ABBA。判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。⚠ 單邊性：窗劣化只把 wall 吹大 ⇒ 實測 <code>t_draft</code> ≥ 真值 ⇒ 由它算出的 m 是<b>上界</b>。",
-        "state": "未結案（判準兩半已答：m ≈ 0.10、主項＝draft 流量；缺的是同一配置下一趟乾淨的複核）",
+        "state": "結案（§63，端點＝m 比值門檻）：乾淨窗口（attribution=none、NOMINAL、起跑 free 7159 MB）一趟 k=1 的 m ＝ 0.159（T_draft 13.70 ms/輪 ÷ 86.13；五條閘全過）≤ 目標 0.30。⇒ 卡片自己推的 k 無窮上界 24.59 是由 m=0.474 推出來的。⚠ 09-30 更正：原文寫「實測更小 ⇒ 上界仍成立」是方向反了 —— m 在分母，m 越小上界越高：1000/(85.8×0.159) ＝ 73.30（不是 24.59）。⚠ 兩件事要說清楚：(i) m 在劣化窗只會被吹大（單邊性）⇒ 乾淨窗量到的 0.159 是上界；(ii) prod-new 的 draft 成本比 09-24 舊 build 高 60%（0.159 vs 0.099）⇒ 但「天花板比舊帳面更低」講反了：draft 成本變高 ⇒ m 變大 ⇒ 上限變低；本格量到的 m 比舊帳面小（0.159 vs 0.474）⇒ 天花板反而被抬高到 73.30。兩者不衝突：09-24 舊 build 的 m≈0.099 是「同 cell、pool 3 GiB」的讀數，不能與 prod-new 的 0.159 直接比價；真正的帳應以同一 cell 為準。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -953,7 +953,7 @@
         ],
         "no_knob": "",
         "note": "★ 09-29 起本格的量測口徑改為 <b>prod-new ＋ harness bench</b>（唯一認可入口），不再是 prod25／server ABBA。判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。⚠ 單邊性：窗劣化只把 wall 吹大 ⇒ 實測 <code>t_draft</code> ≥ 真值 ⇒ 由它算出的 m 是<b>上界</b>。",
-        "state": "未結案（判準兩半已答：m ≈ 0.10、主項＝draft 流量；缺的是同一配置下一趟乾淨的複核）",
+        "state": "結案（§63，端點＝m 比值門檻）：乾淨窗口（attribution=none、NOMINAL、起跑 free 7159 MB）一趟 k=1 的 m ＝ 0.159（T_draft 13.70 ms/輪 ÷ 86.13；五條閘全過）≤ 目標 0.30。⇒ 卡片自己推的 k 無窮上界 24.59 是由 m=0.474 推出來的。⚠ 09-30 更正：原文寫「實測更小 ⇒ 上界仍成立」是方向反了 —— m 在分母，m 越小上界越高：1000/(85.8×0.159) ＝ 73.30（不是 24.59）。⚠ 兩件事要說清楚：(i) m 在劣化窗只會被吹大（單邊性）⇒ 乾淨窗量到的 0.159 是上界；(ii) prod-new 的 draft 成本比 09-24 舊 build 高 60%（0.159 vs 0.099）⇒ 但「天花板比舊帳面更低」講反了：draft 成本變高 ⇒ m 變大 ⇒ 上限變低；本格量到的 m 比舊帳面小（0.159 vs 0.474）⇒ 天花板反而被抬高到 73.30。兩者不衝突：09-24 舊 build 的 m≈0.099 是「同 cell、pool 3 GiB」的讀數，不能與 prod-new 的 0.159 直接比價；真正的帳應以同一 cell 為準。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -1008,7 +1008,7 @@
         ],
         "no_knob": "",
         "note": "⛔ 必帶 --spec-draft-n-max 1：沒帶就是 k_eff≈2.33 必 thrash。且 MTP on/off 是不同輸出函數 ⇒ t/s 不可互比。",
-        "state": "未結案（待產品決策）",
+        "state": "結案（排除）（k 軸經濟學判 DEAD，2026-10-01 16:3x；同日 17:0x 的 k 掃描修正了幅度）—— ★ k 掃描（k=1/2/3/5/7 ＋ 同 session MTP-off，六趟全 attribution=none、NOMINAL、swap 0）：k=2 10.90／10.10（同 session off 的 −5%／−12%）、k=1 10.49（−9%）、k=3 9.34（−19%）、k=5 9.37（−19%）、k=7 5.61（−51%）；同 session 錨點 MTP-off 11.52／11.54（歷史 10.923 是別窗口 ⇒ 本對取代它）。⇒ k 是槓桿、最佳點 k=2，而「+52%／emit token」是 k=7（k_eff 5.06）那一點的產物 —— 最佳點的殘餘虧損 −5~12%。成本律（修正口徑後、六臂、dof 4，殘差 ≤20 ms）：round_ms ≈ 63.6 + 35.2·T̂（T̂ = drafted/rounds + 1）⇒ 每輪固定項 ≈ 0.73 個純解碼步（結構死因）＋邊際 verify token 35.2 ms（＝純步的 0.41 ⇒ 攤薄確實發生）。⚠ 2026-10-01 17:2x 量具修復：上一句原本寫 89 + 33·T —— 那個版本吃了兩個量具的分母不一致（ACCEPT 的 mean_len 把 replay 輪當有產出；MTP-PERF 的 emit_tok_per_round 除以原始 draft 呼叫、漏掉 replay 輪）⇒ 已在 llama-bench.cpp 加 replay=／emit_per_round=（行尾追加）並重建驗證（rounds − calls_draft = Σreplay：208 − 142 = 66 ✓）。真 emit/round 是 1.49–1.98（不是 1.74–2.44），而 n_max 的比較不受影響（t/s 是量出來的）。⇒ 可交付的行動：profile 預設 n_max=3 與本線用過的 7 都不是好設定，2 才是（3→2 同 cell +12%）。判決文 docs/L254_K_AXIS_ECON_2026-10-01.md §k 掃描；立項 charters/e-l254-kaxis-sweep-2026-10-01.yaml、產物 Backup/l254_kaxis_20261001/。兩個問題都答了：① 機制：S1 讓 k_eff 1.8 → 7.000（可行）；② 經濟：不划算 —— 涼窗口成對（B 先跑、同一 build、只差 CGC_MTP_NO_CTX_OTHER）：draft 成本/emit token 9.22 → 13.98 ms（+52%）、emit 只多 2.26× 但 draft 相時間多 3.44×（超線性）、acc_rate 兩臂同（0.416–0.444，沒補回來）⇒ E = 1 + a·k_eff 的「每輪成本固定」前提被實測否定。wall t/s 同向（A 8.60 vs B 7.48；第三趟 B2 13.41 但 attribution=swap）但 四趟的窗口 spread 1.19／1.19／1.19／2.49 均 &gt;1.10 ⇒ t/s 全 VOID，只當方向證據；判死靠的是計數器端點。對照：MTP-off 交付錨點 10.923、生產 ABBA ×0.695（配對）⇒ MTP-on 在此口徑整體為負，拉高 k 更負。reopen 條件（已寫死）：乾淨窗口（none ∧ ≤1.10 ∧ reps3）的成對出現 B_tps ≥ A_tps ⇒ 本判詞被推翻。判決文 docs/L254_K_AXIS_ECON_2026-10-01.md。【底下的機制史留檔】2026-10-01 operator 已拍：MTP-on 獨立口徑 ⇒ 前置①解除；同日 16:05 S1 機制端點達標且兩趟重現：k_eff 7.000 逐輪、draft=0 0%、M-RoPE 拒收 180→2、acc_rate 0.52–0.61（對照臂 1.75–1.97／48%／153–180 行；證據 Backup/l254_s1_20261001/k7_paired{,_clean}.{json,stderr.log}）⇒ 卡點改掛 k 軸經濟學：k_eff 追平 k 之後每輪代價也追上去，且四臂 attribution=thermal ⇒ t/s 全 VOID、需涼窗口重判）。09-30 大 k 接受率穩定性：量了，但量到的不是 MTP 的性質。① 回顧（零盒子成本）：09-24 s1_ksweep 兩場 k=1/2/3/4，k_eff 恰等於 k、0 個 position error，而 k=4 的 a 跨場次讀到 0.489 vs 0.945（1.93×）、k=3 讀到 0.654/0.772/0.892 ⇒ 不穩的是場次，不是 k。② 新跑 k=7 與 k=8（本臂、(default) cell、p2048_n128_d512_r3）：兩趟都被 arm-timeout 殺（rc=-15）；CGC-MTP-PERF 各只出 3 行：k=7 a=0.5238/0.4887/0.4631、gen_tok_per_round=2.032/1.900/1.880；k=8 a=0.4219/0.3516/0.3958、gen_tok_per_round=1.730/1.542/1.655。⛔ 這幾個 a 不可用，理由不是「髒窗口」而是結構：兩趟的 CGC-PHASE-SPLIT 都是 routable=15 slots -> decode graph width=1 tokens，而乾淨那批是 routable=53 -> width=6。兩項交叉驗證同一個結論 —— (i) k_eff &lt;&lt; k（要 7 只得 1.88），實作根本沒把 draft 拉到 k；(ii) position error 密度 104/5055、98/3870 行，遠高於 p2 的 32/11075 ⇒ 驗證區塊被截斷 ⇐ 它放不進 width=1 的圖。⇒ 結論：在現行宣告下，大 k 的接受率不是「不穩定」而是「構上量不到」；0.4631 與 0.3958 是 width=1 的產物，不得寫進 k 曲線。證據：Backup/l254_kbracket_2026-09-30/k7.json（＋k7.stderr.log）、k8.json（＋k8.stderr.log，INCOMPLETE／attribution=both）、Backup/s1_ksweep/20260924_{225548,233141}/*.stderr.log（回顧，k_eff==k）。③ 09-30 15:31 解 width 的實測（交付 cell、p0_n128_d512_r3、其餘同臂）：把 CGC_SERVER_LAYER_CAPS 由 40-40:16 改成 40-40:140 ⇒ LAYER_CAPS ... min 140/layer、routable=139 -> decode graph width=8 tokens，而這一趟跑完了（NOMINAL 全程、attribution=none、base_check PASS、6 行 MTP-PERF 對比 width=1 的 3 行）。⛔ 但 k_eff 仍然只有 1.590（區間 1.59–1.72），不是 7，acc_rate 0.343–0.413。那個 acc_rate 不可用：k_eff 1.6 落在乾淨批 k_eff=1（a=1.000）與 k_eff=2（a≈0.88–0.98）之間，讀到 0.35 自相矛盾 ⇒ 它是被中斷輪次壓低的比值。⇒ 結論修正：width 只解「跑不跑得完」，不解「k 有多深」（width 1 的兩趟是被 stall 殺的，width 8 的這趟活到底且 position error 反而更多：194 vs 98）。真正的截斷＝docs/KEFF_CAP_2026-09-26.md 記的 is_mem_shared draft 位置碰撞（draft loop 第二步解到 X = Y ⇒ llama_decode 拒 ⇒ 迴圈 break ⇒ 静默只吐一個 token）；本趟的指紋是 MTP fast path: draft calls=230 對 verify calls=11916（1:52）。證據：Backup/l254_kbracket_2026-09-30/k7_width8.json（＋k7_width8.stderr.log）。④ 09-30 15:37 帶 LLAMA_BENCH_SPEC_DBG=1 的直方圖（決定性）：不是鏈太短，是六成的輪次一根都沒吐 —— per-round draft=：0 ⇒ 180 輪、1/2/3/4/5 ⇒ 11/18/17/6/4、7 ⇒ 60 輪、8 ⇒ 1（約 297 輪）⇒ 加權平均 1.92 ✓。也就是說 要 7 真的拿得到 7（最深的請求達得到），拖垮平均的是 61% 的 draft=0。⇒ 卡點是 輪級掉線，不是深度。失敗形態指向 target 的 verify 批次：194 次 init 失敗中 X &gt; Y 144（74%）、X == Y 50，而歸屬 draft 迴圈的 llama_decode[0] 只有 6 次 ⇒ 配上本 build 自己印的 shared_kv=1：is_mem_shared=1 下 draft 把位置寫進共用 KV，target 從同一起點 verify 就被 M-RoPE 的嚴格 X &lt; Y 拒掉。⇒ 這能對上 09-24 那批乾淨的 k=1..4（k_eff == k、0 pos-err）：它們跑在 65c76b8c7（09-25 17:16）之前 ⇒ 那時非 GEMMA4 arch 的 ctx_other 被丟掉 ⇒ is_mem_shared=false ⇒ draft 有自己的 KV。這是一個設計取捨（收回去 vs 做對共用 KV 的 verify 佈局），不是一行修補；兩條都要走 M1/M2/M3 oracle gate。證據：Backup/l254_kbracket_2026-09-30/k7_specdbg.json（＋k7_specdbg.stderr.log）。⚠ 另註：speculative.cpp 裡那兩個修法（09-26 one_position_drafts、09-28 stale-tail）在原始碼與 binary 裡都已存在（libllama-common.0.0.630.dylib 14:39:41 驗到 stale-tail 字串、且本次有觸發），它們不對應這條。★ 2026-10-03 批次（MTP 重開工程的帳）：① cb 悬崖定罪：MTP-on k=1 的 4–5 s/步 cb＝分類錯配 —— CGC_SERVER_LAYER_CAPS=40-40:16 ⇒ 15 routable ⇒ cgc_decode_bound(15,8,8)=floor(15/8)=1 ⇒ width=1 ⇒ ntok=2 判成 PREFILL ⇒ CGC_PREFILL_STREAM=1 讓 hook 在 llama-context.cpp:8073/:8334 每層重讀整層 slab（≈356 MiB/層 × 40 層 ≈ 14.2 GiB/步；cb(ntok=2)≈cb(ntok=512)）—— 既有 CGC-HOOK_SPLIT（累加點在 slab 分支之後）、CGC-EB_TIMER（slab 路徑不呼叫 ensure_batch）、以及本輪新裝的 CGC-FASTSEG（整趟只中 1 次、draft ctx）對這條路都是瞎的；10-01 的 k 掃描之所以跑得完，是因為它用 caps=40-40:140（width=8、走 decode 路徑）。⇒ 重開前置：caps ≥17（16 routable ⇒ bound=2）或新 cell；立項 scripts/check/charters/e-mtp-cb-classify-2026-10-03.yaml。② spawn/join 假設已否證（LLAMA_EXPERT_CACHE_SERIAL_FILL=1：cb 中位 4155→5010 ms、EBTIMER 237→150 ms）⇒ 94% 不在逐冷專家 thread+join。③ spec-tree 寬 2＝重開工程 #2（Backup/spec_tree/T1C_VERDICT_2026-10-03.md）：T1c 證「寬 1 ≡ 鏈」原理上不可能打平（accept() 是下一輪 seed 寫入 ⇒ replay 多吐一顆：1.455 vs 1.462）；寬 2 撞 GGML_ASSERT(batch_in.n_seq_id[k]==1) ⇒ 修法＝每個分支各掛一根；判準寫死：寬 2 臂 token/decode ≥ ~2.05 才可能打平 off。④ S1 品質判詞（S1_QUALITY_VERDICT_2026-10-03.md）：控制 10.957（乾淨）vs S1 臂 26.099（swap）×2.38，但品質 −17.2 pp（26/29→21/29、5 題對轉錯）⇒ 20+ 門在 operator 條件下關閉。⑤ 校準軸同日收窄：M2_ONLY_CALIBER_LEVERS（放寬口徑在長 probe 下是空的）、CGC_MM_BITIDENT decode 窗配對 −0.1%（K0 的 −4.9% 不復現、那 4–5% 是 prefill 槓桿）、POOL10G 被 cell 契約拒跑（池=0 也超 11453）。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -1057,7 +1057,7 @@
         ],
         "no_knob": "",
         "note": "★ 09-29 起本格的量測口徑改為 <b>prod-new ＋ harness bench</b>（唯一認可入口），不再是 prod25／server ABBA。判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。⚠ 單邊性：窗劣化只把 wall 吹大 ⇒ 實測 <code>t_draft</code> ≥ 真值 ⇒ 由它算出的 m 是<b>上界</b>。",
-        "state": "未結案（判準兩半已答：m ≈ 0.10、主項＝draft 流量；缺的是同一配置下一趟乾淨的複核）",
+        "state": "結案（§63，端點＝m 比值門檻）：乾淨窗口（attribution=none、NOMINAL、起跑 free 7159 MB）一趟 k=1 的 m ＝ 0.159（T_draft 13.70 ms/輪 ÷ 86.13；五條閘全過）≤ 目標 0.30。⇒ 卡片自己推的 k 無窮上界 24.59 是由 m=0.474 推出來的。⚠ 09-30 更正：原文寫「實測更小 ⇒ 上界仍成立」是方向反了 —— m 在分母，m 越小上界越高：1000/(85.8×0.159) ＝ 73.30（不是 24.59）。⚠ 兩件事要說清楚：(i) m 在劣化窗只會被吹大（單邊性）⇒ 乾淨窗量到的 0.159 是上界；(ii) prod-new 的 draft 成本比 09-24 舊 build 高 60%（0.159 vs 0.099）⇒ 但「天花板比舊帳面更低」講反了：draft 成本變高 ⇒ m 變大 ⇒ 上限變低；本格量到的 m 比舊帳面小（0.159 vs 0.474）⇒ 天花板反而被抬高到 73.30。兩者不衝突：09-24 舊 build 的 m≈0.099 是「同 cell、pool 3 GiB」的讀數，不能與 prod-new 的 0.159 直接比價；真正的帳應以同一 cell 為準。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -1189,7 +1189,7 @@
         ],
         "no_knob": "",
         "note": "★ 09-29 起本格的量測口徑改為 <b>prod-new ＋ harness bench</b>（唯一認可入口），不再是 prod25／server ABBA。判準：m ≤ 0.30 且指名它的主項（draft 流量／verify 寬度／pool 預算）。⚠ 單邊性：窗劣化只把 wall 吹大 ⇒ 實測 <code>t_draft</code> ≥ 真值 ⇒ 由它算出的 m 是<b>上界</b>。",
-        "state": "未結案（判準兩半已答：m ≈ 0.10、主項＝draft 流量；缺的是同一配置下一趟乾淨的複核）",
+        "state": "結案（§63，端點＝m 比值門檻）：乾淨窗口（attribution=none、NOMINAL、起跑 free 7159 MB）一趟 k=1 的 m ＝ 0.159（T_draft 13.70 ms/輪 ÷ 86.13；五條閘全過）≤ 目標 0.30。⇒ 卡片自己推的 k 無窮上界 24.59 是由 m=0.474 推出來的。⚠ 09-30 更正：原文寫「實測更小 ⇒ 上界仍成立」是方向反了 —— m 在分母，m 越小上界越高：1000/(85.8×0.159) ＝ 73.30（不是 24.59）。⚠ 兩件事要說清楚：(i) m 在劣化窗只會被吹大（單邊性）⇒ 乾淨窗量到的 0.159 是上界；(ii) prod-new 的 draft 成本比 09-24 舊 build 高 60%（0.159 vs 0.099）⇒ 但「天花板比舊帳面更低」講反了：draft 成本變高 ⇒ m 變大 ⇒ 上限變低；本格量到的 m 比舊帳面小（0.159 vs 0.474）⇒ 天花板反而被抬高到 73.30。兩者不衝突：09-24 舊 build 的 m≈0.099 是「同 cell、pool 3 GiB」的讀數，不能與 prod-new 的 0.159 直接比價；真正的帳應以同一 cell 為準。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -1229,7 +1229,8 @@
         ],
         "options": [
           "CGC_RHO_PROBE=1",
-          "CGC_PREBIND_PROBE=1"
+          "CGC_PREBIND_PROBE=1",
+          "CGC_RHO=1"
         ],
         "instruments": [
           "CGC_PREBIND_PROBE_VERBOSE=1",
@@ -1239,7 +1240,7 @@
         "cli": [],
         "no_knob": "",
         "note": "前置題：先付 4.76 ms（藏掉或攤平）再談收益；前置成本 ≤ 收益且覆蓋不降才算過。",
-        "state": "未結案（有前置）",
+        "state": "結案（排除）· 否證式（判詞 NO_EFFECT，2026-10-01 12:42）—— ρ 的價格題收在「這套設計量不出價格」，而方向一致（兩趟都是 B 較慢）⇒ 不得寫「ρ 免費」：四條權威 row order1_A 12.3027／order1_B 11.6573／order2_A 12.3767／order2_B 12.1265 全 QUOTABLE；order1 效應 −5.25% &gt; 兩臂散布 2.10% ⇒ 可解，order2 −2.02% ≤ 4.99% ⇒ 不可解 ⇒ 預註冊（兩趟同向才算 PRICE）判 NO_EFFECT、中位 −3.63%。⚠ R5 的解除條件（權威 row 上的可引用價格）因此仍未滿足；⚠ 這一輪順手打破「0 個 ≥12」的天花板：caliber_certify.py（棘輪）對三條判 CERTIFIED（12.3027／12.3767／12.1265 &gt; 現行上限 11.982966）⇒ 全語料首批 12+ 可認證列（operator 2026-10-01 決定：入表＋推上限 ⇒ 已新增 C9 12.3767／C10 12.3027／C11 12.1265，certify_anchor 推到 12.376702；order1_B 11.6573 不過棘輪、不入表）。【結案前的紀錄】未結案（有前置）",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -1279,7 +1280,8 @@
         ],
         "options": [
           "CGC_RHO_PROBE=1",
-          "CGC_PREBIND_PROBE=1"
+          "CGC_PREBIND_PROBE=1",
+          "CGC_RHO=1"
         ],
         "instruments": [
           "CGC_PREBIND_PROBE_VERBOSE=1",
@@ -1289,7 +1291,7 @@
         "cli": [],
         "no_knob": "",
         "note": "前置題：先付 4.76 ms（藏掉或攤平）再談收益；前置成本 ≤ 收益且覆蓋不降才算過。",
-        "state": "未結案（有前置）",
+        "state": "結案（排除）· 否證式（判詞 NO_EFFECT，2026-10-01 12:42）—— ρ 的價格題收在「這套設計量不出價格」，而方向一致（兩趟都是 B 較慢）⇒ 不得寫「ρ 免費」：四條權威 row order1_A 12.3027／order1_B 11.6573／order2_A 12.3767／order2_B 12.1265 全 QUOTABLE；order1 效應 −5.25% &gt; 兩臂散布 2.10% ⇒ 可解，order2 −2.02% ≤ 4.99% ⇒ 不可解 ⇒ 預註冊（兩趟同向才算 PRICE）判 NO_EFFECT、中位 −3.63%。⚠ R5 的解除條件（權威 row 上的可引用價格）因此仍未滿足；⚠ 這一輪順手打破「0 個 ≥12」的天花板：caliber_certify.py（棘輪）對三條判 CERTIFIED（12.3027／12.3767／12.1265 &gt; 現行上限 11.982966）⇒ 全語料首批 12+ 可認證列（operator 2026-10-01 決定：入表＋推上限 ⇒ 已新增 C9 12.3767／C10 12.3027／C11 12.1265，certify_anchor 推到 12.376702；order1_B 11.6573 不過棘輪、不入表）。【結案前的紀錄】未結案（有前置）",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -1411,7 +1413,7 @@
         "cli": [],
         "no_knob": "沒有新旋鈕：本格要的是加大配對 n（-r）到能認證 16.4% 的飄移，或證明飄移是視窗機械造成。",
         "note": "目前 n=5、t=2.08 < df=4 的 2.776 ⇒ 未認證；17.669 已降級為分布尾端一次抽樣。",
-        "state": "未結案（未認證）",
+        "state": "結案（排除）（§63）——前置否證：16.4% 這個數字在權威 cell 上不成立。事先登記的 N=12 配對判決（Backup/k3_pair_cert_2026-09-28/verdict_fcrit_2.22.txt）：配對差 +0.54 t/s（+5.5%）、sd 1.96、SE 0.57、t=0.95 &lt; crit 2.20（df=11） ⇒ NOT SEPARATED；k3 只在 7/12 對較慢。依立項卡跑前寫死的規則：不再加對，k 軸退出 25 的組合（on_fail：k=2 當便宜 screen、winner 回 k=3 確認一次）。⚠ 這一格量的是配對（同 cell 內 k2−k3），不是 t/s 能力 ⇒ 端點不是引用閘門那一類。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -1670,7 +1672,7 @@
         "cli": [],
         "no_knob": "",
         "note": "C 軸唯一還活著的一格；背景題，邊界可量且與既有結論不衝突才算過。",
-        "state": "未結案（本輪立項）",
+        "state": "結案（排除）（§65）——指名：有；邊界：量完了；而它買不到東西。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -1791,9 +1793,9 @@
         "instruments": [],
         "candidates": [],
         "cli": [],
-        "no_knob": "本格沒有既有旋鈕可動：<code>batch</code>／<code>prompt</code>／<code>warm_skip</code> 都是測試卡 §2.5 的<b>嚴格維度</b>（改了 fail-closed 拒跑），現有孿生機制只開放 <code>reps</code>／<code>rep_split</code> ⇒ 這是一個 <b>cell 定義的決定</b>，不是一次跑得動的實驗。",
-        "note": "判別句互斥：B1（起點）⇒ 加大 warm-skip 的 delivery 升到 ~11.5；B3（batch）⇒ (default) 的 batch-512 孿生掉到 ~9.7。",
-        "state": "未結案（§56 於 09-29 立項：跨格子不可比已確定；兩個候選尚未分離）",
+        "no_knob": "孿生機制（<code>cell_contract</code>：<code>rep_split</code>／<code>twin_of</code>）只開放 <code>reps</code>／<code>rep_split</code> —— 而 <code>twin_of</code> 的 reps 孿生<b>已經宣告並跑過</b>（§2.5.4c，3→7）：它壓不了 A4 的 max/min、反而把效應抹平。⇒ 剩下的不是旋鈕／n：<b>2026-10-01 operator 已明文否證式結案（排除）</b>——判詞維持 <code>REFUSE</code>；A4／統計量改革<b>另立前瞻案</b>（已立卡：<code>scripts/check/charters/e-quote-caliber-paired-2026-10-01.yaml</code>；預註冊全文 <code>docs/QUOTE_CALIBER_PAIRED_PREREG_2026-10-01.md</code>）、不回填。",
+        "note": "判別句（§2.5.4b，未改）：B 落在 11.5±5% ⇒ 起點是主因；落 10.5±5% ⇒ falsify。n=7 的實測是<b>兩個都不成立但 A 不可引用</b>：A／B 都落在 11.5±5%（11.794／11.928）⇒ 起點在 n=7 下<b>不再可辨</b>；<b>2026-10-01 operator 明文：否證式結案（排除）</b>（判詞維持 <code>REFUSE</code>）。",
+        "state": "結案（排除）· 否證式（operator 明文 2026-10-01）：以 n=7 的兩臂同平台結成「起點在 n=7 下不再可辨」——判詞維持 REFUSE（A UNUSABLE，全 rep 1.1197），REFUSE ≠ 否証，結案是 operator 的明文處置；配對 per-rep 比率（B/A）中位數 1.0114、p=0.227 ⇒ 換統計量也到不了可判定。結案前的狀態：未結案（§56 於 09-29 立項：跨格子不可比已確定；兩個候選尚未分離）。2026-10-01 07:22（n=7 輪）：reps 孿生（§2.5.4c）在同一窗跑完 —— A delivery-reps7 median 11.7941、全 rep 1.1197 ⇒ UNUSABLE；B delivery-ws192-reps7 11.9281、1.0818 ⇒ QUOTABLE；診斷級 Δ +1.14%（n=3 讀 +4.8%）⇒ n↑ 壓不了 max/min、效應也回到同平台：卡點改成 decision（operator：A4 統計量或否證式結案）。證據：Backup/l2010_b1b3_2026-09-30/clean_ws192_{A,B}.json、clean_ws192_verdict.json（含 diagnostic）、docs/L2010_CLEAN_WS192_20261001.md",
         "also": [
           "L25-3"
         ],
@@ -2156,7 +2158,7 @@
         "cli": [],
         "no_knob": "",
         "note": "控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。",
-        "state": "未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是穩定窗口 —— 該讀數經引用閘門判 DIRTY：逐 rep 1.015 合格，但 attribution=swap）",
+        "state": "結案（排除）——2026-10-02 判死（否證式）：提交路徑 0.75 ms/步（預註冊否證判據 T_sub &lt; 0.31 ms 成立）⇒ 不再投入。⚠ 原比較項「GPU 空轉 ~47 ms/步」已於 10-03 作廢 ⇒ 判死理由改由該判據承接。出處：Backup/l201_accel/fast_cost_split_decode_20261002.json、Backup/cgc_logs/gpu_util_decode_20261002.log。沿革：底已收斂到交付 cell：36.33 ms 重現；該讀數經引用閘門判 DIRTY：逐 rep 1.015 合格，但 attribution=swap）⚠ 2026-09-30 機檢更正：窗口不是這一格的主要卡點。對這支臂跑 quote_gate 的登記表 ⇒ R5 乾淨、R6-DIRTY（唯一規則 CGC_SEG_BATCH）⇒ 「只差窗口」作廢。⚠⚠ 同日把那條解除條件也跑掉了：配對 M1/M2/M3 ＝ 9/9 vs 0/9（第一格 decode 就不同）⇒ 輸出確實不同。⚠⚠⚠ 同日第三件事：換臂的設計題也有答案了 —— 沒有這種臂（五臂同場：控制 99.3／SLOT 118.1／B_SCHEME+SLOT 90.9／HOOK_SPLIT 91.8 ms；S1 49.0 ms）⇒ 底與旗標不可分離；且 hook 自身 CPU 只有 6.5 ms/step（vs 紅利 50 ms）⇒ 真正的卡點是提交路徑。詳見 docs/S1_FLOOR_ARM_ATTRIB_2026-09-30.md；該輪五臂皆 DIRTY（thermal HEAVY／swap）⇒ 診斷級，不可引用。2026-10-01：S2-c 首次 GPU 驗證未過 —— courier 有交棒（CGC-RHO-S2C: layers/step=40、SKIP 守衛也對），但 fill 開啟時 logits 全 NaN（引擎自蓋 invalid）；另抓到一個先於 S2-c 的獨立 NaN：CGC_SLOT_TABLE_GPU×單段臂。patch 已反轉、未套用（llama-context.cpp md5 逐字回原值）；帳：docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md §4.7。2026-10-01 16:5x：兩根 NaN 已 bisect（修正歸因） —— CGC_SLOT_TABLE_GPU=1 單獨跑是 valid／M1 9/9，加上 CGC_SEG_BATCH 才 全非有限值⇒ 不是那顆旗標自己 NaN，是單段提交 × GPU slot-table leaf 的交互（卡上舊語已改）。兩根各有指紋、可各自查；驗收都是 M1 9/9。證據 docs/L201_NAN_BISECT_2026-10-01.md。2026-10-01 結構裁決落帳：R6 三路判死（R1 恢復循環不足／C 全駐留 OOM／(i) post-submit 不可行）⇒「引擎把單段提交做成輸出可驗」作廢，卡點改 decision／operator（端點重定義：機制／計數器，或判死）。X 線診斷腳手架（a9/a10、Phase 0/1、R1PROBE）已全撤；2026-10-01 晚間再撤 S2-c 區塊與兩根 NaN 修（chartered 偵測亦除）⇒ 樹上 R6 殘留＝0（未提交僅餘 L25-2 精修與另一線 MTP／bench 校準）。2026-10-01 深夜：端點重定義落帳 —— 時間端點判死（36.33／49.18 不再主張；天花板維持 19.2 側）；機制端點（提交數 41→1／ms-submit）立項 scripts/check/charters/e-l201-submit-path-2026-10-01.yaml。2026-10-01 深夜：端點已量、判 MECHANISM —— 誠實臂（prod-new:CGC_DECODE_PROFILE=1;CGC_GPU_TIMING=1）T_sub 中位 0.937 ms／step≥64 1.007 ⇒ 40×T_sub＝37.5／40.3 ms（同場參考紅利 50.3 的 74–80%）⇒ 提交路徑＝紅利主體（預註冊判據 [0.63, 1.89]）。⚠ 本場髒窗（HEAVY／swap +1475 MiB）⇒ 任何 t/s 不引用；T_sub 本身是引擎內計時器（不隨窗口漂移）。S1 臂 1 提交/步只作結構對照（該臂未武裝儀器、0 行計數；t/s 依 R6 永不引用）。2026-10-03 措辭更正（零新量測；Backup/spec_tree/WAIT_ATTRIBUTION_2026-10-03.md）：① gpu_busy_sum/wait＝153%（儀器自帶判據：≥70% ⇒ wait 是真 GPU 執行）、gpu_union＝105% ⇒ 「GPU 空轉 47 ms/步」作廢；② 唯一有名字的縫＝gap 16.54 ms（23.7%），其 CPU 部分（hook 6.88＋submit 3.70＝10.58 ms）正是 overlap fence 收割的量（×1.218 ≈ 23.7%，內部自洽）；③ 殘餘 gap_not_cpu ≈ 6.0 ms 是 host 自旋（poll_iters 632,391/步），其兩個候選解（S1＝換口徑；async fill＝收益不足）都已試過 ⇒ 該檔結論＝20+ 在 bit-identical 口徑下判死（不存在 ≥5 ms 的可回收項）；本格判詞（提交路徑非主體）不變，改的是措辭與下一個靶。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -2393,7 +2395,7 @@
         "cli": [],
         "no_knob": "沒有新旋鈕：本格要的是加大配對 n（-r）到能認證 16.4% 的飄移，或證明飄移是視窗機械造成。",
         "note": "目前 n=5、t=2.08 < df=4 的 2.776 ⇒ 未認證；17.669 已降級為分布尾端一次抽樣。",
-        "state": "未結案（未認證）",
+        "state": "結案（排除）（§63）——前置否證：16.4% 這個數字在權威 cell 上不成立。事先登記的 N=12 配對判決（Backup/k3_pair_cert_2026-09-28/verdict_fcrit_2.22.txt）：配對差 +0.54 t/s（+5.5%）、sd 1.96、SE 0.57、t=0.95 &lt; crit 2.20（df=11） ⇒ NOT SEPARATED；k3 只在 7/12 對較慢。依立項卡跑前寫死的規則：不再加對，k 軸退出 25 的組合（on_fail：k=2 當便宜 screen、winner 回 k=3 確認一次）。⚠ 這一格量的是配對（同 cell 內 k2−k3），不是 t/s 能力 ⇒ 端點不是引用閘門那一類。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -2406,8 +2408,8 @@
         },
         {
           "kind": "certified",
-          "ref": "C3",
-          "why": "「目前最好」＝交付錨點 11.703 t/s（三扇門全過）"
+          "ref": "C13",
+          "why": "「目前最好」＝現行棘輪上限 15.2109 t/s（C13；⚠ 降級窗 ＋ operator 顯式放行 R4——乾淨窗最高仍是 C12 13.8674；前上限 C9 12.3767、同批 C10 12.3027／C11 12.1265，再下來才是 C8 11.9830／C7 11.9483）——本格要的是「只剩一個定義」，棘輪就是那個定義"
         }
       ],
       "res_ruling": "**仲裁（09-29）：17.669 t/s 降級為「分布尾端的一次抽樣」，不可作「目前最好」。** 它是 `r4_b_k2` 的第一次啟動、`-r 1`（`stddev 0` 是必然），需要 **26 rounds × 139.3 ms**；同臂／同 cell／同 shape 的三次全新啟動是 **7.63／10.51／8.17**（mean 8.77）對原本 **17.67／11.95／10.74**（mean 13.45）⇒ 儀器沒故障、沒截窗、沒貼錯 cell，是抽到分布尾端（`K3_PAIR_CERT_VERDICT_2026-09-28.md` §5.1）。而且它是 **prod25＝MTP on**（另一個輸出函數）、非 §5.0 認可口徑。⇒「目前最好」＝交付錨點 **11.703 t/s（85.45 ms，唯一三扇門全過）**。"
@@ -2817,7 +2819,7 @@
         ],
         "no_knob": "",
         "note": "⛔ 必帶 --spec-draft-n-max 1：沒帶就是 k_eff≈2.33 必 thrash。且 MTP on/off 是不同輸出函數 ⇒ t/s 不可互比。",
-        "state": "未結案（待產品決策）",
+        "state": "結案（排除）（k 軸經濟學判 DEAD，2026-10-01 16:3x；同日 17:0x 的 k 掃描修正了幅度）—— ★ k 掃描（k=1/2/3/5/7 ＋ 同 session MTP-off，六趟全 attribution=none、NOMINAL、swap 0）：k=2 10.90／10.10（同 session off 的 −5%／−12%）、k=1 10.49（−9%）、k=3 9.34（−19%）、k=5 9.37（−19%）、k=7 5.61（−51%）；同 session 錨點 MTP-off 11.52／11.54（歷史 10.923 是別窗口 ⇒ 本對取代它）。⇒ k 是槓桿、最佳點 k=2，而「+52%／emit token」是 k=7（k_eff 5.06）那一點的產物 —— 最佳點的殘餘虧損 −5~12%。成本律（修正口徑後、六臂、dof 4，殘差 ≤20 ms）：round_ms ≈ 63.6 + 35.2·T̂（T̂ = drafted/rounds + 1）⇒ 每輪固定項 ≈ 0.73 個純解碼步（結構死因）＋邊際 verify token 35.2 ms（＝純步的 0.41 ⇒ 攤薄確實發生）。⚠ 2026-10-01 17:2x 量具修復：上一句原本寫 89 + 33·T —— 那個版本吃了兩個量具的分母不一致（ACCEPT 的 mean_len 把 replay 輪當有產出；MTP-PERF 的 emit_tok_per_round 除以原始 draft 呼叫、漏掉 replay 輪）⇒ 已在 llama-bench.cpp 加 replay=／emit_per_round=（行尾追加）並重建驗證（rounds − calls_draft = Σreplay：208 − 142 = 66 ✓）。真 emit/round 是 1.49–1.98（不是 1.74–2.44），而 n_max 的比較不受影響（t/s 是量出來的）。⇒ 可交付的行動：profile 預設 n_max=3 與本線用過的 7 都不是好設定，2 才是（3→2 同 cell +12%）。判決文 docs/L254_K_AXIS_ECON_2026-10-01.md §k 掃描；立項 charters/e-l254-kaxis-sweep-2026-10-01.yaml、產物 Backup/l254_kaxis_20261001/。兩個問題都答了：① 機制：S1 讓 k_eff 1.8 → 7.000（可行）；② 經濟：不划算 —— 涼窗口成對（B 先跑、同一 build、只差 CGC_MTP_NO_CTX_OTHER）：draft 成本/emit token 9.22 → 13.98 ms（+52%）、emit 只多 2.26× 但 draft 相時間多 3.44×（超線性）、acc_rate 兩臂同（0.416–0.444，沒補回來）⇒ E = 1 + a·k_eff 的「每輪成本固定」前提被實測否定。wall t/s 同向（A 8.60 vs B 7.48；第三趟 B2 13.41 但 attribution=swap）但 四趟的窗口 spread 1.19／1.19／1.19／2.49 均 &gt;1.10 ⇒ t/s 全 VOID，只當方向證據；判死靠的是計數器端點。對照：MTP-off 交付錨點 10.923、生產 ABBA ×0.695（配對）⇒ MTP-on 在此口徑整體為負，拉高 k 更負。reopen 條件（已寫死）：乾淨窗口（none ∧ ≤1.10 ∧ reps3）的成對出現 B_tps ≥ A_tps ⇒ 本判詞被推翻。判決文 docs/L254_K_AXIS_ECON_2026-10-01.md。【底下的機制史留檔】2026-10-01 operator 已拍：MTP-on 獨立口徑 ⇒ 前置①解除；同日 16:05 S1 機制端點達標且兩趟重現：k_eff 7.000 逐輪、draft=0 0%、M-RoPE 拒收 180→2、acc_rate 0.52–0.61（對照臂 1.75–1.97／48%／153–180 行；證據 Backup/l254_s1_20261001/k7_paired{,_clean}.{json,stderr.log}）⇒ 卡點改掛 k 軸經濟學：k_eff 追平 k 之後每輪代價也追上去，且四臂 attribution=thermal ⇒ t/s 全 VOID、需涼窗口重判）。09-30 大 k 接受率穩定性：量了，但量到的不是 MTP 的性質。① 回顧（零盒子成本）：09-24 s1_ksweep 兩場 k=1/2/3/4，k_eff 恰等於 k、0 個 position error，而 k=4 的 a 跨場次讀到 0.489 vs 0.945（1.93×）、k=3 讀到 0.654/0.772/0.892 ⇒ 不穩的是場次，不是 k。② 新跑 k=7 與 k=8（本臂、(default) cell、p2048_n128_d512_r3）：兩趟都被 arm-timeout 殺（rc=-15）；CGC-MTP-PERF 各只出 3 行：k=7 a=0.5238/0.4887/0.4631、gen_tok_per_round=2.032/1.900/1.880；k=8 a=0.4219/0.3516/0.3958、gen_tok_per_round=1.730/1.542/1.655。⛔ 這幾個 a 不可用，理由不是「髒窗口」而是結構：兩趟的 CGC-PHASE-SPLIT 都是 routable=15 slots -> decode graph width=1 tokens，而乾淨那批是 routable=53 -> width=6。兩項交叉驗證同一個結論 —— (i) k_eff &lt;&lt; k（要 7 只得 1.88），實作根本沒把 draft 拉到 k；(ii) position error 密度 104/5055、98/3870 行，遠高於 p2 的 32/11075 ⇒ 驗證區塊被截斷 ⇐ 它放不進 width=1 的圖。⇒ 結論：在現行宣告下，大 k 的接受率不是「不穩定」而是「構上量不到」；0.4631 與 0.3958 是 width=1 的產物，不得寫進 k 曲線。證據：Backup/l254_kbracket_2026-09-30/k7.json（＋k7.stderr.log）、k8.json（＋k8.stderr.log，INCOMPLETE／attribution=both）、Backup/s1_ksweep/20260924_{225548,233141}/*.stderr.log（回顧，k_eff==k）。③ 09-30 15:31 解 width 的實測（交付 cell、p0_n128_d512_r3、其餘同臂）：把 CGC_SERVER_LAYER_CAPS 由 40-40:16 改成 40-40:140 ⇒ LAYER_CAPS ... min 140/layer、routable=139 -> decode graph width=8 tokens，而這一趟跑完了（NOMINAL 全程、attribution=none、base_check PASS、6 行 MTP-PERF 對比 width=1 的 3 行）。⛔ 但 k_eff 仍然只有 1.590（區間 1.59–1.72），不是 7，acc_rate 0.343–0.413。那個 acc_rate 不可用：k_eff 1.6 落在乾淨批 k_eff=1（a=1.000）與 k_eff=2（a≈0.88–0.98）之間，讀到 0.35 自相矛盾 ⇒ 它是被中斷輪次壓低的比值。⇒ 結論修正：width 只解「跑不跑得完」，不解「k 有多深」（width 1 的兩趟是被 stall 殺的，width 8 的這趟活到底且 position error 反而更多：194 vs 98）。真正的截斷＝docs/KEFF_CAP_2026-09-26.md 記的 is_mem_shared draft 位置碰撞（draft loop 第二步解到 X = Y ⇒ llama_decode 拒 ⇒ 迴圈 break ⇒ 静默只吐一個 token）；本趟的指紋是 MTP fast path: draft calls=230 對 verify calls=11916（1:52）。證據：Backup/l254_kbracket_2026-09-30/k7_width8.json（＋k7_width8.stderr.log）。④ 09-30 15:37 帶 LLAMA_BENCH_SPEC_DBG=1 的直方圖（決定性）：不是鏈太短，是六成的輪次一根都沒吐 —— per-round draft=：0 ⇒ 180 輪、1/2/3/4/5 ⇒ 11/18/17/6/4、7 ⇒ 60 輪、8 ⇒ 1（約 297 輪）⇒ 加權平均 1.92 ✓。也就是說 要 7 真的拿得到 7（最深的請求達得到），拖垮平均的是 61% 的 draft=0。⇒ 卡點是 輪級掉線，不是深度。失敗形態指向 target 的 verify 批次：194 次 init 失敗中 X &gt; Y 144（74%）、X == Y 50，而歸屬 draft 迴圈的 llama_decode[0] 只有 6 次 ⇒ 配上本 build 自己印的 shared_kv=1：is_mem_shared=1 下 draft 把位置寫進共用 KV，target 從同一起點 verify 就被 M-RoPE 的嚴格 X &lt; Y 拒掉。⇒ 這能對上 09-24 那批乾淨的 k=1..4（k_eff == k、0 pos-err）：它們跑在 65c76b8c7（09-25 17:16）之前 ⇒ 那時非 GEMMA4 arch 的 ctx_other 被丟掉 ⇒ is_mem_shared=false ⇒ draft 有自己的 KV。這是一個設計取捨（收回去 vs 做對共用 KV 的 verify 佈局），不是一行修補；兩條都要走 M1/M2/M3 oracle gate。證據：Backup/l254_kbracket_2026-09-30/k7_specdbg.json（＋k7_specdbg.stderr.log）。⚠ 另註：speculative.cpp 裡那兩個修法（09-26 one_position_drafts、09-28 stale-tail）在原始碼與 binary 裡都已存在（libllama-common.0.0.630.dylib 14:39:41 驗到 stale-tail 字串、且本次有觸發），它們不對應這條。★ 2026-10-03 批次（MTP 重開工程的帳）：① cb 悬崖定罪：MTP-on k=1 的 4–5 s/步 cb＝分類錯配 —— CGC_SERVER_LAYER_CAPS=40-40:16 ⇒ 15 routable ⇒ cgc_decode_bound(15,8,8)=floor(15/8)=1 ⇒ width=1 ⇒ ntok=2 判成 PREFILL ⇒ CGC_PREFILL_STREAM=1 讓 hook 在 llama-context.cpp:8073/:8334 每層重讀整層 slab（≈356 MiB/層 × 40 層 ≈ 14.2 GiB/步；cb(ntok=2)≈cb(ntok=512)）—— 既有 CGC-HOOK_SPLIT（累加點在 slab 分支之後）、CGC-EB_TIMER（slab 路徑不呼叫 ensure_batch）、以及本輪新裝的 CGC-FASTSEG（整趟只中 1 次、draft ctx）對這條路都是瞎的；10-01 的 k 掃描之所以跑得完，是因為它用 caps=40-40:140（width=8、走 decode 路徑）。⇒ 重開前置：caps ≥17（16 routable ⇒ bound=2）或新 cell；立項 scripts/check/charters/e-mtp-cb-classify-2026-10-03.yaml。② spawn/join 假設已否證（LLAMA_EXPERT_CACHE_SERIAL_FILL=1：cb 中位 4155→5010 ms、EBTIMER 237→150 ms）⇒ 94% 不在逐冷專家 thread+join。③ spec-tree 寬 2＝重開工程 #2（Backup/spec_tree/T1C_VERDICT_2026-10-03.md）：T1c 證「寬 1 ≡ 鏈」原理上不可能打平（accept() 是下一輪 seed 寫入 ⇒ replay 多吐一顆：1.455 vs 1.462）；寬 2 撞 GGML_ASSERT(batch_in.n_seq_id[k]==1) ⇒ 修法＝每個分支各掛一根；判準寫死：寬 2 臂 token/decode ≥ ~2.05 才可能打平 off。④ S1 品質判詞（S1_QUALITY_VERDICT_2026-10-03.md）：控制 10.957（乾淨）vs S1 臂 26.099（swap）×2.38，但品質 −17.2 pp（26/29→21/29、5 題對轉錯）⇒ 20+ 門在 operator 條件下關閉。⑤ 校準軸同日收窄：M2_ONLY_CALIBER_LEVERS（放寬口徑在長 probe 下是空的）、CGC_MM_BITIDENT decode 窗配對 −0.1%（K0 的 −4.9% 不復現、那 4–5% 是 prefill 槓桿）、POOL10G 被 cell 契約拒跑（池=0 也超 11453）。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -2914,9 +2916,9 @@
         "instruments": [],
         "candidates": [],
         "cli": [],
-        "no_knob": "本格沒有既有旋鈕可動：<code>batch</code>／<code>prompt</code>／<code>warm_skip</code> 都是測試卡 §2.5 的<b>嚴格維度</b>（改了 fail-closed 拒跑），現有孿生機制只開放 <code>reps</code>／<code>rep_split</code> ⇒ 這是一個 <b>cell 定義的決定</b>，不是一次跑得動的實驗。",
-        "note": "判別句互斥：B1（起點）⇒ 加大 warm-skip 的 delivery 升到 ~11.5；B3（batch）⇒ (default) 的 batch-512 孿生掉到 ~9.7。",
-        "state": "未結案（§56 於 09-29 立項：跨格子不可比已確定；兩個候選尚未分離）",
+        "no_knob": "孿生機制（<code>cell_contract</code>：<code>rep_split</code>／<code>twin_of</code>）只開放 <code>reps</code>／<code>rep_split</code> —— 而 <code>twin_of</code> 的 reps 孿生<b>已經宣告並跑過</b>（§2.5.4c，3→7）：它壓不了 A4 的 max/min、反而把效應抹平。⇒ 剩下的不是旋鈕／n：<b>2026-10-01 operator 已明文否證式結案（排除）</b>——判詞維持 <code>REFUSE</code>；A4／統計量改革<b>另立前瞻案</b>（已立卡：<code>scripts/check/charters/e-quote-caliber-paired-2026-10-01.yaml</code>；預註冊全文 <code>docs/QUOTE_CALIBER_PAIRED_PREREG_2026-10-01.md</code>）、不回填。",
+        "note": "判別句（§2.5.4b，未改）：B 落在 11.5±5% ⇒ 起點是主因；落 10.5±5% ⇒ falsify。n=7 的實測是<b>兩個都不成立但 A 不可引用</b>：A／B 都落在 11.5±5%（11.794／11.928）⇒ 起點在 n=7 下<b>不再可辨</b>；<b>2026-10-01 operator 明文：否證式結案（排除）</b>（判詞維持 <code>REFUSE</code>）。",
+        "state": "結案（排除）· 否證式（operator 明文 2026-10-01）：以 n=7 的兩臂同平台結成「起點在 n=7 下不再可辨」——判詞維持 REFUSE（A UNUSABLE，全 rep 1.1197），REFUSE ≠ 否証，結案是 operator 的明文處置；配對 per-rep 比率（B/A）中位數 1.0114、p=0.227 ⇒ 換統計量也到不了可判定。結案前的狀態：未結案（§56 於 09-29 立項：跨格子不可比已確定；兩個候選尚未分離）。2026-10-01 07:22（n=7 輪）：reps 孿生（§2.5.4c）在同一窗跑完 —— A delivery-reps7 median 11.7941、全 rep 1.1197 ⇒ UNUSABLE；B delivery-ws192-reps7 11.9281、1.0818 ⇒ QUOTABLE；診斷級 Δ +1.14%（n=3 讀 +4.8%）⇒ n↑ 壓不了 max/min、效應也回到同平台：卡點改成 decision（operator：A4 統計量或否證式結案）。證據：Backup/l2010_b1b3_2026-09-30/clean_ws192_{A,B}.json、clean_ws192_verdict.json（含 diagnostic）、docs/L2010_CLEAN_WS192_20261001.md",
         "also": [
           "L25-1"
         ],
@@ -3073,7 +3075,7 @@
         "cli": [],
         "no_knob": "",
         "note": "要在 ntok=1 主 context 上重測（MTP-on 的 verify 形狀 k=3 與交付口徑不是同一個量）。",
-        "state": "未結案（未跑）",
+        "state": "結案（排除）（§64）——前置否證：「逐步之間那張表是常數」在今天的交付口徑上也不成立：交付步（MTP off、主 context、ntok=1）的 churn 不是 0（publish 級 19.8–20.2%、entry 級 3.2–3.4%，兩筆獨立 run）⇒ 依本格自己的否證句（「churn 仍大 ⇒ S1 的前提維持不成立」）判。⚠ 這一格沒有可引用的 t/s（兩筆都 attribution=swap、文件自己寫「都不得引用」）⇒ 走排除路徑（不是達標）。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -3573,7 +3575,7 @@
         "cli": [],
         "no_knob": "",
         "note": "控制臂＝裸 prod-new；成對重跑（交付 cell、MTP off、warm-skip 64）。底 36.80 ⇒ 天花板 24.5；底 49.18 ⇒ 19.2。",
-        "state": "未結案（底已收斂到交付 cell：36.33 ms 重現；缺的是穩定窗口 —— 該讀數經引用閘門判 DIRTY：逐 rep 1.015 合格，但 attribution=swap）",
+        "state": "結案（排除）——2026-10-02 判死（否證式）：提交路徑 0.75 ms/步（預註冊否證判據 T_sub &lt; 0.31 ms 成立）⇒ 不再投入。⚠ 原比較項「GPU 空轉 ~47 ms/步」已於 10-03 作廢 ⇒ 判死理由改由該判據承接。出處：Backup/l201_accel/fast_cost_split_decode_20261002.json、Backup/cgc_logs/gpu_util_decode_20261002.log。沿革：底已收斂到交付 cell：36.33 ms 重現；該讀數經引用閘門判 DIRTY：逐 rep 1.015 合格，但 attribution=swap）⚠ 2026-09-30 機檢更正：窗口不是這一格的主要卡點。對這支臂跑 quote_gate 的登記表 ⇒ R5 乾淨、R6-DIRTY（唯一規則 CGC_SEG_BATCH）⇒ 「只差窗口」作廢。⚠⚠ 同日把那條解除條件也跑掉了：配對 M1/M2/M3 ＝ 9/9 vs 0/9（第一格 decode 就不同）⇒ 輸出確實不同。⚠⚠⚠ 同日第三件事：換臂的設計題也有答案了 —— 沒有這種臂（五臂同場：控制 99.3／SLOT 118.1／B_SCHEME+SLOT 90.9／HOOK_SPLIT 91.8 ms；S1 49.0 ms）⇒ 底與旗標不可分離；且 hook 自身 CPU 只有 6.5 ms/step（vs 紅利 50 ms）⇒ 真正的卡點是提交路徑。詳見 docs/S1_FLOOR_ARM_ATTRIB_2026-09-30.md；該輪五臂皆 DIRTY（thermal HEAVY／swap）⇒ 診斷級，不可引用。2026-10-01：S2-c 首次 GPU 驗證未過 —— courier 有交棒（CGC-RHO-S2C: layers/step=40、SKIP 守衛也對），但 fill 開啟時 logits 全 NaN（引擎自蓋 invalid）；另抓到一個先於 S2-c 的獨立 NaN：CGC_SLOT_TABLE_GPU×單段臂。patch 已反轉、未套用（llama-context.cpp md5 逐字回原值）；帳：docs/R6_SEGBATCH_FIX_PLAN_2026-09-30.md §4.7。2026-10-01 16:5x：兩根 NaN 已 bisect（修正歸因） —— CGC_SLOT_TABLE_GPU=1 單獨跑是 valid／M1 9/9，加上 CGC_SEG_BATCH 才 全非有限值⇒ 不是那顆旗標自己 NaN，是單段提交 × GPU slot-table leaf 的交互（卡上舊語已改）。兩根各有指紋、可各自查；驗收都是 M1 9/9。證據 docs/L201_NAN_BISECT_2026-10-01.md。2026-10-01 結構裁決落帳：R6 三路判死（R1 恢復循環不足／C 全駐留 OOM／(i) post-submit 不可行）⇒「引擎把單段提交做成輸出可驗」作廢，卡點改 decision／operator（端點重定義：機制／計數器，或判死）。X 線診斷腳手架（a9/a10、Phase 0/1、R1PROBE）已全撤；2026-10-01 晚間再撤 S2-c 區塊與兩根 NaN 修（chartered 偵測亦除）⇒ 樹上 R6 殘留＝0（未提交僅餘 L25-2 精修與另一線 MTP／bench 校準）。2026-10-01 深夜：端點重定義落帳 —— 時間端點判死（36.33／49.18 不再主張；天花板維持 19.2 側）；機制端點（提交數 41→1／ms-submit）立項 scripts/check/charters/e-l201-submit-path-2026-10-01.yaml。2026-10-01 深夜：端點已量、判 MECHANISM —— 誠實臂（prod-new:CGC_DECODE_PROFILE=1;CGC_GPU_TIMING=1）T_sub 中位 0.937 ms／step≥64 1.007 ⇒ 40×T_sub＝37.5／40.3 ms（同場參考紅利 50.3 的 74–80%）⇒ 提交路徑＝紅利主體（預註冊判據 [0.63, 1.89]）。⚠ 本場髒窗（HEAVY／swap +1475 MiB）⇒ 任何 t/s 不引用；T_sub 本身是引擎內計時器（不隨窗口漂移）。S1 臂 1 提交/步只作結構對照（該臂未武裝儀器、0 行計數；t/s 依 R6 永不引用）。2026-10-03 措辭更正（零新量測；Backup/spec_tree/WAIT_ATTRIBUTION_2026-10-03.md）：① gpu_busy_sum/wait＝153%（儀器自帶判據：≥70% ⇒ wait 是真 GPU 執行）、gpu_union＝105% ⇒ 「GPU 空轉 47 ms/步」作廢；② 唯一有名字的縫＝gap 16.54 ms（23.7%），其 CPU 部分（hook 6.88＋submit 3.70＝10.58 ms）正是 overlap fence 收割的量（×1.218 ≈ 23.7%，內部自洽）；③ 殘餘 gap_not_cpu ≈ 6.0 ms 是 host 自旋（poll_iters 632,391/步），其兩個候選解（S1＝換口徑；async fill＝收益不足）都已試過 ⇒ 該檔結論＝20+ 在 bit-identical 口徑下判死（不存在 ≥5 ms 的可回收項）；本格判詞（提交路徑非主體）不變，改的是措辭與下一個靶。",
         "also": [
           "L20-2",
           "L20-3"
@@ -3967,7 +3969,7 @@
         "cli": [],
         "no_knob": "",
         "note": "驗收：不開 debug 仍要有 CGC-RB-FEED 且 prefetch > 0/0。",
-        "state": "未結案（P0 成立、P1 未做）",
+        "state": "結案（P0＋P1 都成立，驗收在 harness bench 上達成 2026-09-30）—— 見 C6。⚠ 兩件要一起讀：① 這一格結的是機制端點，不是速度（這支臂仍是 R6 ⇒ t/s 不可引用）；② expect_ms 那條「連帶讓 debug 回讀可刪 ⇒ −0.46 ms/step」沒有做：回讀還在，只是餵料不再需要它。",
         "also": [],
         "source": "board",
         "confidence": "high"
@@ -3977,6 +3979,2024 @@
           "kind": "subgoal",
           "ref": "L20-5",
           "why": "單次提交臂上把 union 交給預取；P1 餵料的載體"
+        }
+      ]
+    },
+    {
+      "id": "exp-marginal-decomp",
+      "name": "**「邊際 verify token ＝ 34.7 ms」由什麼構成…",
+      "theme": "實驗",
+      "tier": "3a",
+      "goal": "**「邊際 verify token ＝ 34.7 ms」由什麼構成？**\n\n由 L254 的兩個實測點反解出 `round_ms ≈ 52.0 + 34.7·T̂`（off `T̂=1.00／86.7 ms`、k=2 `T̂=2.80／149.1 ms`）。\n那 **34.7 ms／token 的斜率**有三個候選構成：\n① **GPU 執行**（每顆 token 的 GEMV／attention）\n② **IO 等待**（該 token 的新專家讀取）\n③ **派發入場費**（節點數隨 token 數線性成長）\n\n為什麼這一問決定一切：**若把這個邊際壓掉**，在接受率完全不動（E=1.625）的前提下就是\n**×2.71**（邊際砍半 ×1.40、砍到 1/4 ×1.85）。⇒ **(i) 能不能單獨拿到 2× 完全取決於它。**",
+      "crit": "指名 34.7 ms 的主項（GPU 執行／IO／派發）並給比例",
+      "res": "decode 9.97 t/s",
+      "evid": "docs/L254_K_AXIS_ECON_2026-10-01.md",
+      "sub": "M",
+      "note": "假設：**設計修正（2026-10-03，第二次發車）**：原設計用 k≈4 取「同一趟內 T̂ 有變化 ⇒ 可逐點回歸」，\n但 **k=4 違反存活配方**（必帶 `--spec-draft-n-max 1`）⇒ 兩趟 VOID（4.5 s/step 的 thrash，`incomplete=True`）。\n⇒ 改為 **存活配方 k=1 ＋ 一趟 off 對照**，且因 spec 旗標是**整趟級**（不能按臂混）⇒ **兩個 invocation**：\n  - `off`：`--arm \"prod-new\"`，**無** `--spec-type` ⇒ 每步都是 ntok=1 的 **target** 前向\n  - `on-k1`：存活配方 ＋ `--spec-draft-n-max 1` ⇒ draft 步 ntok=1（draft 模型）／verify 步 ntok=2（**target** 模型）\n判準：**Δ ＝ on 的 verify 步 − off 的步** ＝ 「target verify 批多裝 1 顆 token」的邊際，逐桶拆：\n  - Δ`gpu_busy_sum` ≈ Δtotal ⇒ **GPU 執行是主項**\n  - Δ`gap` 或 Δ(`wait`−`gpu_union`) ≈ Δtotal ⇒ **IO／idle 是主項**\n  - Δ`segs`／Δ`bufs` 隨 token 數成長 ⇒ **派發入場費**\n⚠ k=1 的趟內沒有 T̂ 變化（verify 恆 ntok=2）⇒ **不靠迴歸，靠兩趟配對**；\n  要 2 點以上的斜率得再加 k=2 臂（verify 寬度會變，但記憶體風險較高、非本次）。\n⚠ 記錄裡有三條**互相矛盾**的一手線索，所以必須量：§8「權重搬運只值 7.5 ms/步（11%）」→ 不是搬運；\n  §9「MoE GEMV 全族 ≈5%、in-situ 只佔 GPU 忙碌 3.4%」→ 不是 GEMV；\n  DECODE25 §8「85.8 ms ≈ 64 ms miss 相關（75%）」→ 又指向 IO。\n",
+      "runs": [
+        {
+          "when": "2026-10-03 21:01",
+          "arm": "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;LLAMA_BENCH_SPEC=1;LLAMA_BENCH_SPEC_DRAFT_N_MAX=2",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/mtpon_pair_20261003/pair.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/mtpon_pair_20261003/pair.stderr.log",
+            "source": "sibling",
+            "why": "成對：pair.stderr.log（407678 bytes）（另有 2 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 0 -n 64 --warm-skip 64（由產物參數重建）",
+          "result": {
+            "tg": 8.7
+          },
+          "thermal": "HEAVY",
+          "swap": {
+            "before": "7640 MiB",
+            "after": "12226 MiB"
+          },
+          "verdict": "swap：swap_growth=4297.499999999999 MiB, max_swap=12047.25 MiB",
+          "clean": false,
+          "void_why": "attribution.verdict=swap（swap_growth=4297.499999999999 MiB, max_swap=12047.25 MiB）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "positive",
+                "n": 1,
+                "max": 255,
+                "last": 255,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        },
+        {
+          "when": "2026-10-03 21:01",
+          "arm": "prod-new",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/mtpon_pair_20261003/pair.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/mtpon_pair_20261003/pair.stderr.log",
+            "source": "sibling",
+            "why": "成對：pair.stderr.log（407678 bytes）（另有 2 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 0 -n 64 --warm-skip 64（由產物參數重建）",
+          "result": {
+            "tg": 11.53
+          },
+          "thermal": "HEAVY",
+          "swap": {
+            "before": "7640 MiB",
+            "after": "12226 MiB"
+          },
+          "verdict": "both：thermal=HEAVY, swap_growth=296.75 MiB",
+          "clean": false,
+          "void_why": "attribution.verdict=both（thermal=HEAVY, swap_growth=296.75 MiB）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "positive",
+                "n": 1,
+                "max": 82,
+                "last": 82,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        },
+        {
+          "when": "2026-10-03 21:01",
+          "arm": "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;LLAMA_BENCH_SPEC=1;LLAMA_BENCH_SPEC_DRAFT_N_MAX=2",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/mtpon_pair_warm_20261003/warm.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/mtpon_pair_warm_20261003/warm.stderr.log",
+            "source": "sibling",
+            "why": "成對：warm.stderr.log（297453 bytes）（另有 1 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 0 -n 64 --warm-skip 64（由產物參數重建）",
+          "result": {
+            "tg": 9.4
+          },
+          "thermal": "NOMINAL",
+          "swap": {
+            "before": "2160 MiB",
+            "after": "6614 MiB"
+          },
+          "verdict": "swap：swap_growth=4462.38 MiB, max_swap=7151.06 MiB",
+          "clean": false,
+          "void_why": "attribution.verdict=swap（swap_growth=4462.38 MiB, max_swap=7151.06 MiB）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "positive",
+                "n": 1,
+                "max": 255,
+                "last": 255,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        },
+        {
+          "when": "2026-10-03 21:01",
+          "arm": "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;LLAMA_BENCH_SPEC=1;LLAMA_BENCH_SPEC_DRAFT_N_MAX=2",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/mtpon_pair_warm_20261003/pair.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/mtpon_pair_warm_20261003/pair.stderr.log",
+            "source": "sibling",
+            "why": "成對：pair.stderr.log（415399 bytes）（另有 2 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 0 -n 64 --warm-skip 64（由產物參數重建）",
+          "result": {
+            "tg": 9.31
+          },
+          "thermal": "MODERATE",
+          "swap": {
+            "before": "6574 MiB",
+            "after": "6713 MiB"
+          },
+          "verdict": "swap：swap_growth=567.3100000000004 MiB, max_swap=7141.31 MiB",
+          "clean": false,
+          "void_why": "attribution.verdict=swap（swap_growth=567.3100000000004 MiB, max_swap=7141.31 MiB）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "positive",
+                "n": 1,
+                "max": 254,
+                "last": 254,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        },
+        {
+          "when": "2026-10-03 21:01",
+          "arm": "prod-new",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/mtpon_pair_warm_20261003/pair.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/mtpon_pair_warm_20261003/pair.stderr.log",
+            "source": "sibling",
+            "why": "成對：pair.stderr.log（415399 bytes）（另有 2 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 0 -n 64 --warm-skip 64（由產物參數重建）",
+          "result": {
+            "tg": 9.97
+          },
+          "thermal": "MODERATE",
+          "swap": {
+            "before": "6574 MiB",
+            "after": "6713 MiB"
+          },
+          "verdict": "none：swap_growth=-420.3700000000008 MiB, thermal=MODERATE",
+          "clean": true,
+          "void_why": "attribution.verdict=none（量測窗 thermal NOMINAL）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "positive",
+                "n": 1,
+                "max": 48,
+                "last": 48,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        }
+      ],
+      "targets": {
+        "decode_tps": 20.0,
+        "prefill_tps": 250.0
+      },
+      "best": {
+        "metric": "tg",
+        "tg": 9.97,
+        "pp": null,
+        "arm": "prod-new",
+        "log": "Backup/spec_tree/mtpon_pair_warm_20261003/pair.json",
+        "when": "2026-10-03 21:01"
+      },
+      "target_gap": {
+        "decode_tps": {
+          "current": 9.97,
+          "target": 20.0,
+          "gap": -10.03,
+          "pct": 49.9
+        },
+        "prefill_tps": {
+          "current": null,
+          "target": 250.0,
+          "gap": null,
+          "pct": null
+        }
+      },
+      "subtasks": [
+        {
+          "id": "st-charter",
+          "text": "跑前立項（現狀/目標/假設/驗收）",
+          "status": "done",
+          "log": "scripts/check/charters/exp-marginal-decomp.yaml"
+        },
+        {
+          "id": "st-run",
+          "text": "用生產級腳本 prod-new ＋ 自己 option 跑實驗臂，留存 log",
+          "status": "done"
+        },
+        {
+          "id": "st-accept",
+          "text": "驗收：指名 34.7 ms 的主項（GPU 執行／IO／派發）並給比例",
+          "status": "todo"
+        },
+        {
+          "id": "st-falsify",
+          "text": "否證條件：若四個桶的斜率都 ≈0 且加總 ≈34.7 ⇒ 歸因失敗，要換儀器（不主張）",
+          "status": "todo"
+        },
+        {
+          "id": "sg-marginal",
+          "text": "把 34.7 ms 拆進 GPU 執行／IO／派發三桶",
+          "status": "todo",
+          "expect": "0（這是歸因，不是貢獻）",
+          "how": "harness bench ×1（off ／ on-k2，**同一 session**）；spec 由按臂 env 給 ⇒ 不要在 CLI 給 --spec-type；＋ CGC_DECODE_PROFILE=1 ＋ CGC_GPU_TIMING=1；配對 Δ（不靠迴歸）",
+          "contrib": null,
+          "contribs": []
+        }
+      ],
+      "subgoal_binding": {
+        "subgoal": "L25-4",
+        "title": "MTP（C6）：唯一「乘」的軸",
+        "layer": "L25",
+        "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:16;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1"
+        ],
+        "options": [
+          "CGC_SERVER_MTP=1",
+          "CGC_SERVER_LAYER_CAPS=40-40:16",
+          "CGC_DRAFT_CTX_ALIGN=1",
+          "CGC_DRAFT_SMALL_BATCH=1"
+        ],
+        "instruments": [
+          "CGC_MTP_PERF=1"
+        ],
+        "candidates": [],
+        "cli": [
+          "--spec-type draft-mtp",
+          "--spec-draft-n-max 1"
+        ],
+        "no_knob": "",
+        "note": "⛔ 必帶 --spec-draft-n-max 1：沒帶就是 k_eff≈2.33 必 thrash。且 MTP on/off 是不同輸出函數 ⇒ t/s 不可互比。",
+        "state": "結案（排除）（k 軸經濟學判 DEAD，2026-10-01 16:3x；同日 17:0x 的 k 掃描修正了幅度）—— ★ k 掃描（k=1/2/3/5/7 ＋ 同 session MTP-off，六趟全 attribution=none、NOMINAL、swap 0）：k=2 10.90／10.10（同 session off 的 −5%／−12%）、k=1 10.49（−9%）、k=3 9.34（−19%）、k=5 9.37（−19%）、k=7 5.61（−51%）；同 session 錨點 MTP-off 11.52／11.54（歷史 10.923 是別窗口 ⇒ 本對取代它）。⇒ k 是槓桿、最佳點 k=2，而「+52%／emit token」是 k=7（k_eff 5.06）那一點的產物 —— 最佳點的殘餘虧損 −5~12%。成本律（修正口徑後、六臂、dof 4，殘差 ≤20 ms）：round_ms ≈ 63.6 + 35.2·T̂（T̂ = drafted/rounds + 1）⇒ 每輪固定項 ≈ 0.73 個純解碼步（結構死因）＋邊際 verify token 35.2 ms（＝純步的 0.41 ⇒ 攤薄確實發生）。⚠ 2026-10-01 17:2x 量具修復：上一句原本寫 89 + 33·T —— 那個版本吃了兩個量具的分母不一致（ACCEPT 的 mean_len 把 replay 輪當有產出；MTP-PERF 的 emit_tok_per_round 除以原始 draft 呼叫、漏掉 replay 輪）⇒ 已在 llama-bench.cpp 加 replay=／emit_per_round=（行尾追加）並重建驗證（rounds − calls_draft = Σreplay：208 − 142 = 66 ✓）。真 emit/round 是 1.49–1.98（不是 1.74–2.44），而 n_max 的比較不受影響（t/s 是量出來的）。⇒ 可交付的行動：profile 預設 n_max=3 與本線用過的 7 都不是好設定，2 才是（3→2 同 cell +12%）。判決文 docs/L254_K_AXIS_ECON_2026-10-01.md §k 掃描；立項 charters/e-l254-kaxis-sweep-2026-10-01.yaml、產物 Backup/l254_kaxis_20261001/。兩個問題都答了：① 機制：S1 讓 k_eff 1.8 → 7.000（可行）；② 經濟：不划算 —— 涼窗口成對（B 先跑、同一 build、只差 CGC_MTP_NO_CTX_OTHER）：draft 成本/emit token 9.22 → 13.98 ms（+52%）、emit 只多 2.26× 但 draft 相時間多 3.44×（超線性）、acc_rate 兩臂同（0.416–0.444，沒補回來）⇒ E = 1 + a·k_eff 的「每輪成本固定」前提被實測否定。wall t/s 同向（A 8.60 vs B 7.48；第三趟 B2 13.41 但 attribution=swap）但 四趟的窗口 spread 1.19／1.19／1.19／2.49 均 &gt;1.10 ⇒ t/s 全 VOID，只當方向證據；判死靠的是計數器端點。對照：MTP-off 交付錨點 10.923、生產 ABBA ×0.695（配對）⇒ MTP-on 在此口徑整體為負，拉高 k 更負。reopen 條件（已寫死）：乾淨窗口（none ∧ ≤1.10 ∧ reps3）的成對出現 B_tps ≥ A_tps ⇒ 本判詞被推翻。判決文 docs/L254_K_AXIS_ECON_2026-10-01.md。【底下的機制史留檔】2026-10-01 operator 已拍：MTP-on 獨立口徑 ⇒ 前置①解除；同日 16:05 S1 機制端點達標且兩趟重現：k_eff 7.000 逐輪、draft=0 0%、M-RoPE 拒收 180→2、acc_rate 0.52–0.61（對照臂 1.75–1.97／48%／153–180 行；證據 Backup/l254_s1_20261001/k7_paired{,_clean}.{json,stderr.log}）⇒ 卡點改掛 k 軸經濟學：k_eff 追平 k 之後每輪代價也追上去，且四臂 attribution=thermal ⇒ t/s 全 VOID、需涼窗口重判）。09-30 大 k 接受率穩定性：量了，但量到的不是 MTP 的性質。① 回顧（零盒子成本）：09-24 s1_ksweep 兩場 k=1/2/3/4，k_eff 恰等於 k、0 個 position error，而 k=4 的 a 跨場次讀到 0.489 vs 0.945（1.93×）、k=3 讀到 0.654/0.772/0.892 ⇒ 不穩的是場次，不是 k。② 新跑 k=7 與 k=8（本臂、(default) cell、p2048_n128_d512_r3）：兩趟都被 arm-timeout 殺（rc=-15）；CGC-MTP-PERF 各只出 3 行：k=7 a=0.5238/0.4887/0.4631、gen_tok_per_round=2.032/1.900/1.880；k=8 a=0.4219/0.3516/0.3958、gen_tok_per_round=1.730/1.542/1.655。⛔ 這幾個 a 不可用，理由不是「髒窗口」而是結構：兩趟的 CGC-PHASE-SPLIT 都是 routable=15 slots -> decode graph width=1 tokens，而乾淨那批是 routable=53 -> width=6。兩項交叉驗證同一個結論 —— (i) k_eff &lt;&lt; k（要 7 只得 1.88），實作根本沒把 draft 拉到 k；(ii) position error 密度 104/5055、98/3870 行，遠高於 p2 的 32/11075 ⇒ 驗證區塊被截斷 ⇐ 它放不進 width=1 的圖。⇒ 結論：在現行宣告下，大 k 的接受率不是「不穩定」而是「構上量不到」；0.4631 與 0.3958 是 width=1 的產物，不得寫進 k 曲線。證據：Backup/l254_kbracket_2026-09-30/k7.json（＋k7.stderr.log）、k8.json（＋k8.stderr.log，INCOMPLETE／attribution=both）、Backup/s1_ksweep/20260924_{225548,233141}/*.stderr.log（回顧，k_eff==k）。③ 09-30 15:31 解 width 的實測（交付 cell、p0_n128_d512_r3、其餘同臂）：把 CGC_SERVER_LAYER_CAPS 由 40-40:16 改成 40-40:140 ⇒ LAYER_CAPS ... min 140/layer、routable=139 -> decode graph width=8 tokens，而這一趟跑完了（NOMINAL 全程、attribution=none、base_check PASS、6 行 MTP-PERF 對比 width=1 的 3 行）。⛔ 但 k_eff 仍然只有 1.590（區間 1.59–1.72），不是 7，acc_rate 0.343–0.413。那個 acc_rate 不可用：k_eff 1.6 落在乾淨批 k_eff=1（a=1.000）與 k_eff=2（a≈0.88–0.98）之間，讀到 0.35 自相矛盾 ⇒ 它是被中斷輪次壓低的比值。⇒ 結論修正：width 只解「跑不跑得完」，不解「k 有多深」（width 1 的兩趟是被 stall 殺的，width 8 的這趟活到底且 position error 反而更多：194 vs 98）。真正的截斷＝docs/KEFF_CAP_2026-09-26.md 記的 is_mem_shared draft 位置碰撞（draft loop 第二步解到 X = Y ⇒ llama_decode 拒 ⇒ 迴圈 break ⇒ 静默只吐一個 token）；本趟的指紋是 MTP fast path: draft calls=230 對 verify calls=11916（1:52）。證據：Backup/l254_kbracket_2026-09-30/k7_width8.json（＋k7_width8.stderr.log）。④ 09-30 15:37 帶 LLAMA_BENCH_SPEC_DBG=1 的直方圖（決定性）：不是鏈太短，是六成的輪次一根都沒吐 —— per-round draft=：0 ⇒ 180 輪、1/2/3/4/5 ⇒ 11/18/17/6/4、7 ⇒ 60 輪、8 ⇒ 1（約 297 輪）⇒ 加權平均 1.92 ✓。也就是說 要 7 真的拿得到 7（最深的請求達得到），拖垮平均的是 61% 的 draft=0。⇒ 卡點是 輪級掉線，不是深度。失敗形態指向 target 的 verify 批次：194 次 init 失敗中 X &gt; Y 144（74%）、X == Y 50，而歸屬 draft 迴圈的 llama_decode[0] 只有 6 次 ⇒ 配上本 build 自己印的 shared_kv=1：is_mem_shared=1 下 draft 把位置寫進共用 KV，target 從同一起點 verify 就被 M-RoPE 的嚴格 X &lt; Y 拒掉。⇒ 這能對上 09-24 那批乾淨的 k=1..4（k_eff == k、0 pos-err）：它們跑在 65c76b8c7（09-25 17:16）之前 ⇒ 那時非 GEMMA4 arch 的 ctx_other 被丟掉 ⇒ is_mem_shared=false ⇒ draft 有自己的 KV。這是一個設計取捨（收回去 vs 做對共用 KV 的 verify 佈局），不是一行修補；兩條都要走 M1/M2/M3 oracle gate。證據：Backup/l254_kbracket_2026-09-30/k7_specdbg.json（＋k7_specdbg.stderr.log）。⚠ 另註：speculative.cpp 裡那兩個修法（09-26 one_position_drafts、09-28 stale-tail）在原始碼與 binary 裡都已存在（libllama-common.0.0.630.dylib 14:39:41 驗到 stale-tail 字串、且本次有觸發），它們不對應這條。★ 2026-10-03 批次（MTP 重開工程的帳）：① cb 悬崖定罪：MTP-on k=1 的 4–5 s/步 cb＝分類錯配 —— CGC_SERVER_LAYER_CAPS=40-40:16 ⇒ 15 routable ⇒ cgc_decode_bound(15,8,8)=floor(15/8)=1 ⇒ width=1 ⇒ ntok=2 判成 PREFILL ⇒ CGC_PREFILL_STREAM=1 讓 hook 在 llama-context.cpp:8073/:8334 每層重讀整層 slab（≈356 MiB/層 × 40 層 ≈ 14.2 GiB/步；cb(ntok=2)≈cb(ntok=512)）—— 既有 CGC-HOOK_SPLIT（累加點在 slab 分支之後）、CGC-EB_TIMER（slab 路徑不呼叫 ensure_batch）、以及本輪新裝的 CGC-FASTSEG（整趟只中 1 次、draft ctx）對這條路都是瞎的；10-01 的 k 掃描之所以跑得完，是因為它用 caps=40-40:140（width=8、走 decode 路徑）。⇒ 重開前置：caps ≥17（16 routable ⇒ bound=2）或新 cell；立項 scripts/check/charters/e-mtp-cb-classify-2026-10-03.yaml。② spawn/join 假設已否證（LLAMA_EXPERT_CACHE_SERIAL_FILL=1：cb 中位 4155→5010 ms、EBTIMER 237→150 ms）⇒ 94% 不在逐冷專家 thread+join。③ spec-tree 寬 2＝重開工程 #2（Backup/spec_tree/T1C_VERDICT_2026-10-03.md）：T1c 證「寬 1 ≡ 鏈」原理上不可能打平（accept() 是下一輪 seed 寫入 ⇒ replay 多吐一顆：1.455 vs 1.462）；寬 2 撞 GGML_ASSERT(batch_in.n_seq_id[k]==1) ⇒ 修法＝每個分支各掛一根；判準寫死：寬 2 臂 token/decode ≥ ~2.05 才可能打平 off。④ S1 品質判詞（S1_QUALITY_VERDICT_2026-10-03.md）：控制 10.957（乾淨）vs S1 臂 26.099（swap）×2.38，但品質 −17.2 pp（26/29→21/29、5 題對轉錯）⇒ 20+ 門在 operator 條件下關閉。⑤ 校準軸同日收窄：M2_ONLY_CALIBER_LEVERS（放寬口徑在長 probe 下是空的）、CGC_MM_BITIDENT decode 窗配對 −0.1%（K0 的 −4.9% 不復現、那 4–5% 是 prefill 槓桿）、POOL10G 被 cell 契約拒跑（池=0 也超 11453）。",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-4",
+          "why": "邊際 verify token 的成本拆解（round ≈ 52.0 + 34.7·T̂）；2026-10-03 首個「同一 invocation」off/on 配對：ON 8.70 vs OFF 11.53 t/s、兩臂皆非 attribution=none ⇒ 讀數 VOID（機制面已驗：深度=2、decode width=8、fast path cold=0）"
+        }
+      ]
+    },
+    {
+      "id": "e-m2-slab-reuse",
+      "name": "M2 slab pool-reuse（整層填的 memcpy 省多少）",
+      "theme": "實驗",
+      "tier": "3a",
+      "goal": "**整層 slab 填（`llama_expert_cache_fill_layer_slab`）在池已有 15 顆 resident 時，\n真的省下 memcpy／pread 嗎？省下多少位元組、值多少毫秒？**\n—— 即：`CGC-M2-PROF` 的 pool/disk 位元組比與逐 fill 時間，\n在「整層」與「只讀非 resident」兩條路上各是多少。",
+      "crit": "① `CGC-M2-PROF` 逐 fill 行 ≥ 200（覆蓋至少一輪完整 prefill 的所有層）；\n② 由逐 fill 行算出 pool share 與 FAST/非 FAST 的 ms/MiB，並**指名**哪一項主導；\n③ 端點是**計數器／比值**（不走引用閘門）；不得把本趟任何 t/s 當成績。\n",
+      "res": "decode 8.26 t/s",
+      "evid": "Backup/spec_tree/s1speed.json.logs/live/prod-new.p0_n128_d512_r3.stderr.log",
+      "sub": "M",
+      "note": "假設：`fill_layer_slab`（llama-expert-cache.cpp:4341）逐專家檢查 `slot_table`：\nresident 且 slot < usable ⇒ **memcpy 自 pool**（pool_bytes＋），否則收成 segment 走 pread\n（disk_bytes＋）。收尾印 pool/disk 比。既有產物已顯示 pool:disk ≈ 56:44。\n⚠ 但**機制上有一個反向項**：池命中會讓 `segs.size() != ne` ⇒\n合併大 pread 的 fast path（`:4458` `contiguous`）**失效**，240 顆非 resident 變成\n240 次 thread-per-segment pread（`fill_segments_concurrent`，每段一 thread）。\n⇒ 本卡要判定的是**淨效果**：省下的 memcpy/bytes 是否大於打碎 pread 的代價。\n",
+      "runs": [
+        {
+          "when": "2026-10-04 22:32",
+          "arm": "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;LLAMA_BENCH_SPEC=1;LLAMA_BENCH_SPEC_DRAFT_N_MAX=2;CGC_M2_PROFILE=1",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/M2_SLAB_REUSE_2026-10-03.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/M2_SLAB_REUSE_2026-10-03.stderr.log",
+            "source": "sibling",
+            "why": "成對：M2_SLAB_REUSE_2026-10-03.stderr.log（833743 bytes）（另有 2 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 512 -n 128 --warm-skip None（由產物參數重建）",
+          "result": {
+            "pp": 118.84,
+            "tg": 8.91
+          },
+          "thermal": "NOMINAL",
+          "swap": {
+            "before": "6891 MiB",
+            "after": "7580 MiB"
+          },
+          "verdict": "swap：swap_growth=977.8100000000004 MiB, max_swap=8027.56 MiB",
+          "clean": false,
+          "void_why": "attribution.verdict=swap（swap_growth=977.8100000000004 MiB, max_swap=8027.56 MiB）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "positive",
+                "n": 1,
+                "max": 2,
+                "last": 2,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        },
+        {
+          "when": "2026-10-04 22:32",
+          "arm": "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;LLAMA_BENCH_SPEC=1;LLAMA_BENCH_SPEC_DRAFT_N_MAX=2;CGC_M2_PROFILE=1;CGC_M2_DB_DISABLE=1",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/M2_SLAB_REUSE_2026-10-03.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/M2_SLAB_REUSE_2026-10-03.stderr.log",
+            "source": "sibling",
+            "why": "成對：M2_SLAB_REUSE_2026-10-03.stderr.log（833743 bytes）（另有 2 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 512 -n 128 --warm-skip None（由產物參數重建）",
+          "result": {
+            "pp": 78.0,
+            "tg": 8.26
+          },
+          "thermal": "NOMINAL",
+          "swap": {
+            "before": "6891 MiB",
+            "after": "7580 MiB"
+          },
+          "verdict": "none：swap_growth=-288.0 MiB, thermal=NOMINAL",
+          "clean": true,
+          "void_why": "attribution.verdict=none（量測窗 thermal NOMINAL）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "positive",
+                "n": 1,
+                "max": 2,
+                "last": 2,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        },
+        {
+          "when": "2026-10-04 22:32",
+          "arm": "prod-new:CGC_M2_PROFILE=1",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/M2_SLAB_REUSE_2026-10-03.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/M2_SLAB_REUSE_2026-10-03.stderr.log",
+            "source": "sibling",
+            "why": "成對：M2_SLAB_REUSE_2026-10-03.stderr.log（833743 bytes）（另有 2 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p ? -n ? --warm-skip None（由產物參數重建）",
+          "result": {},
+          "thermal": "NOMINAL",
+          "swap": {
+            "before": "6891 MiB",
+            "after": "7580 MiB"
+          },
+          "verdict": "none：swap_growth=0.0 MiB, thermal=NOMINAL",
+          "clean": true,
+          "void_why": "attribution.verdict=none（整臂(舊口徑) thermal NOMINAL）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "這一輪根本沒有起跑（起跑閘不合格）⇒ 沒有量具可驗",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        },
+        {
+          "when": "2026-10-04 22:42",
+          "arm": "prod-new:CGC_M2_PROFILE=1",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/M2_SLAB_REUSE_2026-10-03.mtpoff.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/M2_SLAB_REUSE_2026-10-03.mtpoff.stderr.log",
+            "source": "sibling",
+            "why": "成對：M2_SLAB_REUSE_2026-10-03.mtpoff.stderr.log（110151 bytes）（另有 1 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 512 -n 128 --warm-skip None（由產物參數重建）",
+          "result": {
+            "pp": 120.91,
+            "tg": 11.34
+          },
+          "thermal": "NOMINAL",
+          "swap": {
+            "before": "6525 MiB",
+            "after": "6950 MiB"
+          },
+          "verdict": "swap：swap_growth=424.7399999999998 MiB, max_swap=6973.62 MiB",
+          "clean": false,
+          "void_why": "attribution.verdict=swap（swap_growth=424.7399999999998 MiB, max_swap=6973.62 MiB）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）；但 prefetch 印了全 0（未被要求，只記錄）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "zero-only",
+                "n": 1,
+                "max": 0,
+                "last": 0,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [
+              "prefetch"
+            ],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        }
+      ],
+      "targets": {
+        "decode_tps": 20.0,
+        "prefill_tps": 250.0
+      },
+      "best": {
+        "metric": "tg",
+        "tg": 8.26,
+        "pp": 78.0,
+        "arm": "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;LLAMA_BENCH_SPEC=1;LLAMA_BENCH_SPEC_DRAFT_N_MAX=2;CGC_M2_PROFILE=1;CGC_M2_DB_DISABLE=1",
+        "log": "Backup/spec_tree/M2_SLAB_REUSE_2026-10-03.json",
+        "when": "2026-10-04 22:32"
+      },
+      "target_gap": {
+        "decode_tps": {
+          "current": 8.26,
+          "target": 20.0,
+          "gap": -11.74,
+          "pct": 41.3
+        },
+        "prefill_tps": {
+          "current": 78.0,
+          "target": 250.0,
+          "gap": -172.0,
+          "pct": 31.2
+        }
+      },
+      "subtasks": [
+        {
+          "id": "st-charter",
+          "text": "跑前立項（現狀/目標/假設/驗收）",
+          "status": "done",
+          "log": "scripts/check/charters/e-m2-slab-reuse-2026-10-03.yaml"
+        },
+        {
+          "id": "st-run",
+          "text": "用生產級腳本 prod-new ＋ 自己 option 跑實驗臂，留存 log",
+          "status": "done"
+        },
+        {
+          "id": "st-accept",
+          "text": "驗收：① `CGC-M2-PROF` 逐 fill 行 ≥ 200（覆蓋至少一輪完整 prefill 的所有層）；\n② 由逐 fill 行算出 pool share 與 FAST/非 FAST 的 ms/MiB，並**指名**哪一項主導；\n③ 端點是**計數器／比值**（不走引用閘門）；不得把本趟任何 t/s 當成績。\n",
+          "status": "todo"
+        },
+        {
+          "id": "st-falsify",
+          "text": "否證條件：① 逐 fill 行 < 200（量具沒真的武裝／被 allowlist 吃掉）⇒ 先修量具，不判；\n② 或 pool/disk 比與收尾行矛盾（逐 fill 加總 ≠ 收尾計數）⇒ 量具本身不可信，回讀碼。\n",
+          "status": "todo"
+        },
+        {
+          "id": "sg-slab-reuse",
+          "text": "整層 slab 的 pool-reuse 效率：pool/disk 位元組比 ＋ FAST vs 非 FAST 的 ms/MiB",
+          "status": "todo",
+          "expect": "0（這是歸因／計數器，不是 t/s 貢獻）",
+          "how": "harness bench 一趟（caps 140、MTP-on、CGC_M2_PROFILE=1、CGC_PREFILL_STREAM=1、CGC_GATHER_SLAB_CAP=256）；讀 `CGC-M2-PROF` 逐 fill 行 ＋ `slab fills: pool=… disk=…`",
+          "contrib": null,
+          "contribs": []
+        }
+      ],
+      "subgoal_binding": {
+        "subgoal": "L25-7",
+        "title": "整層 slab 的 pool-reuse 效率",
+        "layer": "L25",
+        "profile": "prod-new",
+        "arm_strings": [
+          "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;LLAMA_BENCH_SPEC=1;LLAMA_BENCH_SPEC_DRAFT_N_MAX=2;CGC_M2_PROFILE=1",
+          "prod-new:CGC_SERVER_MTP=1;CGC_SERVER_LAYER_CAPS=40-40:140;CGC_DRAFT_CTX_ALIGN=1;CGC_DRAFT_SMALL_BATCH=1;LLAMA_BENCH_SPEC=1;LLAMA_BENCH_SPEC_DRAFT_N_MAX=2;CGC_M2_PROFILE=1;CGC_M2_DB_DISABLE=1",
+          "prod-new:CGC_M2_PROFILE=1"
+        ],
+        "options": [
+          "CGC_SERVER_MTP=1",
+          "CGC_SERVER_LAYER_CAPS=40-40:140",
+          "CGC_DRAFT_CTX_ALIGN=1",
+          "CGC_DRAFT_SMALL_BATCH=1",
+          "LLAMA_BENCH_SPEC=1"
+        ],
+        "instruments": [
+          "CGC_M2_PROFILE=1"
+        ],
+        "candidates": [
+          "CGC_M2_DB_DISABLE=1"
+        ],
+        "cli": [],
+        "no_knob": "",
+        "note": "★ 本格端點是<b>計數器／比值</b>（不走引用閘門）；任何 t/s 一律不引用。⚠ 前置（operator 級）已在立項卡寫死：<code>CGC_SERVER_LAYER_CAPS</code> 是 cell 欄位 ⇒ 本卡刻意避開（量的是 slab 路徑，兩個 caps 值都走 slab），主臂用 caps 140（已驗跑完）。⚠ 盒閘：跑前過 <code>l255_close.py --check</code>（即時判定，不寫死數字）。",
+        "state": "結案（排除）· FAST 對照腿不可測（暖池的結構性、非量具問題）—— 10-04 已量。答案：池命中省下 55.5–55.9% 的磁碟位元組（改走 memcpy），但代價是 merged-pread 快路徑永遠失效。實測（(default) 格、pp512、每臂 200 次取樣）：三臂 pool share 0.5547／0.5547／0.5586，收尾行 non-resident 44.5／44.5／44.1%（比值一致；絕對量因逐 fill log 上限 400 筆而不同——falsify ②的解釋：logged&lt;400 就是上限本身）；整層填 0.343–0.379 ms/MiB（中位 ~30 ms/次、每次 ~82 MiB；磁碟側 ~1.2–1.3 GiB/s）。fill_slab_FAST 0/200、fast=1 0/400，且第一次 slab 填（256 顆裡已有 142 顆是 pool memcpy）就破壞 contiguous 條件（llama-expert-cache.cpp:4435，segs.size()==ne）⇒ 假設裡的反向項不是偶發、是結構性的：只要池是暖的，整層填永遠走 thread-per-segment。FAST 對照腿（預登記：≥2× 或同級）在本形狀無法觀測，需冷池臂（如 --no-warmup 使首次填全非 resident）才能取得 FAST 樣本。⚠ 附註：MTP-on 臂的按臂 spec shim 該趟 drafted=0（M-RoPE 位置檢查失敗 ⇒ 退回 plain decode；CGC-BENCH-ACCEPT phase=timed ... draft_ratio=0）—— 本格端點是 prefill 的 slab 計數器，不受影響，但「MTP-on 臂」在別處被引用前必須回讀 ACCEPT。DB 對照：位元組完全相同下 DB-on 0.379 vs DB-off 0.343 ms/MiB（−9.5%；單一配對、不擴張主張）。端點是計數器／比值，不走引用閘門；本趟任何 t/s 不引用。",
+        "also": [],
+        "source": "board",
+        "confidence": "high"
+      },
+      "disposition": [
+        {
+          "kind": "subgoal",
+          "ref": "L25-7",
+          "why": "整層 slab 的 pool-reuse 效率（pool/disk 位元組比 ＋ FAST vs 非 FAST 的 ms/MiB）；MTP 重開工程的診斷前置，端點是計數器／比值"
+        }
+      ]
+    },
+    {
+      "id": "exp-default-cell-first-2026-10-03",
+      "name": "2026-10-03 operator 裁定「移除所有具名格、pro…",
+      "theme": "實驗",
+      "tier": "3a",
+      "goal": "2026-10-03 operator 裁定「移除所有具名格、prod-new ＋ harness bench 完全貼齊 llama-bench\n出廠形狀」之後，**新的預設 cell（唯一可選格）在交付面上值多少**？\n即：`-p 512 -n 128 -b 2048 -ub 512 -d 0 -r 5`、warmup 開、`warm_skip 0`、`ctx_size 0`，\n記憶體側維持 prod-new（ngl 99／load_mode none／池 8 GiB／KV q8_0）之下，\n`pp512` 與 `tg128` 兩列的第一筆讀數是多少、`attribution` 是哪一級？",
+      "crit": "得到一筆 cell 口徑齊備的 pp512／tg128 讀數（contract ok=True、cell 名 (default)、逐 rep 向量），並如實標注 attribution；pp 落在 100–136 且 tg 落在 8.0–11.0 之內 ⇒ 預期成立",
+      "res": "尚無可引用讀數：1 個 run 全部非乾淨（attribution.verdict=swap（swap_growth=3122.3099999999995 MiB, max_swap=7770.69 MiB））",
+      "evid": "docs/PROD_NEW_TEST_CARD_2026-09-24.md",
+      "sub": "na",
+      "note": "假設：與 delivery-std 首筆（`-b 512 -d 512 --warm-skip 64`）相比有兩個實質變化：\n① `--warm-skip 64 → 0` ⇒ tg 那一列不再丟掉前 64 顆，量的就是 llama-bench 的 tg128；\n② `-d 512 → 0` ⇒ **沒有 depth 預填**，池在 decode 起點是冷的，前幾顆會走缺頁路徑。\n兩者都指向「同一個引擎、同一個窗口下 tg 會比 11.885 低」，但那正是 llama-bench 的數字。\n`-b 2048 -ub 512` 對 `-p 512` 沒有實質影響（ubatch 仍是 512 ⇒ 一個 ubatch），pp 應與 117.6 同級。\n",
+      "runs": [
+        {
+          "when": "2026-10-04 22:26",
+          "arm": "prod-new",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/default_cell_20261004/default_cell.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/default_cell_20261004/default_cell.stderr.log",
+            "source": "sibling",
+            "why": "成對：default_cell.stderr.log（58252 bytes）（另有 1 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 512 -n 128 --warm-skip None（由產物參數重建）",
+          "result": {
+            "pp": 94.2,
+            "tg": 10.6
+          },
+          "thermal": "NOMINAL",
+          "swap": {
+            "before": "4160 MiB",
+            "after": "7275 MiB"
+          },
+          "verdict": "swap：swap_growth=3122.3099999999995 MiB, max_swap=7770.69 MiB",
+          "clean": false,
+          "void_why": "attribution.verdict=swap（swap_growth=3122.3099999999995 MiB, max_swap=7770.69 MiB）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）；但 prefetch 印了全 0（未被要求，只記錄）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "zero-only",
+                "n": 1,
+                "max": 0,
+                "last": 0,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [
+              "prefetch"
+            ],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        }
+      ],
+      "targets": {},
+      "best": null,
+      "target_gap": {},
+      "subtasks": [
+        {
+          "id": "st-charter",
+          "text": "跑前立項（現狀/目標/假設/驗收）",
+          "status": "done",
+          "log": "scripts/check/charters/exp-default-cell-first-2026-10-03.yaml"
+        },
+        {
+          "id": "st-run",
+          "text": "用生產級腳本 prod-new ＋ 自己 option 跑實驗臂，留存 log",
+          "status": "done"
+        },
+        {
+          "id": "st-accept",
+          "text": "驗收：得到一筆 cell 口徑齊備的 pp512／tg128 讀數（contract ok=True、cell 名 (default)、逐 rep 向量），並如實標注 attribution；pp 落在 100–136 且 tg 落在 8.0–11.0 之內 ⇒ 預期成立",
+          "status": "todo"
+        },
+        {
+          "id": "st-falsify",
+          "text": "否證條件：若 tg > 11.9（高於帶 depth 預填的舊形狀）或 < 8.0（低於冷池可解釋的範圍）⇒ 機制解釋錯，要改寫「-d 0 冷池」這條歸因，不得把它當基準",
+          "status": "todo"
+        }
+      ],
+      "no_throughput_claim": "本節點 1 個 run 全部非乾淨歸因（attribution.verdict=swap（swap_growth=3122.3099999999995 MiB, max_swap=7770.69 MiB））⇒ 依 MEASUREMENT_CONTRACT §5.1 吞吐不得引用；節點只記判詞。乾淨 = memory_pressure.is_clean()。",
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
+        "instruments": [],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "新預設格（llama-bench 出廠形狀）的第一次讀數：pp512 94.20／tg128 10.60，0/2 可引用（兩列全 rep max/min 各 1.512／1.114 皆 &gt;1.10，且 attribution=swap）⇒ 定案的是約束不是成績：出廠形狀（-d 0 -r 5 --warm-skip 0）在本機 5 reps 內到不了穩態。產物 Backup/spec_tree/default_cell_20261004/default_cell.json",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "新預設格（llama-bench 出廠形狀）的第一次讀數：pp512 94.20／tg128 10.60，0/2 可引用（兩列全 rep max/min 各 1.512／1.114 皆 &gt;1.10，且 attribution=swap）⇒ 定案的是約束不是成績：出廠形狀（-d 0 -r 5 --warm-skip 0）在本機 5 reps 內到不了穩態。產物 Backup/spec_tree/default_cell_20261004/default_cell.json"
+        }
+      ]
+    },
+    {
+      "id": "exp-fence-default-cell-2026-10-05",
+      "name": "把段邊界重疊柵欄（CGC_OVERLAP_FENCE=41）搬到**…",
+      "theme": "實驗",
+      "tier": "3a",
+      "goal": "把段邊界重疊柵欄（CGC_OVERLAP_FENCE=41）搬到**現行的交付格**上值多少？\n柵欄在舊 (default) 形狀（-b 5632 -p 2048 -d 512 --warm-skip 64）上量到 C12 13.867389（乾淨窗）\n與 C13 15.210976（降級窗），但**從未在交付格（llama-bench 出廠形狀 -p 512 -b 2048 -ub 512 -d 0 -r 5\n--warm-skip 0）跑過** —— 這是「20+ 判死」之後唯一有名字、且沒有被否證的一步。",
+      "crit": "同一 invocation 拿到 off/on 兩臂的 pp512＋tg128；tg 比值 ≥1.10 ⇒ 柵欄在交付格上成立（即使窗不可引用，同場比值仍可讀）",
+      "res": "尚無可引用讀數：1 個 run 全部非乾淨（attribution.verdict=swap（swap_growth=3431.74 MiB, max_swap=7984.94 MiB））",
+      "evid": "Backup/l201_accel/ovl_cert_b.json",
+      "sub": "S",
+      "note": "假設：柵欄把段邊界的 drain 與 hook 重疊（早提交 ＋ MTLSharedEvent：host 寫完 remap leaf 後\nsignalEvent，GPU 等到 leaf 就續跑 ⇒ host 不再 drain），紅利全在 wait。\n交付格與舊格的差別是 -d 0（池在 decode 起點是冷的）與 warm_skip 0（冷的 rep 也計入）\n⇒ 段邊界往返的**次數與 miss 分布**不同，但柵欄收割的是**近乎固定的段邊界成本**\n⇒ 方向應不變、幅度可能縮小。\n",
+      "runs": [
+        {
+          "when": "2026-10-05 12:14",
+          "arm": "prod-new",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/fence_default_20261005/fence.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/fence_default_20261005/fence.stderr.log",
+            "source": "sibling",
+            "why": "成對：fence.stderr.log（110002 bytes）（另有 2 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 512 -n 128 --warm-skip None（由產物參數重建）",
+          "result": {
+            "pp": 105.24,
+            "tg": 10.69
+          },
+          "thermal": "MODERATE",
+          "swap": {
+            "before": "4164 MiB",
+            "after": "7917 MiB"
+          },
+          "verdict": "swap：swap_growth=3431.74 MiB, max_swap=7984.94 MiB",
+          "clean": false,
+          "void_why": "attribution.verdict=swap（swap_growth=3431.74 MiB, max_swap=7984.94 MiB）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）；但 prefetch 印了全 0（未被要求，只記錄）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "zero-only",
+                "n": 1,
+                "max": 0,
+                "last": 0,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [
+              "prefetch"
+            ],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        },
+        {
+          "when": "2026-10-05 12:14",
+          "arm": "prod-new:CGC_OVERLAP_FENCE=41",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/fence_default_20261005/fence.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/fence_default_20261005/fence.stderr.log",
+            "source": "sibling",
+            "why": "成對：fence.stderr.log（110002 bytes）（另有 2 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 512 -n 128 --warm-skip None（由產物參數重建）",
+          "result": {
+            "pp": 119.79,
+            "tg": 13.66
+          },
+          "thermal": "MODERATE",
+          "swap": {
+            "before": "4164 MiB",
+            "after": "7917 MiB"
+          },
+          "verdict": "swap：swap_growth=329.0 MiB, max_swap=8006.25 MiB",
+          "clean": false,
+          "void_why": "attribution.verdict=swap（swap_growth=329.0 MiB, max_swap=8006.25 MiB）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）；但 prefetch 印了全 0（未被要求，只記錄）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "zero-only",
+                "n": 1,
+                "max": 0,
+                "last": 0,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [
+              "prefetch"
+            ],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        },
+        {
+          "when": "2026-10-05 12:14",
+          "arm": "prod-new:CGC_OVERLAP_FENCE=41",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/fence_default_20261005/fence_rev.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/fence_default_20261005/fence_rev.stderr.log",
+            "source": "sibling",
+            "why": "成對：fence_rev.stderr.log（109418 bytes）（另有 2 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 512 -n 128 --warm-skip None（由產物參數重建）",
+          "result": {
+            "pp": 118.07,
+            "tg": 13.78
+          },
+          "thermal": "MODERATE",
+          "swap": {
+            "before": "5530 MiB",
+            "after": "7921 MiB"
+          },
+          "verdict": "swap：swap_growth=2132.0 MiB, max_swap=8029.81 MiB",
+          "clean": false,
+          "void_why": "attribution.verdict=swap（swap_growth=2132.0 MiB, max_swap=8029.81 MiB）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）；但 prefetch 印了全 0（未被要求，只記錄）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "zero-only",
+                "n": 1,
+                "max": 0,
+                "last": 0,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [
+              "prefetch"
+            ],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        },
+        {
+          "when": "2026-10-05 12:14",
+          "arm": "prod-new",
+          "profile": "prod-new",
+          "log": "Backup/spec_tree/fence_default_20261005/fence_rev.json",
+          "pair": {
+            "paired": true,
+            "canonical": "/Users/alexchuang/Documents/flashkv-devserver/Backup/spec_tree/fence_default_20261005/fence_rev.stderr.log",
+            "source": "sibling",
+            "why": "成對：fence_rev.stderr.log（109418 bytes）（另有 2 份 per-arm log）"
+          },
+          "cmd": "llama-bench（prod-new）-p 512 -n 128 --warm-skip None（由產物參數重建）",
+          "result": {
+            "pp": 107.43,
+            "tg": 10.99
+          },
+          "thermal": "MODERATE",
+          "swap": {
+            "before": "5530 MiB",
+            "after": "7921 MiB"
+          },
+          "verdict": "swap：swap_growth=258.8799999999992 MiB, max_swap=8144.69 MiB",
+          "clean": false,
+          "void_why": "attribution.verdict=swap（swap_growth=258.8799999999992 MiB, max_swap=8144.69 MiB）",
+          "instrument": {
+            "verdict": "N/A",
+            "why": "本臂未武裝任何受檢量具 ⇒ 沒有東西可綁（不是乾淨、也不是不乾淨）；但 prefetch 印了全 0（未被要求，只記錄）",
+            "required": [],
+            "required_reason": {},
+            "probes": {
+              "mm_pub_n_leaf": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 回讀認出的圖葉節點數",
+                "means": "這張圖有可發佈的葉（全部是 0 ⇒ 地圖從沒填起來，後面所有欄位無意義）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "mm_pub_wrote": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "mask 真的寫進圖的 placeholder 數",
+                "means": "placeholder 真的寫進去了（n_leaf>0 而 wrote 全 0 ⇒ 每個葉都被 skip，看同一行的 skip_*）",
+                "origin": "llama-context.cpp:3948"
+              },
+              "rb_feed": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "回讀迴圈餵給 SpAc／union 的次數",
+                "means": "不經 hook 的餵料在跑（單次提交臂的唯一餵料來源）",
+                "origin": "llama-context.cpp:4058"
+              },
+              "missmask_step": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "走過 mask 判定的步數",
+                "means": "逐步 miss 統計真的有在累加（值不是 miss 數，是步數）",
+                "origin": "llama-context.cpp:4096"
+              },
+              "missmask_row": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "逐層 miss 列數（`misses>0` 才印）",
+                "means": "地圖真的填起來過（沒有 placeholder 寫進圖就不可能有 miss 列）",
+                "origin": "llama-context.cpp:4090"
+              },
+              "spac": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "SpAc 效用 EMA 的刷新次數",
+                "means": "池的重定中心有在跑",
+                "origin": "llama-context.cpp:2188"
+              },
+              "prefetch": {
+                "state": "zero-only",
+                "n": 1,
+                "max": 0,
+                "last": 0,
+                "what": "預取發出的次數（最終統計行）",
+                "means": "預取器真的下過單（0 = 它接到空集合，或根本沒開）",
+                "origin": "llama-expert-cache.cpp 最終統計"
+              },
+              "rho_capture": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "ρ 影子路由累計捕捉的（層 × 步）事件數",
+                "means": "影子分支在 decode 步上真的收貨（沒有這一行 ⇒ 收貨端沒跑；有列印但停在 0 ⇒ 沒量到）",
+                "origin": "llama-context.cpp:6844"
+              },
+              "rho_s2c": {
+                "state": "no-marker",
+                "n": 0,
+                "max": null,
+                "last": null,
+                "what": "S2-c 在單段臂上投遞的（層 × 步）事件數（累計）",
+                "means": "影子 capture 在單段提交臂上真的送達（沒有這一行 ⇒ 補丁沒生效或臂沒帶 CGC_SEG_BATCH；有列印而 layers/step < n_layer ⇒ 影子節點不在這張圖裡）",
+                "origin": "llama-context.cpp:4337（S2-c 補丁）"
+              }
+            },
+            "incidental_zero": [
+              "prefetch"
+            ],
+            "escaped": [],
+            "escape_why": "",
+            "armed": []
+          },
+          "subgoal_contrib": null
+        }
+      ],
+      "targets": {},
+      "best": null,
+      "target_gap": {},
+      "subtasks": [
+        {
+          "id": "st-charter",
+          "text": "跑前立項（現狀/目標/假設/驗收）",
+          "status": "done",
+          "log": "scripts/check/charters/exp-fence-default-cell-2026-10-05.yaml"
+        },
+        {
+          "id": "st-run",
+          "text": "用生產級腳本 prod-new ＋ 自己 option 跑實驗臂，留存 log",
+          "status": "done"
+        },
+        {
+          "id": "st-accept",
+          "text": "驗收：同一 invocation 拿到 off/on 兩臂的 pp512＋tg128；tg 比值 ≥1.10 ⇒ 柵欄在交付格上成立（即使窗不可引用，同場比值仍可讀）",
+          "status": "todo"
+        },
+        {
+          "id": "st-falsify",
+          "text": "否證條件：tg 比值 ≤1.00（on 沒更快）或 pp 也動 >5%（那就不是 decode 段的效果）⇒ 柵欄在交付格不成立，要把它從「唯一未否證的一步」劃掉",
+          "status": "todo"
+        }
+      ],
+      "no_throughput_claim": "本節點 4 個 run 全部非乾淨歸因（attribution.verdict=swap（swap_growth=2132.0 MiB, max_swap=8029.81 MiB）、attribution.verdict=swap（swap_growth=258.8799999999992 MiB, max_swap=8144.69 MiB）、attribution.verdict=swap（swap_growth=329.0 MiB, max_swap=8006.25 MiB）、attribution.verdict=swap（swap_growth=3431.74 MiB, max_swap=7984.94 MiB））⇒ 依 MEASUREMENT_CONTRACT §5.1 吞吐不得引用；節點只記判詞。乾淨 = memory_pressure.is_clean()。",
+      "subgoal_binding": {
+        "subgoal": null,
+        "title": "",
+        "layer": "",
+        "profile": "",
+        "arm_strings": [],
+        "options": [],
+        "instruments": [],
+        "candidates": [],
+        "cli": [],
+        "no_knob": "本條不屬於看板 15 個子目標中的任何一格（已認證／已定案／已作廢）⇒ 沒有待跑的臂，也就沒有要綁的 option。",
+        "note": "柵欄 × 現行交付格的兩方向配對：OFF 10.840 → ON 13.722 tg t/s ＝ ×1.266（① ×1.278／② ×1.254，順序無關，四臂 tg spread ≤1.082）。⇒ 定案兩條：(a) 柵欄在交付格成立、幅度大於舊形狀（×1.120）；(b) 13.72 ≈ 舊形狀乾淨窗最高 13.8674 ⇒ 形狀換成 llama-bench 出廠形狀沒有損失速度。⚠ 20 仍差 +45.8% ⇒ 20+ 仍判死（「唯一未否證的一步」已花掉）。產物 Backup/spec_tree/fence_default_20261005/fence.json ＋ fence_rev.json",
+        "state": "",
+        "also": [],
+        "source": "board",
+        "confidence": "n/a"
+      },
+      "disposition": [
+        {
+          "kind": "settled",
+          "ref": "",
+          "why": "柵欄 × 現行交付格的兩方向配對：OFF 10.840 → ON 13.722 tg t/s ＝ ×1.266（① ×1.278／② ×1.254，順序無關，四臂 tg spread ≤1.082）。⇒ 定案兩條：(a) 柵欄在交付格成立、幅度大於舊形狀（×1.120）；(b) 13.72 ≈ 舊形狀乾淨窗最高 13.8674 ⇒ 形狀換成 llama-bench 出廠形狀沒有損失速度。⚠ 20 仍差 +45.8% ⇒ 20+ 仍判死（「唯一未否證的一步」已花掉）。產物 Backup/spec_tree/fence_default_20261005/fence.json ＋ fence_rev.json"
         }
       ]
     }
