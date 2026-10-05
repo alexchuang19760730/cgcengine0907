@@ -111,10 +111,11 @@
 {"row": "section", "path": ".workbuddy/memory/MEMORY.md", "level": 2, "title": "關鍵事實（詳見子題檔；本線＝線A）", "line_start": 17, "line_end": 32, "lines": 15, "body_bytes": 5744, "subs": []}
 {"row": "section", "path": ".workbuddy/memory/MEMORY.md", "level": 2, "title": "分工（重要）", "line_start": 33, "line_end": 37, "lines": 4, "body_bytes": 544, "subs": []}
 {"row": "section", "path": ".workbuddy/memory/MEMORY.md", "level": 2, "title": "量測衛生／口徑 → `MEMORY_HYGIENE.md`", "line_start": 38, "line_end": 44, "lines": 6, "body_bytes": 2155, "subs": []}
-{"row": "file", "path": ".workbuddy/memory/2026-10-05.md", "abs": "/Users/alexchuang/Documents/flashkv-devserver/.workbuddy/memory/2026-10-05.md", "bytes": 6840, "sha256": "86f938d3f0ab72ad", "lines": 80, "mtime": "2026-10-05T12:29:12"}
+{"row": "file", "path": ".workbuddy/memory/2026-10-05.md", "abs": "/Users/alexchuang/Documents/flashkv-devserver/.workbuddy/memory/2026-10-05.md", "bytes": 8074, "sha256": "a16e12bdfa9c67a2", "lines": 88, "mtime": "2026-10-05T12:44:35"}
 {"row": "section", "path": ".workbuddy/memory/2026-10-05.md", "level": 2, "title": "§EN-2102 ★★★ 柵欄在交付格上 **×1.266**（順序無關）—— 20+ 仍判死", "line_start": 3, "line_end": 44, "lines": 41, "body_bytes": 3090, "subs": []}
 {"row": "section", "path": ".workbuddy/memory/2026-10-05.md", "level": 2, "title": "§EN-2103 兩個工具層的教訓（已寫回 skill）", "line_start": 45, "line_end": 53, "lines": 8, "body_bytes": 644, "subs": []}
-{"row": "section", "path": ".workbuddy/memory/2026-10-05.md", "level": 2, "title": "12:2x — fence 13.722 能不能進「認證／最高紀錄」？（查清、未動）", "line_start": 54, "line_end": 80, "lines": 26, "body_bytes": 2785, "subs": []}
+{"row": "section", "path": ".workbuddy/memory/2026-10-05.md", "level": 2, "title": "12:2x — fence 13.722 能不能進「認證／最高紀錄」？（查清、未動）", "line_start": 54, "line_end": 81, "lines": 27, "body_bytes": 2786, "subs": []}
+{"row": "section", "path": ".workbuddy/memory/2026-10-05.md", "level": 2, "title": "12:5x — 提交（bcbeb9ea1）", "line_start": 82, "line_end": 88, "lines": 6, "body_bytes": 1197, "subs": []}
 {"row": "file", "path": ".workbuddy/memory/2026-10-04.md", "abs": "/Users/alexchuang/Documents/flashkv-devserver/.workbuddy/memory/2026-10-04.md", "bytes": 4099, "sha256": "b4922e6c4f0cd6cf", "lines": 56, "mtime": "2026-10-05T11:39:22"}
 {"row": "section", "path": ".workbuddy/memory/2026-10-04.md", "level": 2, "title": "§EN-2100 ★★★ 新預設格首筆：pp512 94.20／tg128 10.60 —— **0/2 可引用**", "line_start": 5, "line_end": 48, "lines": 43, "body_bytes": 3174, "subs": []}
 {"row": "section", "path": ".workbuddy/memory/2026-10-04.md", "level": 2, "title": "§EN-2101 兩個工具層的觀察（不是本輪引入）", "line_start": 49, "line_end": 56, "lines": 7, "body_bytes": 564, "subs": []}
